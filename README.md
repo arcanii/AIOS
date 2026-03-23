@@ -1,7 +1,7 @@
 # AIOS
 A micro-kernel based operating system study with AI at the core.
 Basically, is there an AI self-improvement model that can be applied to operating systems? 
-Is this feasible, and does it make sense?
+Is this feasible, and does it make sense? This is more of a thought experiment.
 
 ### 1. DESIGN PHILOSOPHY
 
