@@ -142,6 +142,5 @@ The Orchestrator's brain — embedded directly in the Orchestrator process, runn
 
 "What happens if the network is never available?" The bootstrap loader includes a fallback path (bootstrap_from_disk) that loads the kernel, modules, a seed HKB, and a default LLM model from local storage. The system can boot fully offline using pre-packaged artifacts, though the initial HKB will be generic rather than tailored to the specific hardware.
 
-This design gives you a complete, buildable architecture for an AI-native operating system where intelligence is not bolted on as an afterthought but woven into the fundamental resource management layer, while the microkernel remains small, verifiable, and trustworthy as the foundation of system security.
 
 
