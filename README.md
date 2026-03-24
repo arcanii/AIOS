@@ -37,7 +37,7 @@ What seL4 already provides (we delete our custom code that never really existed 
 |Component|	Custom AIOS Kernel (dream)|	seL4 |	Notes|
 |---------|---------------------------|------|-------|
 |Memory manager|	mm.c (~2K LoC)|	Untyped Retype|	seL4's typed memory model; formally verified|
-|IPC|	ipc.c (~1.5K LoC)|	seL4 IPC + Notifications	|~900 cycle round-trip on x86; faster than our design|
+|IPC|	ipc.c (~1.5K LoC)|	seL4 IPC + Notifications	|~900 cycle round-trip on x86; faster than our fictitious design|
 |Capability system|	capability.c (~2K LoC)|	CNodes + Badges	|Proven unforgeable, formally verified|
 |Thread control|	thread.c (~1K LoC)	|TCBs + MCS scheduling	|Budget/period per-thread (the Orchestrator sets these)|
 |IRQ routing|	irq.c (~500 LoC)	|IRQ Handler caps	|Forwarded as notifications to userspace PDs|
