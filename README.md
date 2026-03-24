@@ -28,8 +28,8 @@ Use seL4's microkernel as the core (tested, veried and open source)? - it can be
 seL4 is a cool project that is operational and open-sourced.
 
 - Linux binary compatibility is mandatory, so that ARIES is really a Linux derivative, and legally it should keep the same model (GPL2) as much as possible, but still allow BSD style licensing in clean room areas - the AI needs to log and audit anything it makes in clean-room conditions.
-- Windows binary compatibility is extremely desired, but could be based on WINE functionality - get for free.
-- MacOS binary compatubility is desired, but may carry legal baggage. There is `Darling` but sounds like an uphill battle.
+- Windows binary compatibility is extremely desired, but could be based on WINE functionality, or VM. This should be very possible.
+- MacOS binary compatibility is desired, but may carry legal baggage and Apple ecosystem dependencies. There is already `Darling` so anything else sounds like an uphill battle.
 - Mixed ISA - another project stretch. This would be like Rosetta 2 (Apple) or Prism (Microsoft) - something the AI can tackle later (ha ha ha).
 
 What seL4 already provides (we delete our custom code that never really existed in the first place)
