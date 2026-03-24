@@ -42,7 +42,7 @@ What seL4 already provides (we delete our custom code that never really existed 
 |Thread control|	thread.c (~1K LoC)	|TCBs + MCS scheduling	|Budget/period per-thread (the Orchestrator sets these)|
 |IRQ routing|	irq.c (~500 LoC)	|IRQ Handler caps	|Forwarded as notifications to userspace PDs|
 |Timer|	timer.c (~300 LoC)	|MCS kernel timer	|Sub-microsecond precision|
-|Virtualization	|Not implemented	|vCPU objects	F|ull Linux VM guest support, proven in camkes-vm|
+|Virtualization	|Not implemented	|vCPU objects	|Full Linux VM guest support, proven in camkes-vm|
 |IOMMU|	Not implemented|	ARM SMMU / Intel VT-d	|DMA isolation for untrusted drivers|
 |Multicore|	Not implemented|	SMP support	|Microkit 2.1.0 has SMP configurations|
 |Formal proofs|	Aspirational|	Done (AArch32), in progress (MCS/x86/RISC-V)|	We inherit decades of verification work|
