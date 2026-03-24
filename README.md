@@ -51,16 +51,15 @@ Net effect: We delete ~8K lines of unverified custom kernel code and replace it 
 We also gain virtualization, IOMMU, SMP, and a roadmap to full verification.
 
 What we must build on top of seL4 :
-- Component	Why seL4 doesn't provide it	Our approach
-- Dynamic PD management	Microkit uses static XML-described systems	Build a Component Manager PD with raw seL4 API access
-- AI Orchestrator	Novel to AIOS	Protection domain with max priority (254)
-- sDDF driver agents	sDDF provides the framework; drivers are per-device	AI generates/selects drivers from HKB
-- Linux ABI shim	Not seL4's scope	PD with syscall interposition
-- LLM inference engine	Novel to AIOS	Runs inside Orchestrator PD
-- Hardware Knowledge Base	Novel to AIOS	Shared memory regions + fs_server
-- Bootstrap protocol	Novel to AIOS	Custom UEFI loader talks to external AI
-
-
+|Component	|Why seL4 doesn't provide it|	Our approach|
+|-----------|---------------------------|---------------|
+|Dynamic PD management	|Microkit uses static XML-described systems	|Build a Component Manager PD with raw seL4 API access|
+|AI Orchestrator|	Novel to AIOS	Protection domain with max priority (254)|
+|sDDF driver agents	|sDDF provides the framework; drivers are per-device	|AI generates/selects drivers from HKB|
+|Linux ABI| shim|	Not seL4's scope	|PD with syscall interposition|
+|LLM inference engine|	Novel to AIOS	|Runs inside Orchestrator PD|
+|Hardware Knowledge Base|	Novel to AIOS	|Shared memory regions + fs_server|
+|Bootstrap protocol|	Novel to AIOS	|Custom UEFI loader talks to external AI|
 
 ### 1. DESIGN PHILOSOPHY
 
