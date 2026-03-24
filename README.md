@@ -3,6 +3,13 @@ A micro-kernel based operating system study with AI at the core.
 Basically, is there an AI self-improvement model that can be applied to operating systems? 
 Is this feasible, and does it make sense? This is more of a thought experiment.
 
+working name : project Open Aries
+use seL4's microkernel as the core (tested, veried and open source)
+load a choice LLM as default ochestrator - but this can change dynamically.
+linux is the reference foundation (GPL2)
+
+
+
 ### 1. DESIGN PHILOSOPHY
 
 AIOS inverts the traditional OS model. Instead of a monolithic kernel with static drivers and schedulers, AIOS provides a minimal, formally-verifiable microkernel (~15K lines of C) that does only four things:
