@@ -1,12 +1,64 @@
 # AIOS
-A micro-kernel based operating system study with AI at the core.
-Basically, is there an AI self-improvement model that can be applied to operating systems? 
-Is this feasible, and does it make sense? This is more of a thought experiment.
+This is a thought experiment : what does a AI powered operating system look like? (A.I.O.S.). Ideally, this stuff is really in a white-paper, and this space is reserved more for getting it to work (To Be Actioned). At the momement, it is just a bunch of ideas all bouncing off each other.
 
-working name : project Open Aries
-use seL4's microkernel as the core (tested, veried and open source)
-load a choice LLM as default ochestrator - but this can change dynamically.
-linux is the reference foundation (GPL2)
+The idea is that an AI OS would be able to discover, experiment and self-improve without risking stability of operation or data-corruption. It has to be a useable computer.
+
+It behaves like a normal OS, akin to Linux, BSD/Unix, MacOS, and Windows, however it has more autonomy to change and improve itself automatically.
+It would be cool if you could just run whatever programs you wanted (runs it all, insomuch as it is legaly permissible... MacOS apps may be a problem), and AIOS kept it all up to date, maximum efficiency, and free from risks. With high level direction, it could lock down, or protect data based on a high level policy.
+
+Put AIOS on a computer and it could configure all the hardware, research what it didn't know and maybe even trial and error (aka reverse-engineer) hardware that it had no information about (a big stretch). Share centrally, or P2P with other AIOS so that they can improve as an ecosystem.
+
+Is it better against viruses / malware? It could be, if the AI is programmed to detect, and mitigate viruses. The AI is watching the system operation and could detect if anything odd is happening. A good idea would to be make AIOS resistent if not well hardened against viruses and malware by design. No more ransomware.
+
+It also has built in AI Orchestration capability, like OpenClaw, but at a fundamentally operational level of the OS.
+
+This is where a micro-kernel is needed : small enough to be verified, strong enough that gives the AI the freedom to experiment (and fail). Personal computers should be fast enough to make this feasible. This is different than the design choice of Linux. It is probably not great for low power operations, so it could operate in an improving mode (with a LLM), and a static, low power mode (no self-improvement locally).
+
+working name : project `Open ARIES` (acronym creator : have fun AI).
+This project is inspired by Linux and all that makes Linux amazing : freedom and open source.
+
+- ARIES = Autonomous Reasoning and Intelligent Execution System
+- ARIES = Adaptive Reasoning and Integrated Environment System
+- ARIES = Autonomous Runtime for Intelligent, Extensible Systems
+
+Something like that.
+
+What can we leverage (the lazy factor here); build our own microkernel? I'm nowhere near smart enough for that even though AI encourages me (don't limit yourself it says - ha ha).
+Use seL4's microkernel as the core (tested, veried and open source)? - it can be kept pure and accomplish the same thing. Also have the option to branch it later if needed.
+seL4 is a cool project that is operational and open-sourced.
+
+- Linux binary compatibility is mandatory, so that ARIES is really a Linux derivative, and legally it should keep the same model (GPL2) as much as possible, but still allow BSD style licensing in clean room areas - the AI needs to log and audit anything it makes in clean-room conditions.
+- Windows binary compatibility is extremely desired, but could be based on WINE functionality - get for free.
+- MacOS binary compatubility is desired, but may carry legal baggage. There is `Darling` but sounds like an uphill battle.
+- Mixed ISA - another project stretch. This would be like Rosetta 2 (Apple) or Prism (Microsoft) - something the AI can tackle later (ha ha ha).
+
+What seL4 already provides (we delete our custom code that never really existed in the first place)
+
+|Component|	Custom AIOS Kernel (dream)|	seL4 |	Notes|
+|---------|---------------------------|------|-------|
+|Memory manager|	mm.c (~2K LoC)|	Untyped Retype|	seL4's typed memory model; formally verified|
+|IPC|	ipc.c (~1.5K LoC)|	seL4 IPC + Notifications	|~900 cycle round-trip on x86; faster than our design|
+|Capability system|	capability.c (~2K LoC)|	CNodes + Badges	|Proven unforgeable, formally verified|
+|Thread control|	thread.c (~1K LoC)	|TCBs + MCS scheduling	|Budget/period per-thread (the Orchestrator sets these)|
+|IRQ routing|	irq.c (~500 LoC)	|IRQ Handler caps	|Forwarded as notifications to userspace PDs|
+|Timer|	timer.c (~300 LoC)	|MCS kernel timer	|Sub-microsecond precision|
+|Virtualization	|Not implemented	|vCPU objects	F|ull Linux VM guest support, proven in camkes-vm|
+|IOMMU|	Not implemented|	ARM SMMU / Intel VT-d	|DMA isolation for untrusted drivers|
+|Multicore|	Not implemented|	SMP support	|Microkit 2.1.0 has SMP configurations|
+|Formal proofs|	Aspirational|	Done (AArch32), in progress (MCS/x86/RISC-V)|	We inherit decades of verification work|
+
+Net effect: We delete ~8K lines of unverified custom kernel code and replace it with 12K lines of formally verified seL4 code. 
+We also gain virtualization, IOMMU, SMP, and a roadmap to full verification.
+
+What we must build on top of seL4 :
+- Component	Why seL4 doesn't provide it	Our approach
+- Dynamic PD management	Microkit uses static XML-described systems	Build a Component Manager PD with raw seL4 API access
+- AI Orchestrator	Novel to AIOS	Protection domain with max priority (254)
+- sDDF driver agents	sDDF provides the framework; drivers are per-device	AI generates/selects drivers from HKB
+- Linux ABI shim	Not seL4's scope	PD with syscall interposition
+- LLM inference engine	Novel to AIOS	Runs inside Orchestrator PD
+- Hardware Knowledge Base	Novel to AIOS	Shared memory regions + fs_server
+- Bootstrap protocol	Novel to AIOS	Custom UEFI loader talks to external AI
 
 
 
