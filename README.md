@@ -8,6 +8,33 @@ that runs large language model inference in an isolated protection domain.
 Built from scratch: seL4 kernel, Microkit, 6 protection domains, virtio-blk,
 FAT16, 60MB model load, tokenizer, transformer inference, text generation.
 
+## Plan
+AIOS> build ls
+  1. Orchestrator asks LLM: "generate ls.c for AIOS, 
+     reference /ref/coreutils/ls.c"
+  2. LLM reads the Linux reference, generates AIOS ls.c
+  3. Orchestrator sends ls.c to TCC PD
+  4. TCC compiles to aarch64 machine code
+  5. Orchestrator loads code into sandbox PD
+  6. Sandbox executes ls, output goes to serial
+
+## Self-improvement demo (proof of concept)
+- Day 1:  FAT16 write support (FS_CMD_WRITE, FS_CMD_CREATE).
+- Day 2:  Put reference .c files on disk, add "ai build" command.  
+- Day 3:  LLM generates code, saves to disk via orchestrator.
+- Day 4:  Port TCC to a PD (compile in-memory).
+- Day 5:  Sandbox PD with jump-to-code execution.
+- Day 6:  Wire the full loop: prompt → generate → compile → run.
+- Day 7:  Demo: "build ls" produces a working ls from scratch.
+  
+AIOS> build sh
+  [same loop, but generates a shell interpreter]
+  
+AIOS> build net_driver
+  [LLM reads Linux virtio-net source, generates 
+   an AIOS virtio-net PD]
+
+
 
 ## What It Does
 
