@@ -340,17 +340,29 @@ static void handle_tok_llm_reply(void) {
 }
 
 /* ── Generation reply ──────────────────────────────── */
+
 static void handle_gen_reply(void) {
     uint32_t status = RD32(llm_io, LLM_STATUS);
-    if (status == 0) {
-        char *output = (char *)(llm_io + LLM_OUTPUT);
-        ser_puts(output);
-        ser_puts("\n");
+
+    if (status == LLM_ST_TOKEN) {
+        /* Print the token piece */
+        char *piece = (char *)(llm_io + LLM_OUTPUT);
+        ser_puts(piece);
+        microkit_notify(CH_SERIAL);
+        /* Request next token */
+        WR32(llm_io, LLM_CMD, LLM_CMD_NEXT_TOK);
+        microkit_notify(CH_LLM);
+        /* Stay in GEN_WAITING state */
+    } else if (status == LLM_ST_DONE) {
+        ser_puts("\n\nAIOS> ");
+        microkit_notify(CH_SERIAL);
+        orch_state = RUNNING;
     } else {
-        ser_puts("  Generation failed.\n");
+        ser_puts("\n  Generation error.\n");
+        ser_puts("AIOS> ");
+        microkit_notify(CH_SERIAL);
+        orch_state = RUNNING;
     }
-    ser_puts("\nAIOS> ");
-    orch_state = RUNNING;
 }
 
 /* ── Interactive shell ─────────────────────────────── */
@@ -422,27 +434,27 @@ static void process_command(void) {
             return;
         }
     } else if (str_starts_with(input_line, "gen ") || str_starts_with(input_line, "generate ")) {
-        char *prompt = input_line;
-        while (*prompt && *prompt != ' ') prompt++;
-        while (*prompt == ' ') prompt++;
-        if (*prompt == '\0') {
-            ser_puts("Usage: gen <prompt>\n");
-        } else if (!model_ready) {
-            ser_puts("No model/tokenizer loaded. Run: load STORIES.BIN\n");
-        } else {
-            ser_puts("Generating...\n");
-            microkit_notify(CH_SERIAL);
-            char *dst = (char *)(llm_io + LLM_PROMPT);
-            int i = 0;
-            while (prompt[i] && i < 255) { dst[i] = prompt[i]; i++; }
-            dst[i] = '\0';
-            WR32(llm_io, LLM_MAX_STEPS, 128);
-            WR32(llm_io, LLM_CMD, LLM_CMD_GENERATE);
-            orch_state = GEN_WAITING;
-            microkit_notify(CH_LLM);
-            input_pos = 0;
-            return;
-        }
+            char *prompt = input_line;
+            while (*prompt && *prompt != ' ') prompt++;
+            while (*prompt == ' ') prompt++;
+            if (*prompt == '\0') {
+                ser_puts("Usage: gen <prompt>\n");
+            } else if (!model_ready) {
+                ser_puts("No model/tokenizer loaded. Run: load STORIES.BIN\n");
+            } else {
+                ser_puts("Generating...\n");
+                microkit_notify(CH_SERIAL);
+                char *dst = (char *)(llm_io + LLM_PROMPT);
+                int i = 0;
+                while (prompt[i] && i < 255) { dst[i] = prompt[i]; i++; }
+                dst[i] = '\0';
+                WR32(llm_io, LLM_MAX_STEPS, 256);
+                WR32(llm_io, LLM_CMD, LLM_CMD_GENERATE);
+                orch_state = GEN_WAITING;
+                microkit_notify(CH_LLM);
+                input_pos = 0;
+                return;
+            }
     } else if (str_starts_with(input_line, "shutdown")) {
         ser_puts("Shutting down AIOS...\n");
         ser_puts("System halted. Press Ctrl-A then X to exit QEMU.\n");

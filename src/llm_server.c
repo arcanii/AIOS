@@ -177,19 +177,19 @@ static float my_powf(float base, float exp) {
 /* ══════════════════════════════════════════════
    llm_io layout
    ══════════════════════════════════════════════ */
-#define LLM_CMD       0x000
-#define LLM_STATUS    0x004
-#define LLM_MODELSZ   0x008
-#define LLM_TOKCOUNT  0x00C
-#define LLM_TOKSZ     0x010  /* tokenizer size in bytes */
-#define LLM_STEPS     0x014  /* max generation steps */
-#define LLM_PROMPT    0x100  /* 256 bytes */
-#define LLM_OUTPUT    0x200  /* 3584 bytes */
-#define LLM_OUTPUT_MAX 3584
+//#define LLM_CMD       0x000
+//#define LLM_STATUS    0x004
+//#define LLM_MODELSZ   0x008
+//#define LLM_TOKCOUNT  0x00C
+//#define LLM_TOKSZ     0x010  /* tokenizer size in bytes */
+//#define LLM_STEPS     0x014  /* max generation steps */
+//#define LLM_PROMPT    0x100  /* 256 bytes */
+//#define LLM_OUTPUT    0x200  /* 3584 bytes */
+//#define LLM_OUTPUT_MAX 3584
 
-#define CMD_LOAD_DONE 1
-#define CMD_LOAD_TOK  2
-#define CMD_GENERATE  3
+//#define CMD_LOAD_DONE 1
+//#define CMD_LOAD_TOK  2
+//#define CMD_GENERATE  3
 
 /* ══════════════════════════════════════════════
    Transformer structures (from run.c)
@@ -722,46 +722,106 @@ static int sample_token(float *logits, float temperature) {
 /* ══════════════════════════════════════════════
    Generate text
    ══════════════════════════════════════════════ */
-static void do_generate(void) {
-    char *prompt = (char *)(llm_io + LLM_PROMPT);
-    char *output = (char *)(llm_io + LLM_OUTPUT);
-    uint32_t max_steps = RD32(llm_io, LLM_STEPS);
-    if (max_steps == 0 || max_steps > (uint32_t)config.seq_len)
-        max_steps = config.seq_len;
 
-    int prompt_tokens[256];
-    int num_prompt_tokens = 0;
-    encode_prompt(prompt, prompt_tokens, &num_prompt_tokens);
+/* ── Streaming generation state ─────────────────────── */
+static int gen_active = 0;
+static int gen_pos;
+static int gen_token;
+static int gen_steps;
+static int gen_num_prompt_tokens;
+static int *gen_prompt_tokens;
+static int gen_prompt_alloc;
 
-    int out_pos = 0;
-    int token = prompt_tokens[0];
-    
-    for (uint32_t pos = 0; pos < max_steps; pos++) {
-        float *logits = forward_token(token, (int)pos);
+static void gen_step(void);
 
-        int next;
-        if ((int)pos < num_prompt_tokens - 1) {
-            next = prompt_tokens[pos + 1];
-        } else {
-            next = sample_token(logits, 0.8f);
-        }
-
-        if (next == 1 || next == 2) break; /* BOS or EOS */
-
-        /* Decode and append to output if past prompt */
-        if ((int)pos >= num_prompt_tokens - 1) {
-            char *piece = decode_token(token, next);
-            while (*piece && out_pos < LLM_OUTPUT_MAX - 1) {
-                output[out_pos++] = *piece++;
-            }
-        }
-
-        token = next;
+static void gen_emit_token(const char *piece) {
+    /* Write token text to llm_io output area */
+    char *out = (char *)(llm_io + LLM_OUTPUT);
+    int i = 0;
+    while (piece[i] && i < LLM_OUTPUT_MAX - 1) {
+        out[i] = piece[i];
+        i++;
     }
-    output[out_pos] = '\0';
+    out[i] = '\0';
+    WR32(llm_io, LLM_STATUS, LLM_ST_TOKEN);
+    microkit_notify(CH_ORCH);
+}
 
-    WR32(llm_io, LLM_TOKCOUNT, (uint32_t)out_pos);
-    WR32(llm_io, LLM_STATUS, 0);
+static void gen_finish(void) {
+    gen_active = 0;
+    WR32(llm_io, LLM_STATUS, LLM_ST_DONE);
+    microkit_notify(CH_ORCH);
+}
+
+static void gen_start(void) {
+    char *prompt = (char *)(llm_io + LLM_PROMPT);
+    gen_steps = (int)RD32(llm_io, LLM_MAX_STEPS);
+    if (gen_steps <= 0 || gen_steps > (int)config.seq_len)
+        gen_steps = config.seq_len;
+
+    /* Encode prompt */
+    if (!gen_prompt_tokens) {
+        gen_prompt_alloc = config.seq_len;
+        gen_prompt_tokens = (int *)bump_alloc(gen_prompt_alloc * sizeof(int));
+        if (!gen_prompt_tokens) {
+            microkit_dbg_puts("LLM: prompt alloc failed\n");
+            WR32(llm_io, LLM_STATUS, LLM_ST_ERROR);
+            microkit_notify(CH_ORCH);
+            return;
+        }
+    }
+
+    encode_prompt(prompt, gen_prompt_tokens, &gen_num_prompt_tokens);
+    if (gen_num_prompt_tokens < 1) {
+        gen_prompt_tokens[0] = 1; /* BOS */
+        gen_num_prompt_tokens = 1;
+    }
+
+    gen_pos = 0;
+    gen_token = gen_prompt_tokens[0];
+    gen_active = 1;
+
+    microkit_dbg_puts("LLM: generating (streaming)...\n");
+
+    /* Generate first token immediately */
+    gen_step();
+}
+
+static void gen_step(void) {
+    if (!gen_active) return;
+
+    /* Forward pass */
+    float *logits = forward_token(gen_token, gen_pos);
+
+    int next;
+    if (gen_pos < gen_num_prompt_tokens - 1) {
+        /* Still in prompt — force next prompt token */
+        next = gen_prompt_tokens[gen_pos + 1];
+    } else {
+        /* Sample */
+        next = sample_token(logits, 0.8f);
+    }
+
+    /* Check for end */
+    if (next == 1 || next == 2 || gen_pos >= gen_steps - 1) {
+        gen_finish();
+        return;
+    }
+
+    /* Decode and emit if past prompt */
+    if (gen_pos >= gen_num_prompt_tokens - 1) {
+        char *piece = decode_token(gen_token, next);
+        gen_emit_token(piece);
+    } else {
+        /* Still processing prompt, immediately do next step */
+        gen_token = next;
+        gen_pos++;
+        gen_step();
+        return;
+    }
+
+    gen_token = next;
+    gen_pos++;
 }
 
 /* ══════════════════════════════════════════════
@@ -777,8 +837,14 @@ void notified(microkit_channel ch) {
 
     uint32_t cmd = RD32(llm_io, LLM_CMD);
 
+    /* Handle "next token" request during active generation */
+    if (cmd == LLM_CMD_NEXT_TOK && gen_active) {
+        gen_step();
+        return;
+    }
+
     switch (cmd) {
-    case CMD_LOAD_DONE: {
+    case LLM_CMD_LOAD_DONE: {
         uint32_t msz = RD32(llm_io, LLM_MODELSZ);
         if (init_model(msz) == 0) {
             model_ready = 1;
@@ -789,29 +855,26 @@ void notified(microkit_channel ch) {
         microkit_notify(CH_ORCH);
         break;
     }
-    case CMD_LOAD_TOK: {
-            uint32_t tok_off = RD32(llm_io, LLM_TOK_OFF);
-            uint32_t tok_sz  = RD32(llm_io, LLM_TOK_SZ);
-            if (init_tokenizer(tok_off, tok_sz) == 0) {
-                tokenizer_ready = 1;   // ADD THIS LINE
-                WR32(llm_io, LLM_STATUS, 0);
-            } else {
-                WR32(llm_io, LLM_STATUS, 1);
-            }
-            microkit_notify(CH_ORCH);
-            break;
+    case LLM_CMD_LOAD_TOK: {
+        uint32_t tok_off = RD32(llm_io, LLM_TOK_OFF);
+        uint32_t tok_sz = RD32(llm_io, LLM_TOK_SZ);
+        if (init_tokenizer(tok_off, tok_sz) == 0) {
+            tokenizer_ready = 1;
+            WR32(llm_io, LLM_STATUS, 0);
+        } else {
+            WR32(llm_io, LLM_STATUS, 1);
         }
-    case CMD_GENERATE: {
+        microkit_notify(CH_ORCH);
+        break;
+    }
+    case LLM_CMD_GENERATE: {
         if (!model_ready || !tokenizer_ready) {
             microkit_dbg_puts("LLM: not ready\n");
-            WR32(llm_io, LLM_STATUS, 1);
+            WR32(llm_io, LLM_STATUS, LLM_ST_ERROR);
             microkit_notify(CH_ORCH);
             break;
         }
-        microkit_dbg_puts("LLM: generating...\n");
-        do_generate();
-        microkit_dbg_puts("LLM: done\n");
-        microkit_notify(CH_ORCH);
+        gen_start();
         break;
     }
     default:

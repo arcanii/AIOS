@@ -61,6 +61,13 @@
 #define LLM_CMD_LOAD_DONE  1
 #define LLM_CMD_LOAD_TOK   2
 #define LLM_CMD_GENERATE   3
+#define LLM_CMD_NEXT_TOK   4   /* orchestrator -> llm: "ready for next token" */
+
+/* Status codes for streaming */
+#define LLM_ST_OK          0
+#define LLM_ST_ERROR       1
+#define LLM_ST_TOKEN       2   /* llm -> orch: here is a token piece */
+#define LLM_ST_DONE        3   /* llm -> orch: generation finished */
 
 /* ── model_data region ─────────────────────────── */
 #define MODEL_DATA_MAX  0x8000000   /* 128 MiB */

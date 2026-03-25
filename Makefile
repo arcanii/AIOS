@@ -9,7 +9,7 @@
 # ══════════════════════════════════════════════════════════
 
 # ── SDK & Board ──────────────────────────────────────────
-MICROKIT_SDK ?= $(HOME)/Desktop/working/aios/microkit-sdk-2.1.0
+MICROKIT_SDK ?= $(HOME)/microkit/microkit-sdk-2.1.0
 BOARD        := qemu_virt_aarch64
 CONFIG       := debug
 MICROKIT_DIR := $(MICROKIT_SDK)/board/$(BOARD)/$(CONFIG)
