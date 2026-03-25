@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<system>
+    <!-- ── Memory regions ── -->
+    <memory_region name="uart_mmio" size="0x1000" phys_addr="0x9000000" />
+    <memory_region name="rx_buf"    size="0x1000" />
+    <memory_region name="tx_buf"    size="0x1000" />
+    <memory_region name="blk_mmio"  size="0x1000" phys_addr="0x0a003000" />
+    <memory_region name="blk_dma"   size="0x10000" phys_addr="0xB0000000" />
+    <memory_region name="blk_data"  size="0x1000" />
+    <memory_region name="fs_data"   size="0x1000" />
+
+    <!-- 128 MiB region for model weights -->
+    <memory_region name="model_data" size="0x8000000" />
+
+    <!-- 4 KiB IPC buffer: orchestrator <-> llm_server -->
+    <memory_region name="llm_io" size="0x1000" />
+
+    <!-- ── Serial driver (priority 254) ── -->
+    <protection_domain name="serial_driver" priority="254">
+        <program_image path="serial_driver.elf" />
+        <map mr="uart_mmio" vaddr="0x4000000" perms="rw" cached="false"
+             setvar_vaddr="uart_base_vaddr" />
+        <map mr="rx_buf"    vaddr="0x4200000" perms="rw" cached="false"
+             setvar_vaddr="rx_buf" />
+        <map mr="tx_buf"    vaddr="0x4201000" perms="rw" cached="false"
+             setvar_vaddr="tx_buf" />
+        <irq irq="33" id="2" />
+    </protection_domain>
+
+    <!-- ── Block driver (priority 240) ── -->
+    <protection_domain name="blk_driver" priority="240">
+        <program_image path="blk_driver.elf" />
+        <map mr="blk_mmio" vaddr="0x5000000" perms="rw" cached="false"
+             setvar_vaddr="virtio_blk_base_vaddr" />
+        <map mr="blk_dma"  vaddr="0x5100000" perms="rw" cached="false"
+             setvar_vaddr="dma_base" />
+        <map mr="blk_data" vaddr="0x5200000" perms="rw" cached="false"
+             setvar_vaddr="blk_data" />
+    </protection_domain>
+
+    <!-- ── Filesystem server (priority 220) ── -->
+    <protection_domain name="fs_server" priority="220">
+        <program_image path="fs_server.elf" />
+        <map mr="blk_data" vaddr="0x6000000" perms="rw" cached="false"
+             setvar_vaddr="blk_data" />
+        <map mr="fs_data"  vaddr="0x6100000" perms="rw" cached="false"
+             setvar_vaddr="fs_data" />
+    </protection_domain>
+
+    <!-- ── Orchestrator (priority 200) ── -->
+    <protection_domain name="orchestrator" priority="200">
+        <program_image path="orchestrator.elf" />
+        <map mr="rx_buf"      vaddr="0x4200000" perms="rw" cached="false"
+             setvar_vaddr="rx_buf" />
+        <map mr="tx_buf"      vaddr="0x4201000" perms="rw" cached="false"
+             setvar_vaddr="tx_buf" />
+        <map mr="fs_data"     vaddr="0x6100000" perms="rw" cached="false"
+             setvar_vaddr="fs_data" />
+        <map mr="model_data"  vaddr="0x10000000" perms="rw" cached="true"
+             setvar_vaddr="model_data" />
+        <map mr="llm_io"      vaddr="0x18100000" perms="rw" cached="false"
+             setvar_vaddr="llm_io" />
+    </protection_domain>
+
+    <!-- ── LLM server (priority 180) ── -->
+    <protection_domain name="llm_server" priority="180">
+        <program_image path="llm_server.elf" />
+        <map mr="model_data"  vaddr="0x10000000" perms="rw" cached="true"
+             setvar_vaddr="model_data" />
+        <map mr="llm_io"      vaddr="0x18100000" perms="rw" cached="false"
+             setvar_vaddr="llm_io" />
+    </protection_domain>
+
+    <!-- ── Echo server (priority 100) ── -->
+    <protection_domain name="echo_server" priority="100">
+        <program_image path="echo_server.elf" />
+    </protection_domain>
+
+    <!-- ── Channels ── -->
+    <channel>
+        <end pd="serial_driver" id="1" />
+        <end pd="orchestrator"  id="1" />
+    </channel>
+
+    <channel>
+        <end pd="orchestrator"  id="2" />
+        <end pd="blk_driver"    id="2" />
+    </channel>
+
+    <channel>
+        <end pd="orchestrator"  id="3" />
+        <end pd="echo_server"   id="3" />
+    </channel>
+
+    <channel>
+        <end pd="orchestrator"  id="4" />
+        <end pd="fs_server"     id="4" />
+    </channel>
+
+    <channel>
+        <end pd="fs_server"     id="5" />
+        <end pd="blk_driver"    id="5" />
+    </channel>
+
+    <!-- orchestrator <-> llm_server -->
+    <channel>
+        <end pd="orchestrator"  id="6" />
+        <end pd="llm_server"    id="6" />
+    </channel>
+</system>
