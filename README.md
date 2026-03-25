@@ -1,5 +1,7 @@
 # AIOS - AI Operating System on seL4
 
+Project : Open ARIES
+
 A minimal operating system built on the seL4 formally verified microkernel
 that runs large language model inference in an isolated protection domain.
 
