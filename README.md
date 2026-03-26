@@ -5,6 +5,8 @@ Project : Open ARIES
 A minimal operating system built on the seL4 formally verified microkernel
 that runs large language model inference in an isolated protection domain.
 
+The idea : have the OS build itself, using Linux or other source as a reference. Eventually, have a self improving OS that can watch over the system.
+
 Built from scratch: seL4 kernel, Microkit, 6 protection domains, virtio-blk,
 FAT16, 60MB model load, tokenizer, transformer inference, text generation.
 
