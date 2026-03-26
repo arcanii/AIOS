@@ -58,18 +58,30 @@ static inline void mb(void) {
 }
 
 /* ── Block read/write ──────────────────────────────────── */
+/*
+ * blk_read_write – transfer one 512-byte sector via virtio-blk.
+ *
+ * Virtio descriptor flag semantics:
+ *   VIRTQ_DESC_F_WRITE  = buffer is DEVICE-writable (device writes INTO it)
+ *   (flag absent)       = buffer is DEVICE-readable  (device reads FROM it)
+ *
+ * For a READ  (device → host): data buffer needs VIRTQ_DESC_F_WRITE
+ * For a WRITE (host → device): data buffer must NOT have VIRTQ_DESC_F_WRITE
+ */
 static int blk_read_write(uint64_t sector, int is_write, void *buf) {
     if (sector >= blk_capacity_sectors) {
         microkit_dbg_puts("BLK: sector out of range\n");
         return -1;
     }
 
-    /* Fill the request */
+    /* ── Build request header ──────────────────────────── */
     blk_req->type     = is_write ? VIRTIO_BLK_T_OUT : VIRTIO_BLK_T_IN;
     blk_req->reserved = 0;
     blk_req->sector   = sector;
-    blk_req->status   = 0xFF;
+    blk_req->status   = 0xFF;   /* poison — device will overwrite on success */
 
+    /* For writes: copy caller's data into the DMA-visible buffer
+       BEFORE we submit the descriptors to the device. */
     if (is_write) {
         uint8_t *src = (uint8_t *)buf;
         for (int i = 0; i < VIRTIO_BLK_SECTOR_SIZE; i++)
@@ -78,34 +90,36 @@ static int blk_read_write(uint64_t sector, int is_write, void *buf) {
 
     uint64_t req_pa = (uint64_t)DMA_PADDR + DMA_REQ_OFF;
 
-    /* Descriptor 0: request header (type, reserved, sector) = 16 bytes */
+    /* ── Descriptor 0: request header (16 bytes, device-readable) */
     descs[0].addr  = req_pa;
     descs[0].len   = 16;
     descs[0].flags = VIRTQ_DESC_F_NEXT;
     descs[0].next  = 1;
 
-    /* Descriptor 1: data buffer */
+    /* ── Descriptor 1: 512-byte data buffer
+     *    READ  → device writes into buffer  → VIRTQ_DESC_F_WRITE
+     *    WRITE → device reads from buffer   → 0 (no WRITE flag)  */
     descs[1].addr  = req_pa + __builtin_offsetof(struct virtio_blk_req, data);
     descs[1].len   = VIRTIO_BLK_SECTOR_SIZE;
     descs[1].flags = VIRTQ_DESC_F_NEXT | (is_write ? 0 : VIRTQ_DESC_F_WRITE);
     descs[1].next  = 2;
 
-    /* Descriptor 2: status byte (device-writable) */
+    /* ── Descriptor 2: 1-byte status (always device-writable) */
     descs[2].addr  = req_pa + __builtin_offsetof(struct virtio_blk_req, status);
     descs[2].len   = 1;
     descs[2].flags = VIRTQ_DESC_F_WRITE;
     descs[2].next  = 0;
 
-    /* Submit to avail ring */
-    avail->ring[avail->idx % VIRTQ_SIZE] = 0;
+    /* ── Submit to available ring ──────────────────────── */
+    avail->ring[avail->idx % VIRTQ_SIZE] = 0;  /* descriptor chain head = 0 */
     mb();
     avail->idx++;
     mb();
 
-    /* Notify device */
+    /* Kick the device */
     vio_write32(VIRTIO_MMIO_QUEUE_NOTIFY, 0);
 
-    /* Poll for completion */
+    /* ── Poll for completion ───────────────────────────── */
     int timeout = 0;
     while (used->idx == last_used_idx) {
         mb();
@@ -116,13 +130,15 @@ static int blk_read_write(uint64_t sector, int is_write, void *buf) {
     }
     last_used_idx = used->idx;
 
-    /* Check status */
+    /* ── Check device status ───────────────────────────── */
     if (blk_req->status != 0) {
-        microkit_dbg_puts("BLK: device error\n");
+        microkit_dbg_puts("BLK: device error, status=");
+        microkit_dbg_put32(blk_req->status);
+        microkit_dbg_puts("\n");
         return -1;
     }
 
-    /* Copy data out for reads */
+    /* For reads: copy data from the DMA buffer to the caller. */
     if (!is_write) {
         uint8_t *dst = (uint8_t *)buf;
         for (int i = 0; i < VIRTIO_BLK_SECTOR_SIZE; i++)
@@ -226,35 +242,17 @@ void init(void) {
     }
 }
 
+
 void notified(microkit_channel ch) {
-    if (ch == CH_BLK || ch == CH_FS_BLK) {
-        volatile uint32_t *cmd_p    = (volatile uint32_t *)(blk_data + BLK_CMD);
-        volatile uint32_t *sector_p = (volatile uint32_t *)(blk_data + BLK_SECTOR);
-        volatile uint32_t *status_p = (volatile uint32_t *)(blk_data + BLK_STATUS);
-        volatile uint8_t  *data_p   = (volatile uint8_t  *)(blk_data + BLK_DATA);
+    if (ch == CH_FS_BLK) {
+        uint32_t cmd    = RD32(blk_data, BLK_CMD);
+        uint32_t sector = RD32(blk_data, BLK_SECTOR);
+        int is_write    = (cmd == BLK_CMD_WRITE) ? 1 : 0;
 
-        uint32_t cmd    = *cmd_p;
-        uint32_t sector = *sector_p;
-
-        uint8_t tmp[VIRTIO_BLK_SECTOR_SIZE];
-
-        /* For writes, copy data from shared buffer first */
-        if (cmd == BLK_CMD_WRITE) {
-            for (int i = 0; i < VIRTIO_BLK_SECTOR_SIZE; i++)
-                tmp[i] = data_p[i];
-        }
-
-        int rc = blk_read_write((uint64_t)sector,
-                                (cmd == BLK_CMD_WRITE) ? 1 : 0,
-                                tmp);
-
-        /* For reads, copy data into shared buffer */
-        if (rc == 0 && cmd == BLK_CMD_READ) {
-            for (int i = 0; i < VIRTIO_BLK_SECTOR_SIZE; i++)
-                data_p[i] = tmp[i];
-        }
-
-        *status_p = (rc == 0) ? 0 : 1;
-        microkit_notify(ch);
+        int r = blk_read_write((uint64_t)sector, is_write,
+                               (void *)(blk_data + BLK_DATA));
+        WR32(blk_data, BLK_STATUS, (uint32_t)r);
+        microkit_notify(CH_FS_BLK);
     }
 }
+

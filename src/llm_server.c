@@ -17,13 +17,6 @@
 uintptr_t model_data;    /* 128 MiB: model weights (read-only) */
 uintptr_t llm_io;        /* 4 KiB: IPC with orchestrator */
 
-/* We need a large working memory for RunState (KV cache, activations).
-   For stories15M: ~6 MB for KV cache + ~1 MB for activations.
-   We'll use a static buffer. */
-//#define WORK_MEM_SIZE  (16 * 1024 * 1024)  /* 16 MiB */
-//static uint8_t work_mem[WORK_MEM_SIZE] __attribute__((aligned(16)));
-//static uint32_t work_mem_used = 0;
-
 #define WORK_MEM_SIZE  (16 * 1024 * 1024)  /* 16 MiB */
 static uint8_t *work_mem;
 static uint32_t work_mem_used = 0;
@@ -173,23 +166,6 @@ static float my_powf(float base, float exp) {
    Channel IDs
    ══════════════════════════════════════════════ */
 #define CH_ORCH  6
-
-/* ══════════════════════════════════════════════
-   llm_io layout
-   ══════════════════════════════════════════════ */
-//#define LLM_CMD       0x000
-//#define LLM_STATUS    0x004
-//#define LLM_MODELSZ   0x008
-//#define LLM_TOKCOUNT  0x00C
-//#define LLM_TOKSZ     0x010  /* tokenizer size in bytes */
-//#define LLM_STEPS     0x014  /* max generation steps */
-//#define LLM_PROMPT    0x100  /* 256 bytes */
-//#define LLM_OUTPUT    0x200  /* 3584 bytes */
-//#define LLM_OUTPUT_MAX 3584
-
-//#define CMD_LOAD_DONE 1
-//#define CMD_LOAD_TOK  2
-//#define CMD_GENERATE  3
 
 /* ══════════════════════════════════════════════
    Transformer structures (from run.c)
@@ -399,8 +375,9 @@ static float *forward_token(int token, int pos) {
 static int init_model(uint32_t model_size) {
     //bump_reset();
     
-    /* Place work memory after the model data, aligned to 16 bytes */
-    uint32_t work_start = (model_size + 15) & ~15UL;
+    /* Reserve space after model for tokenizer (1 MiB gap) */
+    #define TOK_RESERVE (1 * 1024 * 1024)
+    uint32_t work_start = (model_size + TOK_RESERVE + 15) & ~15UL;
     if (work_start + WORK_MEM_SIZE > MODEL_DATA_MAX) {
         microkit_dbg_puts("LLM: not enough space for work mem\n");
         return -1;
@@ -495,15 +472,21 @@ static int init_model(uint32_t model_size) {
    ══════════════════════════════════════════════ */
 
 static int init_tokenizer(uint32_t tok_offset, uint32_t tok_size) {
-    uint8_t *raw = (uint8_t *)(model_data + tok_offset);
+    
+    microkit_dbg_puts("LLM: init_tokenizer off=");
+    microkit_dbg_put32(tok_offset);
+    microkit_dbg_puts(" sz=");
+    microkit_dbg_put32(tok_size);
+    microkit_dbg_puts("\n");
 
-    /* tokenizer.bin format:
-       [4 bytes] max_token_length (int)
-       then for each token (vocab_size times):
-         [4 bytes] score (float)
-         [4 bytes] len (int)
-         [len bytes] string
-    */
+    if (tok_offset == 0 || tok_size == 0 ||
+        tok_offset + tok_size > MODEL_DATA_MAX) {
+        microkit_dbg_puts("LLM: bad tok offset/size\n");
+        return -1;
+    }
+   
+    uint8_t *raw = (uint8_t *)(model_data + tok_offset);
+    
     tok_vocab_size = config.vocab_size;
     uint32_t off = 0;
 
@@ -524,16 +507,42 @@ static int init_tokenizer(uint32_t tok_offset, uint32_t tok_size) {
     }
 
     /* First pass: scan to calculate total string bytes needed */
-    uint32_t scan_off = off;
-    uint32_t total_str_bytes = 0;
-    for (int i = 0; i < tok_vocab_size; i++) {
-        scan_off += 4; /* skip score */
-        int len;
-        my_memcpy(&len, raw + scan_off, 4);
-        scan_off += 4;
-        total_str_bytes += len + 1; /* +1 for null terminator */
-        scan_off += len;
-    }
+     uint32_t scan_off = off;
+     uint32_t total_str_bytes = 0;
+     for (int i = 0; i < tok_vocab_size; i++) {
+         scan_off += 4; /* skip score */
+
+         if (scan_off + 4 > tok_size) {
+             microkit_dbg_puts("LLM: tok scan OOB at i=");
+             microkit_dbg_put32(i);
+             microkit_dbg_puts(" scan_off=");
+             microkit_dbg_put32(scan_off);
+             microkit_dbg_puts("\n");
+             return -1;
+         }
+
+         int len;
+         my_memcpy(&len, raw + scan_off, 4);
+         scan_off += 4;
+
+         if (len < 0 || len > 1024) {
+             microkit_dbg_puts("LLM: bad len=");
+             microkit_dbg_put32((uint32_t)len);
+             microkit_dbg_puts(" at i=");
+             microkit_dbg_put32(i);
+             microkit_dbg_puts(" scan_off=");
+             microkit_dbg_put32(scan_off);
+             microkit_dbg_puts("\n");
+             return -1;
+         }
+
+         total_str_bytes += len + 1;
+         scan_off += len;
+     }
+
+     microkit_dbg_puts("LLM: scan OK total_str=");
+     microkit_dbg_put32(total_str_bytes);
+     microkit_dbg_puts("\n");
 
     /* Single bulk allocation for all token strings */
     char *str_pool = (char *)bump_alloc(total_str_bytes);
@@ -581,17 +590,6 @@ static int init_tokenizer(uint32_t tok_offset, uint32_t tok_size) {
     }
 
     microkit_dbg_puts("LLM: tokenizer ready, vocab_size=");
-    /* print vocab size */
-    {
-        char buf[12];
-        int n = tok_vocab_size;
-        int i = 0;
-        if (n == 0) { buf[i++] = '0'; }
-        else { while (n > 0) { buf[i++] = '0' + (n % 10); n /= 10; } }
-        while (i > 0) { char c = buf[--i]; microkit_dbg_puts((char[]){c, '\0'}); }
-    }
-    microkit_dbg_puts("\n");
-
     return 0;
 }
 

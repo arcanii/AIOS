@@ -14,20 +14,27 @@
 #define RD32(base, off)     (*(volatile uint32_t *)((base) + (off)))
 
 /* ── fs_data layout (4 KiB page) ───────────────── */
-#define FS_CMD          0x000
-#define FS_STATUS       0x004
-#define FS_FD           0x008
-#define FS_OFFSET       0x00C
-#define FS_LENGTH       0x010
-#define FS_FILESIZE     0x014
-#define FS_FILENAME     0x100   /* 256 bytes for filename */
-#define FS_DATA         0x200   /* file data payload      */
-#define FS_DATA_MAX     3584    /* 0x1000 - 0x200         */
+#define FS_CMD       0x000
+#define FS_STATUS    0x004
+#define FS_FD        0x008
+#define FS_FILESIZE  0x00C
+#define FS_REQLEN    0x010
+#define FS_READLEN   0x014
+#define FS_OFFSET    0x018   /* dedicated field: file offset    */
+#define FS_LENGTH    0x01C   /* dedicated field: request length */
+#define FS_FILENAME  0x040
+#define FS_DATA      0x200
+#define FS_DATA_MAX  3584
 
-/* fs commands */
-#define FS_CMD_OPEN     1
-#define FS_CMD_READ     2
-#define FS_CMD_CLOSE    3
+/* ── FS commands (orchestrator → fs_server) ─────────────── */
+#define FS_CMD_OPEN      1
+#define FS_CMD_READ      2
+#define FS_CMD_CLOSE     3
+#define FS_CMD_CREATE    4   /* NEW: create a file        */
+#define FS_CMD_WRITE     5   /* NEW: write to open file   */
+#define FS_CMD_DELETE    6   /* NEW: delete a file        */
+#define FS_CMD_STAT      7   /* NEW: get file size        */
+#define FS_CMD_SYNC      8   /* NEW: flush FAT/dir to disk*/
 
 /* fs status codes */
 #define FS_ST_OK        0
@@ -43,8 +50,8 @@
 #define BLK_SECTOR_SIZE 512
 
 /* blk commands */
-#define BLK_CMD_READ    0
-#define BLK_CMD_WRITE   1
+#define BLK_CMD_READ    1
+#define BLK_CMD_WRITE   2
 
 /* ── llm_io layout (4 KiB page) ───────────────── */
 #define LLM_CMD         0x000

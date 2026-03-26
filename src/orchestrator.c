@@ -36,6 +36,10 @@ typedef enum {
     TOK_CLOSING,
     TOK_NOTIFY_LLM,
     GEN_WAITING,
+    WRITE_WAIT_CREATE,
+    WRITE_WAIT_DATA,
+    WRITE_WAIT_CLOSE,
+    DELETE_WAIT,
     RUNNING,
 } orch_state_t;
 
@@ -56,6 +60,12 @@ static uint32_t tok_offset_in_model = 0;
 
 /* Ready flag */
 static int model_ready = 0;
+
+static inline void dsb_sy(void) {
+    __asm__ volatile("dsb sy" ::: "memory");
+}
+
+
 
 /* ── FS client (non-blocking) ──────────────────────── */
 static void fs_open(const char *filename) {
@@ -89,7 +99,7 @@ static void handle_boot_open_reply(void) {
         cur_fd       = RD32(fs_data, FS_FD);
         cur_filesize = RD32(fs_data, FS_FILESIZE);
         cur_offset   = 0;
-        ser_puts("  hello.txt: ");
+        ser_puts("  File size: ");
         ser_put_dec(cur_filesize);
         ser_puts(" bytes\n");
         uint32_t chunk = cur_filesize;
@@ -97,16 +107,19 @@ static void handle_boot_open_reply(void) {
         orch_state = BOOT_READING;
         fs_read(cur_fd, 0, chunk);
     } else {
-        ser_puts("  hello.txt: not found (ok)\n");
+        ser_puts("  File not found.\n");
+        microkit_notify(CH_SERIAL);
         orch_state = RUNNING;
         ser_puts("AIOS> ");
+        microkit_notify(CH_SERIAL);
     }
 }
 
 static void handle_boot_read_reply(void) {
     uint32_t status = RD32(fs_data, FS_STATUS);
     uint32_t got    = RD32(fs_data, FS_LENGTH);
-    if (status == FS_ST_OK && got > 0) {
+    
+    if ((status == FS_ST_OK || status == FS_ST_EOF) && got > 0) {
         ser_puts("  Contents: ");
         volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
         for (uint32_t i = 0; i < got; i++) ser_putc((char)src[i]);
@@ -220,6 +233,7 @@ static void handle_load_read_reply(void) {
 
 static void handle_load_close_reply(void) {
     if (model_loaded_bytes > 0) {
+        dsb_sy();  // ensure all model writes are visible
         ser_puts("  Notifying LLM server...\n");
         microkit_notify(CH_SERIAL);
         WR32(llm_io, LLM_CMD, LLM_CMD_LOAD_DONE);
@@ -315,6 +329,7 @@ static void handle_tok_read_reply(void) {
 
 static void handle_tok_close_reply(void) {
     if (tok_loaded_bytes > 0) {
+        dsb_sy();  // ensure all writes to model_data are visible
         WR32(llm_io, LLM_CMD, LLM_CMD_LOAD_TOK);
         WR32(llm_io, LLM_TOK_OFF, tok_offset_in_model);
         WR32(llm_io, LLM_TOK_SZ, tok_loaded_bytes);
@@ -382,15 +397,69 @@ static void process_command(void) {
 
     if (input_pos == 0) {
         /* empty — just re-prompt */
-    } else if (str_starts_with(input_line, "help")) {
+    }
+    
+    /* ── write <filename> <text> ─────────────────────────── */
+    if (str_starts_with(input_line, "write ")) {
+        char *p = input_line + 6;
+        char fname[64];
+        int fi = 0;
+        while (*p && *p != ' ' && fi < 63) fname[fi++] = *p++;
+        fname[fi] = 0;
+        if (*p == ' ') p++; /* skip space before text */
+
+        /* Copy filename into fs_data */
+        for (int i = 0; i < fi; i++)
+            *(char *)(fs_data + FS_FILENAME + i) = fname[i];
+        *(char *)(fs_data + FS_FILENAME + fi) = '\0';
+
+        /* Save the text to write — stash in fs_data+FS_DATA temporarily */
+        int tlen = 0;
+        while (p[tlen] && tlen < (int)FS_DATA_MAX - 1) {
+            *(char *)(fs_data + FS_DATA + tlen) = p[tlen];
+            tlen++;
+        }
+        *(char *)(fs_data + FS_DATA + tlen) = '\0';
+        WR32(fs_data, FS_REQLEN, (uint32_t)tlen);
+
+        /* Step 1: create the file */
+        WR32(fs_data, FS_CMD, FS_CMD_CREATE);
+        orch_state = WRITE_WAIT_CREATE;
+        microkit_notify(CH_FS);
+        input_pos = 0;
+        input_line[0] = '\0';
+        return;
+    }
+
+    /* ── rm <filename> / del <filename> ──────────────────── */
+    else if (str_starts_with(input_line, "rm ") || str_starts_with(input_line, "del ")) {
+        char *p = input_line + (input_line[0] == 'r' ? 3 : 4);
+        int fi = 0;
+        while (p[fi] && fi < 63) {
+            *(char *)(fs_data + FS_FILENAME + fi) = p[fi];
+            fi++;
+        }
+        *(char *)(fs_data + FS_FILENAME + fi) = '\0';
+
+        WR32(fs_data, FS_CMD, FS_CMD_DELETE);
+        orch_state = DELETE_WAIT;
+        microkit_notify(CH_FS);
+        input_pos = 0;
+        input_line[0] = '\0';
+        return;
+    }
+    else if (str_starts_with(input_line, "help")) {
         ser_puts("Commands:\n");
         ser_puts("  help            - this message\n");
         ser_puts("  cat <file>      - read a file from disk\n");
+        ser_puts("  write <f> <txt> - write text to a file\n");
+        ser_puts("  rm <file>       - delete a file\n");
         ser_puts("  load <file>     - load model into memory\n");
         ser_puts("  gen <prompt>    - generate text\n");
         ser_puts("  info            - system info\n");
         ser_puts("  shutdown        - halt system\n");
-    } else if (str_starts_with(input_line, "info")) {
+    }
+    else if (str_starts_with(input_line, "info")) {
         ser_puts("AIOS v0.4 on seL4 14.0.0 (Microkit 2.1.0)\n");
         ser_puts("PDs: serial_driver, blk_driver, fs_server, orchestrator, llm_server, echo_server\n");
         if (model_ready) {
@@ -495,7 +564,7 @@ static void handle_serial_input(void) {
 /* ── Microkit entry points ─────────────────────────── */
 void init(void) {
     ser_puts("\n========================================\n");
-    ser_puts("  AIOS Orchestrator v0.4\n");
+    ser_puts("  AIOS Orchestrator v0.6\n");
     ser_puts("  Kernel:  seL4 14.0.0 (Microkit 2.1.0)\n");
     ser_puts("  Drivers: PL011 UART, virtio-blk, FAT16\n");
     ser_puts("  LLM:     llm_server (llama2.c engine)\n");
@@ -523,6 +592,66 @@ void notified(microkit_channel ch) {
         case TOK_OPENING:   handle_tok_open_reply();   break;
         case TOK_READING:   handle_tok_read_reply();   break;
         case TOK_CLOSING:   handle_tok_close_reply();  break;
+                
+                
+/* ── Write support ──────────────────────────── */
+        case WRITE_WAIT_CREATE: {
+            int st = (int)RD32(fs_data, FS_STATUS);
+            if (st != 0) {
+                ser_puts("  Create failed\n");
+                microkit_notify(CH_SERIAL);
+                orch_state = RUNNING;
+                ser_puts("AIOS> ");
+                microkit_notify(CH_SERIAL);
+                break;
+            }
+            ser_puts("  File created, writing data...\n");
+            microkit_notify(CH_SERIAL);
+            /* Send write command — fs_data already has the data
+               from process_command */
+            WR32(fs_data, FS_CMD, FS_CMD_WRITE);
+            orch_state = WRITE_WAIT_DATA;
+            microkit_notify(CH_FS);
+            break;
+        }
+        case WRITE_WAIT_DATA: {
+            int st = (int)RD32(fs_data, FS_STATUS);
+            uint32_t wrote = RD32(fs_data, FS_READLEN);
+            if (st != 0) {
+                ser_puts("  Write failed\n");
+                microkit_notify(CH_SERIAL);
+            } else {
+                ser_puts("  Wrote ");
+                ser_put_dec(wrote);
+                ser_puts(" bytes\n");
+                microkit_notify(CH_SERIAL);
+            }
+            /* Close the file */
+            WR32(fs_data, FS_CMD, FS_CMD_CLOSE);
+            orch_state = WRITE_WAIT_CLOSE;
+            microkit_notify(CH_FS);
+            break;
+        }
+        case WRITE_WAIT_CLOSE: {
+            ser_puts("  File saved.\n");
+            microkit_notify(CH_SERIAL);
+            orch_state = RUNNING;
+            ser_puts("AIOS> ");
+            microkit_notify(CH_SERIAL);
+            break;
+        }
+        case DELETE_WAIT: {
+            int st = (int)RD32(fs_data, FS_STATUS);
+            if (st == 0)
+                ser_puts("  Deleted.\n");
+            else
+                ser_puts("  Delete failed (file not found?)\n");
+            microkit_notify(CH_SERIAL);
+            orch_state = RUNNING;
+            ser_puts("AIOS> ");
+            microkit_notify(CH_SERIAL);
+            break;
+        }
         default: break;
         }
         break;
