@@ -8,6 +8,8 @@ that runs large language model inference in an isolated protection domain.
 Built from scratch: seL4 kernel, Microkit, 6 protection domains, virtio-blk,
 FAT16, 60MB model load, tokenizer, transformer inference, text generation.
 
+Challenge : kernal protection domains are static (need dynamic eventually)
+
 ## Plan
 AIOS> build ls
   1. Orchestrator asks LLM: "generate ls.c for AIOS, 
@@ -70,7 +72,7 @@ IPC channels:
 ## Example Session
 
   ========================================
-    AIOS Orchestrator v0.4
+    AIOS Orchestrator v0.6
     Kernel:  seL4 14.0.0 (Microkit 2.1.0)
     Drivers: PL011 UART, virtio-blk, FAT16
     LLM:     llm_server (llama2.c engine)
@@ -117,18 +119,18 @@ Prerequisites:
 Build and run:
 
   # 1. Download the model and tokenizer
-  curl -L -o stories15M.bin \
-    https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin
-  curl -L -o tokenizer.bin \
-    https://github.com/karpathy/llama2.c/raw/master/tokenizer.bin
+  - `curl -L -o stories15M.bin \
+    https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin`
+  - `curl -L -o tokenizer.bin \
+    https://github.com/karpathy/llama2.c/raw/master/tokenizer.bin`
 
   # 2. Create disk image and build
   make disk
   make clean && make run
 
   # 3. At the AIOS> prompt:
-  #    load STORIES.BIN
-  #    gen Once upon a time
+  `load STORIES.BIN`
+  `gen Once upon a time`
 
 Shell commands:
 
@@ -140,7 +142,7 @@ Shell commands:
   shutdown      - Halt the system
 
 
-## Project Structure
+## Project Structure (TODO : fix)
 
   aios/
   ├── README.md
