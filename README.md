@@ -21,7 +21,7 @@ AIOS> build ls
   6. Sandbox executes ls, output goes to serial
 
 ## Self-improvement demo (proof of concept)
-- Day 1:  FAT16 write support (FS_CMD_WRITE, FS_CMD_CREATE).
+- :white_check_mark: Day 1:  FAT16 write support (FS_CMD_WRITE, FS_CMD_CREATE). (26 March, 2026) 
 - Day 2:  Put reference .c files on disk, add "ai build" command.  
 - Day 3:  LLM generates code, saves to disk via orchestrator.
 - Day 4:  Port TCC to a PD (compile in-memory).
