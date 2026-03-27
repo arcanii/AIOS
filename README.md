@@ -53,14 +53,14 @@ AIOS> build net_driver
 ## Architecture
 
 Six isolated protection domains running on seL4 via Microkit:
-
+```
   serial_driver  - PL011 UART driver, RX/TX ring buffers (priority 254)
   blk_driver     - virtio-blk legacy v1, sector read/write (priority 240)
   fs_server      - Read-only FAT16, directory scan, FAT chain (priority 220)
   orchestrator   - Central coordinator, shell, file/model loading (priority 200)
   llm_server     - Llama-2 transformer inference, freestanding (priority 180)
   echo_server    - Stub for future use (priority 100)
-
+```
 Communication between PDs uses shared memory and Microkit notifications.
 
 IPC channels:
@@ -72,7 +72,7 @@ IPC channels:
 
 
 ## Example Session
-
+```
   ========================================
     AIOS Orchestrator v0.6
     Kernel:  seL4 14.0.0 (Microkit 2.1.0)
@@ -107,7 +107,7 @@ IPC channels:
   AIOS> shutdown
   Shutting down AIOS...
   System halted. Press Ctrl-A then X to exit QEMU.
-
+```
 
 ## Quick Start
 
@@ -121,19 +121,20 @@ Prerequisites:
 Build and run:
 
   # 1. Download the model and tokenizer
-  - `curl -L -o stories15M.bin \
-    https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin`
-  - `curl -L -o tokenizer.bin \
-    https://github.com/karpathy/llama2.c/raw/master/tokenizer.bin`
-
+  ```
+  curl -L -o stories15M.bin https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin
+  curl -L -o tokenizer.bin https://github.com/karpathy/llama2.c/raw/master/tokenizer.bin
+  ```
   # 2. Create disk image and build
+  ```
   make disk
   make clean && make run
-
+  ```
   # 3. At the AIOS> prompt:
-  `load STORIES.BIN`
-  `gen Once upon a time`
-
+  ```
+  load STORIES.BIN
+  gen Once upon a time
+  ```
 Shell commands:
 
   help          - Show available commands
@@ -144,8 +145,8 @@ Shell commands:
   shutdown      - Halt the system
 
 
-## Project Structure (TODO : fix)
-
+## Project Structure
+```
   aios/
   ├── README.md
   ├── LICENSE
@@ -168,7 +169,7 @@ Shell commands:
   │   └── echo_server.c         Stub PD
   └── scripts/
       └── mkdisk.sh             Disk image creation helper
-
+```
 
 ## Key Design Decisions
 
