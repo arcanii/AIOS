@@ -22,6 +22,8 @@ AIOS> build ls
   5. Orchestrator loads code into sandbox PD
   6. Sandbox executes ls, output goes to serial
 
+Problem : interal LLM will not be powerful/accurate enough without large model and GPU accel, so need to switch to external AI support (revised)
+
 ## Self-improvement demo (proof of concept)
 - :white_check_mark: Day 1:  FAT16 write support (FS_CMD_WRITE, FS_CMD_CREATE). (26 March, 2026) 
 - :white_check_mark: Day 2:  Put reference .c files on disk, add "ai build" command.  
