@@ -17,3 +17,4 @@
 
 #endif /* AIOS_CHANNELS_H */
 
+#define CH_SANDBOX      7   /* orchestrator  <-> sandbox        */

@@ -15,6 +15,12 @@
     <!-- 4 KiB IPC buffer: orchestrator <-> llm_server -->
     <memory_region name="llm_io" size="0x4000" />
 
+
+    <!-- Sandbox PD: userspace execution environment -->
+    <memory_region name="sandbox_io"  size="0x1000" />   <!-- IPC: commands + status -->
+    <memory_region name="sandbox_heap" size="0x400000" /> <!-- 4 MiB heap for malloc -->
+    <memory_region name="sandbox_code" size="0x100000" /> <!-- 1 MiB for compiled code -->
+
     <!-- ── Serial driver (priority 254) ── -->
     <protection_domain name="serial_driver" priority="254">
         <program_image path="serial_driver.elf" />
@@ -60,6 +66,10 @@
              setvar_vaddr="model_data" />
         <map mr="llm_io"      vaddr="0x18100000" perms="rw" cached="false"
              setvar_vaddr="llm_io" />
+        <map mr="sandbox_io"  vaddr="0x20000000" perms="rw" cached="false"
+             setvar_vaddr="sandbox_io" />
+        <map mr="sandbox_code" vaddr="0x20500000" perms="rw" cached="false"
+             setvar_vaddr="sandbox_code" />
     </protection_domain>
 
     <!-- ── LLM server (priority 180) ── -->
@@ -68,6 +78,18 @@
         <map mr="model_data" vaddr="0x10000000" perms="rw" cached="true" setvar_vaddr="model_data" />
         <map mr="llm_io"      vaddr="0x18100000" perms="rw" cached="false"
              setvar_vaddr="llm_io" />
+    </protection_domain>
+
+
+    <!-- ── Sandbox PD (priority 150) — userspace execution ── -->
+    <protection_domain name="sandbox" priority="150" stack_size="0x10000">
+        <program_image path="sandbox.elf" />
+        <map mr="sandbox_io"   vaddr="0x20000000" perms="rw" cached="false"
+             setvar_vaddr="sandbox_io" />
+        <map mr="sandbox_heap" vaddr="0x20100000" perms="rw" cached="true"
+             setvar_vaddr="sandbox_heap" />
+        <map mr="sandbox_code" vaddr="0x20500000" perms="rwx" cached="false"
+             setvar_vaddr="sandbox_code" />
     </protection_domain>
 
     <!-- ── Echo server (priority 100) ── -->
@@ -106,4 +128,11 @@
         <end pd="orchestrator"  id="6" />
         <end pd="llm_server"    id="6" />
     </channel>
+
+    <!-- orchestrator <-> sandbox -->
+    <channel>
+        <end pd="orchestrator"  id="7" />
+        <end pd="sandbox"       id="7" />
+    </channel>
+
 </system>

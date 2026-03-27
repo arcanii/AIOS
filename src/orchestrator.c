@@ -21,6 +21,8 @@ uintptr_t blk_data;
 uintptr_t fs_data;
 uintptr_t model_data;
 uintptr_t llm_io;
+uintptr_t sandbox_io;
+uintptr_t sandbox_code;
 
 /* ── State machine ──────────────────────────────────── */
 typedef enum {
@@ -47,6 +49,10 @@ typedef enum {
     AI_SAVE_CREATE,
     AI_SAVE_WRITE,
     AI_SAVE_CLOSE,
+    EXEC_OPENING,
+    EXEC_READING,
+    EXEC_CLOSING,
+    EXEC_RUNNING,
     RUNNING,
 } orch_state_t;
 
@@ -77,6 +83,9 @@ static char ai_target_file[24];    /* e.g. "LS.C" */
 static char ai_ref_file[24];       /* e.g. "R_LS.C" */
 static char ai_ref_buf[2048];      /* reference file content */
 static uint32_t ai_ref_len = 0;
+
+/* Exec state */
+static uint32_t exec_loaded_bytes = 0;
 
 static inline void dsb_sy(void) {
     __asm__ volatile("dsb sy" ::: "memory");
@@ -474,6 +483,7 @@ static void process_command(void) {
         ser_puts("  load <file>     - load model into memory\n");
         ser_puts("  gen <prompt>    - generate text\n");
         ser_puts("  ai build <name> - AI generates a C program\n");
+        ser_puts("  exec <file.bin> - run a sandbox program\n");
         ser_puts("  info            - system info\n");
         ser_puts("  shutdown        - halt system\n");
     }
@@ -577,6 +587,22 @@ static void process_command(void) {
             microkit_notify(CH_SERIAL);
             orch_state = AI_REF_OPENING;
             fs_open(ai_ref_file);
+            input_pos = 0;
+            return;
+        }
+    } else if (str_starts_with(input_line, "exec ")) {
+        char *fname = &input_line[5];
+        while (*fname == ' ') fname++;
+        if (*fname == '\0') {
+            ser_puts("Usage: exec <file.bin>\n");
+        } else {
+            ser_puts("Loading program: ");
+            ser_puts(fname);
+            ser_puts("\n");
+            microkit_notify(CH_SERIAL);
+            exec_loaded_bytes = 0;
+            orch_state = EXEC_OPENING;
+            fs_open(fname);
             input_pos = 0;
             return;
         }
@@ -777,6 +803,118 @@ static void handle_ai_save_close_reply(void) {
     orch_state = RUNNING;
 }
 
+
+/* ── Exec handlers ─────────────────────────────────── */
+
+static void handle_exec_open_reply(void) {
+    uint32_t status = RD32(fs_data, FS_STATUS);
+    if (status != FS_ST_OK) {
+        ser_puts("  File not found.\n");
+        microkit_notify(CH_SERIAL);
+        orch_state = RUNNING;
+        ser_puts("AIOS> ");
+        microkit_notify(CH_SERIAL);
+        return;
+    }
+    cur_fd = RD32(fs_data, FS_FD);
+    cur_filesize = RD32(fs_data, FS_FILESIZE);
+    ser_puts("  Program size: ");
+    ser_put_dec(cur_filesize);
+    ser_puts(" bytes\n");
+    microkit_notify(CH_SERIAL);
+
+    if (cur_filesize > 0x100000) {  /* 1 MiB sandbox_code limit */
+        ser_puts("  Error: program too large (max 1 MiB)\n");
+        microkit_notify(CH_SERIAL);
+        orch_state = EXEC_CLOSING;
+        fs_close(cur_fd);
+        return;
+    }
+
+    exec_loaded_bytes = 0;
+    cur_offset = 0;
+    uint32_t chunk = cur_filesize;
+    if (chunk > FS_DATA_MAX) chunk = FS_DATA_MAX;
+    orch_state = EXEC_READING;
+    fs_read(cur_fd, 0, chunk);
+}
+
+static void handle_exec_read_reply(void) {
+    uint32_t status = RD32(fs_data, FS_STATUS);
+    uint32_t got    = RD32(fs_data, FS_LENGTH);
+
+    if ((status == FS_ST_OK || status == FS_ST_EOF) && got > 0) {
+        /* Copy chunk into sandbox_code region */
+        volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
+        volatile uint8_t *dst = (volatile uint8_t *)(sandbox_code + exec_loaded_bytes);
+        for (uint32_t i = 0; i < got; i++) dst[i] = src[i];
+        exec_loaded_bytes += got;
+        cur_offset += got;
+
+        if (cur_offset < cur_filesize) {
+            uint32_t chunk = cur_filesize - cur_offset;
+            if (chunk > FS_DATA_MAX) chunk = FS_DATA_MAX;
+            fs_read(cur_fd, cur_offset, chunk);
+        } else {
+            orch_state = EXEC_CLOSING;
+            fs_close(cur_fd);
+        }
+    } else {
+        orch_state = EXEC_CLOSING;
+        fs_close(cur_fd);
+    }
+}
+
+static void handle_exec_close_reply(void) {
+    if (exec_loaded_bytes == 0) {
+        ser_puts("  No code loaded.\n");
+        microkit_notify(CH_SERIAL);
+        orch_state = RUNNING;
+        ser_puts("AIOS> ");
+        microkit_notify(CH_SERIAL);
+        return;
+    }
+    ser_puts("  Loaded ");
+    ser_put_dec(exec_loaded_bytes);
+    ser_puts(" bytes into sandbox. Executing...\n");
+    microkit_notify(CH_SERIAL);
+
+    /* Tell sandbox to run */
+    WR32(sandbox_io, SBX_CODE_SIZE, exec_loaded_bytes);
+    WR32(sandbox_io, SBX_CMD, SBX_CMD_RUN);
+    orch_state = EXEC_RUNNING;
+    microkit_notify(CH_SANDBOX);
+}
+
+static void handle_exec_done(void) {
+    uint32_t status = RD32(sandbox_io, SBX_STATUS);
+    if (status == SBX_ST_DONE) {
+        uint32_t exit_code = RD32(sandbox_io, SBX_EXIT_CODE);
+        uint32_t out_len   = RD32(sandbox_io, SBX_OUTPUT_LEN);
+
+        if (out_len > 0) {
+            ser_puts("--- program output ---\n");
+            microkit_notify(CH_SERIAL);
+            volatile char *out = (volatile char *)(sandbox_io + SBX_OUTPUT);
+            for (uint32_t i = 0; i < out_len && i < SBX_OUTPUT_MAX; i++)
+                ser_putc(out[i]);
+            if (out_len > 0 && out[out_len - 1] != '\n') ser_putc('\n');
+            ser_puts("--- end output ---\n");
+            microkit_notify(CH_SERIAL);
+        }
+        ser_puts("  Exit code: ");
+        ser_put_dec(exit_code);
+        ser_putc('\n');
+        microkit_notify(CH_SERIAL);
+    } else {
+        ser_puts("  Execution error.\n");
+        microkit_notify(CH_SERIAL);
+    }
+    orch_state = RUNNING;
+    ser_puts("AIOS> ");
+    microkit_notify(CH_SERIAL);
+}
+
 static void handle_serial_input(void) {
     ring_buf_t *rx = (ring_buf_t *)rx_buf;
     char c;
@@ -897,6 +1035,9 @@ void notified(microkit_channel ch) {
         case AI_SAVE_CREATE: handle_ai_save_create_reply();   break;
         case AI_SAVE_WRITE:  handle_ai_save_write_reply();    break;
         case AI_SAVE_CLOSE:  handle_ai_save_close_reply();    break;
+        case EXEC_OPENING:  handle_exec_open_reply();  break;
+        case EXEC_READING:  handle_exec_read_reply();  break;
+        case EXEC_CLOSING:  handle_exec_close_reply(); break;
         default: break;
         }
         break;
@@ -909,6 +1050,11 @@ void notified(microkit_channel ch) {
         case AI_GEN_WAITING:  handle_ai_gen_reply();    break;
         default: break;
         }
+        break;
+
+    case CH_SANDBOX:
+        if (orch_state == EXEC_RUNNING)
+            handle_exec_done();
         break;
 
     default:

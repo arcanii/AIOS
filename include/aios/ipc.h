@@ -83,3 +83,21 @@
 
 #endif /* AIOS_IPC_H */
 
+
+/* ── sandbox_io layout (4 KiB page) ───────────── */
+#define SBX_CMD         0x000
+#define SBX_STATUS      0x004
+#define SBX_CODE_SIZE   0x008   /* size of code in sandbox_code region */
+#define SBX_EXIT_CODE   0x00C   /* exit code from program */
+#define SBX_OUTPUT      0x100   /* 3840 bytes for program stdout */
+#define SBX_OUTPUT_LEN  0x010
+#define SBX_OUTPUT_MAX  3840
+
+#define SBX_CMD_NOP     0
+#define SBX_CMD_RUN     1       /* execute code at sandbox_code */
+#define SBX_CMD_HALT    2
+
+#define SBX_ST_IDLE     0
+#define SBX_ST_RUNNING  1
+#define SBX_ST_DONE     2
+#define SBX_ST_ERROR    3
