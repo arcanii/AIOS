@@ -6,8 +6,8 @@
     <memory_region name="tx_buf"    size="0x1000" />
     <memory_region name="blk_mmio"  size="0x1000" phys_addr="0x0a003000" />
     <memory_region name="blk_dma"   size="0x10000" phys_addr="0xB0000000" />
-    <memory_region name="blk_data"  size="0x1000" />
-    <memory_region name="fs_data"   size="0x1000" />
+    <memory_region name="blk_data"  size="0x10000" />
+    <memory_region name="fs_data"   size="0x10000" />
 
     <!-- 128 MiB region for model weights -->
     <memory_region name="model_data" size="0x8000000" />
@@ -119,7 +119,7 @@
     </channel>
 
     <channel>
-        <end pd="fs_server"     id="5" />
+        <end pd="fs_server"     id="5" pp="true" />
         <end pd="blk_driver"    id="5" />
     </channel>
 
@@ -132,7 +132,7 @@
     <!-- orchestrator <-> sandbox -->
     <channel>
         <end pd="orchestrator"  id="7" />
-        <end pd="sandbox"       id="7" />
+        <end pd="sandbox"       id="7" pp="true" />
     </channel>
 
 </system>

@@ -985,6 +985,7 @@ void notified(microkit_channel ch) {
             microkit_notify(CH_SERIAL);
             /* Send write command — fs_data already has the data
                from process_command */
+            WR32(fs_data, FS_LENGTH, RD32(fs_data, FS_REQLEN));
             WR32(fs_data, FS_CMD, FS_CMD_WRITE);
             orch_state = WRITE_WAIT_DATA;
             microkit_notify(CH_FS);
@@ -992,7 +993,7 @@ void notified(microkit_channel ch) {
         }
         case WRITE_WAIT_DATA: {
             int st = (int)RD32(fs_data, FS_STATUS);
-            uint32_t wrote = RD32(fs_data, FS_READLEN);
+            uint32_t wrote = RD32(fs_data, FS_LENGTH);
             if (st != 0) {
                 ser_puts("  Write failed\n");
                 microkit_notify(CH_SERIAL);

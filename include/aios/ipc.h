@@ -24,7 +24,7 @@
 #define FS_LENGTH    0x01C   /* dedicated field: request length */
 #define FS_FILENAME  0x040
 #define FS_DATA      0x200
-#define FS_DATA_MAX  3584
+#define FS_DATA_MAX  65024
 
 /* ── FS commands (orchestrator → fs_server) ─────────────── */
 #define FS_CMD_OPEN      1
@@ -32,9 +32,10 @@
 #define FS_CMD_CLOSE     3
 #define FS_CMD_CREATE    4   /* NEW: create a file        */
 #define FS_CMD_WRITE     5   /* NEW: write to open file   */
-#define FS_CMD_DELETE    6   /* NEW: delete a file        */
-#define FS_CMD_STAT      7   /* NEW: get file size        */
-#define FS_CMD_SYNC      8   /* NEW: flush FAT/dir to disk*/
+#define FS_CMD_DELETE    6
+#define FS_CMD_LIST      7
+#define FS_CMD_STAT      8
+#define FS_CMD_SYNC      9
 
 /* fs status codes */
 #define FS_ST_OK        0
@@ -46,6 +47,8 @@
 #define BLK_CMD         0x000
 #define BLK_SECTOR      0x004
 #define BLK_STATUS      0x008
+#define BLK_COUNT       0x00C   /* number of sectors */
+#define BLK_DATA_MAX    64512   /* 0x10000 - 0x200 */
 #define BLK_DATA        0x200   /* 512-byte sector payload */
 #define BLK_SECTOR_SIZE 512
 
@@ -101,3 +104,12 @@
 #define SBX_ST_RUNNING  1
 #define SBX_ST_DONE     2
 #define SBX_ST_ERROR    3
+
+/* ── Sandbox PPC syscall numbers ───────────────────── */
+#define SYS_PUTC        1   /* arg0 = char */
+#define SYS_PUTS        2   /* string in sandbox_io+SBX_OUTPUT */
+#define SYS_READ_FILE   3   /* filename in sandbox_io+0x200, returns data in sandbox_heap */
+#define SYS_WRITE_FILE  4   /* filename in sandbox_io+0x200, data in sandbox_heap */
+#define SYS_LIST_DIR    5   /* returns listing in sandbox_io+SBX_OUTPUT */
+#define SYS_GET_ARG     6   /* arg0 = index, returns string in sandbox_io+0x200 */
+#define SYS_EXEC        7   /* filename in sandbox_io+0x200, chain-exec another program */

@@ -63,8 +63,8 @@ $(BUILD)/%.elf: $(BUILD)/%.o
 	$(LD) $< $(LDFLAGS) -o $@
 
 # ── Pack into Microkit loader image ─────────────────────
-$(BUILD)/loader.img: $(ELFS) hello.system
-	$(MICROKIT_SDK)/bin/microkit hello.system \
+$(BUILD)/loader.img: $(ELFS) aios.system
+	$(MICROKIT_SDK)/bin/microkit aios.system \
 		--search-path $(BUILD) \
 		--board $(BOARD) \
 		--config $(CONFIG) \
