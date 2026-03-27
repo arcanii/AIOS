@@ -25,7 +25,7 @@ AIOS> build ls
 ## Self-improvement demo (proof of concept)
 - :white_check_mark: Day 1:  FAT16 write support (FS_CMD_WRITE, FS_CMD_CREATE). (26 March, 2026) 
 - :white_check_mark: Day 2:  Put reference .c files on disk, add "ai build" command.  
-- Day 3:  LLM generates code, saves to disk via orchestrator.
+- :white_check_mark: Day 3:  LLM generates code, saves to disk via orchestrator.
 - Day 4:  Port TCC to a PD (compile in-memory).
 - Day 5:  Sandbox PD with jump-to-code execution.
 - Day 6:  Wire the full loop: prompt → generate → compile → run.
