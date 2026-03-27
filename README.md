@@ -49,6 +49,11 @@ AIOS> build net_driver
 5. Generates text using a freestanding Llama-2 transformer inference engine
 6. Provides an interactive serial shell (help, cat, load, gen, info, shutdown)
 
+## Future
+1. add X86-64 (currently ARM/aarch64)
+2. add dynamic PD (re-arch microkernel)
+3. add external AI / modular AI
+4. LLM acceleration (GPU)
 
 ## Architecture
 
