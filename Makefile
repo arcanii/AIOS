@@ -80,15 +80,15 @@ disk: $(DISK_IMG)
 
 $(DISK_IMG):
 	@echo "Creating FAT16 disk image..."
-	dd if=/dev/zero of=$@ bs=1M count=64
-	mformat -i $@ -t 128 -h 16 -s 63 -M 512 -v AIOS ::
+	dd if=/dev/zero of=$@ bs=1M count=128
+	mformat -i $@ -t 256 -h 16 -s 63 -M 512 -v AIOS ::
 	printf "Hello from AIOS disk! This is our FAT filesystem.\n" \
 		| mcopy -i $@ - ::hello.txt
-	@if [ -f stories15M.bin ]; then \
-		echo "  Adding stories15M.bin -> STORIES.BIN"; \
-		mcopy -i $@ stories15M.bin ::STORIES.BIN; \
+	@if [ -f code25M.bin ]; then \
+		echo "  Adding code25M.bin -> CODE25M.BIN"; \
+		mcopy -i $@ code25M.bin ::CODE25M.BIN; \
 	else \
-		echo "  stories15M.bin not found (skipping model)"; \
+		echo "  code25M.bin not found (skipping model)"; \
 	fi
 	@if [ -f tokenizer.bin ]; then \
 		echo "  Adding tokenizer.bin -> TOK.BIN"; \

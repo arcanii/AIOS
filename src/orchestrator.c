@@ -684,17 +684,9 @@ static void handle_ai_ref_close_reply(void) {
     /* Now build the prompt and start generation */
     char *dst = (char *)(llm_io + LLM_PROMPT);
     int pi = 0;
-    const char *instr = "Write a C program called ";
-    while (*instr && pi < LLM_PROMPT_MAX - 256) dst[pi++] = *instr++;
-    for (int k = 0; ai_target_name[k] && pi < LLM_PROMPT_MAX - 256; k++)
-        dst[pi++] = ai_target_name[k];
-    const char *instr2 = ". Output only valid C code. ";
-    while (*instr2 && pi < LLM_PROMPT_MAX - 200) dst[pi++] = *instr2++;
+    /* Prompt: paste reference then start a new function */
     if (ai_ref_len > 0) {
-        const char *ctx = "Here is a reference:\n";
-        while (*ctx && pi < LLM_PROMPT_MAX - (int)ai_ref_len - 10)
-            dst[pi++] = *ctx++;
-        for (uint32_t k = 0; k < ai_ref_len && pi < LLM_PROMPT_MAX - 2; k++)
+        for (uint32_t k = 0; k < ai_ref_len && pi < LLM_PROMPT_MAX - 100; k++)
             dst[pi++] = ai_ref_buf[k];
     }
     dst[pi] = '\0';
