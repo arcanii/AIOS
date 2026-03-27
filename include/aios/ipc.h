@@ -60,9 +60,11 @@
 #define LLM_TOK_OFF     0x00C
 #define LLM_TOK_SZ      0x010
 #define LLM_MAX_STEPS   0x014
-#define LLM_PROMPT      0x100   /* 256 bytes for prompt   */
-#define LLM_OUTPUT      0x200   /* generated text output  */
-#define LLM_OUTPUT_MAX  3584
+#define LLM_PROMPT      0x100   /* 4 KiB for prompt (ends at 0x1100) */
+
+#define LLM_PROMPT_MAX  4096
+#define LLM_OUTPUT      0x1100  /* generated text output  */
+#define LLM_OUTPUT_MAX  12032   /* 0x4000 - 0x1100 = 12032 */
 
 /* llm commands */
 #define LLM_CMD_LOAD_DONE  1

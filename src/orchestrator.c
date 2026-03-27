@@ -40,6 +40,13 @@ typedef enum {
     WRITE_WAIT_DATA,
     WRITE_WAIT_CLOSE,
     DELETE_WAIT,
+    AI_REF_OPENING,
+    AI_REF_READING,
+    AI_REF_CLOSING,
+    AI_GEN_WAITING,
+    AI_SAVE_CREATE,
+    AI_SAVE_WRITE,
+    AI_SAVE_CLOSE,
     RUNNING,
 } orch_state_t;
 
@@ -60,6 +67,16 @@ static uint32_t tok_offset_in_model = 0;
 
 /* Ready flag */
 static int model_ready = 0;
+
+/* AI build state */
+#define AI_GEN_BUF_MAX  4096
+static char ai_gen_buf[AI_GEN_BUF_MAX];
+static uint32_t ai_gen_len = 0;
+static char ai_target_name[16];    /* e.g. "LS" */
+static char ai_target_file[24];    /* e.g. "LS.C" */
+static char ai_ref_file[24];       /* e.g. "R_LS.C" */
+static char ai_ref_buf[2048];      /* reference file content */
+static uint32_t ai_ref_len = 0;
 
 static inline void dsb_sy(void) {
     __asm__ volatile("dsb sy" ::: "memory");
@@ -456,6 +473,7 @@ static void process_command(void) {
         ser_puts("  rm <file>       - delete a file\n");
         ser_puts("  load <file>     - load model into memory\n");
         ser_puts("  gen <prompt>    - generate text\n");
+        ser_puts("  ai build <name> - AI generates a C program\n");
         ser_puts("  info            - system info\n");
         ser_puts("  shutdown        - halt system\n");
     }
@@ -515,7 +533,7 @@ static void process_command(void) {
                 microkit_notify(CH_SERIAL);
                 char *dst = (char *)(llm_io + LLM_PROMPT);
                 int i = 0;
-                while (prompt[i] && i < 255) { dst[i] = prompt[i]; i++; }
+                while (prompt[i] && i < LLM_PROMPT_MAX - 1) { dst[i] = prompt[i]; i++; }
                 dst[i] = '\0';
                 WR32(llm_io, LLM_MAX_STEPS, 256);
                 WR32(llm_io, LLM_CMD, LLM_CMD_GENERATE);
@@ -524,6 +542,44 @@ static void process_command(void) {
                 input_pos = 0;
                 return;
             }
+    } else if (str_starts_with(input_line, "ai build ")) {
+        char *name = input_line + 9;
+        while (*name == ' ') name++;
+        if (*name == '\0' || !model_ready) {
+            if (!model_ready)
+                ser_puts("No model loaded. Run: load STORIES.BIN\n");
+            else
+                ser_puts("Usage: ai build <name>\n");
+            microkit_notify(CH_SERIAL);
+        } else {
+            /* Copy target name (uppercase, no extension) */
+            int ni = 0;
+            while (name[ni] && name[ni] != ' ' && name[ni] != '.' && ni < 15) {
+                char c = name[ni];
+                if (c >= 'a' && c <= 'z') c -= 32;
+                ai_target_name[ni] = c;
+                ni++;
+            }
+            ai_target_name[ni] = '\0';
+            /* Build filenames: R_<NAME>.C and <NAME>.C */
+            int j = 0;
+            ai_ref_file[j++] = 'R'; ai_ref_file[j++] = '_';
+            for (int k = 0; k < ni; k++) ai_ref_file[j++] = ai_target_name[k];
+            ai_ref_file[j++] = '.'; ai_ref_file[j++] = 'C'; ai_ref_file[j] = '\0';
+            j = 0;
+            for (int k = 0; k < ni; k++) ai_target_file[j++] = ai_target_name[k];
+            ai_target_file[j++] = '.'; ai_target_file[j++] = 'C'; ai_target_file[j] = '\0';
+            ai_gen_len = 0;
+            ai_ref_len = 0;
+            ser_puts("AI Build: reading reference R_");
+            ser_puts(ai_target_name);
+            ser_puts(".C ...\n");
+            microkit_notify(CH_SERIAL);
+            orch_state = AI_REF_OPENING;
+            fs_open(ai_ref_file);
+            input_pos = 0;
+            return;
+        }
     } else if (str_starts_with(input_line, "shutdown")) {
         ser_puts("Shutting down AIOS...\n");
         ser_puts("System halted. Press Ctrl-A then X to exit QEMU.\n");
@@ -537,6 +593,196 @@ static void process_command(void) {
 
     ser_puts("AIOS> ");
     input_pos = 0;
+}
+
+
+/* ── AI Build: read reference file ─────────────────── */
+static void handle_ai_ref_open_reply(void) {
+    uint32_t status = RD32(fs_data, FS_STATUS);
+    if (status == FS_ST_OK) {
+        cur_fd       = RD32(fs_data, FS_FD);
+        cur_filesize = RD32(fs_data, FS_FILESIZE);
+        cur_offset   = 0;
+        ai_ref_len   = 0;
+        ser_puts("  Reference file: ");
+        ser_put_dec(cur_filesize);
+        ser_puts(" bytes\n");
+        microkit_notify(CH_SERIAL);
+        uint32_t chunk = cur_filesize;
+        if (chunk > FS_DATA_MAX) chunk = FS_DATA_MAX;
+        orch_state = AI_REF_READING;
+        fs_read(cur_fd, 0, chunk);
+    } else {
+        ser_puts("  Reference file not found. Generating without context.\n");
+        microkit_notify(CH_SERIAL);
+        ai_ref_len = 0;
+        /* Skip straight to generation */
+        goto ai_start_gen;
+    }
+    return;
+ai_start_gen:
+    {
+        /* Build prompt: instruction + (optional) reference */
+        char *dst = (char *)(llm_io + LLM_PROMPT);
+        int pi = 0;
+        /* Instruction */
+        const char *instr = "Write a C program called ";
+        while (*instr && pi < LLM_PROMPT_MAX - 256) dst[pi++] = *instr++;
+        for (int k = 0; ai_target_name[k] && pi < LLM_PROMPT_MAX - 256; k++)
+            dst[pi++] = ai_target_name[k];
+        const char *instr2 = ". Output only valid C code. ";
+        while (*instr2 && pi < LLM_PROMPT_MAX - 200) dst[pi++] = *instr2++;
+        if (ai_ref_len > 0) {
+            const char *ctx = "Here is a reference:\n";
+            while (*ctx && pi < LLM_PROMPT_MAX - ai_ref_len - 10)
+                dst[pi++] = *ctx++;
+            for (uint32_t k = 0; k < ai_ref_len && pi < LLM_PROMPT_MAX - 2; k++)
+                dst[pi++] = ai_ref_buf[k];
+        }
+        dst[pi] = '\0';
+        ser_puts("  Prompt (");
+        ser_put_dec(pi);
+        ser_puts(" bytes), generating...\n");
+        microkit_notify(CH_SERIAL);
+        ai_gen_len = 0;
+        WR32(llm_io, LLM_MAX_STEPS, 512);
+        WR32(llm_io, LLM_CMD, LLM_CMD_GENERATE);
+        orch_state = AI_GEN_WAITING;
+        microkit_notify(CH_LLM);
+    }
+}
+
+static void handle_ai_ref_read_reply(void) {
+    uint32_t status = RD32(fs_data, FS_STATUS);
+    uint32_t got    = RD32(fs_data, FS_LENGTH);
+    if ((status == FS_ST_OK || status == FS_ST_EOF) && got > 0) {
+        volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
+        for (uint32_t i = 0; i < got && ai_ref_len < sizeof(ai_ref_buf) - 1; i++)
+            ai_ref_buf[ai_ref_len++] = (char)src[i];
+        cur_offset += got;
+        if (cur_offset >= cur_filesize || status == FS_ST_EOF) {
+            ai_ref_buf[ai_ref_len] = '\0';
+            orch_state = AI_REF_CLOSING;
+            fs_close(cur_fd);
+        } else {
+            uint32_t chunk = cur_filesize - cur_offset;
+            if (chunk > FS_DATA_MAX) chunk = FS_DATA_MAX;
+            fs_read(cur_fd, cur_offset, chunk);
+        }
+    } else {
+        ai_ref_buf[ai_ref_len] = '\0';
+        orch_state = AI_REF_CLOSING;
+        fs_close(cur_fd);
+    }
+}
+
+static void handle_ai_ref_close_reply(void) {
+    ser_puts("  Reference loaded (");
+    ser_put_dec(ai_ref_len);
+    ser_puts(" bytes).\n");
+    microkit_notify(CH_SERIAL);
+    /* Now build the prompt and start generation */
+    char *dst = (char *)(llm_io + LLM_PROMPT);
+    int pi = 0;
+    const char *instr = "Write a C program called ";
+    while (*instr && pi < LLM_PROMPT_MAX - 256) dst[pi++] = *instr++;
+    for (int k = 0; ai_target_name[k] && pi < LLM_PROMPT_MAX - 256; k++)
+        dst[pi++] = ai_target_name[k];
+    const char *instr2 = ". Output only valid C code. ";
+    while (*instr2 && pi < LLM_PROMPT_MAX - 200) dst[pi++] = *instr2++;
+    if (ai_ref_len > 0) {
+        const char *ctx = "Here is a reference:\n";
+        while (*ctx && pi < LLM_PROMPT_MAX - (int)ai_ref_len - 10)
+            dst[pi++] = *ctx++;
+        for (uint32_t k = 0; k < ai_ref_len && pi < LLM_PROMPT_MAX - 2; k++)
+            dst[pi++] = ai_ref_buf[k];
+    }
+    dst[pi] = '\0';
+    ser_puts("  Prompt (");
+    ser_put_dec(pi);
+    ser_puts(" bytes), generating...\n");
+    microkit_notify(CH_SERIAL);
+    ai_gen_len = 0;
+    WR32(llm_io, LLM_MAX_STEPS, 512);
+    WR32(llm_io, LLM_CMD, LLM_CMD_GENERATE);
+    orch_state = AI_GEN_WAITING;
+    microkit_notify(CH_LLM);
+}
+
+static void handle_ai_gen_reply(void) {
+    uint32_t status = RD32(llm_io, LLM_STATUS);
+    if (status == LLM_ST_TOKEN) {
+        char *piece = (char *)(llm_io + LLM_OUTPUT);
+        /* Print to console */
+        ser_puts(piece);
+        microkit_notify(CH_SERIAL);
+        /* Accumulate into ai_gen_buf */
+        for (int i = 0; piece[i] && ai_gen_len < AI_GEN_BUF_MAX - 1; i++)
+            ai_gen_buf[ai_gen_len++] = piece[i];
+        /* Request next token */
+        WR32(llm_io, LLM_CMD, LLM_CMD_NEXT_TOK);
+        microkit_notify(CH_LLM);
+    } else if (status == LLM_ST_DONE) {
+        ai_gen_buf[ai_gen_len] = '\0';
+        ser_puts("\n  Generation done (");
+        ser_put_dec(ai_gen_len);
+        ser_puts(" bytes). Saving to ");
+        ser_puts(ai_target_file);
+        ser_puts("...\n");
+        microkit_notify(CH_SERIAL);
+        /* Write to disk: first create the file */
+        char *fn = (char *)(fs_data + FS_FILENAME);
+        int i = 0;
+        while (ai_target_file[i]) { fn[i] = ai_target_file[i]; i++; }
+        fn[i] = '\0';
+        /* Copy generated code into fs_data */
+        for (uint32_t k = 0; k < ai_gen_len && k < FS_DATA_MAX; k++)
+            *(char *)(fs_data + FS_DATA + k) = ai_gen_buf[k];
+        WR32(fs_data, FS_REQLEN, ai_gen_len < FS_DATA_MAX ? ai_gen_len : FS_DATA_MAX);
+        WR32(fs_data, FS_CMD, FS_CMD_CREATE);
+        orch_state = AI_SAVE_CREATE;
+        microkit_notify(CH_FS);
+    } else {
+        ser_puts("\n  AI generation error.\n");
+        ser_puts("AIOS> ");
+        microkit_notify(CH_SERIAL);
+        orch_state = RUNNING;
+    }
+}
+
+static void handle_ai_save_create_reply(void) {
+    int st = (int)RD32(fs_data, FS_STATUS);
+    if (st != 0) {
+        ser_puts("  Save failed (create error).\n");
+        ser_puts("AIOS> ");
+        microkit_notify(CH_SERIAL);
+        orch_state = RUNNING;
+        return;
+    }
+    WR32(fs_data, FS_CMD, FS_CMD_WRITE);
+    orch_state = AI_SAVE_WRITE;
+    microkit_notify(CH_FS);
+}
+
+static void handle_ai_save_write_reply(void) {
+    int st = (int)RD32(fs_data, FS_STATUS);
+    if (st != 0) {
+        ser_puts("  Save failed (write error).\n");
+    }
+    WR32(fs_data, FS_CMD, FS_CMD_CLOSE);
+    orch_state = AI_SAVE_CLOSE;
+    microkit_notify(CH_FS);
+}
+
+static void handle_ai_save_close_reply(void) {
+    ser_puts("  Saved ");
+    ser_puts(ai_target_file);
+    ser_puts(" (");
+    ser_put_dec(ai_gen_len);
+    ser_puts(" bytes) to disk.\n");
+    ser_puts("AIOS> ");
+    microkit_notify(CH_SERIAL);
+    orch_state = RUNNING;
 }
 
 static void handle_serial_input(void) {
@@ -652,6 +898,13 @@ void notified(microkit_channel ch) {
             microkit_notify(CH_SERIAL);
             break;
         }
+        /* ── AI Build: file I/O ─────────────── */
+        case AI_REF_OPENING: handle_ai_ref_open_reply();      break;
+        case AI_REF_READING: handle_ai_ref_read_reply();      break;
+        case AI_REF_CLOSING: handle_ai_ref_close_reply();     break;
+        case AI_SAVE_CREATE: handle_ai_save_create_reply();   break;
+        case AI_SAVE_WRITE:  handle_ai_save_write_reply();    break;
+        case AI_SAVE_CLOSE:  handle_ai_save_close_reply();    break;
         default: break;
         }
         break;
@@ -661,6 +914,7 @@ void notified(microkit_channel ch) {
         case LOAD_NOTIFY_LLM: handle_llm_load_reply(); break;
         case TOK_NOTIFY_LLM:  handle_tok_llm_reply();  break;
         case GEN_WAITING:     handle_gen_reply();       break;
+        case AI_GEN_WAITING:  handle_ai_gen_reply();    break;
         default: break;
         }
         break;

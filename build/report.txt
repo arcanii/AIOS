@@ -1,0 +1,502 @@
+# Initial Task (CapDL Initialiser) Details
+
+# IRQ Details
+	- IRQ: 'irq_33_serial_driver'
+		* Number: 33
+		* Trigger: level
+		* CPU: 0
+
+
+# TCB Details
+	- TCB: 'tcb_blk_driver'
+		* IP: 0x200000
+		* SP: 0x10000000000
+		* IPC Buffer: 0x203000
+		* Priority: 240
+		* CPU Affinity: 0
+		* Bound Objects:
+			-> CSpace: 'cnode_blk_driver'
+			-> VSpace: 'pud_blk_driver'
+			-> IPC Buffer: 'frame_ipcbuf_blk_driver'
+			-> Fault Endpoint: 'ep_fault_monitor'
+			-> Scheduling Context: 'sched_context_blk_driver'
+			-> Notification: 'ntfn_blk_driver'
+
+	- TCB: 'tcb_echo_server'
+		* IP: 0x200000
+		* SP: 0x10000000000
+		* IPC Buffer: 0x202000
+		* Priority: 100
+		* CPU Affinity: 0
+		* Bound Objects:
+			-> CSpace: 'cnode_echo_server'
+			-> VSpace: 'pud_echo_server'
+			-> IPC Buffer: 'frame_ipcbuf_echo_server'
+			-> Fault Endpoint: 'ep_fault_monitor'
+			-> Scheduling Context: 'sched_context_echo_server'
+			-> Notification: 'ntfn_echo_server'
+
+	- TCB: 'tcb_fs_server'
+		* IP: 0x200000
+		* SP: 0x10000000000
+		* IPC Buffer: 0x206000
+		* Priority: 220
+		* CPU Affinity: 0
+		* Bound Objects:
+			-> CSpace: 'cnode_fs_server'
+			-> VSpace: 'pud_fs_server'
+			-> IPC Buffer: 'frame_ipcbuf_fs_server'
+			-> Fault Endpoint: 'ep_fault_monitor'
+			-> Scheduling Context: 'sched_context_fs_server'
+			-> Notification: 'ntfn_fs_server'
+
+	- TCB: 'tcb_llm_server'
+		* IP: 0x200000
+		* SP: 0x10000000000
+		* IPC Buffer: 0x206000
+		* Priority: 180
+		* CPU Affinity: 0
+		* Bound Objects:
+			-> CSpace: 'cnode_llm_server'
+			-> VSpace: 'pud_llm_server'
+			-> IPC Buffer: 'frame_ipcbuf_llm_server'
+			-> Fault Endpoint: 'ep_fault_monitor'
+			-> Scheduling Context: 'sched_context_llm_server'
+			-> Notification: 'ntfn_llm_server'
+
+	- TCB: 'tcb_monitor'
+		* IP: 0x200000
+		* SP: 0x10000000000
+		* IPC Buffer: 0x206000
+		* Priority: 255
+		* CPU Affinity: 0
+		* Bound Objects:
+			-> VSpace: 'pud_monitor'
+			-> IPC Buffer: 'frame_ipcbuf_monitor'
+			-> CSpace: 'cnode_monitor'
+			-> Scheduling Context: 'sched_context_monitor'
+
+	- TCB: 'tcb_orchestrator'
+		* IP: 0x200000
+		* SP: 0x10000000000
+		* IPC Buffer: 0x207000
+		* Priority: 200
+		* CPU Affinity: 0
+		* Bound Objects:
+			-> CSpace: 'cnode_orchestrator'
+			-> VSpace: 'pud_orchestrator'
+			-> IPC Buffer: 'frame_ipcbuf_orchestrator'
+			-> Fault Endpoint: 'ep_fault_monitor'
+			-> Scheduling Context: 'sched_context_orchestrator'
+			-> Notification: 'ntfn_orchestrator'
+
+	- TCB: 'tcb_serial_driver'
+		* IP: 0x200000
+		* SP: 0x10000000000
+		* IPC Buffer: 0x203000
+		* Priority: 254
+		* CPU Affinity: 0
+		* Bound Objects:
+			-> CSpace: 'cnode_serial_driver'
+			-> VSpace: 'pud_serial_driver'
+			-> IPC Buffer: 'frame_ipcbuf_serial_driver'
+			-> Fault Endpoint: 'ep_fault_monitor'
+			-> Scheduling Context: 'sched_context_serial_driver'
+			-> Notification: 'ntfn_serial_driver'
+
+
+# CNode Details
+	- CNode: 'cnode_blk_driver'
+		* Slot: 1
+			-> Object: 'ntfn_blk_driver'
+			-> Rights: Read, Write
+			-> Badge: 0x0
+		* Slot: 2
+			-> Object: 'ep_fault_monitor'
+			-> Rights: Read, Write, Grant
+			-> Badge: 0x2
+		* Slot: 3
+			-> Object: 'pud_blk_driver'
+		* Slot: 4
+			-> Object: 'reply_blk_driver'
+		* Slot: 12
+			-> Object: 'ntfn_orchestrator'
+			-> Rights: Read, Write
+			-> Badge: 0x4
+		* Slot: 15
+			-> Object: 'ntfn_fs_server'
+			-> Rights: Read, Write
+			-> Badge: 0x20
+
+	- CNode: 'cnode_echo_server'
+		* Slot: 1
+			-> Object: 'ntfn_echo_server'
+			-> Rights: Read, Write
+			-> Badge: 0x0
+		* Slot: 2
+			-> Object: 'ep_fault_monitor'
+			-> Rights: Read, Write, Grant
+			-> Badge: 0x6
+		* Slot: 3
+			-> Object: 'pud_echo_server'
+		* Slot: 4
+			-> Object: 'reply_echo_server'
+		* Slot: 13
+			-> Object: 'ntfn_orchestrator'
+			-> Rights: Read, Write
+			-> Badge: 0x8
+
+	- CNode: 'cnode_fs_server'
+		* Slot: 1
+			-> Object: 'ntfn_fs_server'
+			-> Rights: Read, Write
+			-> Badge: 0x0
+		* Slot: 2
+			-> Object: 'ep_fault_monitor'
+			-> Rights: Read, Write, Grant
+			-> Badge: 0x3
+		* Slot: 3
+			-> Object: 'pud_fs_server'
+		* Slot: 4
+			-> Object: 'reply_fs_server'
+		* Slot: 14
+			-> Object: 'ntfn_orchestrator'
+			-> Rights: Read, Write
+			-> Badge: 0x10
+		* Slot: 15
+			-> Object: 'ntfn_blk_driver'
+			-> Rights: Read, Write
+			-> Badge: 0x20
+
+	- CNode: 'cnode_llm_server'
+		* Slot: 1
+			-> Object: 'ntfn_llm_server'
+			-> Rights: Read, Write
+			-> Badge: 0x0
+		* Slot: 2
+			-> Object: 'ep_fault_monitor'
+			-> Rights: Read, Write, Grant
+			-> Badge: 0x5
+		* Slot: 3
+			-> Object: 'pud_llm_server'
+		* Slot: 4
+			-> Object: 'reply_llm_server'
+		* Slot: 16
+			-> Object: 'ntfn_orchestrator'
+			-> Rights: Read, Write
+			-> Badge: 0x40
+
+	- CNode: 'cnode_monitor'
+		* Slot: 1
+			-> Object: 'ep_fault_monitor'
+			-> Rights: Read, Write, Grant
+			-> Badge: 0x0
+		* Slot: 2
+			-> Object: 'reply_monitor'
+		* Slot: 10
+			-> Object: 'tcb_serial_driver'
+		* Slot: 11
+			-> Object: 'tcb_blk_driver'
+		* Slot: 12
+			-> Object: 'tcb_fs_server'
+		* Slot: 13
+			-> Object: 'tcb_orchestrator'
+		* Slot: 14
+			-> Object: 'tcb_llm_server'
+		* Slot: 15
+			-> Object: 'tcb_echo_server'
+
+	- CNode: 'cnode_orchestrator'
+		* Slot: 1
+			-> Object: 'ntfn_orchestrator'
+			-> Rights: Read, Write
+			-> Badge: 0x0
+		* Slot: 2
+			-> Object: 'ep_fault_monitor'
+			-> Rights: Read, Write, Grant
+			-> Badge: 0x4
+		* Slot: 3
+			-> Object: 'pud_orchestrator'
+		* Slot: 4
+			-> Object: 'reply_orchestrator'
+		* Slot: 11
+			-> Object: 'ntfn_serial_driver'
+			-> Rights: Read, Write
+			-> Badge: 0x2
+		* Slot: 12
+			-> Object: 'ntfn_blk_driver'
+			-> Rights: Read, Write
+			-> Badge: 0x4
+		* Slot: 13
+			-> Object: 'ntfn_echo_server'
+			-> Rights: Read, Write
+			-> Badge: 0x8
+		* Slot: 14
+			-> Object: 'ntfn_fs_server'
+			-> Rights: Read, Write
+			-> Badge: 0x10
+		* Slot: 16
+			-> Object: 'ntfn_llm_server'
+			-> Rights: Read, Write
+			-> Badge: 0x40
+
+	- CNode: 'cnode_serial_driver'
+		* Slot: 1
+			-> Object: 'ntfn_serial_driver'
+			-> Rights: Read, Write
+			-> Badge: 0x0
+		* Slot: 2
+			-> Object: 'ep_fault_monitor'
+			-> Rights: Read, Write, Grant
+			-> Badge: 0x1
+		* Slot: 3
+			-> Object: 'pud_serial_driver'
+		* Slot: 4
+			-> Object: 'reply_serial_driver'
+		* Slot: 11
+			-> Object: 'ntfn_orchestrator'
+			-> Rights: Read, Write
+			-> Badge: 0x2
+		* Slot: 140
+			-> Object: 'irq_33_serial_driver'
+
+
+# Architecture Specific Details
+
+# Kernel Objects Details: ID, Type, Name, Physical Address
+	0 - Page(4 KiB): 'frame_mr_uart_mmio_000000000' @ 0x000009000000
+	1 - Page(4 KiB): 'frame_mr_blk_mmio_000000000' @ 0x00000a003000
+	2 - Page(4 KiB): 'frame_mr_blk_dma_000000000' @ 0x0000b0000000
+	3 - Page(4 KiB): 'frame_mr_blk_dma_000000001' @ 0x0000b0001000
+	4 - Page(4 KiB): 'frame_mr_blk_dma_000000002' @ 0x0000b0002000
+	5 - Page(4 KiB): 'frame_mr_blk_dma_000000003' @ 0x0000b0003000
+	6 - Page(4 KiB): 'frame_mr_blk_dma_000000004' @ 0x0000b0004000
+	7 - Page(4 KiB): 'frame_mr_blk_dma_000000005' @ 0x0000b0005000
+	8 - Page(4 KiB): 'frame_mr_blk_dma_000000006' @ 0x0000b0006000
+	9 - Page(4 KiB): 'frame_mr_blk_dma_000000007' @ 0x0000b0007000
+	10 - Page(4 KiB): 'frame_mr_blk_dma_000000008' @ 0x0000b0008000
+	11 - Page(4 KiB): 'frame_mr_blk_dma_000000009' @ 0x0000b0009000
+	12 - Page(4 KiB): 'frame_mr_blk_dma_000000010' @ 0x0000b000a000
+	13 - Page(4 KiB): 'frame_mr_blk_dma_000000011' @ 0x0000b000b000
+	14 - Page(4 KiB): 'frame_mr_blk_dma_000000012' @ 0x0000b000c000
+	15 - Page(4 KiB): 'frame_mr_blk_dma_000000013' @ 0x0000b000d000
+	16 - Page(4 KiB): 'frame_mr_blk_dma_000000014' @ 0x0000b000e000
+	17 - Page(4 KiB): 'frame_mr_blk_dma_000000015' @ 0x0000b000f000
+	18 - Page(2 MiB): 'frame_mr_model_data_000000000' @ 0x000060400000
+	19 - Page(2 MiB): 'frame_mr_model_data_000000001' @ 0x000060600000
+	20 - Page(2 MiB): 'frame_mr_model_data_000000002' @ 0x000060800000
+	21 - Page(2 MiB): 'frame_mr_model_data_000000003' @ 0x000060a00000
+	22 - Page(2 MiB): 'frame_mr_model_data_000000004' @ 0x000060c00000
+	23 - Page(2 MiB): 'frame_mr_model_data_000000005' @ 0x000060e00000
+	24 - Page(2 MiB): 'frame_mr_model_data_000000006' @ 0x000061000000
+	25 - Page(2 MiB): 'frame_mr_model_data_000000007' @ 0x000061200000
+	26 - Page(2 MiB): 'frame_mr_model_data_000000008' @ 0x000061400000
+	27 - Page(2 MiB): 'frame_mr_model_data_000000009' @ 0x000061600000
+	28 - Page(2 MiB): 'frame_mr_model_data_000000010' @ 0x000061800000
+	29 - Page(2 MiB): 'frame_mr_model_data_000000011' @ 0x000061a00000
+	30 - Page(2 MiB): 'frame_mr_model_data_000000012' @ 0x000061c00000
+	31 - Page(2 MiB): 'frame_mr_model_data_000000013' @ 0x000061e00000
+	32 - Page(2 MiB): 'frame_mr_model_data_000000014' @ 0x000062000000
+	33 - Page(2 MiB): 'frame_mr_model_data_000000015' @ 0x000062200000
+	34 - Page(2 MiB): 'frame_mr_model_data_000000016' @ 0x000062400000
+	35 - Page(2 MiB): 'frame_mr_model_data_000000017' @ 0x000062600000
+	36 - Page(2 MiB): 'frame_mr_model_data_000000018' @ 0x000062800000
+	37 - Page(2 MiB): 'frame_mr_model_data_000000019' @ 0x000062a00000
+	38 - Page(2 MiB): 'frame_mr_model_data_000000020' @ 0x000062c00000
+	39 - Page(2 MiB): 'frame_mr_model_data_000000021' @ 0x000062e00000
+	40 - Page(2 MiB): 'frame_mr_model_data_000000022' @ 0x000063000000
+	41 - Page(2 MiB): 'frame_mr_model_data_000000023' @ 0x000063200000
+	42 - Page(2 MiB): 'frame_mr_model_data_000000024' @ 0x000063400000
+	43 - Page(2 MiB): 'frame_mr_model_data_000000025' @ 0x000063600000
+	44 - Page(2 MiB): 'frame_mr_model_data_000000026' @ 0x000063800000
+	45 - Page(2 MiB): 'frame_mr_model_data_000000027' @ 0x000063a00000
+	46 - Page(2 MiB): 'frame_mr_model_data_000000028' @ 0x000063c00000
+	47 - Page(2 MiB): 'frame_mr_model_data_000000029' @ 0x000063e00000
+	48 - Page(2 MiB): 'frame_mr_model_data_000000030' @ 0x000064000000
+	49 - Page(2 MiB): 'frame_mr_model_data_000000031' @ 0x000064200000
+	50 - Page(2 MiB): 'frame_mr_model_data_000000032' @ 0x000064400000
+	51 - Page(2 MiB): 'frame_mr_model_data_000000033' @ 0x000064600000
+	52 - Page(2 MiB): 'frame_mr_model_data_000000034' @ 0x000064800000
+	53 - Page(2 MiB): 'frame_mr_model_data_000000035' @ 0x000064a00000
+	54 - Page(2 MiB): 'frame_mr_model_data_000000036' @ 0x000064c00000
+	55 - Page(2 MiB): 'frame_mr_model_data_000000037' @ 0x000064e00000
+	56 - Page(2 MiB): 'frame_mr_model_data_000000038' @ 0x000065000000
+	57 - Page(2 MiB): 'frame_mr_model_data_000000039' @ 0x000065200000
+	58 - Page(2 MiB): 'frame_mr_model_data_000000040' @ 0x000065400000
+	59 - Page(2 MiB): 'frame_mr_model_data_000000041' @ 0x000065600000
+	60 - Page(2 MiB): 'frame_mr_model_data_000000042' @ 0x000065800000
+	61 - Page(2 MiB): 'frame_mr_model_data_000000043' @ 0x000065a00000
+	62 - Page(2 MiB): 'frame_mr_model_data_000000044' @ 0x000065c00000
+	63 - Page(2 MiB): 'frame_mr_model_data_000000045' @ 0x000065e00000
+	64 - Page(2 MiB): 'frame_mr_model_data_000000046' @ 0x000066000000
+	65 - Page(2 MiB): 'frame_mr_model_data_000000047' @ 0x000066200000
+	66 - Page(2 MiB): 'frame_mr_model_data_000000048' @ 0x000066400000
+	67 - Page(2 MiB): 'frame_mr_model_data_000000049' @ 0x000066600000
+	68 - Page(2 MiB): 'frame_mr_model_data_000000050' @ 0x000066800000
+	69 - Page(2 MiB): 'frame_mr_model_data_000000051' @ 0x000066a00000
+	70 - Page(2 MiB): 'frame_mr_model_data_000000052' @ 0x000066c00000
+	71 - Page(2 MiB): 'frame_mr_model_data_000000053' @ 0x000066e00000
+	72 - Page(2 MiB): 'frame_mr_model_data_000000054' @ 0x000067000000
+	73 - Page(2 MiB): 'frame_mr_model_data_000000055' @ 0x000067200000
+	74 - Page(2 MiB): 'frame_mr_model_data_000000056' @ 0x000067400000
+	75 - Page(2 MiB): 'frame_mr_model_data_000000057' @ 0x000067600000
+	76 - Page(2 MiB): 'frame_mr_model_data_000000058' @ 0x000067800000
+	77 - Page(2 MiB): 'frame_mr_model_data_000000059' @ 0x000067a00000
+	78 - Page(2 MiB): 'frame_mr_model_data_000000060' @ 0x000067c00000
+	79 - Page(2 MiB): 'frame_mr_model_data_000000061' @ 0x000067e00000
+	80 - Page(2 MiB): 'frame_mr_model_data_000000062' @ 0x000068000000
+	81 - Page(2 MiB): 'frame_mr_model_data_000000063' @ 0x000068200000
+	82 - CNode: 'cnode_blk_driver' @ 0x000060000000
+	83 - CNode: 'cnode_echo_server' @ 0x000060004000
+	84 - CNode: 'cnode_fs_server' @ 0x000060008000
+	85 - CNode: 'cnode_llm_server' @ 0x00006000c000
+	86 - CNode: 'cnode_monitor' @ 0x0000602a4000
+	87 - CNode: 'cnode_orchestrator' @ 0x0000602a8000
+	88 - CNode: 'cnode_serial_driver' @ 0x0000602ac000
+	89 - PageTable: 'pud_blk_driver' @ 0x0000602a2000
+	90 - PageTable: 'pud_echo_server' @ 0x0000602b0000
+	91 - PageTable: 'pud_fs_server' @ 0x0000602b2000
+	92 - PageTable: 'pud_llm_server' @ 0x0000602b4000
+	93 - PageTable: 'pud_monitor' @ 0x0000602b6000
+	94 - PageTable: 'pud_orchestrator' @ 0x0000602b8000
+	95 - PageTable: 'pud_serial_driver' @ 0x0000602ba000
+	96 - Page(4 KiB): 'frame_blk_driver_stack_000000000' @ 0x0000602bc000
+	97 - Page(4 KiB): 'frame_blk_driver_stack_000000001' @ 0x0000602bd000
+	98 - Page(4 KiB): 'frame_echo_server_stack_000000000' @ 0x0000602be000
+	99 - Page(4 KiB): 'frame_echo_server_stack_000000001' @ 0x0000602bf000
+	100 - Page(4 KiB): 'frame_elf_blk_driver_000000000' @ 0x0000602c0000
+	101 - Page(4 KiB): 'frame_elf_blk_driver_000000001' @ 0x0000602c1000
+	102 - Page(4 KiB): 'frame_elf_blk_driver_000000002' @ 0x0000602c2000
+	103 - Page(4 KiB): 'frame_elf_echo_server_000000000' @ 0x0000602c3000
+	104 - Page(4 KiB): 'frame_elf_echo_server_000000001' @ 0x0000602c4000
+	105 - Page(4 KiB): 'frame_elf_fs_server_000000000' @ 0x0000602c5000
+	106 - Page(4 KiB): 'frame_elf_fs_server_000000001' @ 0x0000602c6000
+	107 - Page(4 KiB): 'frame_elf_fs_server_000000002' @ 0x0000602c7000
+	108 - Page(4 KiB): 'frame_elf_fs_server_000000003' @ 0x0000602c8000
+	109 - Page(4 KiB): 'frame_elf_fs_server_000000004' @ 0x0000602c9000
+	110 - Page(4 KiB): 'frame_elf_fs_server_000000005' @ 0x0000602ca000
+	111 - Page(4 KiB): 'frame_elf_llm_server_000000000' @ 0x0000602cb000
+	112 - Page(4 KiB): 'frame_elf_llm_server_000000001' @ 0x0000602cc000
+	113 - Page(4 KiB): 'frame_elf_llm_server_000000002' @ 0x0000602cd000
+	114 - Page(4 KiB): 'frame_elf_llm_server_000000003' @ 0x0000602ce000
+	115 - Page(4 KiB): 'frame_elf_llm_server_000000004' @ 0x0000602cf000
+	116 - Page(4 KiB): 'frame_elf_llm_server_000000005' @ 0x0000602d0000
+	117 - Page(4 KiB): 'frame_elf_monitor_000000000' @ 0x0000602d1000
+	118 - Page(4 KiB): 'frame_elf_monitor_000000001' @ 0x0000602d2000
+	119 - Page(4 KiB): 'frame_elf_monitor_000000002' @ 0x0000602d3000
+	120 - Page(4 KiB): 'frame_elf_monitor_000000003' @ 0x0000602d4000
+	121 - Page(4 KiB): 'frame_elf_monitor_000000004' @ 0x0000602d5000
+	122 - Page(4 KiB): 'frame_elf_monitor_000000005' @ 0x0000602d6000
+	123 - Page(4 KiB): 'frame_elf_orchestrator_000000000' @ 0x0000602d7000
+	124 - Page(4 KiB): 'frame_elf_orchestrator_000000001' @ 0x0000602d8000
+	125 - Page(4 KiB): 'frame_elf_orchestrator_000000002' @ 0x0000602d9000
+	126 - Page(4 KiB): 'frame_elf_orchestrator_000000003' @ 0x0000602da000
+	127 - Page(4 KiB): 'frame_elf_orchestrator_000000004' @ 0x0000602db000
+	128 - Page(4 KiB): 'frame_elf_orchestrator_000000005' @ 0x0000602dc000
+	129 - Page(4 KiB): 'frame_elf_orchestrator_000000006' @ 0x0000602dd000
+	130 - Page(4 KiB): 'frame_elf_serial_driver_000000000' @ 0x0000602de000
+	131 - Page(4 KiB): 'frame_elf_serial_driver_000000001' @ 0x0000602df000
+	132 - Page(4 KiB): 'frame_elf_serial_driver_000000002' @ 0x0000602e0000
+	133 - Page(4 KiB): 'frame_fs_server_stack_000000000' @ 0x0000602e1000
+	134 - Page(4 KiB): 'frame_fs_server_stack_000000001' @ 0x0000602e2000
+	135 - Page(4 KiB): 'frame_ipcbuf_blk_driver' @ 0x0000602e3000
+	136 - Page(4 KiB): 'frame_ipcbuf_echo_server' @ 0x0000602e4000
+	137 - Page(4 KiB): 'frame_ipcbuf_fs_server' @ 0x0000602e5000
+	138 - Page(4 KiB): 'frame_ipcbuf_llm_server' @ 0x0000602e6000
+	139 - Page(4 KiB): 'frame_ipcbuf_monitor' @ 0x0000602e7000
+	140 - Page(4 KiB): 'frame_ipcbuf_orchestrator' @ 0x0000602e8000
+	141 - Page(4 KiB): 'frame_ipcbuf_serial_driver' @ 0x0000602e9000
+	142 - Page(4 KiB): 'frame_llm_server_stack_000000000' @ 0x0000602ea000
+	143 - Page(4 KiB): 'frame_llm_server_stack_000000001' @ 0x0000602eb000
+	144 - Page(4 KiB): 'frame_llm_server_stack_000000002' @ 0x0000602ec000
+	145 - Page(4 KiB): 'frame_llm_server_stack_000000003' @ 0x0000602ed000
+	146 - Page(4 KiB): 'frame_llm_server_stack_000000004' @ 0x0000602ee000
+	147 - Page(4 KiB): 'frame_llm_server_stack_000000005' @ 0x0000602ef000
+	148 - Page(4 KiB): 'frame_llm_server_stack_000000006' @ 0x0000602f0000
+	149 - Page(4 KiB): 'frame_llm_server_stack_000000007' @ 0x0000602f1000
+	150 - Page(4 KiB): 'frame_llm_server_stack_000000008' @ 0x0000602f2000
+	151 - Page(4 KiB): 'frame_llm_server_stack_000000009' @ 0x0000602f3000
+	152 - Page(4 KiB): 'frame_llm_server_stack_000000010' @ 0x0000602f4000
+	153 - Page(4 KiB): 'frame_llm_server_stack_000000011' @ 0x0000602f5000
+	154 - Page(4 KiB): 'frame_llm_server_stack_000000012' @ 0x0000602f6000
+	155 - Page(4 KiB): 'frame_llm_server_stack_000000013' @ 0x0000602f7000
+	156 - Page(4 KiB): 'frame_llm_server_stack_000000014' @ 0x0000602f8000
+	157 - Page(4 KiB): 'frame_llm_server_stack_000000015' @ 0x0000602f9000
+	158 - Page(4 KiB): 'frame_monitor_stack' @ 0x0000602fa000
+	159 - Page(4 KiB): 'frame_mr_blk_data_000000000' @ 0x0000602fb000
+	160 - Page(4 KiB): 'frame_mr_fs_data_000000000' @ 0x0000602fc000
+	161 - Page(4 KiB): 'frame_mr_llm_io_000000000' @ 0x0000602fd000
+	162 - Page(4 KiB): 'frame_mr_llm_io_000000001' @ 0x0000602fe000
+	163 - Page(4 KiB): 'frame_mr_llm_io_000000002' @ 0x0000602ff000
+	164 - Page(4 KiB): 'frame_mr_llm_io_000000003' @ 0x000060300000
+	165 - Page(4 KiB): 'frame_mr_rx_buf_000000000' @ 0x000060301000
+	166 - Page(4 KiB): 'frame_mr_tx_buf_000000000' @ 0x000060302000
+	167 - Page(4 KiB): 'frame_orchestrator_stack_000000000' @ 0x000060303000
+	168 - Page(4 KiB): 'frame_orchestrator_stack_000000001' @ 0x000060304000
+	169 - Page(4 KiB): 'frame_serial_driver_stack_000000000' @ 0x000060305000
+	170 - Page(4 KiB): 'frame_serial_driver_stack_000000001' @ 0x000060306000
+	171 - PageTable: 'pd_blk_driver_vaddr_0x0' @ 0x000060307000
+	172 - PageTable: 'pd_blk_driver_vaddr_0xffc0000000' @ 0x000060308000
+	173 - PageTable: 'pd_echo_server_vaddr_0x0' @ 0x000060309000
+	174 - PageTable: 'pd_echo_server_vaddr_0xffc0000000' @ 0x00006030a000
+	175 - PageTable: 'pd_fs_server_vaddr_0x0' @ 0x00006030b000
+	176 - PageTable: 'pd_fs_server_vaddr_0xffc0000000' @ 0x00006030c000
+	177 - PageTable: 'pd_llm_server_vaddr_0x0' @ 0x00006030d000
+	178 - PageTable: 'pd_llm_server_vaddr_0xffc0000000' @ 0x00006030e000
+	179 - PageTable: 'pd_monitor_vaddr_0x0' @ 0x00006030f000
+	180 - PageTable: 'pd_monitor_vaddr_0xffc0000000' @ 0x000060310000
+	181 - PageTable: 'pd_orchestrator_vaddr_0x0' @ 0x000060311000
+	182 - PageTable: 'pd_orchestrator_vaddr_0xffc0000000' @ 0x000060312000
+	183 - PageTable: 'pd_serial_driver_vaddr_0x0' @ 0x000060313000
+	184 - PageTable: 'pd_serial_driver_vaddr_0xffc0000000' @ 0x000060314000
+	185 - PageTable: 'pt_blk_driver_vaddr_0x200000' @ 0x000060315000
+	186 - PageTable: 'pt_blk_driver_vaddr_0x5000000' @ 0x000060316000
+	187 - PageTable: 'pt_blk_driver_vaddr_0x5200000' @ 0x000060317000
+	188 - PageTable: 'pt_blk_driver_vaddr_0xffffe00000' @ 0x000060318000
+	189 - PageTable: 'pt_echo_server_vaddr_0x200000' @ 0x000060319000
+	190 - PageTable: 'pt_echo_server_vaddr_0xffffe00000' @ 0x00006031a000
+	191 - PageTable: 'pt_fs_server_vaddr_0x200000' @ 0x00006031b000
+	192 - PageTable: 'pt_fs_server_vaddr_0x6000000' @ 0x00006031c000
+	193 - PageTable: 'pt_fs_server_vaddr_0xffffe00000' @ 0x00006031d000
+	194 - PageTable: 'pt_llm_server_vaddr_0x18000000' @ 0x00006031e000
+	195 - PageTable: 'pt_llm_server_vaddr_0x200000' @ 0x00006031f000
+	196 - PageTable: 'pt_llm_server_vaddr_0xffffe00000' @ 0x000060320000
+	197 - PageTable: 'pt_monitor_vaddr_0x200000' @ 0x000060321000
+	198 - PageTable: 'pt_monitor_vaddr_0xffffe00000' @ 0x000060322000
+	199 - PageTable: 'pt_orchestrator_vaddr_0x18000000' @ 0x000060323000
+	200 - PageTable: 'pt_orchestrator_vaddr_0x200000' @ 0x000060324000
+	201 - PageTable: 'pt_orchestrator_vaddr_0x4200000' @ 0x000060325000
+	202 - PageTable: 'pt_orchestrator_vaddr_0x6000000' @ 0x000060326000
+	203 - PageTable: 'pt_orchestrator_vaddr_0xffffe00000' @ 0x000060327000
+	204 - PageTable: 'pt_serial_driver_vaddr_0x200000' @ 0x000060328000
+	205 - PageTable: 'pt_serial_driver_vaddr_0x4000000' @ 0x000060329000
+	206 - PageTable: 'pt_serial_driver_vaddr_0x4200000' @ 0x00006032a000
+	207 - PageTable: 'pt_serial_driver_vaddr_0xffffe00000' @ 0x00006032b000
+	208 - TCB: 'tcb_blk_driver' @ 0x00006032c000
+	209 - TCB: 'tcb_echo_server' @ 0x00006032c800
+	210 - TCB: 'tcb_fs_server' @ 0x00006032d000
+	211 - TCB: 'tcb_llm_server' @ 0x00006032d800
+	212 - TCB: 'tcb_monitor' @ 0x00006032e000
+	213 - TCB: 'tcb_orchestrator' @ 0x00006032e800
+	214 - TCB: 'tcb_serial_driver' @ 0x00006032f000
+	215 - SchedContext: 'sched_context_blk_driver' @ 0x00006032f800
+	216 - SchedContext: 'sched_context_echo_server' @ 0x00006032f900
+	217 - SchedContext: 'sched_context_fs_server' @ 0x00006032fa00
+	218 - SchedContext: 'sched_context_llm_server' @ 0x00006032fb00
+	219 - SchedContext: 'sched_context_monitor' @ 0x00006032fc00
+	220 - SchedContext: 'sched_context_orchestrator' @ 0x00006032fd00
+	221 - SchedContext: 'sched_context_serial_driver' @ 0x00006032fe00
+	222 - Notification: 'ntfn_blk_driver' @ 0x00006032ff00
+	223 - Notification: 'ntfn_echo_server' @ 0x00006032ff40
+	224 - Notification: 'ntfn_fs_server' @ 0x00006032ff80
+	225 - Notification: 'ntfn_llm_server' @ 0x00006032ffc0
+	226 - Notification: 'ntfn_orchestrator' @ 0x000060330000
+	227 - Notification: 'ntfn_serial_driver' @ 0x000060330040
+	228 - Reply: 'reply_blk_driver' @ 0x000060330080
+	229 - Reply: 'reply_echo_server' @ 0x0000603300a0
+	230 - Reply: 'reply_fs_server' @ 0x0000603300c0
+	231 - Reply: 'reply_llm_server' @ 0x0000603300e0
+	232 - Reply: 'reply_monitor' @ 0x000060330100
+	233 - Reply: 'reply_orchestrator' @ 0x000060330120
+	234 - Reply: 'reply_serial_driver' @ 0x000060330140
+	235 - Endpoint: 'ep_fault_monitor' @ 0x000060330160

@@ -96,6 +96,12 @@ $(DISK_IMG):
 	else \
 		echo "  tokenizer.bin not found (skipping tokenizer)"; \
 	fi
+	@echo "  Adding reference files..."
+	
+	for f in ref/*; do \
+		echo "    $$f -> R_$$(basename $$f)"; \
+		mcopy -i $@ $$f "::R_$$(basename $$f)"; \
+	done
 	@echo "Disk contents:"
 	mdir -i $@ ::
 

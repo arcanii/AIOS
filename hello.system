@@ -13,7 +13,7 @@
     <memory_region name="model_data" size="0x8000000" />
 
     <!-- 4 KiB IPC buffer: orchestrator <-> llm_server -->
-    <memory_region name="llm_io" size="0x1000" />
+    <memory_region name="llm_io" size="0x4000" />
 
     <!-- ── Serial driver (priority 254) ── -->
     <protection_domain name="serial_driver" priority="254">
@@ -63,7 +63,7 @@
     </protection_domain>
 
     <!-- ── LLM server (priority 180) ── -->
-    <protection_domain name="llm_server" priority="180">
+    <protection_domain name="llm_server" priority="180" stack_size="0x10000">
         <program_image path="llm_server.elf" />
         <map mr="model_data" vaddr="0x10000000" perms="rw" cached="true" setvar_vaddr="model_data" />
         <map mr="llm_io"      vaddr="0x18100000" perms="rw" cached="false"
