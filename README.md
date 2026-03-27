@@ -30,7 +30,7 @@ Problem : interal LLM will not be powerful/accurate enough without large model a
 - :white_check_mark: Day 3:  LLM generates code, saves to disk via orchestrator.
 
 - Revised Day 4-7:
-- Day 4: Sandbox PD with syscall interface + minimal libc (memcpy, strlen, malloc, puts)
+- :white_check_mark: Day 4: Sandbox PD with syscall interface + minimal libc (memcpy, strlen, malloc, puts)
 - Day 5: Port TCC to run inside the sandbox using that libc
 - Day 6: Shell process in the sandbox that can load and execute compiled programs
 - Day 7: Demo: external AI generates C code → written to disk → TCC compiles → shell runs it
