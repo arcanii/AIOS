@@ -64,12 +64,12 @@ Six isolated protection domains running on seL4 via Microkit:
 Communication between PDs uses shared memory and Microkit notifications.
 
 IPC channels:
-
+```
   serial_driver <-ch1-> orchestrator <-ch4-> fs_server <-ch5-> blk_driver
                         orchestrator <-ch2-> blk_driver
                         orchestrator <-ch3-> echo_server
                         orchestrator <-ch6-> llm_server
-
+```
 
 ## Example Session
 ```
