@@ -1,86 +1,32 @@
-# AIOS - AI Operating System on seL4
-
-Project : Open ARIES
-
-A minimal operating system built on the seL4 formally verified microkernel
-that runs large language model inference in an isolated protection domain.
-
-The idea : have the OS build itself, using Linux or other source as a reference. Eventually, have a self improving OS that can watch over the system.
-
-Built from scratch: seL4 kernel, Microkit, 6 protection domains, virtio-blk,
-FAT16, 60MB model load, tokenizer, transformer inference, text generation.
-
-Challenge : kernal protection domains are static (need dynamic eventually)
+## Vision
+AIOS is a microkernel operating system built on seL4, designed for stability,
+security, and AI-native development. External AI (Claude, etc.) generates and
+reviews code, which is compiled and deployed to AIOS. The long-term goal is
+self-hosted development within AIOS itself (see docs/ARCHITECTURE.md)
 
 ## Plan
-AIOS> build ls
-  1. Orchestrator asks LLM: "generate ls.c for AIOS, 
-     reference /ref/coreutils/ls.c"
-  2. LLM reads the Linux reference, generates AIOS ls.c
-  3. Orchestrator sends ls.c to TCC PD
-  4. TCC compiles to aarch64 machine code
-  5. Orchestrator loads code into sandbox PD
-  6. Sandbox executes ls, output goes to serial
 
-Problem : interal LLM will not be powerful/accurate enough without large model and GPU accel, so need to switch to external AI support (revised)
+# AIOS Development Roadmap (see docs/ROADMAP.md)
 
-## Self-improvement demo (proof of concept)
-- :white_check_mark: Day 1:  FAT16 write support (FS_CMD_WRITE, FS_CMD_CREATE). (26 March, 2026) 
-- :white_check_mark: Day 2:  Put reference .c files on disk, add "ai build" command.  
-- :white_check_mark: Day 3:  LLM generates code, saves to disk via orchestrator.
-
-- Revised Day 4-7:
-- :white_check_mark: Day 4: Sandbox PD with syscall interface + minimal libc (memcpy, strlen, malloc, puts)
-- Day 5: Port TCC to run inside the sandbox using that libc
-- Day 6: Shell process in the sandbox that can load and execute compiled programs
-- Day 7: Demo: external AI generates C code → written to disk → TCC compiles → shell runs it
-  
-AIOS> build sh
-  [same loop, but generates a shell interpreter]
-  
-AIOS> build net_driver
-  [LLM reads Linux virtio-net source, generates 
-   an AIOS virtio-net PD]
-
-
-
-## What It Does
-
-1. Boots seL4, initializes six isolated protection domains
-2. Mounts a FAT16 filesystem from a virtio block device
-3. Loads a 60 MB language model (stories15M) from disk into shared memory
-4. Loads the tokenizer from disk
-5. Generates text using a freestanding Llama-2 transformer inference engine
-6. Provides an interactive serial shell (help, cat, load, gen, info, shutdown)
+## Milestone 1: POSIX Foundation (Current)
+- [ ] libc with POSIX wrappers (open, read, write, close, stat, readdir)
+- [ ] VFS server with file descriptor table
+- [ ] Process server (sandbox lifecycle management)
+- [ ] /dev/console for stdin/stdout
+- [ ] Shell as a POSIX program
+- [ ] Core utilities: ls, cat, echo, cp, rm, mkdir
 
 ## Future
-1. add X86-64 (currently ARM/aarch64)
-2. add dynamic PD (re-arch microkernel)
-3. add external AI / modular AI
-4. LLM acceleration (GPU)
+- [ ] port to x86-64
 
 ## Architecture
+(see docs/ARCHITECTURE.md)
 
-Six isolated protection domains running on seL4 via Microkit:
-```
-  serial_driver  - PL011 UART driver, RX/TX ring buffers (priority 254)
-  blk_driver     - virtio-blk legacy v1, sector read/write (priority 240)
-  fs_server      - Read-only FAT16, directory scan, FAT chain (priority 220)
-  orchestrator   - Central coordinator, shell, file/model loading (priority 200)
-  llm_server     - Llama-2 transformer inference, freestanding (priority 180)
-  echo_server    - Stub for future use (priority 100)
-```
-Communication between PDs uses shared memory and Microkit notifications.
 
-IPC channels:
-```
-  serial_driver <-ch1-> orchestrator <-ch4-> fs_server <-ch5-> blk_driver
-                        orchestrator <-ch2-> blk_driver
-                        orchestrator <-ch3-> echo_server
-                        orchestrator <-ch6-> llm_server
-```
 
-## Example Session
+## Legacy prototype
+
+## Example Session (old version)
 ```
   ========================================
     AIOS Orchestrator v0.6
