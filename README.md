@@ -2,11 +2,13 @@
 AIOS is a microkernel operating system built on seL4, designed for stability,
 security, and AI-native development. External AI (Claude, etc.) generates and
 reviews code, which is compiled and deployed to AIOS. The long-term goal is
-self-hosted development within AIOS itself (see docs/ARCHITECTURE.md)
+self-hosted development within AIOS itself 
 
-## Plan
+## Architecture
+(see docs/ARCHITECTURE.md)
 
-# AIOS Development Roadmap (see docs/ROADMAP.md)
+## AIOS Development Roadmap 
+(see docs/ROADMAP.md)
 
 ## Milestone 1: POSIX Foundation (Current)
 - [ ] libc with POSIX wrappers (open, read, write, close, stat, readdir)
