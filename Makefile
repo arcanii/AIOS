@@ -134,3 +134,26 @@ debug: $(BUILD)/loader.img $(DISK_IMG)
 clean:
 	rm -rf $(BUILD)
 
+
+# ── Sandbox programs ────────────────────────────────────
+PROGS_SRC := $(wildcard programs/*.c)
+PROGS_BIN := $(patsubst programs/%.c,programs/%.bin,$(PROGS_SRC))
+
+programs/%.bin: programs/%.c
+	$(CC) -c -mcpu=cortex-a53 -ffreestanding -nostdlib -O2 -Iprograms $< -o /tmp/$*.o
+	$(LD) -Ttext=0x20500000 /tmp/$*.o -o /tmp/$*.elf
+	aarch64-linux-gnu-objcopy -O binary /tmp/$*.elf $@
+	@echo "  $@: $$(wc -c < $@) bytes"
+
+programs: $(PROGS_BIN)
+	@echo "Built $(words $(PROGS_BIN)) sandbox programs"
+
+# Inject all .bin programs onto disk image
+inject: $(PROGS_BIN) $(DISK_IMG)
+	@for f in programs/*.bin; do \
+		name=$$(basename $$f .bin | tr 'a-z' 'A-Z'); \
+		echo "  $$f -> $${name}.BIN"; \
+		mcopy -i $(DISK_IMG) -o $$f "::$${name}.BIN"; \
+	done
+	@echo "Disk contents:"
+	@mdir -i $(DISK_IMG) :: | grep BIN
