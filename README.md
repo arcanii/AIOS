@@ -26,10 +26,12 @@ AIOS> build ls
 - :white_check_mark: Day 1:  FAT16 write support (FS_CMD_WRITE, FS_CMD_CREATE). (26 March, 2026) 
 - :white_check_mark: Day 2:  Put reference .c files on disk, add "ai build" command.  
 - :white_check_mark: Day 3:  LLM generates code, saves to disk via orchestrator.
-- Day 4:  Port TCC to a PD (compile in-memory).
-- Day 5:  Sandbox PD with jump-to-code execution.
-- Day 6:  Wire the full loop: prompt → generate → compile → run.
-- Day 7:  Demo: "build ls" produces a working ls from scratch.
+
+- Revised Day 4-7:
+- Day 4: Sandbox PD with syscall interface + minimal libc (memcpy, strlen, malloc, puts)
+- Day 5: Port TCC to run inside the sandbox using that libc
+- Day 6: Shell process in the sandbox that can load and execute compiled programs
+- Day 7: Demo: external AI generates C code → written to disk → TCC compiles → shell runs it
   
 AIOS> build sh
   [same loop, but generates a shell interpreter]
