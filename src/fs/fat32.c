@@ -130,9 +130,9 @@ static int walk_dir(uint32_t start_cluster, dir_walk_fn fn, void *ctx) {
             int entries = 512 / 32;
             for (int i = 0; i < entries; i++) {
                 uint8_t *ent = sector_buf + i * 32;
-                if (ent[0] == 0x00) return 0; /* end of directory */
                 int rc = fn(ent, sec_base + s, i, ctx);
                 if (rc != 0) return rc;
+                if (ent[0] == 0x00) return 0; /* end of directory */
             }
         }
         cluster = fat_read(cluster);
@@ -167,16 +167,99 @@ static int find_cb(uint8_t *ent, uint32_t dir_sector, int idx, void *ctx) {
     return 0;
 }
 
-static int find_entry(const char *filename, find_ctx_t *fc) {
-    to_name83(filename, fc->name83);
-    fc->found = 0;
-    walk_dir(root_cluster, find_cb, fc);
-    return fc->found ? 0 : -1;
-}
 
 static uint32_t fc_cluster(const find_ctx_t *fc) {
     return ((uint32_t)fc->cluster_hi << 16) | fc->cluster_lo;
 }
+
+/* Find a named entry within a specific directory cluster chain */
+
+/* ── Find free directory entry context ────────────────── */
+typedef struct {
+    uint32_t dir_sector;
+    int      dir_index;
+    int      found;
+} free_slot_ctx_t;
+
+static int free_slot_cb(uint8_t *ent, uint32_t dir_sector, int idx, void *ctx) {
+    free_slot_ctx_t *fs = (free_slot_ctx_t *)ctx;
+    if (ent[0] == 0x00 || ent[0] == 0xE5) {
+        fs->dir_sector = dir_sector;
+        fs->dir_index = idx;
+        fs->found = 1;
+        return 1;
+    }
+    return 0;
+}
+static int find_in_dir(uint32_t dir_cluster, const char *name, find_ctx_t *fc) {
+    to_name83(name, fc->name83);
+    fc->found = 0;
+    walk_dir(dir_cluster, find_cb, fc);
+    return fc->found ? 0 : -1;
+}
+
+/* Find a free slot in a specific directory cluster chain */
+static int free_slot_in_dir(uint32_t dir_cluster, free_slot_ctx_t *fsc) {
+    fsc->found = 0;
+    walk_dir(dir_cluster, free_slot_cb, fsc);
+    return fsc->found ? 0 : -1;
+}
+
+/* ── Path resolution for subdirectories ──────────────── */
+static int resolve_fat32_path(const char *path, char *basename, int bmax,
+                              uint32_t *parent_cluster) {
+    *parent_cluster = root_cluster;
+
+    int i = 0;
+    if (path[0] == '/') i = 1;
+
+    while (path[i]) {
+        /* Extract component */
+        char comp[64];
+        int ci = 0;
+        while (path[i] && path[i] != '/' && ci < 63) comp[ci++] = path[i++];
+        comp[ci] = '\0';
+        if (ci == 0) { if (path[i] == '/') i++; continue; }
+
+        /* Check if there's more path */
+        int j = i;
+        while (path[j] == '/') j++;
+
+        if (path[j]) {
+            /* Intermediate component — must be a directory */
+            find_ctx_t fc;
+            if (find_in_dir(*parent_cluster, comp, &fc) != 0) return -1;
+            /* Check directory attribute */
+            uint32_t sec = fc.dir_sector;
+            blk->read_sector(sec, sector_buf);
+            uint8_t *ent = sector_buf + fc.dir_index * 32;
+            if ((ent[11] & 0x10) == 0) return -1; /* not a directory */
+            *parent_cluster = fc_cluster(&fc);
+            if (path[i] == '/') i++;
+        } else {
+            /* Last component — basename */
+            int bi = 0;
+            while (bi < bmax - 1 && comp[bi]) { basename[bi] = comp[bi]; bi++; }
+            basename[bi] = '\0';
+            return 0;
+        }
+    }
+
+    basename[0] = '\0';
+    return 0;
+}
+
+static int find_entry(const char *filename, find_ctx_t *fc) {
+    char base[64];
+    uint32_t parent;
+    if (resolve_fat32_path(filename, base, sizeof(base), &parent) != 0)
+        return -1;
+    const char *name = base[0] ? base : filename;
+    return find_in_dir(parent, name, fc);
+}
+
+
+
 
 /* ── Allocate a free cluster ──────────────────────────── */
 static uint32_t alloc_cluster(void) {
@@ -198,23 +281,6 @@ static void free_chain(uint32_t cluster) {
     }
 }
 
-/* ── Find free directory entry context ────────────────── */
-typedef struct {
-    uint32_t dir_sector;
-    int      dir_index;
-    int      found;
-} free_slot_ctx_t;
-
-static int free_slot_cb(uint8_t *ent, uint32_t dir_sector, int idx, void *ctx) {
-    free_slot_ctx_t *fs = (free_slot_ctx_t *)ctx;
-    if (ent[0] == 0x00 || ent[0] == 0xE5) {
-        fs->dir_sector = dir_sector;
-        fs->dir_index = idx;
-        fs->found = 1;
-        return 1;
-    }
-    return 0;
-}
 
 /* ── List context ─────────────────────────────────────── */
 typedef struct {
@@ -280,16 +346,12 @@ static int fat32_open(const char *filename, open_file_t *fd) {
     if (find_entry(filename, &fc) != 0) return -1;
 
     fd->in_use = 1;
-    fd->start_cluster = (uint16_t)(fc_cluster(&fc) & 0xFFFF);
+    fd->start_cluster = fc_cluster(&fc);
     fd->file_size = fc.file_size;
     fd->offset = 0;
     fd->dir_abs_sector = fc.dir_sector;
     fd->dir_index = (uint8_t)(fc.dir_index & 0xFF);
     to_name83(filename, fd->name83);
-    /* Store high cluster bits in a reserved area */
-    /* We reuse dir_sector high bits — but for FAT32 we need
-       the full 32-bit cluster. Store high 16 bits via offset field. */
-    fd->offset = fc_cluster(&fc); /* temporarily store full start cluster */
     return 0;
 }
 
@@ -299,7 +361,7 @@ static int fat32_read(open_file_t *fd, uint8_t *buf, uint32_t offset,
     if (offset + len > fd->file_size) len = fd->file_size - offset;
 
     uint32_t cluster_size = sectors_per_cluster * 512;
-    uint32_t cluster = fd->offset; /* full 32-bit start cluster */
+    uint32_t cluster = fd->start_cluster;
 
     /* Skip to the cluster containing 'offset' */
     uint32_t skip = offset / cluster_size;
@@ -338,17 +400,18 @@ static int fat32_close(open_file_t *fd) {
 }
 
 static int fat32_create(const char *filename, open_file_t *fd) {
-    uint8_t name83[11];
-    to_name83(filename, name83);
-
-    /* Find free directory entry */
-    free_slot_ctx_t fsc = {0, 0, 0};
-    walk_dir(root_cluster, free_slot_cb, &fsc);
-
-    if (!fsc.found) {
-        /* TODO: extend root directory cluster chain */
+    char base[64];
+    uint32_t parent;
+    if (resolve_fat32_path(filename, base, sizeof(base), &parent) != 0)
         return -1;
-    }
+    const char *name = base[0] ? base : filename;
+
+    uint8_t name83[11];
+    to_name83(name, name83);
+
+    /* Find free directory entry in parent */
+    free_slot_ctx_t fsc = {0, 0, 0};
+    if (free_slot_in_dir(parent, &fsc) != 0) return -1;
 
     uint32_t cluster = alloc_cluster();
     if (cluster == 0) return -1;
@@ -365,9 +428,9 @@ static int fat32_create(const char *filename, open_file_t *fd) {
     blk->write_sector(fsc.dir_sector, sector_buf);
 
     fd->in_use = 1;
-    fd->start_cluster = (uint16_t)(cluster & 0xFFFF);
+    fd->start_cluster = cluster;
     fd->file_size = 0;
-    fd->offset = cluster; /* full 32-bit start cluster */
+    fd->offset = 0;
     fd->dir_abs_sector = fsc.dir_sector;
     fd->dir_index = (uint8_t)fsc.dir_index;
     my_memcpy(fd->name83, name83, 11);
@@ -377,7 +440,7 @@ static int fat32_create(const char *filename, open_file_t *fd) {
 static int fat32_write(open_file_t *fd, const uint8_t *data,
                        uint32_t len, uint32_t *bytes_written) {
     uint32_t cluster_size = sectors_per_cluster * 512;
-    uint32_t cluster = fd->offset; /* full 32-bit start cluster */
+    uint32_t cluster = fd->start_cluster;
     uint32_t prev = 0;
 
     /* Walk to last cluster */
@@ -473,15 +536,21 @@ static int fat32_stat(const char *filename, uint32_t *size_out) {
 
 /* ── mkdir: create a subdirectory ─────────────────────── */
 static int fat32_mkdir(const char *dirname) {
+    char base[64];
+    uint32_t parent;
+    if (resolve_fat32_path(dirname, base, sizeof(base), &parent) != 0)
+        return -1;
+    const char *name = base[0] ? base : dirname;
+
     uint8_t name83[11];
-    to_name83(dirname, name83);
+    to_name83(name, name83);
 
     /* Allocate a cluster for the new directory */
     uint32_t cluster = alloc_cluster();
     if (cluster == 0) return -1;
 
     /* Write . and .. entries */
-    uint32_t dir_lba = data_start + (cluster - 2) * sectors_per_cluster;
+    uint32_t dir_lba = cluster_to_sector(cluster);
     uint8_t buf[512];
     my_memset(buf, 0, 512);
 
@@ -493,13 +562,13 @@ static int fat32_mkdir(const char *dirname) {
     wr16(dot + 26, cluster & 0xFFFF);
     wr16(dot + 20, (cluster >> 16) & 0xFFFF);
 
-    /* ".." */
+    /* ".." points to parent */
     uint8_t *dotdot = buf + 32;
     my_memset(dotdot, ' ', 11);
     dotdot[0] = '.'; dotdot[1] = '.';
     dotdot[11] = 0x10;
-    wr16(dotdot + 26, root_cluster & 0xFFFF);
-    wr16(dotdot + 20, (root_cluster >> 16) & 0xFFFF);
+    wr16(dotdot + 26, parent & 0xFFFF);
+    wr16(dotdot + 20, (parent >> 16) & 0xFFFF);
 
     blk->write_sector(dir_lba, buf);
     for (uint32_t s = 1; s < sectors_per_cluster; s++) {
@@ -510,98 +579,82 @@ static int fat32_mkdir(const char *dirname) {
     /* Mark end of chain in FAT */
     fat_write(cluster, 0x0FFFFFF8);
 
-    /* Add entry to root directory cluster chain */
-    uint32_t cur = root_cluster;
-    while (cur >= 2 && cur < 0x0FFFFFF8) {
-        uint32_t lba = data_start + (cur - 2) * sectors_per_cluster;
-        for (uint32_t s = 0; s < sectors_per_cluster; s++) {
-            blk->read_sector(lba + s, buf);
-            for (int i = 0; i < 512 / 32; i++) {
-                uint8_t *ent = buf + i * 32;
-                if (ent[0] == 0x00 || ent[0] == 0xE5) {
-                    my_memset(ent, 0, 32);
-                    my_memcpy(ent, name83, 11);
-                    ent[11] = 0x10;
-                    wr16(ent + 26, cluster & 0xFFFF);
-                    wr16(ent + 20, (cluster >> 16) & 0xFFFF);
-                    blk->write_sector(lba + s, buf);
-                    return 0;
-                }
-            }
-        }
-        cur = fat_read(cur);
-    }
-    return -1;
+    /* Add entry to parent directory */
+    free_slot_ctx_t fsc = {0, 0, 0};
+    if (free_slot_in_dir(parent, &fsc) != 0) return -1;
+
+    blk->read_sector(fsc.dir_sector, sector_buf);
+    uint8_t *ent = sector_buf + fsc.dir_index * 32;
+    my_memset(ent, 0, 32);
+    my_memcpy(ent, name83, 11);
+    ent[11] = 0x10;
+    wr16(ent + 26, cluster & 0xFFFF);
+    wr16(ent + 20, (cluster >> 16) & 0xFFFF);
+    blk->write_sector(fsc.dir_sector, sector_buf);
+    return 0;
 }
 
 /* ── rmdir: remove an empty subdirectory ─────────────── */
 static int fat32_rmdir(const char *dirname) {
-    uint8_t name83[11];
-    to_name83(dirname, name83);
-    uint8_t buf[512];
+    char base[64];
+    uint32_t parent;
+    if (resolve_fat32_path(dirname, base, sizeof(base), &parent) != 0)
+        return -1;
+    const char *name = base[0] ? base : dirname;
 
-    uint32_t cur = root_cluster;
+    find_ctx_t fc;
+    if (find_in_dir(parent, name, &fc) != 0) return -1;
+
+    /* Verify it's a directory */
+    blk->read_sector(fc.dir_sector, sector_buf);
+    uint8_t *ent = sector_buf + fc.dir_index * 32;
+    if ((ent[11] & 0x10) == 0) return -1;
+
+    uint32_t dcluster = fc_cluster(&fc);
+
+    /* Check directory is empty (only . and ..) */
+    uint32_t cur = dcluster;
     while (cur >= 2 && cur < 0x0FFFFFF8) {
-        uint32_t lba = data_start + (cur - 2) * sectors_per_cluster;
+        uint32_t lba = cluster_to_sector(cur);
         for (uint32_t s = 0; s < sectors_per_cluster; s++) {
-            blk->read_sector(lba + s, buf);
+            blk->read_sector(lba + s, sector_buf);
             for (int i = 0; i < 512 / 32; i++) {
-                uint8_t *ent = buf + i * 32;
-                if (ent[0] == 0x00) return -1;
-                if (ent[0] == 0xE5) continue;
-                if (my_memcmp(ent, name83, 11) != 0) continue;
-                if ((ent[11] & 0x10) == 0) return -1;
-
-                uint32_t dcluster = rd16(ent + 26) | ((uint32_t)rd16(ent + 20) << 16);
-                /* Check empty (only . and ..) */
-                uint32_t dlba = data_start + (dcluster - 2) * sectors_per_cluster;
-                uint8_t dbuf[512];
-                blk->read_sector(dlba, dbuf);
-                for (int j = 2; j < 512 / 32; j++) {
-                    if (dbuf[j * 32] == 0x00) break;
-                    if (dbuf[j * 32] != 0xE5) return -1;
-                }
-
-                /* Free cluster chain */
-                fat_write(dcluster, 0x00000000);
-
-                /* Delete entry */
-                ent[0] = 0xE5;
-                blk->write_sector(lba + s, buf);
-                return 0;
+                uint8_t *e = sector_buf + i * 32;
+                if (e[0] == 0x00) goto empty_ok;
+                if (e[0] == 0xE5) continue;
+                if (e[0] == '.' && (e[1] == ' ' || e[1] == '.')) continue;
+                return -1; /* non-empty */
             }
         }
         cur = fat_read(cur);
     }
-    return -1;
+empty_ok:
+    /* Mark directory entry as deleted */
+    blk->read_sector(fc.dir_sector, sector_buf);
+    sector_buf[fc.dir_index * 32] = 0xE5;
+    blk->write_sector(fc.dir_sector, sector_buf);
+
+    /* Free cluster chain */
+    free_chain(dcluster);
+    return 0;
 }
 
 /* ── rename: rename a file or directory ──────────────── */
 static int fat32_rename(const char *oldname, const char *newname) {
-    uint8_t old83[11], new83[11];
-    to_name83(oldname, old83);
-    to_name83(newname, new83);
-    uint8_t buf[512];
+    find_ctx_t fc;
+    if (find_entry(oldname, &fc) != 0) return -1;
 
-    uint32_t cur = root_cluster;
-    while (cur >= 2 && cur < 0x0FFFFFF8) {
-        uint32_t lba = data_start + (cur - 2) * sectors_per_cluster;
-        for (uint32_t s = 0; s < sectors_per_cluster; s++) {
-            blk->read_sector(lba + s, buf);
-            for (int i = 0; i < 512 / 32; i++) {
-                uint8_t *ent = buf + i * 32;
-                if (ent[0] == 0x00) return -1;
-                if (ent[0] == 0xE5) continue;
-                if (my_memcmp(ent, old83, 11) == 0) {
-                    my_memcpy(ent, new83, 11);
-                    blk->write_sector(lba + s, buf);
-                    return 0;
-                }
-            }
-        }
-        cur = fat_read(cur);
-    }
-    return -1;
+    uint8_t name83[11];
+    char base[64];
+    uint32_t parent;
+    if (resolve_fat32_path(newname, base, sizeof(base), &parent) != 0)
+        return -1;
+    to_name83(base[0] ? base : newname, name83);
+
+    blk->read_sector(fc.dir_sector, sector_buf);
+    my_memcpy(sector_buf + fc.dir_index * 32, name83, 11);
+    blk->write_sector(fc.dir_sector, sector_buf);
+    return 0;
 }
 
 const aios_fs_ops_t fat32_ops = {

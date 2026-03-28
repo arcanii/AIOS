@@ -18,7 +18,7 @@ typedef struct aios_fs_ops aios_fs_ops_t;
 
 typedef struct {
     int      in_use;
-    uint16_t start_cluster;
+    uint32_t start_cluster;
     uint32_t file_size;
     uint32_t offset;
     uint32_t dir_abs_sector; /* absolute sector holding this dir entry  */

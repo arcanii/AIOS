@@ -898,8 +898,13 @@ static int ext2_mkdir(const char *dirname) {
 
 /* ── rmdir: remove an empty subdirectory ────────────── */
 static int ext2_rmdir(const char *dirname) {
+    uint32_t parent_ino;
+    char base[64];
+    if (resolve_path(dirname, &parent_ino, base, sizeof(base)) != 0)
+        return -1;
+
     uint32_t ino;
-    if (dir_lookup(EXT2_ROOT_INO, dirname, &ino) != 0)
+    if (dir_lookup(parent_ino, base, &ino) != 0)
         return -1;
 
     /* Verify it is a directory */
@@ -935,14 +940,14 @@ static int ext2_rmdir(const char *dirname) {
     free_inode(ino);
 
     /* Remove directory entry from parent */
-    dir_remove_entry(EXT2_ROOT_INO, dirname);
+    dir_remove_entry(parent_ino, base);
 
     /* Decrement parent link count */
     uint8_t parent_buf[128];
-    if (read_inode(EXT2_ROOT_INO, parent_buf) == 0) {
+    if (read_inode(parent_ino, parent_buf) == 0) {
         uint16_t links = rd16(parent_buf + 26);
         if (links > 1) wr16(parent_buf + 26, links - 1);
-        write_inode(EXT2_ROOT_INO, parent_buf);
+        write_inode(parent_ino, parent_buf);
     }
 
     return 0;

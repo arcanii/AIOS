@@ -534,7 +534,7 @@ static void cmd_gen(const char *prompt) {
 
 /* ── Command: info ───────────────────────────────────── */
 static void cmd_info(void) {
-    ser_puts("AIOS System Information:\n");
+    ser_puts("Open Aries System Information:\n");
     ser_puts("  Kernel:     seL4 14.0.0 (Microkit 2.1.0)\n");
     ser_puts("  Arch:       AArch64 (Cortex-A53)\n");
     ser_puts("  RAM:        2 GiB\n");
@@ -972,12 +972,12 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
 
 /* ── Microkit entry points ─────────────────────────── */
 void init(void) {
-    ser_puts("\n========================================\n");
+    ser_puts("\n============ Open Aries ================\n");
     ser_puts("  " AIOS_VERSION_FULL "\n");
     ser_puts("  Kernel:  seL4 14.0.0 (Microkit 2.1.0)\n");
     ser_puts("  Drivers: PL011 UART, virtio-blk, FAT16\n");
     ser_puts("  LLM:     llm_server (llama2.c engine)\n");
-    ser_puts("========================================\n\n");
+    ser_puts("============ Open Aries ================\n\n");
     ser_flush();
 
     /* Boot: read hello.txt synchronously */
