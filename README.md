@@ -7,9 +7,9 @@ self-hosted development within AIOS itself. This is also a study on AI coding us
 It currently is only tested in QEMU on aarch64 a53 
 
 ## Hardware Targets
-- [ ] - Development: QEMU virt (AArch64) — current platform
-- Primary: Raspberry Pi 4/5 (BCM2711/BCM2712, AArch64)
-- Primary++ : x86-64 (Ryzen Strix Halo)
+- [x] - Development: QEMU virt (AArch64) — current platform
+- [ ] Primary: Raspberry Pi 4/5 (BCM2711/BCM2712, AArch64)
+- [ ] Primary++ : x86-64 (Ryzen Strix Halo)
 
 The goal is to make it POSIX compatible, and Linux compatible.
 Stretch goals : BSD, Win32, MacOS.
