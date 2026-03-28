@@ -124,16 +124,19 @@ static inline int remove(const char *path) {
 
 /* ── POSIX stat() ────────────────────────────────────── */
 static inline int stat(const char *path, struct stat *buf) {
-    /* Open, get size, close */
-    int fd = sys->open(path);
-    if (fd < 0) return -1;
+    unsigned long size = 0;
+    int r = sys->stat_file(path, &size);
+    if (r < 0) return -1;
     if (buf) {
-        buf->st_size = (off_t)sys->filesize();
+        for (int i = 0; i < (int)sizeof(struct stat); i++)
+            ((char *)buf)[i] = 0;
+        buf->st_size = (off_t)size;
         buf->st_mode = S_IFREG | 0644;
         buf->st_ino = 1;
         buf->st_nlink = 1;
+
+
     }
-    sys->close(fd);
     return 0;
 }
 
@@ -183,6 +186,11 @@ static inline int closedir(DIR *dirp) {
 
 /* ── Stubs ───────────────────────────────────────────── */
 
+static inline off_t lseek(int fd, off_t offset, int whence) {
+    if (_FD_IS_CONSOLE(fd)) return -1;
+    return (off_t)sys->lseek(fd - 3, (long)offset, whence);
+}
+
 static inline int mkdir(const char *path, mode_t mode) {
     (void)path; (void)mode;
     return -1;  /* not yet supported */
@@ -194,7 +202,7 @@ static inline int rmdir(const char *path) {
 }
 
 static inline char *getcwd(char *buf, size_t size) {
-    if (buf && size >= 2) { buf[0] = '/'; buf[1] = '\0'; }
+    sys->getcwd(buf, (unsigned long)size);
     return buf;
 }
 
@@ -202,7 +210,7 @@ static inline int isatty(int fd) {
     return _FD_IS_CONSOLE(fd) ? 1 : 0;
 }
 
-static inline pid_t getpid(void) { return 1; }
+static inline pid_t getpid(void) { return (pid_t)sys->getpid(); }
 
 /* ── printf family (minimal) ─────────────────────────── */
 /* Programs already have puts/putc from aios.h; for POSIX

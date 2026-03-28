@@ -48,7 +48,13 @@ ELFS := $(patsubst %,$(BUILD)/%.elf,$(PDS))
 # ── Default target ──────────────────────────────────────
 .PHONY: all clean run debug disk
 
+
 all: $(BUILD)/loader.img
+
+# ── Build number (auto-increments every compile) ─────────────
+.PHONY: build_number
+build_number:
+	@sh tools/bump_build.sh
 
 # ── Build directory ─────────────────────────────────────
 $(BUILD):
@@ -80,7 +86,7 @@ $(BUILD)/%.elf: $(BUILD)/%.o
 	$(LD) $< $(LDFLAGS) -o $@
 
 # ── Pack into Microkit loader image ─────────────────────
-$(BUILD)/loader.img: $(ELFS) aios.system
+$(BUILD)/loader.img: build_number $(ELFS) aios.system
 	$(MICROKIT_SDK)/bin/microkit aios.system \
 		--search-path $(BUILD) \
 		--board $(BOARD) \
@@ -178,3 +184,28 @@ inject: $(PROGS_BIN) $(DISK_IMG)
 	done
 	@echo "Disk contents:"
 	@mdir -i $(DISK_IMG) :: | grep BIN
+
+# ── Version management ──────────────────────────────────
+# Usage:
+#   make              — builds and increments build number
+#   make bump-patch   — increment Z in X.Y.Z (edit version.h)
+#   make bump-minor   — increment Y, reset Z to 0
+#   make version      — print current version and build number
+.PHONY: bump-patch bump-minor version
+
+version:
+	@echo "Version: $$(grep AIOS_VERSION_MAJOR include/aios/version.h | head -1 | awk '{print $$3}').$$(grep AIOS_VERSION_MINOR include/aios/version.h | head -1 | awk '{print $$3}').$$(grep AIOS_VERSION_PATCH include/aios/version.h | head -1 | awk '{print $$3}')"
+	@echo "Build:   $$(cat .build_number)"
+
+bump-patch:
+	@PATCH=$$(grep 'AIOS_VERSION_PATCH' include/aios/version.h | head -1 | awk '{print $$3}'); \
+	NEW=$$((PATCH + 1)); \
+	sed -i '' "s/AIOS_VERSION_PATCH  *$$PATCH/AIOS_VERSION_PATCH  $$NEW/" include/aios/version.h; \
+	echo "Version bumped to 0.1.$$NEW"
+
+bump-minor:
+	@MINOR=$$(grep 'AIOS_VERSION_MINOR' include/aios/version.h | head -1 | awk '{print $$3}'); \
+	NEW=$$((MINOR + 1)); \
+	sed -i '' "s/AIOS_VERSION_MINOR  *$$MINOR/AIOS_VERSION_MINOR  $$NEW/" include/aios/version.h; \
+	sed -i '' "s/AIOS_VERSION_PATCH  *[0-9]*/AIOS_VERSION_PATCH  0/" include/aios/version.h; \
+	echo "Version bumped to 0.$$NEW.0"

@@ -33,6 +33,11 @@ typedef struct {
     int   (*unlink)(const char *path);
     int   (*readdir)(void *buf, unsigned long max_entries);
     int   (*filesize)(void);
+    /* Extended POSIX */
+    int   (*stat_file)(const char *path, unsigned long *size_out);
+    int   (*lseek)(int fd, long offset, int whence);
+    int   (*getcwd)(char *buf, unsigned long size);
+    int   (*getpid)(void);
     /* Args */
     const char *args;
     /* Interactive I/O (immediate, not buffered) */

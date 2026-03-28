@@ -6,6 +6,7 @@
 #include "aios/ipc.h"
 #include "aios/channels.h"
 #include "sys/syscall.h"
+#include "aios/version.h"
 #include "aios/ring.h"
 
 /* ── Shared memory regions (set by Microkit loader) ─── */
@@ -117,6 +118,16 @@ static int fs_delete_sync(const char *filename) {
     dst[i] = '\0';
     microkit_ppcall(CH_FS, microkit_msginfo_new(0, 0));
     return (int)RD32(fs_data, FS_STATUS);
+}
+
+static int fs_stat_sync(const char *filename) {
+    volatile char *dst = (volatile char *)(fs_data + FS_FILENAME);
+    int i = 0;
+    while (filename[i] && i < 63) { dst[i] = filename[i]; i++; }
+    dst[i] = '\0';
+    WR32(fs_data, FS_CMD, FS_CMD_STAT);
+    microkit_ppcall(CH_FS, microkit_msginfo_new(0, 1));
+    return (int)seL4_GetMR(0);
 }
 
 static int fs_list_sync(void) {
@@ -767,6 +778,65 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         result = (int64_t)(unsigned char)rx_getc_blocking();
         break;
     }
+    case SYS_STAT: {
+        volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        char fname[256];
+        int i = 0;
+        while (path[i] && i < 255) { fname[i] = path[i]; i++; }
+        fname[i] = '\0';
+        int st = fs_stat_sync(fname);
+        if (st == 0) {
+            result = 0;
+            seL4_SetMR(1, RD32(fs_data, FS_FILESIZE));
+        } else {
+            result = -1;
+        }
+        break;
+    }
+    case SYS_FSTAT: {
+        /* Return file size for open fd */
+        result = 0;
+        seL4_SetMR(1, seL4_GetMR(1)); /* placeholder */
+        break;
+    }
+    case SYS_LSEEK: {
+        /* Handled client-side via fd_pos in sandbox */
+        result = 0;
+        break;
+    }
+    case SYS_MKDIR: {
+        /* Not supported yet on flat filesystems */
+        result = -1;
+        break;
+    }
+    case SYS_RMDIR: {
+        result = -1;
+        break;
+    }
+    case SYS_GETCWD: {
+        /* Write "/" to sandbox_io+0x200 */
+        volatile char *dst = (volatile char *)(sandbox_io + 0x200);
+        dst[0] = '/'; dst[1] = '\0';
+        result = 0;
+        break;
+    }
+    case SYS_GETPID: {
+        result = 1; /* single process */
+        break;
+    }
+    case SYS_SLEEP: {
+        /* Busy-wait approximation */
+        uint32_t secs = (uint32_t)seL4_GetMR(1);
+        for (volatile uint32_t s = 0; s < secs; s++)
+            for (volatile uint32_t i = 0; i < 1000000; i++);
+        result = 0;
+        break;
+    }
+    case SYS_EXEC: {
+        /* Future: run program from within program */
+        result = -1;
+        break;
+    }
     case SYS_EXIT: {
         result = 0;
         break;
@@ -783,7 +853,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
 /* ── Microkit entry points ─────────────────────────── */
 void init(void) {
     ser_puts("\n========================================\n");
-    ser_puts("  AIOS v0.7\n");
+    ser_puts("  " AIOS_VERSION_FULL "\n");
     ser_puts("  Kernel:  seL4 14.0.0 (Microkit 2.1.0)\n");
     ser_puts("  Drivers: PL011 UART, virtio-blk, FAT16\n");
     ser_puts("  LLM:     llm_server (llama2.c engine)\n");

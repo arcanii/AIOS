@@ -13,3 +13,4 @@ __pycache__/
 
 # OS files
 .DS_Store
+include/aios/build_number.h

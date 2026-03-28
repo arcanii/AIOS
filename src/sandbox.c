@@ -202,6 +202,39 @@ static int sbx_filesize(void) {
     return (int)seL4_GetMR(1);
 }
 
+/* ── Additional POSIX syscalls ─────────────────────── */
+
+static int sbx_stat(const char *path, unsigned long *size_out) {
+    volatile char *dst = (volatile char *)(sandbox_io + 0x200);
+    int i = 0;
+    while (path[i] && i < 255) { dst[i] = path[i]; i++; }
+    dst[i] = '\0';
+    seL4_SetMR(0, SYS_STAT);
+    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 1));
+    int r = (int)seL4_GetMR(0);
+    if (r == 0 && size_out) *size_out = (unsigned long)seL4_GetMR(1);
+    return r;
+}
+
+static int sbx_lseek(int fd, long offset, int whence) {
+    if (fd >= 0 && fd < MAX_FDS) {
+        if (whence == 0) fd_pos[fd] = (uint32_t)offset;        /* SEEK_SET */
+        else if (whence == 1) fd_pos[fd] += (uint32_t)offset;   /* SEEK_CUR */
+        /* SEEK_END not supported without knowing file size */
+        return (int)fd_pos[fd];
+    }
+    return -1;
+}
+
+static int sbx_getcwd(char *buf, unsigned long size) {
+    if (buf && size >= 2) { buf[0] = '/'; buf[1] = '\0'; }
+    return 0;
+}
+
+static int sbx_getpid(void) {
+    return 1;
+}
+
 /* ── Interactive I/O (PPC, immediate) ────────────────── */
 
 static int sbx_getc(void) {
@@ -257,6 +290,11 @@ typedef struct {
     int   (*unlink)(const char *path);
     int   (*readdir)(void *buf, unsigned long max_entries);
     int   (*filesize)(void);
+    /* Extended POSIX */
+    int   (*stat_file)(const char *path, unsigned long *size_out);
+    int   (*lseek)(int fd, long offset, int whence);
+    int   (*getcwd)(char *buf, unsigned long size);
+    int   (*getpid)(void);
     /* Args */
     const char *args;
     /* Interactive I/O */
@@ -289,6 +327,11 @@ static void init_syscalls(void) {
     syscalls.unlink     = sbx_unlink;
     syscalls.readdir    = sbx_readdir;
     syscalls.filesize   = sbx_filesize;
+    /* Extended POSIX */
+    syscalls.stat_file  = sbx_stat;
+    syscalls.lseek      = sbx_lseek;
+    syscalls.getcwd     = sbx_getcwd;
+    syscalls.getpid     = sbx_getpid;
     /* Args */
     syscalls.getc        = sbx_getc;
     syscalls.puts_direct = sbx_puts_direct;
