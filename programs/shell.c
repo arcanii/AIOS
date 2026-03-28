@@ -115,6 +115,8 @@ static void cmd_help(void) {
     print("  cmd >> file     - append output to file\n");
     print("  cmd < file      - redirect input from file\n");
     print("  cmd1 | cmd2     - pipe output of cmd1 to cmd2\n");
+    print("  source <file>   - run shell script\n");
+    print("  sh <file>       - run shell script\n");
     print("  exit            - exit shell\n");
 }
 
@@ -304,6 +306,90 @@ static void parse_redirects(void) {
 }
 
 /* ── Dispatch a single command in line[] ──────────────── */
+/* ── Script execution ──────────────────────────────────── */
+static void dispatch(void);
+
+static void cmd_source(const char *filename) {
+    int fd = open(filename, O_RDONLY);
+    if (fd < 0) { print("sh: cannot open "); print(filename); print("\n"); return; }
+    
+    /* Read entire script into redir_buf */
+    char script[REDIR_BUF_SIZE];
+    int total = 0;
+    ssize_t n;
+    while ((n = read(fd, script + total, (size_t)(REDIR_BUF_SIZE - 1 - total))) > 0)
+        total += (int)n;
+    close(fd);
+    script[total] = '\0';
+    
+    /* Execute line by line */
+    int pos = 0;
+    while (pos < total) {
+        /* Extract one line */
+        line_len = 0;
+        while (pos < total && script[pos] != '\n' && script[pos] != '\r') {
+            if (line_len < LINE_MAX - 1)
+                line[line_len++] = script[pos];
+            pos++;
+        }
+        line[line_len] = '\0';
+        /* Skip newline chars */
+        while (pos < total && (script[pos] == '\n' || script[pos] == '\r')) pos++;
+        
+        /* Skip empty lines and comments */
+        if (line_len == 0) continue;
+        if (line[0] == '#') continue;
+        
+        /* Echo the command */
+        print("+ "); print(line); print("\n");
+        
+        /* Parse redirects and dispatch */
+        parse_redirects();
+        if (redir_in_file[0]) {
+            int ifd = open(redir_in_file, O_RDONLY);
+            if (ifd < 0) { print("sh: cannot open "); print(redir_in_file); print("\n"); continue; }
+            redir_buf_len = (int)read(ifd, redir_buf, REDIR_BUF_SIZE - 1);
+            close(ifd);
+            start_feed();
+        }
+        if (redir_pipe || redir_out_file[0]) start_capture();
+        
+        dispatch();
+        
+        if (redir_out_file[0] && !redir_pipe) {
+            stop_capture();
+            if (!redir_append) unlink(redir_out_file);
+            int ofd = open(redir_out_file, O_WRONLY | O_CREAT);
+            if (ofd >= 0) {
+                if (redir_append) lseek(ofd, 0, SEEK_END);
+                write(ofd, redir_buf, (size_t)redir_buf_len);
+                close(ofd);
+            }
+        }
+        if (redir_pipe) {
+            stop_capture();
+            start_feed();
+            int i = 0;
+            while (pipe_cmd[i] && i < LINE_MAX - 1) { line[i] = pipe_cmd[i]; i++; }
+            line[i] = 0; line_len = i;
+            redir_pipe = 0;
+            parse_redirects();
+            if (redir_out_file[0]) start_capture();
+            dispatch();
+            stop_feed();
+            if (redir_out_file[0]) {
+                stop_capture();
+                unlink(redir_out_file);
+                int ofd = open(redir_out_file, O_WRONLY | O_CREAT);
+                if (ofd >= 0) { write(ofd, redir_buf, (size_t)redir_buf_len); close(ofd); }
+            }
+        }
+        if (redir_in_file[0]) stop_feed();
+        
+        if (shell_exit) return;
+    }
+}
+
 static void dispatch(void) {
     if (line_len == 0) return;
     if (str_eq(line, "help"))           cmd_help();
@@ -311,6 +397,8 @@ static void dispatch(void) {
     else if (str_eq(line, "pwd"))       cmd_pwd();
     else if (str_eq(line, "clear"))     cmd_clear();
     else if (str_eq(line, "exit"))      { shell_exit = 1; }
+    else if (starts_with(line, "source ")) cmd_source(line + 7);
+    else if (starts_with(line, "sh "))     cmd_source(line + 3);
     else if (str_eq(line, "cat"))        cmd_cat("");
     else if (starts_with(line, "cat ")) cmd_cat(line + 4);
     else if (starts_with(line, "cp "))  cmd_cp(line + 3);
