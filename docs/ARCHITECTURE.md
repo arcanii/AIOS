@@ -18,9 +18,36 @@ self-hosted development within AIOS itself.
 - Development: QEMU virt (AArch64) — current platform
 
 ## Architecture Overview
-
-┌─────────────────────────────────────────────────────┐ │ User Space │ │ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────────┐ │ │ │ shell│ │ httpd│ │ sshd │ │ prog │ │ ai_agent │ │ │ └──┬───┘ └──┬───┘ └──┬───┘ └──┬───┘ └────┬─────┘ │ │ │ │ │ │ │ │ │ ┌──┴────────┴────────┴────────┴───────────┴──────┐ │ │ │ libc (POSIX interface) │ │ │ └──┬────────┬────────┬────────┬──────────────────┘ │ │ │ │ │ │ │ │ ┌──┴───┐ ┌─┴────┐ ┌─┴────┐ ┌┴──────┐ ┌─────────┐ │ │ │ vfs │ │ net │ │ proc │ │ devfs │ │ llm_srv │ │ │ │server│ │server│ │server│ │ │ │ │ │ │ └──┬───┘ └──┬───┘ └──┬───┘ └──┬───┘ └─────────┘ │ │ │ │ │ │ │ │ ┌──┴───┐ ┌─┴────┐ │ ┌───┴────┐ │ │ │ fs │ │ net │ │ │ serial │ │ │ │server│ │driver│ │ │ driver │ │ │ └──┬───┘ └──┬───┘ │ └────────┘ │ │ │ │ │ │ │ ┌──┴───┐ ┌─┴────┐ │ │ │ │ blk │ │ eth │ │ │ │ │driver│ │driver│ │ │ │ └──────┘ └──────┘ │ │ ├───────────────────────┼──────────────────────────────┤ │ seL4 Microkernel (Microkit) │ ├──────────────────────────────────────────────────────┤ │ Hardware (RPi / QEMU) │ └──────────────────────────────────────────────────────┘
-
+```
+┌─────────────────────────────────────────────────────┐ │ User Space │
+│ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────────┐    │
+│ │ shell│ │ httpd│ │ sshd │ │ prog │ │ ai_agent │    │
+│ └──┬───┘ └──┬───┘ └──┬───┘ └──┬───┘ └────┬─────┘    │
+│    │        │        │        │          │          │
+│ ┌──┴────────┴────────┴────────┴───────────┴──────┐  │
+│ │ libc (POSIX interface)                         │  │
+│ └──┬────────┬────────┬────────┬──────────────────┘  │
+│    │        │        │        │                     │
+│ ┌──┴───┐  ┌─┴────┐ ┌─┴────┐  ┌┴──────┐ ┌─────────┐  │
+│ │ vfs  │  │ net  │ │ proc │  │ devfs │ │ llm_srv │  │
+│ │server│  │server│ │server│  │       │ │         │  │
+│ └──┬───┘  └──┬───┘ └──┬───┘  └──┬───┘  └─────────┘  │
+│    │         │        │         │                   │
+│ ┌──┴───┐   ┌─┴────┐   │     ┌───┴────┐              │
+│ │ fs   │   │ net  │   │     │ serial │              │
+│ │server│   │driver│   │     │ driver │              │
+│ └──┬───┘   └──┬───┘   │     └────────┘              │
+│    │          │       │                             │
+│ ┌──┴───┐    ┌─┴────┐  │                             │
+│ │ blk  │    │ eth  │  │                             │
+│ │driver│    │driver│  │                             │
+│ └──────┘    └──────┘  │                             │
+├───────────────────────┼──────────────────────────────┤
+│ seL4 Microkernel (Microkit)                          │
+├──────────────────────────────────────────────────────┤
+│ Hardware (RPi / QEMU)                                │
+└──────────────────────────────────────────────────────┘
+```
 
 ## Service Architecture (PPC-based)
 
@@ -39,7 +66,7 @@ All inter-service communication uses seL4 Protected Procedure Calls (PPC):
 
 Programs link against libc which translates POSIX calls to PPC:
 
-```c
+```
 // libc/open.c
 int open(const char *path, int flags) {
     seL4_SetMR(0, SYS_OPEN);
@@ -78,78 +105,5 @@ AI agent runs inside AIOS (larger model or API access)
 Reads own source, proposes changes
 Compiles, tests, commits to git
 Human reviews via web UI EOF
-echo "Created docs/ARCHITECTURE.md"
 
-
-Now let's create the roadmap with concrete milestones:
-
-```bash
-cat > docs/ROADMAP.md << 'EOF'
-# AIOS Development Roadmap
-
-## Milestone 1: POSIX Foundation (Current Sprint)
-Goal: Programs can use open/read/write/close/stat/readdir
-
-- [ ] VFS server with file descriptor table
-- [ ] libc with POSIX wrappers (open, read, write, close, stat, readdir)
-- [ ] Process server (sandbox lifecycle management)
-- [ ] /dev/console for stdin/stdout
-- [ ] Shell as a POSIX program (reads stdin, writes stdout)
-- [ ] Core utilities: ls, cat, echo, cp, mv, rm, mkdir
-
-## Milestone 2: Network Stack
-Goal: AIOS can communicate over the network
-
-- [ ] virtio-net driver (QEMU)
-- [ ] TCP/IP stack (lwIP port)
-- [ ] Socket API in libc (socket, bind, listen, accept, connect)
-- [ ] DNS resolver
-- [ ] HTTP client (for AI API access)
-- [ ] HTTP server (status UI)
-
-## Milestone 3: Status Web UI
-Goal: Browser-based system management
-
-- [ ] Static file serving from /www
-- [ ] /api/status JSON endpoint
-- [ ] /api/log real-time log stream
-- [ ] /api/priority POST endpoint for user guidance
-- [ ] Simple HTML/JS dashboard
-- [ ] AI task queue visible in UI
-
-## Milestone 4: Raspberry Pi Port
-Goal: AIOS boots on real hardware
-
-- [ ] Microkit RPi4 board support (exists upstream)
-- [ ] BCM2711 UART driver (replaces PL011)
-- [ ] SD card driver (replaces virtio-blk)
-- [ ] USB ethernet or WiFi driver
-- [ ] Device tree parsing
-- [ ] Boot from SD card
-
-## Milestone 5: Build System Inside AIOS
-Goal: Compile C code within AIOS
-
-- [ ] Port TCC to run as AIOS process
-- [ ] libc headers on filesystem
-- [ ] `cc` command compiles .c to executable
-- [ ] `make` equivalent (simple build tool)
-- [ ] Can rebuild own utilities
-
-## Milestone 6: Git and Self-Hosted Development
-Goal: AIOS manages its own source
-
-- [ ] Port minimal git client
-- [ ] Clone/pull/commit/push over HTTPS
-- [ ] AI agent reads source, proposes patches
-- [ ] Automated test suite
-- [ ] Push at milestone intervals
-
-## Milestone 7: AI Agent Autonomy
-Goal: AI drives development with human oversight
-
-- [ ] AI agent PD with network access to LLM API
-- [ ] Task queue: reads priorities from web UI
-- [ ] Generates code, compiles, tests
-- [ ] Submits for human review via web UI
-- [ ] Approved changes committed and pushed
+```
