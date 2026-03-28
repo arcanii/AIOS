@@ -504,9 +504,68 @@ static int ext2_mount(const blk_io_t *b) {
     return 0;
 }
 
+
+/* ── Path resolution: walk /dir1/dir2/file ──────────── */
+static int resolve_path(const char *path, uint32_t *parent_ino, char *basename, int basename_max) {
+    uint32_t cur_ino = EXT2_ROOT_INO;
+    
+    /* Skip leading / */
+    int i = 0;
+    if (path[0] == '/') i = 1;
+    
+    /* Walk each component */
+    while (path[i]) {
+        /* Extract next component */
+        char comp[64];
+        int ci = 0;
+        while (path[i] && path[i] != '/' && ci < 63) {
+            comp[ci++] = path[i++];
+        }
+        comp[ci] = '\0';
+        if (ci == 0) { i++; continue; } /* skip double slashes */
+        
+        /* Is there more path after this? */
+        int more = 0;
+        int j = i;
+        while (path[j] == '/') j++;
+        if (path[j]) more = 1;
+        
+        if (more) {
+            /* This component must be a directory — look it up */
+            uint32_t child_ino;
+            if (dir_lookup(cur_ino, comp, &child_ino) != 0)
+                return -1; /* directory not found */
+            
+            /* Verify it's a directory */
+            uint8_t ib[128];
+            if (read_inode(child_ino, ib) != 0) return -1;
+            if ((rd16(ib + 0) & 0xF000) != 0x4000) return -1; /* not a dir */
+            
+            cur_ino = child_ino;
+            if (path[i] == '/') i++;
+        } else {
+            /* Last component — this is the basename */
+            int bi = 0;
+            while (bi < basename_max - 1 && comp[bi]) { basename[bi] = comp[bi]; bi++; }
+            basename[bi] = '\0';
+            *parent_ino = cur_ino;
+            return 0;
+        }
+    }
+    
+    /* Path ended with / or was just "/" — basename is empty, parent is cur_ino */
+    basename[0] = '\0';
+    *parent_ino = cur_ino;
+    return 0;
+}
+
 static int ext2_open(const char *filename, open_file_t *fd) {
     uint32_t ino;
-    if (dir_lookup(EXT2_ROOT_INO, filename, &ino) != 0)
+    uint32_t parent_ino;
+    char base[64];
+    if (resolve_path(filename, &parent_ino, base, sizeof(base)) != 0) return -1;
+    if (base[0] == '\0') return -1; /* can't open a directory as file */
+    if (dir_lookup(parent_ino, base, &ino) != 0)
         return -1;
 
     uint8_t inode_buf[128];
@@ -553,6 +612,11 @@ static int ext2_close(open_file_t *fd) {
 }
 
 static int ext2_create(const char *filename, open_file_t *fd) {
+    uint32_t parent_ino;
+    char base[64];
+    if (resolve_path(filename, &parent_ino, base, sizeof(base)) != 0) return -1;
+    if (base[0] == '\0') return -1;
+    
     /* Allocate inode */
     uint32_t ino = alloc_inode();
     if (ino == 0) return -1;
@@ -577,7 +641,7 @@ static int ext2_create(const char *filename, open_file_t *fd) {
     write_inode(ino, inode_buf);
 
     /* Add directory entry */
-    if (dir_add_entry(EXT2_ROOT_INO, filename, ino, EXT2_FT_REG_FILE) != 0) {
+    if (dir_add_entry(parent_ino, base, ino, EXT2_FT_REG_FILE) != 0) {
         free_block(data_blk);
         free_inode(ino);
         return -1;
@@ -643,7 +707,10 @@ static int ext2_write(open_file_t *fd, const uint8_t *data_in,
 
 static int ext2_delete(const char *filename) {
     uint32_t ino;
-    if (dir_lookup(EXT2_ROOT_INO, filename, &ino) != 0) return -1;
+    uint32_t parent_ino_d;
+    char base_d[64];
+    if (resolve_path(filename, &parent_ino_d, base_d, sizeof(base_d)) != 0) return -1;
+    if (dir_lookup(parent_ino_d, base_d, &ino) != 0) return -1;
 
     uint8_t inode_buf[128];
     if (read_inode(ino, inode_buf) != 0) return -1;
@@ -659,7 +726,7 @@ static int ext2_delete(const char *filename) {
     free_inode(ino);
 
     /* Remove directory entry */
-    dir_remove_entry(EXT2_ROOT_INO, filename);
+    dir_remove_entry(parent_ino_d, base_d);
 
     return 0;
 }
@@ -748,7 +815,10 @@ static int ext2_sync(void) { return 0; }
 
 static int ext2_stat(const char *filename, uint32_t *size_out) {
     uint32_t ino;
-    if (dir_lookup(EXT2_ROOT_INO, filename, &ino) != 0) return -1;
+    uint32_t parent_ino_s;
+    char base_s[64];
+    if (resolve_path(filename, &parent_ino_s, base_s, sizeof(base_s)) != 0) return -1;
+    if (dir_lookup(parent_ino_s, base_s, &ino) != 0) return -1;
 
     uint8_t inode_buf[128];
     if (read_inode(ino, inode_buf) != 0) return -1;
@@ -761,6 +831,12 @@ static int ext2_stat(const char *filename, uint32_t *size_out) {
 
 /* ── mkdir: create a subdirectory ────────────────────── */
 static int ext2_mkdir(const char *dirname) {
+    uint32_t mkdir_parent;
+    char mkdir_base[64];
+    if (resolve_path(dirname, &mkdir_parent, mkdir_base, sizeof(mkdir_base)) != 0)
+        return -1;
+    if (mkdir_base[0] == '\0') return -1;
+
     /* Allocate inode for new directory */
     uint32_t ino = alloc_inode();
     if (ino == 0) return -1;
@@ -783,7 +859,7 @@ static int ext2_mkdir(const char *dirname) {
 
     /* ".." entry — points to parent (root for now) */
     off = 12;
-    wr32(dir_data + off + 0, EXT2_ROOT_INO); /* parent inode */
+    wr32(dir_data + off + 0, mkdir_parent); /* parent inode */
     wr16(dir_data + off + 4, block_size - 12); /* rec_len fills rest */
     dir_data[off + 6] = 2;                   /* name_len */
     dir_data[off + 7] = EXT2_FT_DIR;        /* file_type */
@@ -803,7 +879,7 @@ static int ext2_mkdir(const char *dirname) {
     write_inode(ino, inode_buf);
 
     /* Add entry in parent (root) directory */
-    if (dir_add_entry(EXT2_ROOT_INO, dirname, ino, EXT2_FT_DIR) != 0) {
+    if (dir_add_entry(mkdir_parent, mkdir_base, ino, EXT2_FT_DIR) != 0) {
         free_block(data_blk);
         free_inode(ino);
         return -1;
@@ -811,10 +887,10 @@ static int ext2_mkdir(const char *dirname) {
 
     /* Increment parent link count (for ..) */
     uint8_t parent_buf[128];
-    if (read_inode(EXT2_ROOT_INO, parent_buf) == 0) {
+    if (read_inode(mkdir_parent, parent_buf) == 0) {
         uint16_t links = rd16(parent_buf + 26);
         wr16(parent_buf + 26, links + 1);
-        write_inode(EXT2_ROOT_INO, parent_buf);
+        write_inode(mkdir_parent, parent_buf);
     }
 
     return 0;

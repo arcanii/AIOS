@@ -101,6 +101,114 @@ static void to_name83(const char *name, uint8_t *out) {
 }
 
 /* ── Find entry in root directory ─────────────────────── */
+
+/* Forward declarations */
+static int find_entry(const char *filename, uint16_t *cluster_out,
+                      uint32_t *size_out, uint8_t *dir_sec_out,
+                      uint8_t *dir_idx_out);
+
+/* ── Search for a name within a subdirectory cluster chain ── */
+static int find_in_subdir(uint16_t dir_cluster, const uint8_t *name83,
+                          uint16_t *cluster_out, uint32_t *size_out,
+                          uint8_t *attr_out,
+                          uint32_t *abs_sector_out, uint8_t *didx_out) {
+    uint16_t cur = dir_cluster;
+    while (cur >= 2 && cur < 0xFFF8) {
+        uint32_t sec_base = cluster_to_sector(cur);
+        for (uint32_t s = 0; s < sectors_per_cluster; s++) {
+            blk->read_sector(sec_base + s, sector_buf);
+            for (int i = 0; i < 512 / 32; i++) {
+                uint8_t *ent = sector_buf + i * 32;
+                if (ent[0] == 0x00) return -1;
+                if (ent[0] == 0xE5) continue;
+                if (ent[11] == 0x0F) continue;
+                if (my_memcmp(ent, name83, 11) == 0) {
+                    if (cluster_out) *cluster_out = rd16(ent + 26);
+                    if (size_out) *size_out = rd32(ent + 28);
+                    if (attr_out) *attr_out = ent[11];
+                    if (abs_sector_out) *abs_sector_out = sec_base + s;
+                    if (didx_out) *didx_out = (uint8_t)i;
+                    return 0;
+                }
+            }
+        }
+        cur = fat_read(cur);
+    }
+    return -1;
+}
+
+/* ── Resolve a path like /dir1/dir2/file.txt ──────────── */
+/* Returns: 0 = in root dir, >0 = subdir cluster, -1 = error */
+/* Sets basename to the final component */
+static int resolve_fat16_path(const char *path, char *basename, int bmax,
+                              uint16_t *parent_cluster) {
+    *parent_cluster = 0; /* 0 = root directory */
+    
+    int i = 0;
+    if (path[0] == '/') i = 1;
+    
+    while (path[i]) {
+        /* Extract component */
+        char comp[64];
+        int ci = 0;
+        while (path[i] && path[i] != '/' && ci < 63) comp[ci++] = path[i++];
+        comp[ci] = '\0';
+        if (ci == 0) { if (path[i] == '/') i++; continue; }
+        
+        /* Check if there's more path */
+        int j = i;
+        while (path[j] == '/') j++;
+        
+        if (path[j]) {
+            /* More to go — this component must be a directory */
+            uint8_t name83[11];
+            to_name83(comp, name83);
+            uint16_t child_cluster;
+            uint8_t attr;
+            int rc;
+            
+            if (*parent_cluster == 0) {
+                /* Search root directory */
+                uint32_t dummy_size;
+                rc = find_entry(comp, &child_cluster, &dummy_size, 0, 0);
+                /* Verify it's a directory by checking root dir entry attr */
+                if (rc == 0) {
+                    /* Re-scan to get attr */
+                    for (uint32_t sec = 0; sec < root_dir_sectors; sec++) {
+                        blk->read_sector(root_dir_start + sec, sector_buf);
+                        for (int ei = 0; ei < 512/32; ei++) {
+                            uint8_t *ent = sector_buf + ei * 32;
+                            if (my_memcmp(ent, name83, 11) == 0) {
+                                attr = ent[11];
+                                goto got_attr;
+                            }
+                        }
+                    }
+                    return -1;
+                    got_attr:
+                    if ((attr & 0x10) == 0) return -1;
+                }
+            } else {
+                rc = find_in_subdir(*parent_cluster, name83, &child_cluster, 0, &attr, 0, 0);
+                if (rc != 0 || (attr & 0x10) == 0) return -1;
+            }
+            
+            if (rc != 0) return -1;
+            *parent_cluster = child_cluster;
+            if (path[i] == '/') i++;
+        } else {
+            /* Last component — basename */
+            int bi = 0;
+            while (bi < bmax - 1 && comp[bi]) { basename[bi] = comp[bi]; bi++; }
+            basename[bi] = '\0';
+            return 0;
+        }
+    }
+    
+    basename[0] = '\0';
+    return 0;
+}
+
 static int find_entry(const char *filename, uint16_t *cluster_out,
                       uint32_t *size_out, uint8_t *dir_sec_out,
                       uint8_t *dir_idx_out) {
@@ -144,14 +252,15 @@ static void free_cluster(uint16_t cluster) {
     }
 }
 
-/* ── Free a cluster chain ─────────────────────────────── */
-static void free_chain(uint16_t cluster) {
+static void free_cluster_chain(uint16_t cluster) {
     while (cluster >= 2 && cluster < 0xFFF8) {
         uint16_t next = fat_read(cluster);
         fat_write(cluster, 0x0000);
         cluster = next;
     }
 }
+
+/* ── Free a cluster chain ─────────────────────────────── */
 
 /* ═══════════════════════════════════════════════════════
  *  VFS ops implementation
@@ -193,13 +302,41 @@ static int fat16_open(const char *filename, open_file_t *fd) {
     uint16_t cluster;
     uint32_t size;
     uint8_t dsec, didx;
-    if (find_entry(filename, &cluster, &size, &dsec, &didx) != 0)
+    
+    /* Try path resolution for subdirectories */
+    char base[64];
+    uint16_t parent_cluster;
+    if (resolve_fat16_path(filename, base, sizeof(base), &parent_cluster) != 0)
         return -1;
+    
+    if (parent_cluster == 0) {
+        /* Root directory — use original find_entry */
+        const char *name = (base[0]) ? base : filename;
+        if (find_entry(name, &cluster, &size, &dsec, &didx) != 0)
+            return -1;
+    } else {
+        /* Subdirectory */
+        uint8_t name83[11];
+        to_name83(base, name83);
+        uint8_t attr;
+        uint32_t abs_sec = 0;
+        uint8_t di = 0;
+        if (find_in_subdir(parent_cluster, name83, &cluster, &size, &attr, &abs_sec, &di) != 0)
+            return -1;
+        fd->in_use = 1;
+        fd->start_cluster = cluster;
+        fd->file_size = size;
+        fd->offset = 0;
+        fd->dir_abs_sector = abs_sec;
+        fd->dir_index = di;
+        to_name83(base, fd->name83);
+        return 0;
+    }
     fd->in_use = 1;
     fd->start_cluster = cluster;
     fd->file_size = size;
     fd->offset = 0;
-    fd->dir_sector = dsec;
+    fd->dir_abs_sector = dsec;
     fd->dir_index = didx;
     to_name83(filename, fd->name83);
     return 0;
@@ -249,11 +386,56 @@ static int fat16_close(open_file_t *fd) {
     return 0;
 }
 
-static int fat16_create(const char *filename, open_file_t *fd) {
-    uint8_t name83[11];
-    to_name83(filename, name83);
+static int create_in_subdir(uint16_t dir_cluster, const uint8_t *name83, open_file_t *fd) {
+    uint16_t cur = dir_cluster;
+    while (cur >= 2 && cur < 0xFFF8) {
+        uint32_t sec_base = cluster_to_sector(cur);
+        for (uint32_t s = 0; s < sectors_per_cluster; s++) {
+            blk->read_sector(sec_base + s, sector_buf);
+            for (int i = 0; i < 512 / 32; i++) {
+                uint8_t *ent = sector_buf + i * 32;
+                if (ent[0] == 0x00 || ent[0] == 0xE5) {
+                    uint16_t cluster = alloc_cluster();
+                    if (cluster == 0) return -1;
+                    my_memset(ent, 0, 32);
+                    my_memcpy(ent, name83, 11);
+                    ent[11] = 0x20;
+                    wr16(ent + 26, cluster);
+                    wr32(ent + 28, 0);
+                    blk->write_sector(sec_base + s, sector_buf);
+                    fd->in_use = 1;
+                    fd->start_cluster = cluster;
+                    fd->file_size = 0;
+                    fd->offset = 0;
+                    fd->dir_abs_sector = sec_base + s;
+                    fd->dir_index = (uint8_t)i;
+                    my_memcpy(fd->name83, name83, 11);
+                    return 0;
+                }
+            }
+        }
+        cur = fat_read(cur);
+    }
+    return -1;
+}
 
-    /* Find free directory entry */
+static int fat16_create(const char *filename, open_file_t *fd) {
+    /* Resolve path for subdirectory support */
+    char base[64];
+    uint16_t parent_cluster;
+    if (resolve_fat16_path(filename, base, sizeof(base), &parent_cluster) != 0)
+        return -1;
+    const char *name = (base[0]) ? base : filename;
+    
+    uint8_t name83[11];
+    to_name83(name, name83);
+    
+    if (parent_cluster != 0) {
+        /* Create in subdirectory */
+        return create_in_subdir(parent_cluster, name83, fd);
+    }
+
+    /* Find free directory entry in root */
     for (uint32_t sec = 0; sec < root_dir_sectors; sec++) {
         blk->read_sector(root_dir_start + sec, sector_buf);
         int entries = 512 / 32;
@@ -275,7 +457,7 @@ static int fat16_create(const char *filename, open_file_t *fd) {
                 fd->start_cluster = cluster;
                 fd->file_size = 0;
                 fd->offset = 0;
-                fd->dir_sector = (uint8_t)sec;
+                fd->dir_abs_sector = root_dir_start + sec;
                 fd->dir_index = (uint8_t)i;
                 my_memcpy(fd->name83, name83, 11);
                 return 0;
@@ -339,19 +521,50 @@ static int fat16_write(open_file_t *fd, const uint8_t *data,
 
     /* Update directory entry with new size */
     fd->file_size += written;
-    blk->read_sector(root_dir_start + fd->dir_sector, sector_buf);
+    blk->read_sector(fd->dir_abs_sector, sector_buf);
     uint8_t *ent = sector_buf + fd->dir_index * 32;
     wr32(ent + 28, fd->file_size);
-    blk->write_sector(root_dir_start + fd->dir_sector, sector_buf);
+    blk->write_sector(fd->dir_abs_sector, sector_buf);
 
     *bytes_written = written;
     return 0;
 }
 
 static int fat16_delete(const char *filename) {
+    char base[64];
+    uint16_t parent_cluster;
+    if (resolve_fat16_path(filename, base, sizeof(base), &parent_cluster) != 0)
+        return -1;
+    const char *name = (base[0]) ? base : filename;
     uint8_t name83[11];
-    to_name83(filename, name83);
+    to_name83(name, name83);
 
+    if (parent_cluster != 0) {
+        /* Delete from subdirectory */
+        uint16_t cur = parent_cluster;
+        while (cur >= 2 && cur < 0xFFF8) {
+            uint32_t sec_base = cluster_to_sector(cur);
+            for (uint32_t s = 0; s < sectors_per_cluster; s++) {
+                blk->read_sector(sec_base + s, sector_buf);
+                for (int i = 0; i < 512 / 32; i++) {
+                    uint8_t *ent = sector_buf + i * 32;
+                    if (ent[0] == 0x00) return -1;
+                    if (ent[0] == 0xE5) continue;
+                    if (my_memcmp(ent, name83, 11) == 0) {
+                        uint16_t fc = rd16(ent + 26);
+                        free_cluster_chain(fc);
+                        ent[0] = 0xE5;
+                        blk->write_sector(sec_base + s, sector_buf);
+                        return 0;
+                    }
+                }
+            }
+            cur = fat_read(cur);
+        }
+        return -1;
+    }
+
+    /* Delete from root directory */
     for (uint32_t sec = 0; sec < root_dir_sectors; sec++) {
         blk->read_sector(root_dir_start + sec, sector_buf);
         int entries = 512 / 32;
@@ -360,8 +573,8 @@ static int fat16_delete(const char *filename) {
             if (ent[0] == 0x00) return -1;
             if (ent[0] == 0xE5) continue;
             if (my_memcmp(ent, name83, 11) == 0) {
-                uint16_t cluster = rd16(ent + 26);
-                free_chain(cluster);
+                uint16_t fc = rd16(ent + 26);
+                free_cluster_chain(fc);
                 ent[0] = 0xE5;
                 blk->write_sector(root_dir_start + sec, sector_buf);
                 return 0;
@@ -405,37 +618,45 @@ done:
 static int fat16_sync(void) { return 0; }
 
 static int fat16_stat(const char *filename, uint32_t *size_out) {
-    uint16_t cluster;
-    uint8_t dsec, didx;
-    return find_entry(filename, &cluster, size_out, &dsec, &didx);
+    char base[64];
+    uint16_t parent_cluster;
+    if (resolve_fat16_path(filename, base, sizeof(base), &parent_cluster) != 0)
+        return -1;
+
+    
+    if (parent_cluster == 0) {
+        const char *name = (base[0]) ? base : filename;
+        uint16_t cluster; uint32_t size;
+        if (find_entry(name, &cluster, &size, 0, 0) != 0) return -1;
+        *size_out = size;
+    } else {
+        uint8_t name83[11];
+        to_name83(base, name83);
+        uint32_t size; uint8_t attr;
+        if (find_in_subdir(parent_cluster, name83, 0, &size, &attr, 0, 0) != 0) return -1;
+        *size_out = size;
+    }
+    return 0;
 }
 
 /* ── Export the ops table ─────────────────────────────── */
 
 /* ── mkdir: create a subdirectory in root ─────────────── */
 static int fat16_mkdir(const char *dirname) {
+    char base[64];
+    uint16_t parent_cluster;
+    if (resolve_fat16_path(dirname, base, sizeof(base), &parent_cluster) != 0)
+        return -1;
+
     uint8_t name83[11];
-    to_name83(dirname, name83);
+    to_name83(base, name83);
 
-    /* Check it doesn't already exist */
-    for (uint32_t sec = 0; sec < root_dir_sectors; sec++) {
-        blk->read_sector(root_dir_start + sec, sector_buf);
-        int entries = 512 / 32;
-        for (int i = 0; i < entries; i++) {
-            uint8_t *ent = sector_buf + i * 32;
-            if (ent[0] == 0x00) goto not_found;
-            if (ent[0] == 0xE5) continue;
-            if (my_memcmp(ent, name83, 11) == 0) return -1; /* exists */
-        }
-    }
-not_found:
-
-    /* Allocate a cluster for the directory data (. and ..) */
+    /* Allocate a cluster for the new directory */
     uint16_t cluster = alloc_cluster();
     if (cluster == 0) return -1;
 
     /* Write . and .. entries into the new cluster */
-    uint32_t dir_lba = data_start + (cluster - 2) * sectors_per_cluster;
+    uint32_t dir_lba = cluster_to_sector(cluster);
     uint8_t dir_buf[512];
     my_memset(dir_buf, 0, 512);
 
@@ -443,84 +664,138 @@ not_found:
     uint8_t *dot = dir_buf;
     my_memset(dot, ' ', 11);
     dot[0] = '.';
-    dot[11] = 0x10; /* directory attribute */
+    dot[11] = 0x10;
     wr16(dot + 26, cluster);
-    wr32(dot + 28, 0);
 
     /* ".." entry */
     uint8_t *dotdot = dir_buf + 32;
     my_memset(dotdot, ' ', 11);
     dotdot[0] = '.'; dotdot[1] = '.';
     dotdot[11] = 0x10;
-    wr16(dotdot + 26, 0); /* root cluster = 0 */
-    wr32(dotdot + 28, 0);
+    wr16(dotdot + 26, (parent_cluster == 0) ? 0 : parent_cluster);
 
     blk->write_sector(dir_lba, dir_buf);
-
-    /* Zero remaining sectors in cluster if multi-sector */
     for (uint32_t s = 1; s < sectors_per_cluster; s++) {
         my_memset(dir_buf, 0, 512);
         blk->write_sector(dir_lba + s, dir_buf);
     }
 
-    /* Find free root directory entry and write it */
-    for (uint32_t sec = 0; sec < root_dir_sectors; sec++) {
-        blk->read_sector(root_dir_start + sec, sector_buf);
-        int entries = 512 / 32;
-        for (int i = 0; i < entries; i++) {
-            uint8_t *ent = sector_buf + i * 32;
-            if (ent[0] == 0x00 || ent[0] == 0xE5) {
-                my_memset(ent, 0, 32);
-                my_memcpy(ent, name83, 11);
-                ent[11] = 0x10; /* directory attribute */
-                wr16(ent + 26, cluster);
-                wr32(ent + 28, 0);
-                blk->write_sector(root_dir_start + sec, sector_buf);
-                return 0;
+    /* Add entry to parent directory */
+    if (parent_cluster == 0) {
+        /* Root directory */
+        for (uint32_t sec = 0; sec < root_dir_sectors; sec++) {
+            blk->read_sector(root_dir_start + sec, sector_buf);
+            for (int i = 0; i < 512 / 32; i++) {
+                uint8_t *ent = sector_buf + i * 32;
+                if (ent[0] == 0x00 || ent[0] == 0xE5) {
+                    my_memset(ent, 0, 32);
+                    my_memcpy(ent, name83, 11);
+                    ent[11] = 0x10;
+                    wr16(ent + 26, cluster);
+                    blk->write_sector(root_dir_start + sec, sector_buf);
+                    return 0;
+                }
             }
         }
+    } else {
+        /* Subdirectory */
+        uint16_t cur = parent_cluster;
+        while (cur >= 2 && cur < 0xFFF8) {
+            uint32_t sec_base = cluster_to_sector(cur);
+            for (uint32_t s = 0; s < sectors_per_cluster; s++) {
+                blk->read_sector(sec_base + s, sector_buf);
+                for (int i = 0; i < 512 / 32; i++) {
+                    uint8_t *ent = sector_buf + i * 32;
+                    if (ent[0] == 0x00 || ent[0] == 0xE5) {
+                        my_memset(ent, 0, 32);
+                        my_memcpy(ent, name83, 11);
+                        ent[11] = 0x10;
+                        wr16(ent + 26, cluster);
+                        blk->write_sector(sec_base + s, sector_buf);
+                        return 0;
+                    }
+                }
+            }
+            cur = fat_read(cur);
+        }
     }
-    return -1; /* no space in root directory */
+
+    free_cluster(cluster);
+    return -1;
 }
 
 /* ── rmdir: remove an empty subdirectory ─────────────── */
 static int fat16_rmdir(const char *dirname) {
+    char base[64];
+    uint16_t parent_cluster;
+    if (resolve_fat16_path(dirname, base, sizeof(base), &parent_cluster) != 0)
+        return -1;
+
     uint8_t name83[11];
-    to_name83(dirname, name83);
+    to_name83(base, name83);
 
-    /* Find directory entry */
-    for (uint32_t sec = 0; sec < root_dir_sectors; sec++) {
-        blk->read_sector(root_dir_start + sec, sector_buf);
-        int entries = 512 / 32;
-        for (int i = 0; i < entries; i++) {
-            uint8_t *ent = sector_buf + i * 32;
-            if (ent[0] == 0x00) return -1;
-            if (ent[0] == 0xE5) continue;
-            if (my_memcmp(ent, name83, 11) != 0) continue;
-            if ((ent[11] & 0x10) == 0) return -1; /* not a directory */
-
-            uint16_t cluster = rd16(ent + 26);
-            uint32_t dir_lba = data_start + (cluster - 2) * sectors_per_cluster;
-
-            /* Check directory is empty (only . and ..) */
-            uint8_t dir_buf[512];
-            blk->read_sector(dir_lba, dir_buf);
-            for (int j = 2; j < 512 / 32; j++) {
-                uint8_t *de = dir_buf + j * 32;
-                if (de[0] == 0x00) break;
-                if (de[0] != 0xE5) return -1; /* not empty */
+    /* Helper: scan a directory for the named entry and remove it */
+    if (parent_cluster == 0) {
+        /* Root directory */
+        for (uint32_t sec = 0; sec < root_dir_sectors; sec++) {
+            blk->read_sector(root_dir_start + sec, sector_buf);
+            for (int i = 0; i < 512 / 32; i++) {
+                uint8_t *ent = sector_buf + i * 32;
+                if (ent[0] == 0x00) return -1;
+                if (ent[0] == 0xE5) continue;
+                if (my_memcmp(ent, name83, 11) != 0) continue;
+                if ((ent[11] & 0x10) == 0) return -1;
+                uint16_t cluster = rd16(ent + 26);
+                /* Check empty */
+                uint32_t dir_lba = cluster_to_sector(cluster);
+                uint8_t dir_buf[512];
+                blk->read_sector(dir_lba, dir_buf);
+                for (int j = 2; j < 512 / 32; j++) {
+                    uint8_t *de = dir_buf + j * 32;
+                    if (de[0] == 0x00) break;
+                    if (de[0] != 0xE5) return -1;
+                }
+                free_cluster(cluster);
+                ent[0] = 0xE5;
+                blk->write_sector(root_dir_start + sec, sector_buf);
+                return 0;
             }
-
-            /* Free cluster */
-            free_cluster(cluster);
-
-            /* Mark entry as deleted */
-            ent[0] = 0xE5;
-            blk->write_sector(root_dir_start + sec, sector_buf);
-            return 0;
+        }
+    } else {
+        /* Subdirectory */
+        uint16_t cur = parent_cluster;
+        while (cur >= 2 && cur < 0xFFF8) {
+            uint32_t sec_base = cluster_to_sector(cur);
+            for (uint32_t s = 0; s < sectors_per_cluster; s++) {
+                blk->read_sector(sec_base + s, sector_buf);
+                for (int i = 0; i < 512 / 32; i++) {
+                    uint8_t *ent = sector_buf + i * 32;
+                    if (ent[0] == 0x00) return -1;
+                    if (ent[0] == 0xE5) continue;
+                    if (my_memcmp(ent, name83, 11) != 0) continue;
+                    if ((ent[11] & 0x10) == 0) return -1;
+                    uint16_t cluster = rd16(ent + 26);
+                    uint32_t dir_lba = cluster_to_sector(cluster);
+                    uint8_t dir_buf[512];
+                    blk->read_sector(dir_lba, dir_buf);
+                    for (int j = 2; j < 512 / 32; j++) {
+                        uint8_t *de = dir_buf + j * 32;
+                        if (de[0] == 0x00) break;
+                        if (de[0] != 0xE5) return -1;
+                    }
+                    free_cluster(cluster);
+                    /* Re-read sector (may have been clobbered) */
+                    blk->read_sector(sec_base + s, sector_buf);
+                    ent = sector_buf + i * 32;
+                    ent[0] = 0xE5;
+                    blk->write_sector(sec_base + s, sector_buf);
+                    return 0;
+                }
+            }
+            cur = fat_read(cur);
         }
     }
-    return -1; /* not found */
+    return -1;
 }
 
 /* ── rename: rename a file or directory ──────────────── */

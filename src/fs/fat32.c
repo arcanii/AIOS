@@ -283,7 +283,7 @@ static int fat32_open(const char *filename, open_file_t *fd) {
     fd->start_cluster = (uint16_t)(fc_cluster(&fc) & 0xFFFF);
     fd->file_size = fc.file_size;
     fd->offset = 0;
-    fd->dir_sector = (uint8_t)(fc.dir_sector & 0xFF);
+    fd->dir_abs_sector = fc.dir_sector;
     fd->dir_index = (uint8_t)(fc.dir_index & 0xFF);
     to_name83(filename, fd->name83);
     /* Store high cluster bits in a reserved area */
@@ -368,7 +368,7 @@ static int fat32_create(const char *filename, open_file_t *fd) {
     fd->start_cluster = (uint16_t)(cluster & 0xFFFF);
     fd->file_size = 0;
     fd->offset = cluster; /* full 32-bit start cluster */
-    fd->dir_sector = (uint8_t)(fsc.dir_sector & 0xFF);
+    fd->dir_abs_sector = fsc.dir_sector;
     fd->dir_index = (uint8_t)fsc.dir_index;
     my_memcpy(fd->name83, name83, 11);
     return 0;
@@ -428,10 +428,10 @@ static int fat32_write(open_file_t *fd, const uint8_t *data,
 
     /* Update directory entry */
     fd->file_size += written;
-    blk->read_sector(fd->dir_sector, sector_buf);
+    blk->read_sector(fd->dir_abs_sector, sector_buf);
     uint8_t *ent = sector_buf + fd->dir_index * 32;
     wr32(ent + 28, fd->file_size);
-    blk->write_sector(fd->dir_sector, sector_buf);
+    blk->write_sector(fd->dir_abs_sector, sector_buf);
 
     *bytes_written = written;
     return 0;

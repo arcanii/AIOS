@@ -31,6 +31,7 @@ static uint32_t heap_used = 0;
 /* Per-fd file position tracking */
 #define MAX_FDS 16
 static uint32_t fd_pos[MAX_FDS];
+static uint32_t fd_size[MAX_FDS];
 
 static void *sbx_malloc(unsigned long size) {
     /* Simple bump allocator — no free */
@@ -130,7 +131,10 @@ static int sbx_open_flags(const char *path, int flags) {
     seL4_SetMR(1, (seL4_Word)flags);
     microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 2));
     int fd = (int)seL4_GetMR(0);
-    if (fd >= 0 && fd < MAX_FDS) fd_pos[fd] = 0;
+    if (fd >= 0 && fd < MAX_FDS) {
+        fd_pos[fd] = 0;
+        fd_size[fd] = (uint32_t)seL4_GetMR(1);
+    }
     return fd;
 }
 
@@ -167,7 +171,7 @@ static int sbx_write_file(int fd, const void *buf, unsigned long len) {
 }
 
 static int sbx_close(int fd) {
-    if (fd >= 0 && fd < MAX_FDS) fd_pos[fd] = 0;
+    if (fd >= 0 && fd < MAX_FDS) { fd_pos[fd] = 0; fd_size[fd] = 0; }
     seL4_SetMR(0, SYS_CLOSE);
     seL4_SetMR(1, fd);
     microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 2));
@@ -254,9 +258,9 @@ static int sbx_stat(const char *path, unsigned long *size_out) {
 
 static int sbx_lseek(int fd, long offset, int whence) {
     if (fd >= 0 && fd < MAX_FDS) {
-        if (whence == 0) fd_pos[fd] = (uint32_t)offset;        /* SEEK_SET */
-        else if (whence == 1) fd_pos[fd] += (uint32_t)offset;   /* SEEK_CUR */
-        /* SEEK_END not supported without knowing file size */
+        if (whence == 0) fd_pos[fd] = (uint32_t)offset;              /* SEEK_SET */
+        else if (whence == 1) fd_pos[fd] += (uint32_t)offset;         /* SEEK_CUR */
+        else if (whence == 2) fd_pos[fd] = fd_size[fd] + (uint32_t)offset; /* SEEK_END */
         return (int)fd_pos[fd];
     }
     return -1;

@@ -126,8 +126,8 @@ static int fs_stat_sync(const char *filename) {
     while (filename[i] && i < 63) { dst[i] = filename[i]; i++; }
     dst[i] = '\0';
     WR32(fs_data, FS_CMD, FS_CMD_STAT);
-    microkit_ppcall(CH_FS, microkit_msginfo_new(0, 1));
-    return (int)seL4_GetMR(0);
+    microkit_ppcall(CH_FS, microkit_msginfo_new(0, 0));
+    return (int)RD32(fs_data, FS_STATUS);
 }
 
 static int fs_mkdir_sync(const char *dirname) {
@@ -136,8 +136,8 @@ static int fs_mkdir_sync(const char *dirname) {
     while (dirname[i] && i < 63) { dst[i] = dirname[i]; i++; }
     dst[i] = '\0';
     WR32(fs_data, FS_CMD, FS_CMD_MKDIR);
-    microkit_ppcall(CH_FS, microkit_msginfo_new(0, 1));
-    return (int)seL4_GetMR(0);
+    microkit_ppcall(CH_FS, microkit_msginfo_new(0, 0));
+    return (int)RD32(fs_data, FS_STATUS);
 }
 
 static int fs_rmdir_sync(const char *dirname) {
@@ -146,8 +146,8 @@ static int fs_rmdir_sync(const char *dirname) {
     while (dirname[i] && i < 63) { dst[i] = dirname[i]; i++; }
     dst[i] = '\0';
     WR32(fs_data, FS_CMD, FS_CMD_RMDIR);
-    microkit_ppcall(CH_FS, microkit_msginfo_new(0, 1));
-    return (int)seL4_GetMR(0);
+    microkit_ppcall(CH_FS, microkit_msginfo_new(0, 0));
+    return (int)RD32(fs_data, FS_STATUS);
 }
 
 static int fs_rename_sync(const char *oldname, const char *newname) {
@@ -160,8 +160,8 @@ static int fs_rename_sync(const char *oldname, const char *newname) {
     while (newname[j] && i < 126) { dst[i] = newname[j]; i++; j++; }
     dst[i] = '\0';
     WR32(fs_data, FS_CMD, FS_CMD_RENAME);
-    microkit_ppcall(CH_FS, microkit_msginfo_new(0, 1));
-    return (int)seL4_GetMR(0);
+    microkit_ppcall(CH_FS, microkit_msginfo_new(0, 0));
+    return (int)RD32(fs_data, FS_STATUS);
 }
 
 

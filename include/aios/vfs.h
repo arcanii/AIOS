@@ -21,7 +21,7 @@ typedef struct {
     uint16_t start_cluster;
     uint32_t file_size;
     uint32_t offset;
-    uint8_t  dir_sector;     /* which root-dir sector holds this entry */
+    uint32_t dir_abs_sector; /* absolute sector holding this dir entry  */
     uint8_t  dir_index;      /* index within that sector               */
     uint8_t  name83[11];     /* cached 8.3 name for write-back         */
 } open_file_t;
