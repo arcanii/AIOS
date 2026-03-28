@@ -169,7 +169,26 @@ void init(void) {
 }
 
 void notified(microkit_channel ch) {
-    (void)ch;
+    if (ch == 10) {
+        /* fs_server requesting block I/O via notification */
+        uint32_t cmd    = RD32(blk_data, BLK_CMD);
+        uint32_t sector = RD32(blk_data, BLK_SECTOR);
+        uint32_t count  = RD32(blk_data, BLK_COUNT);
+        if (count == 0) count = 1;
+        if (count > BLK_DATA_MAX / 512) count = BLK_DATA_MAX / 512;
+
+        int is_write = (cmd == BLK_CMD_WRITE) ? 1 : 0;
+        int r = 0;
+
+        for (uint32_t i = 0; i < count; i++) {
+            r = blk_read_write((uint64_t)(sector + i), is_write,
+                               (void *)(blk_data + BLK_DATA + i * 512));
+            if (r != 0) break;
+        }
+
+        /* Signal completion */
+        WR32(blk_data, BLK_STATUS, 1);
+    }
 }
 
 microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {

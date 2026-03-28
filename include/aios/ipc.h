@@ -106,3 +106,19 @@
 #define SBX_ST_ERROR    3
 
 /* ── Sandbox PPC syscall numbers ───────────────────── */
+
+/* ── Network driver IPC layout ─────────────────────────── */
+#define NET_CMD       0x000
+#define NET_STATUS    0x004
+#define NET_PKT_LEN   0x008
+#define NET_MAC_OFF   0x010
+#define NET_PKT_DATA  0x100
+#define NET_DATA_MAX  (0x10000 - 0x100)
+
+#define NET_CMD_NONE   0
+#define NET_CMD_SEND   1
+#define NET_CMD_RECV   2
+#define NET_CMD_GET_MAC 3
+#define NET_ST_OK      0
+#define NET_ST_ERR    (-1)
+#define NET_ST_NODATA  1

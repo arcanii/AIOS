@@ -34,7 +34,7 @@
     </protection_domain>
 
     <!-- ── Block driver (priority 240) ── -->
-    <protection_domain name="blk_driver" priority="240">
+    <protection_domain name="blk_driver" priority="250">
         <program_image path="blk_driver.elf" />
         <map mr="blk_mmio" vaddr="0x5000000" perms="rw" cached="false"
              setvar_vaddr="virtio_blk_base_vaddr" />
@@ -45,7 +45,7 @@
     </protection_domain>
 
     <!-- ── Filesystem server (priority 220) ── -->
-    <protection_domain name="fs_server" priority="220">
+    <protection_domain name="fs_server" priority="240">
         <program_image path="fs_server.elf" />
         <map mr="blk_data" vaddr="0x6000000" perms="rw" cached="false"
              setvar_vaddr="blk_data" />
@@ -118,10 +118,7 @@
         <end pd="fs_server"     id="4" />
     </channel>
 
-    <channel>
-        <end pd="fs_server"     id="5" pp="true" />
-        <end pd="blk_driver"    id="5" />
-    </channel>
+
 
     <!-- orchestrator <-> llm_server -->
     <channel>
@@ -135,4 +132,38 @@
         <end pd="sandbox"       id="7" pp="true" />
     </channel>
 
+
+    <!-- ── Memory regions for network ── -->
+    <memory_region name="net_dma"   size="0x20000" phys_addr="0xB0100000" />
+    <memory_region name="net_data"  size="0x10000" />
+
+    <!-- ── Network driver (priority 230) ── -->
+    <protection_domain name="net_driver" priority="230">
+        <program_image path="net_driver.elf" />
+        <map mr="blk_mmio" vaddr="0x5200000" perms="rw" cached="false"
+             setvar_vaddr="virtio_net_base_vaddr" />
+        <map mr="net_dma"  vaddr="0x5300000" perms="rw" cached="false"
+             setvar_vaddr="net_dma_base" />
+        <map mr="net_data" vaddr="0x5500000" perms="rw" cached="false"
+             setvar_vaddr="net_data" />
+        <irq irq="78" id="9" />
+    </protection_domain>
+
+    <channel>
+        <end pd="net_driver"    id="8" />
+        <end pd="net_server"    id="8" />
+    </channel>
+
+
+    <!-- ── Network server / IP stack (priority 210) ── -->
+    <protection_domain name="net_server" priority="210">
+        <program_image path="net_server.elf" />
+        <map mr="net_data" vaddr="0x5500000" perms="rw" cached="false"
+             setvar_vaddr="net_data" />
+    </protection_domain>
+
+    <channel>
+        <end pd="fs_server"     id="10" />
+        <end pd="blk_driver"    id="10" />
+    </channel>
 </system>

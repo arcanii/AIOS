@@ -40,7 +40,7 @@ SRC      := src
 DISK_IMG := disk.img
 
 # ── Protection domains ──────────────────────────────────
-PDS := serial_driver blk_driver fs_server orchestrator llm_server echo_server sandbox
+PDS := serial_driver blk_driver fs_server orchestrator llm_server echo_server sandbox net_driver net_server
 
 OBJS := $(patsubst %,$(BUILD)/%.o,$(PDS))
 ELFS := $(patsubst %,$(BUILD)/%.elf,$(PDS))
@@ -59,6 +59,17 @@ $(BUILD)/%.o: $(SRC)/%.c | $(BUILD)
 	$(CC) $(CFLAGS) $< -o $@
 
 # ── Link .o → .elf ─────────────────────────────────────
+# ── Compile fs_fat16 ────────────────────────────────────
+$(BUILD)/fs_server.o: src/fs/vfs.c
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(BUILD)/fs_fat16.o: src/fs/fat16.c
+	$(CC) -c $(CFLAGS) $< -o $@
+
+# ── Link fs_server with FAT backends ───────────────────
+$(BUILD)/fs_server.elf: $(BUILD)/fs_server.o $(BUILD)/fs_fat16.o
+	$(LD) $^ $(LDFLAGS) -o $@
+
 $(BUILD)/%.elf: $(BUILD)/%.o
 	$(LD) $< $(LDFLAGS) -o $@
 
@@ -115,7 +126,9 @@ run: $(BUILD)/loader.img $(DISK_IMG)
 		-serial mon:stdio \
 		-kernel $< \
 		-drive file=$(DISK_IMG),format=raw,if=none,id=hd0 \
-		-device virtio-blk-device,drive=hd0
+		-device virtio-blk-device,drive=hd0 \
+		-device virtio-net-device,netdev=net0 \
+		-netdev user,id=net0,hostfwd=tcp::8888-:80
 
 # ── Run with GDB server ─────────────────────────────────
 debug: $(BUILD)/loader.img $(DISK_IMG)
@@ -128,6 +141,8 @@ debug: $(BUILD)/loader.img $(DISK_IMG)
 		-kernel $< \
 		-drive file=$(DISK_IMG),format=raw,if=none,id=hd0 \
 		-device virtio-blk-device,drive=hd0 \
+		-device virtio-net-device,netdev=net0 \
+		-netdev user,id=net0,hostfwd=tcp::8888-:80 \
 		-S -s
 
 # ── Clean ────────────────────────────────────────────────
