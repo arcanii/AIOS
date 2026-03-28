@@ -727,7 +727,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         if (st != 0 && (flags & 0x0040)) {
             /* O_CREAT: file not found, create it */
             st = fs_create_sync(fname);
-            if (st == 0) st = fs_open_sync(fname);
+            /* create already opens the file — use its fd directly */
         }
         if (st == 0) {
             result = RD32(fs_data, FS_FD);

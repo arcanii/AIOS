@@ -184,6 +184,7 @@ static void handle_create(void) {
     int rc = active_fs->create(name, &open_files[fd_idx]);
     if (rc == 0) {
         WR32(fs_data, FS_FD, fd_idx);
+        WR32(fs_data, FS_FILESIZE, open_files[fd_idx].file_size);
         reply_status(0);
     } else {
         reply_status(-1);

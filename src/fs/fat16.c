@@ -336,7 +336,7 @@ static int fat16_open(const char *filename, open_file_t *fd) {
     fd->start_cluster = cluster;
     fd->file_size = size;
     fd->offset = 0;
-    fd->dir_abs_sector = dsec;
+    fd->dir_abs_sector = root_dir_start + dsec;
     fd->dir_index = didx;
     to_name83(filename, fd->name83);
     return 0;
