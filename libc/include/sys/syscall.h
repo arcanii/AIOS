@@ -24,6 +24,7 @@
 #define SYS_GETPID     21
 #define SYS_SLEEP      22
 #define SYS_EXEC       23
+#define SYS_EXEC_DONE  24
 
 /* Console I/O — to serial_server */
 #define SYS_PUTC       30

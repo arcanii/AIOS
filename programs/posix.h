@@ -204,6 +204,10 @@ static inline off_t lseek(int fd, off_t offset, int whence) {
     return (off_t)sys->lseek(fd - 3, (long)offset, whence);
 }
 
+static inline int aios_exec(const char *path, const char *args) {
+    return sys->exec(path, args);
+}
+
 static inline int chdir(const char *path) {
     return sys->chdir(path);
 }

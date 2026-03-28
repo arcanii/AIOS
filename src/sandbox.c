@@ -218,6 +218,8 @@ static int sbx_rename(const char *oldpath, const char *newpath) {
     return (int)seL4_GetMR(0);
 }
 
+
+
 static int sbx_readdir(void *buf, unsigned long max_entries) {
     seL4_SetMR(0, SYS_READDIR);
     microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 1));
@@ -325,6 +327,7 @@ typedef struct {
     int   (*mkdir)(const char *path);
     int   (*rmdir)(const char *path);
     int   (*rename)(const char *oldpath, const char *newpath);
+    int   (*exec)(const char *path, const char *args);
     int   (*readdir)(void *buf, unsigned long max_entries);
     int   (*filesize)(void);
     /* Extended POSIX */
@@ -340,8 +343,102 @@ typedef struct {
     void  (*puts_direct)(const char *s);
     void  (*putc_direct)(char c);
 } aios_syscalls_t;
+typedef int (*program_entry_t)(aios_syscalls_t *sys);
 
 static aios_syscalls_t syscalls;
+
+static int sbx_exec(const char *path, const char *args) {
+    /* Save parent code to top of heap before orchestrator overwrites it */
+    uint32_t parent_size = RD32(sandbox_io, SBX_CODE_SIZE);
+    uint8_t *backup = (uint8_t *)(sandbox_heap + HEAP_SIZE - parent_size);
+    volatile uint8_t *code = (volatile uint8_t *)sandbox_code;
+    for (uint32_t i = 0; i < parent_size; i++) backup[i] = code[i];
+
+    /* Write filename + args to path buffer */
+    volatile char *dst = (volatile char *)(sandbox_io + 0x200);
+    int i = 0;
+    while (path[i] && i < 127) { dst[i] = path[i]; i++; }
+    dst[i] = '\0';
+
+    /* Write args to SBX_ARGS */
+    volatile char *adst = (volatile char *)(sandbox_io + SBX_ARGS);
+    int ai = 0;
+    if (args) {
+        while (args[ai] && ai < SBX_ARGS_MAX - 1) { adst[ai] = args[ai]; ai++; }
+    }
+    adst[ai] = '\0';
+
+    /* PPC to orchestrator: load child into sandbox_code */
+    seL4_SetMR(0, SYS_EXEC);
+    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 1));
+    int64_t magic = (int64_t)seL4_GetMR(0);
+
+    if (magic != (int64_t)SBX_EXEC_MAGIC) {
+        /* Failed to load — restore parent */
+        for (uint32_t j = 0; j < parent_size; j++) code[j] = backup[j];
+        return -1;
+    }
+
+    /* Child is now in sandbox_code — flush caches and run */
+    uint32_t child_size = RD32(sandbox_io, SBX_EXEC_CHILD_SIZE);
+    uintptr_t addr = sandbox_code;
+    uintptr_t end = sandbox_code + child_size;
+    for (; addr < end; addr += 64)
+        __asm__ volatile("dc cvau, %0" :: "r"(addr));
+    __asm__ volatile("dsb ish" ::: "memory");
+    addr = sandbox_code;
+    for (; addr < end; addr += 64)
+        __asm__ volatile("ic ivau, %0" :: "r"(addr));
+    __asm__ volatile("dsb ish" ::: "memory");
+    __asm__ volatile("isb" ::: "memory");
+
+    /* Reset output buffer before running child */
+    out_len = 0;
+    WR32(sandbox_io, SBX_OUTPUT_LEN, 0);
+
+    /* Set args pointer for child */
+    syscalls.args = (const char *)(sandbox_io + SBX_ARGS);
+
+    /* Run child */
+    program_entry_t entry = (program_entry_t)sandbox_code;
+    int child_exit = entry(&syscalls);
+
+    /* Flush child output via direct serial before restoring parent */
+    if (out_len > 0) {
+        volatile char *out = (volatile char *)(sandbox_io + SBX_OUTPUT);
+        for (uint32_t oi = 0; oi < out_len; oi++)
+            sbx_putc_direct(out[oi]);
+    }
+    /* Reset output buffer for parent */
+    out_len = 0;
+    WR32(sandbox_io, SBX_OUTPUT_LEN, 0);
+
+    /* Restore parent code from heap backup */
+    for (uint32_t j = 0; j < parent_size; j++) code[j] = backup[j];
+
+    /* Flush caches for restored parent */
+    addr = sandbox_code;
+    end = sandbox_code + parent_size;
+    for (; addr < end; addr += 64)
+        __asm__ volatile("dc cvau, %0" :: "r"(addr));
+    __asm__ volatile("dsb ish" ::: "memory");
+    addr = sandbox_code;
+    for (; addr < end; addr += 64)
+        __asm__ volatile("ic ivau, %0" :: "r"(addr));
+    __asm__ volatile("dsb ish" ::: "memory");
+    __asm__ volatile("isb" ::: "memory");
+
+    /* Tell orchestrator we are done, pass child exit code */
+    seL4_SetMR(0, SYS_EXEC_DONE);
+    seL4_SetMR(1, (uint64_t)(uint32_t)child_exit);
+    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 2));
+
+    /* Restore args pointer for parent */
+    syscalls.args = (const char *)(sandbox_io + SBX_ARGS);
+
+    return child_exit;
+}
+
 
 static void init_syscalls(void) {
     syscalls.puts    = sbx_puts;
@@ -366,6 +463,7 @@ static void init_syscalls(void) {
     syscalls.mkdir      = sbx_mkdir;
     syscalls.rmdir      = sbx_rmdir;
     syscalls.rename     = sbx_rename;
+    syscalls.exec       = sbx_exec;
     syscalls.readdir    = sbx_readdir;
     syscalls.filesize   = sbx_filesize;
     /* Extended POSIX */
@@ -380,7 +478,6 @@ static void init_syscalls(void) {
 }
 
 /* ── Execute code ──────────────────────────────────── */
-typedef int (*program_entry_t)(aios_syscalls_t *sys);
 
 static void run_program(void) {
     uint32_t code_size = RD32(sandbox_io, SBX_CODE_SIZE);

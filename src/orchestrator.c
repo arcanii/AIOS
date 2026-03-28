@@ -907,8 +907,54 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
     case SYS_EXEC: {
-        /* Future: run program from within program */
-        result = -1;
+        /* Chaining exec: load child program into sandbox_code */
+        volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        char fname[256];
+        int i = 0;
+        while (path[i] && i < 255) { fname[i] = path[i]; i++; }
+        fname[i] = '\0';
+
+        /* Open child program */
+        int st = fs_open_sync(fname);
+        if (st != 0) { result = -1; break; }
+        uint32_t fd = RD32(fs_data, FS_FD);
+        uint32_t child_size = RD32(fs_data, FS_FILESIZE);
+        if (child_size == 0 || child_size > 0x80000) { /* max 512K for child */
+            fs_close_sync(fd);
+            result = -1;
+            break;
+        }
+
+        /* Store parent size so sandbox can back it up */
+        WR32(sandbox_io, SBX_EXEC_PARENT_SIZE, exec_loaded_bytes);
+
+        /* Load child into sandbox_code (overwriting parent) */
+        volatile uint8_t *code = (volatile uint8_t *)sandbox_code;
+        uint32_t offset = 0;
+        while (offset < child_size) {
+            uint32_t chunk = child_size - offset;
+            if (chunk > FS_DATA_MAX) chunk = FS_DATA_MAX;
+            st = fs_read_sync(fd, offset, chunk);
+            if (st != 0 && st != 3) break;
+            uint32_t got = RD32(fs_data, FS_LENGTH);
+            if (got == 0) break;
+            volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
+            for (uint32_t j = 0; j < got; j++) code[offset + j] = src[j];
+            offset += got;
+        }
+        fs_close_sync(fd);
+
+        WR32(sandbox_io, SBX_EXEC_CHILD_SIZE, offset);
+        exec_loaded_bytes = offset;
+
+        result = SBX_EXEC_MAGIC;
+        break;
+    }
+    case SYS_EXEC_DONE: {
+        /* Child finished — sandbox already restored parent code */
+        exec_loaded_bytes = RD32(sandbox_io, SBX_EXEC_PARENT_SIZE);
+        /* Return the child exit code (passed in MR1) */
+        result = (int64_t)(int32_t)seL4_GetMR(1);
         break;
     }
     case SYS_EXIT: {

@@ -99,6 +99,10 @@
 #define SBX_OUTPUT_LEN  0x010
 #define SBX_ARGS        0x014   /* null-terminated args string (max 236 bytes) */
 #define SBX_ARGS_MAX    236
+#define SBX_EXEC_PARENT_SIZE  0x0F0  /* saved parent code size */
+#define SBX_EXEC_CHILD_SIZE   0x0F4  /* loaded child code size */
+#define SBX_EXEC_MAGIC        0x45584543  /* "EXEC" */
+
 #define SBX_OUTPUT_MAX  3840
 
 #define SBX_CMD_NOP     0

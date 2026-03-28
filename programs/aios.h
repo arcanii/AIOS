@@ -34,6 +34,7 @@ typedef struct {
     int   (*mkdir)(const char *path);
     int   (*rmdir)(const char *path);
     int   (*rename)(const char *oldpath, const char *newpath);
+    int   (*exec)(const char *path, const char *args);
     int   (*readdir)(void *buf, unsigned long max_entries);
     int   (*filesize)(void);
     /* Extended POSIX */

@@ -218,6 +218,23 @@ AIOS_ENTRY {
                 if (rename(old, args + i + 1) < 0) print("rename: failed\n");
             } else print("usage: rename <old> <new>\n");
         }
-        else { print(line); print(": command not found\n"); }
+        else {
+            /* Try to exec as external program: uppercase + .BIN */
+            char bin[64];
+            int bi = 0;
+            for (int ci = 0; line[ci] && line[ci] != ' ' && bi < 55; ci++) {
+                char c = line[ci];
+                if (c >= 'a' && c <= 'z') c -= 32;
+                bin[bi++] = c;
+            }
+            bin[bi++] = '.'; bin[bi++] = 'B'; bin[bi++] = 'I'; bin[bi++] = 'N'; bin[bi] = '\0';
+            /* Find args (after first space) */
+            const char *args = "";
+            for (int ci = 0; line[ci]; ci++) {
+                if (line[ci] == ' ') { args = line + ci + 1; break; }
+            }
+            int rc = aios_exec(bin, args);
+            if (rc < 0) { print(line); print(": command not found\n"); }
+        }
     }
 }
