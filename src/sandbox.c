@@ -28,6 +28,10 @@ uintptr_t sandbox_code;
 #define HEAP_SIZE (4 * 1024 * 1024)  /* 4 MiB */
 static uint32_t heap_used = 0;
 
+/* Per-fd file position tracking */
+#define MAX_FDS 16
+static uint32_t fd_pos[MAX_FDS];
+
 static void *sbx_malloc(unsigned long size) {
     /* Simple bump allocator — no free */
     size = (size + 15) & ~15UL;  /* align to 16 */
@@ -117,20 +121,28 @@ static void sbx_put_hex(unsigned int n) {
 
 /* ── File I/O syscalls (PPC to orchestrator) ─────────── */
 
-static int sbx_open(const char *path) {
+static int sbx_open_flags(const char *path, int flags) {
     volatile char *dst = (volatile char *)(sandbox_io + 0x200);
     int i = 0;
     while (path[i] && i < 255) { dst[i] = path[i]; i++; }
     dst[i] = '\0';
     seL4_SetMR(0, SYS_OPEN);
-    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 1));
-    return (int)seL4_GetMR(0);
+    seL4_SetMR(1, (seL4_Word)flags);
+    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 2));
+    int fd = (int)seL4_GetMR(0);
+    if (fd >= 0 && fd < MAX_FDS) fd_pos[fd] = 0;
+    return fd;
+}
+
+static int sbx_open(const char *path) {
+    return sbx_open_flags(path, 0);
 }
 
 static int sbx_read(int fd, void *buf, unsigned long len) {
+    uint32_t offset = (fd >= 0 && fd < MAX_FDS) ? fd_pos[fd] : 0;
     seL4_SetMR(0, SYS_READ);
     seL4_SetMR(1, fd);
-    seL4_SetMR(2, 0);
+    seL4_SetMR(2, offset);
     seL4_SetMR(3, len);
     microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 4));
     int got = (int)seL4_GetMR(0);
@@ -138,6 +150,7 @@ static int sbx_read(int fd, void *buf, unsigned long len) {
         volatile uint8_t *src = (volatile uint8_t *)(sandbox_io + 0x400);
         uint8_t *d = (uint8_t *)buf;
         for (int i = 0; i < got; i++) d[i] = src[i];
+        if (fd >= 0 && fd < MAX_FDS) fd_pos[fd] += (uint32_t)got;
     }
     return got;
 }
@@ -154,6 +167,7 @@ static int sbx_write_file(int fd, const void *buf, unsigned long len) {
 }
 
 static int sbx_close(int fd) {
+    if (fd >= 0 && fd < MAX_FDS) fd_pos[fd] = 0;
     seL4_SetMR(0, SYS_CLOSE);
     seL4_SetMR(1, fd);
     microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 2));
@@ -236,12 +250,15 @@ typedef struct {
     char *(*strncpy)(char *dst, const char *src, unsigned long n);
     /* File I/O */
     int   (*open)(const char *path);
+    int   (*open_flags)(const char *path, int flags);
     int   (*read)(int fd, void *buf, unsigned long len);
     int   (*write_file)(int fd, const void *buf, unsigned long len);
     int   (*close)(int fd);
     int   (*unlink)(const char *path);
     int   (*readdir)(void *buf, unsigned long max_entries);
     int   (*filesize)(void);
+    /* Args */
+    const char *args;
     /* Interactive I/O */
     int   (*getc)(void);
     void  (*puts_direct)(const char *s);
@@ -265,13 +282,14 @@ static void init_syscalls(void) {
     syscalls.strncpy = sbx_strncpy;
     /* File I/O */
     syscalls.open       = sbx_open;
+    syscalls.open_flags = sbx_open_flags;
     syscalls.read       = sbx_read;
     syscalls.write_file = sbx_write_file;
     syscalls.close      = sbx_close;
     syscalls.unlink     = sbx_unlink;
     syscalls.readdir    = sbx_readdir;
     syscalls.filesize   = sbx_filesize;
-    /* Interactive I/O */
+    /* Args */
     syscalls.getc        = sbx_getc;
     syscalls.puts_direct = sbx_puts_direct;
     syscalls.putc_direct = sbx_putc_direct;
@@ -308,6 +326,9 @@ static void run_program(void) {
     }
     __asm__ volatile("dsb ish" ::: "memory");
     __asm__ volatile("isb" ::: "memory");
+
+    /* Set args pointer */
+    syscalls.args = (const char *)(sandbox_io + SBX_ARGS);
 
     /* Jump to code: entry point is the start of sandbox_code */
     program_entry_t entry = (program_entry_t)sandbox_code;

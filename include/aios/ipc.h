@@ -94,6 +94,8 @@
 #define SBX_EXIT_CODE   0x00C   /* exit code from program */
 #define SBX_OUTPUT      0x100   /* 3840 bytes for program stdout */
 #define SBX_OUTPUT_LEN  0x010
+#define SBX_ARGS        0x014   /* null-terminated args string (max 236 bytes) */
+#define SBX_ARGS_MAX    236
 #define SBX_OUTPUT_MAX  3840
 
 #define SBX_CMD_NOP     0

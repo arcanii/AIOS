@@ -147,6 +147,7 @@ static uint32_t saved_tok_size = 0;
 
 /* ── Exec state ──────────────────────────────────────── */
 static uint32_t exec_loaded_bytes = 0;
+static char exec_args[256];
 
 /* ── Command: help ───────────────────────────────────── */
 static void cmd_help(void) {
@@ -344,6 +345,16 @@ static void cmd_exec(const char *filename) {
     ser_puts(" bytes into sandbox. Executing...\n");
     ser_flush();
 
+    /* Copy args to sandbox_io for the program */
+    {
+        volatile char *adst = (volatile char *)(sandbox_io + SBX_ARGS);
+        int ai = 0;
+        while (exec_args[ai] && ai < SBX_ARGS_MAX - 1) {
+            adst[ai] = exec_args[ai]; ai++;
+        }
+        adst[ai] = '\0';
+    }
+
     /* Tell sandbox to run */
     WR32(sandbox_io, SBX_CODE_SIZE, exec_loaded_bytes);
     WR32(sandbox_io, SBX_CMD, SBX_CMD_RUN);
@@ -520,14 +531,25 @@ static void process_command(void) {
         if (*fn) cmd_rm(fn);
         else { ser_puts("Usage: rm <file>\n"); ser_flush(); }
     } else if (str_starts_with(input_line, "exec ")) {
-        char *fn = &input_line[5];
-        while (*fn == ' ') fn++;
-        if (*fn) {
-            cmd_exec(fn);
+        char *p = &input_line[5];
+        while (*p == ' ') p++;
+        /* Split "PROG.BIN arg1 arg2..." */
+        char exec_file[64];
+        int ei = 0;
+        while (p[ei] && p[ei] != ' ' && ei < 63) { exec_file[ei] = p[ei]; ei++; }
+        exec_file[ei] = '\0';
+        /* Copy remaining as args */
+        const char *astart = p + ei;
+        while (*astart == ' ') astart++;
+        int ai = 0;
+        while (astart[ai] && ai < (int)(SBX_ARGS_MAX - 1)) { exec_args[ai] = astart[ai]; ai++; }
+        exec_args[ai] = '\0';
+        if (exec_file[0]) {
+            cmd_exec(exec_file);
             input_pos = 0;
-            return; /* Don't print prompt yet — sandbox running */
+            return;
         }
-        else { ser_puts("Usage: exec <file.bin>\n"); ser_flush(); }
+        else { ser_puts("Usage: exec <file.bin> [args]\n"); ser_flush(); }
     } else if (str_starts_with(input_line, "load ")) {
         char *fn = &input_line[5];
         while (*fn == ' ') fn++;
@@ -649,11 +671,17 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
     switch (syscall_nr) {
     case SYS_OPEN: {
         volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        uint32_t flags = (uint32_t)seL4_GetMR(1);
         char fname[256];
         int i = 0;
         while (path[i] && i < 255) { fname[i] = path[i]; i++; }
         fname[i] = '\0';
         int st = fs_open_sync(fname);
+        if (st != 0 && (flags & 0x0040)) {
+            /* O_CREAT: file not found, create it */
+            st = fs_create_sync(fname);
+            if (st == 0) st = fs_open_sync(fname);
+        }
         if (st == 0) {
             result = RD32(fs_data, FS_FD);
             seL4_SetMR(1, RD32(fs_data, FS_FILESIZE));

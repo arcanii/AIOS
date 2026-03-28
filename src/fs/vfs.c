@@ -158,6 +158,7 @@ static void handle_read(void) {
     int rc = active_fs->read(&open_files[fd_idx], (uint8_t *)dst,
                              offset, len, &bytes_read);
     WR32(fs_data, FS_READLEN, bytes_read);
+    WR32(fs_data, FS_LENGTH, bytes_read);
     reply_status(rc);
 }
 
@@ -202,6 +203,7 @@ static void handle_write(void) {
     int rc = active_fs->write(&open_files[fd_idx], (const uint8_t *)src,
                               len, &written);
     WR32(fs_data, FS_READLEN, written);
+    WR32(fs_data, FS_LENGTH, written);
     reply_status(rc);
 }
 

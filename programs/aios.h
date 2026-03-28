@@ -26,12 +26,15 @@ typedef struct {
     char *(*strncpy)(char *dst, const char *src, size_t n);
     /* File I/O */
     int   (*open)(const char *path);
+    int   (*open_flags)(const char *path, int flags);
     int   (*read)(int fd, void *buf, unsigned long len);
     int   (*write_file)(int fd, const void *buf, unsigned long len);
     int   (*close)(int fd);
     int   (*unlink)(const char *path);
     int   (*readdir)(void *buf, unsigned long max_entries);
     int   (*filesize)(void);
+    /* Args */
+    const char *args;
     /* Interactive I/O (immediate, not buffered) */
     int   (*getc)(void);
     void  (*puts_direct)(const char *s);
@@ -76,13 +79,16 @@ static aios_syscalls_t *sys;
 #define aios_readdir(buf, max)   sys->readdir(buf, max)
 #define aios_filesize()          sys->filesize()
 
+/* Program arguments */
+#define aios_args()              sys->args
+
 /* Interactive I/O macros */
 #define aios_getc()              sys->getc()
 #define aios_puts_direct(s)      sys->puts_direct(s)
 #define aios_putc_direct(c)      sys->putc_direct(c)
 
 /* Entry point wrapper */
-#define AIOS_ENTRY int aios_main(void); int _start(aios_syscalls_t *_sys) { sys = _sys; return aios_main(); } \
+#define AIOS_ENTRY int aios_main(void); __attribute__((section(".text._start"))) int _start(aios_syscalls_t *_sys) { sys = _sys; return aios_main(); } \
                    int aios_main(void)
 
 #endif /* AIOS_H */
