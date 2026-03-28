@@ -66,8 +66,11 @@ $(BUILD)/fs_server.o: src/fs/vfs.c
 $(BUILD)/fs_fat16.o: src/fs/fat16.c
 	$(CC) -c $(CFLAGS) $< -o $@
 
+$(BUILD)/fs_fat32.o: src/fs/fat32.c
+	$(CC) -c $(CFLAGS) $< -o $@
+
 # ── Link fs_server with FAT backends ───────────────────
-$(BUILD)/fs_server.elf: $(BUILD)/fs_server.o $(BUILD)/fs_fat16.o
+$(BUILD)/fs_server.elf: $(BUILD)/fs_server.o $(BUILD)/fs_fat16.o $(BUILD)/fs_fat32.o
 	$(LD) $^ $(LDFLAGS) -o $@
 
 $(BUILD)/%.elf: $(BUILD)/%.o
