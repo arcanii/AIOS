@@ -106,10 +106,3 @@
 #define SBX_ST_ERROR    3
 
 /* ── Sandbox PPC syscall numbers ───────────────────── */
-#define SYS_PUTC        1   /* arg0 = char */
-#define SYS_PUTS        2   /* string in sandbox_io+SBX_OUTPUT */
-#define SYS_READ_FILE   3   /* filename in sandbox_io+0x200, returns data in sandbox_heap */
-#define SYS_WRITE_FILE  4   /* filename in sandbox_io+0x200, data in sandbox_heap */
-#define SYS_LIST_DIR    5   /* returns listing in sandbox_io+SBX_OUTPUT */
-#define SYS_GET_ARG     6   /* arg0 = index, returns string in sandbox_io+0x200 */
-#define SYS_EXEC        7   /* filename in sandbox_io+0x200, chain-exec another program */

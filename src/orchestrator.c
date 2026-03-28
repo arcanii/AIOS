@@ -1,883 +1,344 @@
-/*
- * AIOS Orchestrator
- *
- * Central coordinator PD. Manages boot sequence, file loading,
- * model loading, interactive shell, and LLM inference requests.
- *
- * Copyright (c) 2025 AIOS Project
- * SPDX-License-Identifier: MIT
+/* AIOS Orchestrator — synchronous rewrite
+ * All filesystem operations use microkit_ppcall (blocking).
+ * State machine only needed for: LLM generation (async), sandbox exec (async).
  */
-#include <stdint.h>
 #include <microkit.h>
-#include "aios/channels.h"
 #include "aios/ipc.h"
+#include "aios/channels.h"
+#include "sys/syscall.h"
 #include "aios/ring.h"
-#include "aios/serial.h"
 
-/* ── Shared-memory regions (set by Microkit loader) ── */
-uintptr_t rx_buf;
+/* ── Shared memory regions (set by Microkit loader) ─── */
 uintptr_t tx_buf;
-uintptr_t blk_data;
+uintptr_t rx_buf;
 uintptr_t fs_data;
 uintptr_t model_data;
 uintptr_t llm_io;
 uintptr_t sandbox_io;
 uintptr_t sandbox_code;
 
-/* ── State machine ──────────────────────────────────── */
-typedef enum {
-    BOOT_OPENING,
-    BOOT_READING,
-    BOOT_CLOSING,
-    LOAD_OPENING,
-    LOAD_READING,
-    LOAD_CLOSING,
-    LOAD_NOTIFY_LLM,
-    TOK_OPENING,
-    TOK_READING,
-    TOK_CLOSING,
-    TOK_NOTIFY_LLM,
-    GEN_WAITING,
-    WRITE_WAIT_CREATE,
-    WRITE_WAIT_DATA,
-    WRITE_WAIT_CLOSE,
-    DELETE_WAIT,
-    AI_REF_OPENING,
-    AI_REF_READING,
-    AI_REF_CLOSING,
-    AI_GEN_WAITING,
-    AI_SAVE_CREATE,
-    AI_SAVE_WRITE,
-    AI_SAVE_CLOSE,
-    EXEC_OPENING,
-    EXEC_READING,
-    EXEC_CLOSING,
-    EXEC_RUNNING,
-    RUNNING,
-} orch_state_t;
-
-static orch_state_t orch_state = BOOT_OPENING;
-static uint32_t cur_fd       = 0;
-static uint32_t cur_filesize = 0;
-static uint32_t cur_offset   = 0;
-
-/* Model loading */
-static uint32_t model_loaded_bytes = 0;
-static uint32_t model_total_bytes  = 0;
-static uint32_t last_progress_pct  = 0;
-
-/* Tokenizer loading */
-static uint32_t tok_loaded_bytes    = 0;
-static uint32_t tok_total_bytes     = 0;
-static uint32_t tok_offset_in_model = 0;
-
-/* Ready flag */
-static int model_ready = 0;
-
-/* AI build state */
-#define AI_GEN_BUF_MAX  4096
-static char ai_gen_buf[AI_GEN_BUF_MAX];
-static uint32_t ai_gen_len = 0;
-static char ai_target_name[16];    /* e.g. "LS" */
-static char ai_target_file[24];    /* e.g. "LS.C" */
-static char ai_ref_file[24];       /* e.g. "R_LS.C" */
-static char ai_ref_buf[2048];      /* reference file content */
-static uint32_t ai_ref_len = 0;
-
-/* Exec state */
-static uint32_t exec_loaded_bytes = 0;
-
-static inline void dsb_sy(void) {
-    __asm__ volatile("dsb sy" ::: "memory");
+/* ── Memory helpers ──────────────────────────────────── */
+static __attribute__((unused)) void my_memcpy(void *dst, const void *src, unsigned long n) {
+    char *d = dst; const char *s = src;
+    while (n--) *d++ = *s++;
+}
+static __attribute__((unused)) void my_memset(void *dst, int c, unsigned long n) {
+    char *d = dst;
+    while (n--) *d++ = (char)c;
+}
+static int my_strlen(const char *s) {
+    int n = 0; while (*s++) n++;
+    return n;
+}
+static int my_strcmp(const char *a, const char *b) {
+    while (*a && *a == *b) { a++; b++; }
+    return (unsigned char)*a - (unsigned char)*b;
+}
+static int str_starts_with(const char *s, const char *prefix) {
+    while (*prefix) { if (*s++ != *prefix++) return 0; }
+    return 1;
 }
 
+/* ── Serial I/O ──────────────────────────────────────── */
+static void ser_putc(char c) {
+    ring_buf_t *tx = (ring_buf_t *)tx_buf;
+    ring_put(tx, (uint8_t)c);
+}
+static void ser_puts(const char *s) {
+    ring_buf_t *tx = (ring_buf_t *)tx_buf;
+    while (*s) ring_put(tx, (uint8_t)*s++);
+}
+static void ser_put_dec(unsigned int n) {
+    char buf[12]; int i = 0;
+    if (n == 0) { ser_putc('0'); return; }
+    while (n) { buf[i++] = '0' + (n % 10); n /= 10; }
+    while (i--) ser_putc(buf[i]);
+}
+static __attribute__((unused)) void ser_put_hex(unsigned long n) {
+    char buf[17]; int i = 0;
+    if (n == 0) { ser_puts("0"); return; }
+    while (n) { int d = n & 0xf; buf[i++] = d < 10 ? '0'+d : 'a'+d-10; n >>= 4; }
+    while (i--) ser_putc(buf[i]);
+}
+#define ser_flush() microkit_notify(CH_SERIAL)
 
+/* ── Synchronous FS operations ───────────────────────── */
 
-/* ── FS client (non-blocking) ──────────────────────── */
-static void fs_open(const char *filename) {
+static int fs_open_sync(const char *filename) {
     WR32(fs_data, FS_CMD, FS_CMD_OPEN);
     char *dst = (char *)(fs_data + FS_FILENAME);
     int i = 0;
     while (filename[i] && i < 255) { dst[i] = filename[i]; i++; }
     dst[i] = '\0';
-    microkit_notify(CH_FS);
+    microkit_ppcall(CH_FS, microkit_msginfo_new(0, 0));
+    return (int)RD32(fs_data, FS_STATUS);
 }
 
-static void fs_read(uint32_t fd, uint32_t offset, uint32_t len) {
+static int fs_read_sync(uint32_t fd, uint32_t offset, uint32_t len) {
     if (len > FS_DATA_MAX) len = FS_DATA_MAX;
-    WR32(fs_data, FS_CMD,    FS_CMD_READ);
-    WR32(fs_data, FS_FD,     fd);
+    WR32(fs_data, FS_CMD, FS_CMD_READ);
+    WR32(fs_data, FS_FD, fd);
     WR32(fs_data, FS_OFFSET, offset);
     WR32(fs_data, FS_LENGTH, len);
-    microkit_notify(CH_FS);
+    microkit_ppcall(CH_FS, microkit_msginfo_new(0, 0));
+    return (int)RD32(fs_data, FS_STATUS);
 }
 
-static void fs_close(uint32_t fd) {
+static int fs_write_sync(uint32_t fd, uint32_t len) {
+    WR32(fs_data, FS_CMD, FS_CMD_WRITE);
+    WR32(fs_data, FS_FD, fd);
+    WR32(fs_data, FS_LENGTH, len);
+    microkit_ppcall(CH_FS, microkit_msginfo_new(0, 0));
+    return (int)RD32(fs_data, FS_STATUS);
+}
+
+static int fs_close_sync(uint32_t fd) {
     WR32(fs_data, FS_CMD, FS_CMD_CLOSE);
-    WR32(fs_data, FS_FD,  fd);
-    microkit_notify(CH_FS);
+    WR32(fs_data, FS_FD, fd);
+    microkit_ppcall(CH_FS, microkit_msginfo_new(0, 0));
+    return (int)RD32(fs_data, FS_STATUS);
 }
 
-/* ── Boot: read hello.txt ──────────────────────────── */
-static void handle_boot_open_reply(void) {
-    uint32_t status = RD32(fs_data, FS_STATUS);
-    if (status == FS_ST_OK) {
-        cur_fd       = RD32(fs_data, FS_FD);
-        cur_filesize = RD32(fs_data, FS_FILESIZE);
-        cur_offset   = 0;
-        ser_puts("  File size: ");
-        ser_put_dec(cur_filesize);
-        ser_puts(" bytes\n");
-        uint32_t chunk = cur_filesize;
-        if (chunk > FS_DATA_MAX) chunk = FS_DATA_MAX;
-        orch_state = BOOT_READING;
-        fs_read(cur_fd, 0, chunk);
-    } else {
-        ser_puts("  File not found.\n");
-        microkit_notify(CH_SERIAL);
-        orch_state = RUNNING;
-        ser_puts("AIOS> ");
-        microkit_notify(CH_SERIAL);
-    }
+static int fs_create_sync(const char *filename) {
+    WR32(fs_data, FS_CMD, FS_CMD_CREATE);
+    char *dst = (char *)(fs_data + FS_FILENAME);
+    int i = 0;
+    while (filename[i] && i < 255) { dst[i] = filename[i]; i++; }
+    dst[i] = '\0';
+    microkit_ppcall(CH_FS, microkit_msginfo_new(0, 0));
+    return (int)RD32(fs_data, FS_STATUS);
 }
 
-static void handle_boot_read_reply(void) {
-    uint32_t status = RD32(fs_data, FS_STATUS);
-    uint32_t got    = RD32(fs_data, FS_LENGTH);
-    
-    if ((status == FS_ST_OK || status == FS_ST_EOF) && got > 0) {
-        ser_puts("  Contents: ");
-        volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
-        for (uint32_t i = 0; i < got; i++) ser_putc((char)src[i]);
-        if (got > 0 && (char)src[got - 1] != '\n') ser_putc('\n');
-        microkit_notify(CH_SERIAL);
-        cur_offset += got;
-        if (cur_offset < cur_filesize) {
-            uint32_t chunk = cur_filesize - cur_offset;
-            if (chunk > FS_DATA_MAX) chunk = FS_DATA_MAX;
-            fs_read(cur_fd, cur_offset, chunk);
-        } else {
-            orch_state = BOOT_CLOSING;
-            fs_close(cur_fd);
-        }
-    } else {
-        orch_state = BOOT_CLOSING;
-        fs_close(cur_fd);
-    }
+static int fs_delete_sync(const char *filename) {
+    WR32(fs_data, FS_CMD, FS_CMD_DELETE);
+    char *dst = (char *)(fs_data + FS_FILENAME);
+    int i = 0;
+    while (filename[i] && i < 255) { dst[i] = filename[i]; i++; }
+    dst[i] = '\0';
+    microkit_ppcall(CH_FS, microkit_msginfo_new(0, 0));
+    return (int)RD32(fs_data, FS_STATUS);
 }
 
-static void handle_boot_close_reply(void) {
-    ser_puts("  File closed.\n\n");
-    ser_puts("AIOS> ");
-    orch_state = RUNNING;
+static int fs_list_sync(void) {
+    WR32(fs_data, FS_CMD, FS_CMD_LIST);
+    microkit_ppcall(CH_FS, microkit_msginfo_new(0, 0));
+    return (int)RD32(fs_data, FS_STATUS);
 }
 
-/* ── Model loading ─────────────────────────────────── */
-static void start_model_load(const char *filename) {
-    model_loaded_bytes = 0;
-    model_total_bytes  = 0;
-    last_progress_pct  = 0;
-    model_ready        = 0;
-    orch_state = LOAD_OPENING;
-    fs_open(filename);
-}
-
-static void handle_load_open_reply(void) {
-    uint32_t status = RD32(fs_data, FS_STATUS);
-    if (status != FS_ST_OK) {
-        ser_puts("  Model file not found!\n");
-        ser_puts("AIOS> ");
-        orch_state = RUNNING;
-        return;
-    }
-    cur_fd          = RD32(fs_data, FS_FD);
-    cur_filesize    = RD32(fs_data, FS_FILESIZE);
-    cur_offset      = 0;
-    model_total_bytes = cur_filesize;
-
-    ser_puts("  File size: ");
-    ser_put_dec(cur_filesize);
-    ser_puts(" bytes (");
-    ser_put_dec(cur_filesize / 1024);
-    ser_puts(" KiB)\n");
-
-    if (cur_filesize > MODEL_DATA_MAX) {
-        ser_puts("  ERROR: model too large for memory region!\n");
-        orch_state = LOAD_CLOSING;
-        fs_close(cur_fd);
-        return;
-    }
-
-    ser_puts("  Loading: [");
-    microkit_notify(CH_SERIAL);
-    orch_state = LOAD_READING;
-    uint32_t chunk = cur_filesize;
-    if (chunk > FS_DATA_MAX) chunk = FS_DATA_MAX;
-    fs_read(cur_fd, 0, chunk);
-}
-
-static void handle_load_read_reply(void) {
-    uint32_t status = RD32(fs_data, FS_STATUS);
-    uint32_t got    = RD32(fs_data, FS_LENGTH);
-
-    if ((status == FS_ST_OK || status == FS_ST_EOF) && got > 0) {
-        volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
-        volatile uint8_t *dst = (volatile uint8_t *)(model_data + model_loaded_bytes);
-        for (uint32_t i = 0; i < got; i++) dst[i] = src[i];
-        model_loaded_bytes += got;
-        cur_offset += got;
-
-        uint32_t pct = 0;
-        if (model_total_bytes > 0)
-            pct = (uint32_t)((uint64_t)model_loaded_bytes * 100 / model_total_bytes);
-        while (last_progress_pct + 2 <= pct) {
-            ser_putc('#');
-            last_progress_pct += 2;
-        }
-        microkit_notify(CH_SERIAL);
-
-        if (cur_offset >= cur_filesize || status == FS_ST_EOF) {
-            ser_puts("] 100%\n");
-            ser_puts("  Loaded ");
-            ser_put_dec(model_loaded_bytes);
-            ser_puts(" bytes into memory\n");
-            microkit_notify(CH_SERIAL);
-            orch_state = LOAD_CLOSING;
-            fs_close(cur_fd);
-        } else {
-            uint32_t chunk = cur_filesize - cur_offset;
-            if (chunk > FS_DATA_MAX) chunk = FS_DATA_MAX;
-            fs_read(cur_fd, cur_offset, chunk);
-        }
-    } else {
-        ser_puts("] ERROR\n");
-        microkit_notify(CH_SERIAL);
-        orch_state = LOAD_CLOSING;
-        fs_close(cur_fd);
-    }
-}
-
-static void handle_load_close_reply(void) {
-    if (model_loaded_bytes > 0) {
-        dsb_sy();  // ensure all model writes are visible
-        ser_puts("  Notifying LLM server...\n");
-        microkit_notify(CH_SERIAL);
-        WR32(llm_io, LLM_CMD, LLM_CMD_LOAD_DONE);
-        WR32(llm_io, LLM_MODELSZ, model_loaded_bytes);
-        orch_state = LOAD_NOTIFY_LLM;
-        microkit_notify(CH_LLM);
-    } else {
-        ser_puts("  Load failed.\n");
-        ser_puts("AIOS> ");
-        orch_state = RUNNING;
-    }
-}
-
-static void handle_llm_load_reply(void) {
-    uint32_t status = RD32(llm_io, LLM_STATUS);
-    if (status == 0) {
-        ser_puts("  LLM server acknowledged model.\n");
-        /* Auto-load tokenizer */
-        ser_puts("  Loading tokenizer...\n");
-        microkit_notify(CH_SERIAL);
-        tok_offset_in_model = (model_loaded_bytes + 15) & ~15UL;
-        tok_loaded_bytes = 0;
-        tok_total_bytes  = 0;
-        cur_offset       = 0;
-        orch_state = TOK_OPENING;
-        fs_open("TOK.BIN");
-    } else {
-        ser_puts("  LLM server rejected model!\n");
-        ser_puts("\nAIOS> ");
-        orch_state = RUNNING;
-    }
-}
-
-/* ── Tokenizer loading ─────────────────────────────── */
-static void handle_tok_open_reply(void) {
-    uint32_t status = RD32(fs_data, FS_STATUS);
-    if (status != FS_ST_OK) {
-        ser_puts("  Tokenizer file not found!\n");
-        ser_puts("AIOS> ");
-        orch_state = RUNNING;
-        return;
-    }
-    cur_fd       = RD32(fs_data, FS_FD);
-    cur_filesize = RD32(fs_data, FS_FILESIZE);
-    cur_offset   = 0;
-    tok_total_bytes = cur_filesize;
-
-    ser_puts("  Tokenizer: ");
-    ser_put_dec(cur_filesize);
-    ser_puts(" bytes\n");
-    microkit_notify(CH_SERIAL);
-
-    if (tok_offset_in_model + cur_filesize > MODEL_DATA_MAX) {
-        ser_puts("  ERROR: no room for tokenizer!\n");
-        orch_state = TOK_CLOSING;
-        fs_close(cur_fd);
-        return;
-    }
-
-    orch_state = TOK_READING;
-    uint32_t chunk = cur_filesize;
-    if (chunk > FS_DATA_MAX) chunk = FS_DATA_MAX;
-    fs_read(cur_fd, 0, chunk);
-}
-
-static void handle_tok_read_reply(void) {
-    uint32_t status = RD32(fs_data, FS_STATUS);
-    uint32_t got    = RD32(fs_data, FS_LENGTH);
-
-    if ((status == FS_ST_OK || status == FS_ST_EOF) && got > 0) {
-        volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
-        volatile uint8_t *dst = (volatile uint8_t *)(model_data + tok_offset_in_model + tok_loaded_bytes);
-        for (uint32_t i = 0; i < got; i++) dst[i] = src[i];
-        tok_loaded_bytes += got;
-        cur_offset += got;
-
-        if (cur_offset >= cur_filesize || status == FS_ST_EOF) {
-            ser_puts("  Tokenizer loaded.\n");
-            microkit_notify(CH_SERIAL);
-            orch_state = TOK_CLOSING;
-            fs_close(cur_fd);
-        } else {
-            uint32_t chunk = cur_filesize - cur_offset;
-            if (chunk > FS_DATA_MAX) chunk = FS_DATA_MAX;
-            fs_read(cur_fd, cur_offset, chunk);
-        }
-    } else {
-        ser_puts("  Tokenizer read error!\n");
-        orch_state = TOK_CLOSING;
-        fs_close(cur_fd);
-    }
-}
-
-static void handle_tok_close_reply(void) {
-    if (tok_loaded_bytes > 0) {
-        dsb_sy();  // ensure all writes to model_data are visible
-        WR32(llm_io, LLM_CMD, LLM_CMD_LOAD_TOK);
-        WR32(llm_io, LLM_TOK_OFF, tok_offset_in_model);
-        WR32(llm_io, LLM_TOK_SZ, tok_loaded_bytes);
-        orch_state = TOK_NOTIFY_LLM;
-        microkit_notify(CH_LLM);
-    } else {
-        ser_puts("  Tokenizer load failed.\n");
-        ser_puts("AIOS> ");
-        orch_state = RUNNING;
-    }
-}
-
-static void handle_tok_llm_reply(void) {
-    uint32_t status = RD32(llm_io, LLM_STATUS);
-    if (status == 0) {
-        ser_puts("  Tokenizer acknowledged. Ready for inference!\n");
-        model_ready = 1;
-    } else {
-        ser_puts("  Tokenizer rejected!\n");
-    }
-    ser_puts("\nAIOS> ");
-    orch_state = RUNNING;
-}
-
-/* ── Generation reply ──────────────────────────────── */
-
-static void handle_gen_reply(void) {
-    uint32_t status = RD32(llm_io, LLM_STATUS);
-
-    if (status == LLM_ST_TOKEN) {
-        /* Print the token piece */
-        char *piece = (char *)(llm_io + LLM_OUTPUT);
-        ser_puts(piece);
-        microkit_notify(CH_SERIAL);
-        /* Request next token */
-        WR32(llm_io, LLM_CMD, LLM_CMD_NEXT_TOK);
-        microkit_notify(CH_LLM);
-        /* Stay in GEN_WAITING state */
-    } else if (status == LLM_ST_DONE) {
-        ser_puts("\n\nAIOS> ");
-        microkit_notify(CH_SERIAL);
-        orch_state = RUNNING;
-    } else {
-        ser_puts("\n  Generation error.\n");
-        ser_puts("AIOS> ");
-        microkit_notify(CH_SERIAL);
-        orch_state = RUNNING;
-    }
-}
-
-/* ── Interactive shell ─────────────────────────────── */
-#define INPUT_MAX 128
+/* ── Input buffer ────────────────────────────────────── */
+#define INPUT_MAX 256
 static char input_line[INPUT_MAX];
 static int  input_pos = 0;
 
-static int str_starts_with(const char *s, const char *prefix) {
-    while (*prefix) {
-        if (*s++ != *prefix++) return 0;
-    }
-    return 1;
+/* ── Orchestrator state (minimal — only for async ops) ─ */
+enum {
+    RUNNING,
+    EXEC_RUNNING,   /* sandbox is executing */
+    GEN_WAITING,    /* LLM generating tokens */
+};
+static int orch_state = RUNNING;
+
+/* ── Model loading state ─────────────────────────────── */
+static uint32_t llm_model_loaded = 0;
+
+/* ── Exec state ──────────────────────────────────────── */
+static uint32_t exec_loaded_bytes = 0;
+
+/* ── Command: help ───────────────────────────────────── */
+static void cmd_help(void) {
+    ser_puts("Commands:\n");
+    ser_puts("  help            - this message\n");
+    ser_puts("  ls              - list files\n");
+    ser_puts("  cat <file>      - read a file from disk\n");
+    ser_puts("  write <f> <txt> - write text to a file\n");
+    ser_puts("  rm <file>       - delete a file\n");
+    ser_puts("  load <file>     - load model into memory\n");
+    ser_puts("  gen <prompt>    - generate text\n");
+    ser_puts("  exec <file.bin> - run a sandbox program\n");
+    ser_puts("  info            - system info\n");
+    ser_puts("  shutdown        - halt system\n");
+    ser_flush();
 }
 
-static void process_command(void) {
-    input_line[input_pos] = '\0';
-
-    if (input_pos == 0) {
-        /* empty — just re-prompt */
-    }
-    
-    /* ── write <filename> <text> ─────────────────────────── */
-    if (str_starts_with(input_line, "write ")) {
-        char *p = input_line + 6;
-        char fname[64];
-        int fi = 0;
-        while (*p && *p != ' ' && fi < 63) fname[fi++] = *p++;
-        fname[fi] = 0;
-        if (*p == ' ') p++; /* skip space before text */
-
-        /* Copy filename into fs_data */
-        for (int i = 0; i < fi; i++)
-            *(char *)(fs_data + FS_FILENAME + i) = fname[i];
-        *(char *)(fs_data + FS_FILENAME + fi) = '\0';
-
-        /* Save the text to write — stash in fs_data+FS_DATA temporarily */
-        int tlen = 0;
-        while (p[tlen] && tlen < (int)FS_DATA_MAX - 1) {
-            *(char *)(fs_data + FS_DATA + tlen) = p[tlen];
-            tlen++;
-        }
-        *(char *)(fs_data + FS_DATA + tlen) = '\0';
-        WR32(fs_data, FS_REQLEN, (uint32_t)tlen);
-
-        /* Step 1: create the file */
-        WR32(fs_data, FS_CMD, FS_CMD_CREATE);
-        orch_state = WRITE_WAIT_CREATE;
-        microkit_notify(CH_FS);
-        input_pos = 0;
-        input_line[0] = '\0';
+/* ── Command: ls ─────────────────────────────────────── */
+static void cmd_ls(void) {
+    int st = fs_list_sync();
+    if (st != 0) {
+        ser_puts("  Error listing directory\n");
+        ser_flush();
         return;
     }
-
-    /* ── rm <filename> / del <filename> ──────────────────── */
-    else if (str_starts_with(input_line, "rm ") || str_starts_with(input_line, "del ")) {
-        char *p = input_line + (input_line[0] == 'r' ? 3 : 4);
-        int fi = 0;
-        while (p[fi] && fi < 63) {
-            *(char *)(fs_data + FS_FILENAME + fi) = p[fi];
-            fi++;
+    /* fs_data+FS_DATA has directory listing: 16-byte entries (11 name + 1 attr + 4 size) */
+    uint32_t count = RD32(fs_data, FS_LENGTH);
+    uint8_t *entries = (uint8_t *)(fs_data + FS_DATA);
+    for (uint32_t i = 0; i < count; i++) {
+        uint8_t *ent = entries + i * 16;
+        /* 8.3 name */
+        char name[13];
+        int p = 0;
+        for (int j = 0; j < 8; j++) {
+            if (ent[j] != ' ') name[p++] = ent[j];
         }
-        *(char *)(fs_data + FS_FILENAME + fi) = '\0';
-
-        WR32(fs_data, FS_CMD, FS_CMD_DELETE);
-        orch_state = DELETE_WAIT;
-        microkit_notify(CH_FS);
-        input_pos = 0;
-        input_line[0] = '\0';
-        return;
-    }
-    else if (str_starts_with(input_line, "help")) {
-        ser_puts("Commands:\n");
-        ser_puts("  help            - this message\n");
-        ser_puts("  cat <file>      - read a file from disk\n");
-        ser_puts("  write <f> <txt> - write text to a file\n");
-        ser_puts("  rm <file>       - delete a file\n");
-        ser_puts("  load <file>     - load model into memory\n");
-        ser_puts("  gen <prompt>    - generate text\n");
-        ser_puts("  ai build <name> - AI generates a C program\n");
-        ser_puts("  exec <file.bin> - run a sandbox program\n");
-        ser_puts("  info            - system info\n");
-        ser_puts("  shutdown        - halt system\n");
-    }
-    else if (str_starts_with(input_line, "info")) {
-        ser_puts("AIOS v0.4 on seL4 14.0.0 (Microkit 2.1.0)\n");
-        ser_puts("PDs: serial_driver, blk_driver, fs_server, orchestrator, llm_server, echo_server\n");
-        if (model_ready) {
-            ser_puts("Model: ");
-            ser_put_dec(model_loaded_bytes);
-            ser_puts(" bytes | Tokenizer: ");
-            ser_put_dec(tok_loaded_bytes);
-            ser_puts(" bytes | Ready\n");
-        } else if (model_loaded_bytes > 0) {
-            ser_puts("Model: ");
-            ser_put_dec(model_loaded_bytes);
-            ser_puts(" bytes loaded (tokenizer pending)\n");
-        } else {
-            ser_puts("Model: none loaded\n");
-        }
-    } else if (str_starts_with(input_line, "cat ")) {
-        char *fname = &input_line[4];
-        while (*fname == ' ') fname++;
-        if (*fname == '\0') {
-            ser_puts("Usage: cat <filename>\n");
-        } else {
-            ser_puts("Opening ");
-            ser_puts(fname);
-            ser_puts("...\n");
-            orch_state = BOOT_OPENING;
-            fs_open(fname);
-            input_pos = 0;
-            return;
-        }
-    } else if (str_starts_with(input_line, "load ")) {
-        char *fname = &input_line[5];
-        while (*fname == ' ') fname++;
-        if (*fname == '\0') {
-            ser_puts("Usage: load <filename>\n");
-        } else {
-            ser_puts("Loading model: ");
-            ser_puts(fname);
-            ser_puts("\n");
-            start_model_load(fname);
-            input_pos = 0;
-            return;
-        }
-    } else if (str_starts_with(input_line, "gen ") || str_starts_with(input_line, "generate ")) {
-            char *prompt = input_line;
-            while (*prompt && *prompt != ' ') prompt++;
-            while (*prompt == ' ') prompt++;
-            if (*prompt == '\0') {
-                ser_puts("Usage: gen <prompt>\n");
-            } else if (!model_ready) {
-                ser_puts("No model/tokenizer loaded. Run: load STORIES.BIN\n");
-            } else {
-                ser_puts("Generating...\n");
-                microkit_notify(CH_SERIAL);
-                char *dst = (char *)(llm_io + LLM_PROMPT);
-                int i = 0;
-                while (prompt[i] && i < LLM_PROMPT_MAX - 1) { dst[i] = prompt[i]; i++; }
-                dst[i] = '\0';
-                WR32(llm_io, LLM_MAX_STEPS, 256);
-                WR32(llm_io, LLM_CMD, LLM_CMD_GENERATE);
-                orch_state = GEN_WAITING;
-                microkit_notify(CH_LLM);
-                input_pos = 0;
-                return;
+        if (ent[8] != ' ') {
+            name[p++] = '.';
+            for (int j = 8; j < 11; j++) {
+                if (ent[j] != ' ') name[p++] = ent[j];
             }
-    } else if (str_starts_with(input_line, "ai build ")) {
-        char *name = input_line + 9;
-        while (*name == ' ') name++;
-        if (*name == '\0' || !model_ready) {
-            if (!model_ready)
-                ser_puts("No model loaded. Run: load STORIES.BIN\n");
-            else
-                ser_puts("Usage: ai build <name>\n");
-            microkit_notify(CH_SERIAL);
-        } else {
-            /* Copy target name (uppercase, no extension) */
-            int ni = 0;
-            while (name[ni] && name[ni] != ' ' && name[ni] != '.' && ni < 15) {
-                char c = name[ni];
-                if (c >= 'a' && c <= 'z') c -= 32;
-                ai_target_name[ni] = c;
-                ni++;
-            }
-            ai_target_name[ni] = '\0';
-            /* Build filenames: R_<NAME>.C and <NAME>.C */
-            int j = 0;
-            ai_ref_file[j++] = 'R'; ai_ref_file[j++] = '_';
-            for (int k = 0; k < ni; k++) ai_ref_file[j++] = ai_target_name[k];
-            ai_ref_file[j++] = '.'; ai_ref_file[j++] = 'C'; ai_ref_file[j] = '\0';
-            j = 0;
-            for (int k = 0; k < ni; k++) ai_target_file[j++] = ai_target_name[k];
-            ai_target_file[j++] = '.'; ai_target_file[j++] = 'C'; ai_target_file[j] = '\0';
-            ai_gen_len = 0;
-            ai_ref_len = 0;
-            ser_puts("AI Build: reading reference R_");
-            ser_puts(ai_target_name);
-            ser_puts(".C ...\n");
-            microkit_notify(CH_SERIAL);
-            orch_state = AI_REF_OPENING;
-            fs_open(ai_ref_file);
-            input_pos = 0;
-            return;
         }
-    } else if (str_starts_with(input_line, "exec ")) {
-        char *fname = &input_line[5];
-        while (*fname == ' ') fname++;
-        if (*fname == '\0') {
-            ser_puts("Usage: exec <file.bin>\n");
-        } else {
-            ser_puts("Loading program: ");
-            ser_puts(fname);
-            ser_puts("\n");
-            microkit_notify(CH_SERIAL);
-            exec_loaded_bytes = 0;
-            orch_state = EXEC_OPENING;
-            fs_open(fname);
-            input_pos = 0;
-            return;
-        }
-    } else if (str_starts_with(input_line, "shutdown")) {
-        ser_puts("Shutting down AIOS...\n");
-        ser_puts("System halted. Press Ctrl-A then X to exit QEMU.\n");
-        microkit_notify(CH_SERIAL);
-        for (;;) { __asm__ volatile("wfi"); }
-    } else {
-        ser_puts("Unknown command: ");
-        ser_puts(input_line);
-        ser_puts("\n  Type 'help' for commands.\n");
-    }
-
-    ser_puts("AIOS> ");
-    input_pos = 0;
-}
-
-
-/* ── AI Build: read reference file ─────────────────── */
-static void handle_ai_ref_open_reply(void) {
-    uint32_t status = RD32(fs_data, FS_STATUS);
-    if (status == FS_ST_OK) {
-        cur_fd       = RD32(fs_data, FS_FD);
-        cur_filesize = RD32(fs_data, FS_FILESIZE);
-        cur_offset   = 0;
-        ai_ref_len   = 0;
-        ser_puts("  Reference file: ");
-        ser_put_dec(cur_filesize);
+        name[p] = '\0';
+        uint32_t size = ent[12] | (ent[13]<<8) | (ent[14]<<16) | (ent[15]<<24);
+        /* Format: name     size */
+        ser_puts("  ");
+        ser_puts(name);
+        /* Pad to 16 chars */
+        for (int j = p; j < 14; j++) ser_putc(' ');
+        ser_put_dec(size);
         ser_puts(" bytes\n");
-        microkit_notify(CH_SERIAL);
-        uint32_t chunk = cur_filesize;
-        if (chunk > FS_DATA_MAX) chunk = FS_DATA_MAX;
-        orch_state = AI_REF_READING;
-        fs_read(cur_fd, 0, chunk);
-    } else {
-        ser_puts("  Reference file not found. Generating without context.\n");
-        microkit_notify(CH_SERIAL);
-        ai_ref_len = 0;
-        /* Skip straight to generation */
-        goto ai_start_gen;
     }
-    return;
-ai_start_gen:
-    {
-        /* Build prompt: instruction + (optional) reference */
-        char *dst = (char *)(llm_io + LLM_PROMPT);
-        int pi = 0;
-        /* Instruction */
-        const char *instr = "Write a C program called ";
-        while (*instr && pi < LLM_PROMPT_MAX - 256) dst[pi++] = *instr++;
-        for (int k = 0; ai_target_name[k] && pi < LLM_PROMPT_MAX - 256; k++)
-            dst[pi++] = ai_target_name[k];
-        const char *instr2 = ". Output only valid C code. ";
-        while (*instr2 && pi < LLM_PROMPT_MAX - 200) dst[pi++] = *instr2++;
-        if (ai_ref_len > 0) {
-            const char *ctx = "Here is a reference:\n";
-            while (*ctx && pi < LLM_PROMPT_MAX - ai_ref_len - 10)
-                dst[pi++] = *ctx++;
-            for (uint32_t k = 0; k < ai_ref_len && pi < LLM_PROMPT_MAX - 2; k++)
-                dst[pi++] = ai_ref_buf[k];
-        }
-        dst[pi] = '\0';
-        ser_puts("  Prompt (");
-        ser_put_dec(pi);
-        ser_puts(" bytes), generating...\n");
-        microkit_notify(CH_SERIAL);
-        ai_gen_len = 0;
-        WR32(llm_io, LLM_MAX_STEPS, 512);
-        WR32(llm_io, LLM_CMD, LLM_CMD_GENERATE);
-        orch_state = AI_GEN_WAITING;
-        microkit_notify(CH_LLM);
-    }
+    ser_flush();
 }
 
-static void handle_ai_ref_read_reply(void) {
-    uint32_t status = RD32(fs_data, FS_STATUS);
-    uint32_t got    = RD32(fs_data, FS_LENGTH);
-    if ((status == FS_ST_OK || status == FS_ST_EOF) && got > 0) {
-        volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
-        for (uint32_t i = 0; i < got && ai_ref_len < sizeof(ai_ref_buf) - 1; i++)
-            ai_ref_buf[ai_ref_len++] = (char)src[i];
-        cur_offset += got;
-        if (cur_offset >= cur_filesize || status == FS_ST_EOF) {
-            ai_ref_buf[ai_ref_len] = '\0';
-            orch_state = AI_REF_CLOSING;
-            fs_close(cur_fd);
-        } else {
-            uint32_t chunk = cur_filesize - cur_offset;
-            if (chunk > FS_DATA_MAX) chunk = FS_DATA_MAX;
-            fs_read(cur_fd, cur_offset, chunk);
-        }
-    } else {
-        ai_ref_buf[ai_ref_len] = '\0';
-        orch_state = AI_REF_CLOSING;
-        fs_close(cur_fd);
-    }
-}
+/* ── Command: cat <file> ─────────────────────────────── */
+static void cmd_cat(const char *filename) {
+    ser_puts("Opening ");
+    ser_puts(filename);
+    ser_puts("...\n");
+    ser_flush();
 
-static void handle_ai_ref_close_reply(void) {
-    ser_puts("  Reference loaded (");
-    ser_put_dec(ai_ref_len);
-    ser_puts(" bytes).\n");
-    microkit_notify(CH_SERIAL);
-    /* Now build the prompt and start generation */
-    char *dst = (char *)(llm_io + LLM_PROMPT);
-    int pi = 0;
-    /* Prompt: paste reference then start a new function */
-    if (ai_ref_len > 0) {
-        for (uint32_t k = 0; k < ai_ref_len && pi < LLM_PROMPT_MAX - 100; k++)
-            dst[pi++] = ai_ref_buf[k];
-    }
-    dst[pi] = '\0';
-    ser_puts("  Prompt (");
-    ser_put_dec(pi);
-    ser_puts(" bytes), generating...\n");
-    microkit_notify(CH_SERIAL);
-    ai_gen_len = 0;
-    WR32(llm_io, LLM_MAX_STEPS, 512);
-    WR32(llm_io, LLM_CMD, LLM_CMD_GENERATE);
-    orch_state = AI_GEN_WAITING;
-    microkit_notify(CH_LLM);
-}
-
-static void handle_ai_gen_reply(void) {
-    uint32_t status = RD32(llm_io, LLM_STATUS);
-    if (status == LLM_ST_TOKEN) {
-        char *piece = (char *)(llm_io + LLM_OUTPUT);
-        /* Print to console */
-        ser_puts(piece);
-        microkit_notify(CH_SERIAL);
-        /* Accumulate into ai_gen_buf */
-        for (int i = 0; piece[i] && ai_gen_len < AI_GEN_BUF_MAX - 1; i++)
-            ai_gen_buf[ai_gen_len++] = piece[i];
-        /* Request next token */
-        WR32(llm_io, LLM_CMD, LLM_CMD_NEXT_TOK);
-        microkit_notify(CH_LLM);
-    } else if (status == LLM_ST_DONE) {
-        ai_gen_buf[ai_gen_len] = '\0';
-        ser_puts("\n  Generation done (");
-        ser_put_dec(ai_gen_len);
-        ser_puts(" bytes). Saving to ");
-        ser_puts(ai_target_file);
-        ser_puts("...\n");
-        microkit_notify(CH_SERIAL);
-        /* Write to disk: first create the file */
-        char *fn = (char *)(fs_data + FS_FILENAME);
-        int i = 0;
-        while (ai_target_file[i]) { fn[i] = ai_target_file[i]; i++; }
-        fn[i] = '\0';
-        /* Copy generated code into fs_data */
-        for (uint32_t k = 0; k < ai_gen_len && k < FS_DATA_MAX; k++)
-            *(char *)(fs_data + FS_DATA + k) = ai_gen_buf[k];
-        WR32(fs_data, FS_REQLEN, ai_gen_len < FS_DATA_MAX ? ai_gen_len : FS_DATA_MAX);
-        WR32(fs_data, FS_CMD, FS_CMD_CREATE);
-        orch_state = AI_SAVE_CREATE;
-        microkit_notify(CH_FS);
-    } else {
-        ser_puts("\n  AI generation error.\n");
-        ser_puts("AIOS> ");
-        microkit_notify(CH_SERIAL);
-        orch_state = RUNNING;
-    }
-}
-
-static void handle_ai_save_create_reply(void) {
-    int st = (int)RD32(fs_data, FS_STATUS);
+    int st = fs_open_sync(filename);
     if (st != 0) {
-        ser_puts("  Save failed (create error).\n");
-        ser_puts("AIOS> ");
-        microkit_notify(CH_SERIAL);
-        orch_state = RUNNING;
+        ser_puts("  File not found.\n"); ser_flush();
         return;
     }
-    WR32(fs_data, FS_CMD, FS_CMD_WRITE);
-    orch_state = AI_SAVE_WRITE;
-    microkit_notify(CH_FS);
-}
-
-static void handle_ai_save_write_reply(void) {
-    int st = (int)RD32(fs_data, FS_STATUS);
-    if (st != 0) {
-        ser_puts("  Save failed (write error).\n");
-    }
-    WR32(fs_data, FS_CMD, FS_CMD_CLOSE);
-    orch_state = AI_SAVE_CLOSE;
-    microkit_notify(CH_FS);
-}
-
-static void handle_ai_save_close_reply(void) {
-    ser_puts("  Saved ");
-    ser_puts(ai_target_file);
-    ser_puts(" (");
-    ser_put_dec(ai_gen_len);
-    ser_puts(" bytes) to disk.\n");
-    ser_puts("AIOS> ");
-    microkit_notify(CH_SERIAL);
-    orch_state = RUNNING;
-}
-
-
-/* ── Exec handlers ─────────────────────────────────── */
-
-static void handle_exec_open_reply(void) {
-    uint32_t status = RD32(fs_data, FS_STATUS);
-    if (status != FS_ST_OK) {
-        ser_puts("  File not found.\n");
-        microkit_notify(CH_SERIAL);
-        orch_state = RUNNING;
-        ser_puts("AIOS> ");
-        microkit_notify(CH_SERIAL);
-        return;
-    }
-    cur_fd = RD32(fs_data, FS_FD);
-    cur_filesize = RD32(fs_data, FS_FILESIZE);
-    ser_puts("  Program size: ");
-    ser_put_dec(cur_filesize);
+    uint32_t fd   = RD32(fs_data, FS_FD);
+    uint32_t size = RD32(fs_data, FS_FILESIZE);
+    ser_puts("  File size: ");
+    ser_put_dec(size);
     ser_puts(" bytes\n");
-    microkit_notify(CH_SERIAL);
+    ser_flush();
 
-    if (cur_filesize > 0x100000) {  /* 1 MiB sandbox_code limit */
-        ser_puts("  Error: program too large (max 1 MiB)\n");
-        microkit_notify(CH_SERIAL);
-        orch_state = EXEC_CLOSING;
-        fs_close(cur_fd);
+    uint32_t offset = 0;
+    while (offset < size) {
+        uint32_t chunk = size - offset;
+        if (chunk > FS_DATA_MAX) chunk = FS_DATA_MAX;
+        st = fs_read_sync(fd, offset, chunk);
+        if (st != 0 && st != 3 /* EOF */) break;
+        uint32_t got = RD32(fs_data, FS_LENGTH);
+        if (got == 0) break;
+        /* Print data */
+        volatile char *data = (volatile char *)(fs_data + FS_DATA);
+        for (uint32_t i = 0; i < got; i++) ser_putc(data[i]);
+        ser_flush();
+        offset += got;
+    }
+    ser_puts("\n");
+    fs_close_sync(fd);
+    ser_puts("  File closed.\n");
+    ser_flush();
+}
+
+/* ── Command: write <file> <text> ────────────────────── */
+static void cmd_write(const char *args) {
+    /* Parse: filename text */
+    char fname[64];
+    int i = 0;
+    while (args[i] && args[i] != ' ' && i < 63) { fname[i] = args[i]; i++; }
+    fname[i] = '\0';
+    while (args[i] == ' ') i++;
+    const char *text = &args[i];
+    int tlen = my_strlen(text);
+
+    if (tlen == 0) {
+        ser_puts("Usage: write <file> <text>\n"); ser_flush();
         return;
     }
 
-    exec_loaded_bytes = 0;
-    cur_offset = 0;
-    uint32_t chunk = cur_filesize;
-    if (chunk > FS_DATA_MAX) chunk = FS_DATA_MAX;
-    orch_state = EXEC_READING;
-    fs_read(cur_fd, 0, chunk);
-}
+    /* Delete existing file if present */
+    fs_delete_sync(fname);
 
-static void handle_exec_read_reply(void) {
-    uint32_t status = RD32(fs_data, FS_STATUS);
-    uint32_t got    = RD32(fs_data, FS_LENGTH);
+    /* Create new file */
+    int st = fs_create_sync(fname);
+    if (st != 0) {
+        ser_puts("  Create failed.\n"); ser_flush();
+        return;
+    }
+    uint32_t fd = RD32(fs_data, FS_FD);
 
-    if ((status == FS_ST_OK || status == FS_ST_EOF) && got > 0) {
-        /* Copy chunk into sandbox_code region */
-        volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
-        volatile uint8_t *dst = (volatile uint8_t *)(sandbox_code + exec_loaded_bytes);
-        for (uint32_t i = 0; i < got; i++) dst[i] = src[i];
-        exec_loaded_bytes += got;
-        cur_offset += got;
+    /* Copy text into fs_data buffer */
+    volatile char *data = (volatile char *)(fs_data + FS_DATA);
+    for (int j = 0; j < tlen; j++) data[j] = text[j];
+    WR32(fs_data, FS_LENGTH, tlen);
 
-        if (cur_offset < cur_filesize) {
-            uint32_t chunk = cur_filesize - cur_offset;
-            if (chunk > FS_DATA_MAX) chunk = FS_DATA_MAX;
-            fs_read(cur_fd, cur_offset, chunk);
-        } else {
-            orch_state = EXEC_CLOSING;
-            fs_close(cur_fd);
-        }
+    st = fs_write_sync(fd, tlen);
+    if (st != 0) {
+        ser_puts("  Write failed.\n"); ser_flush();
     } else {
-        orch_state = EXEC_CLOSING;
-        fs_close(cur_fd);
+        uint32_t wrote = RD32(fs_data, FS_LENGTH);
+        ser_puts("  Wrote ");
+        ser_put_dec(wrote);
+        ser_puts(" bytes.\n");
+        ser_flush();
+    }
+    fs_close_sync(fd);
+}
+
+/* ── Command: rm <file> ──────────────────────────────── */
+static void cmd_rm(const char *filename) {
+    int st = fs_delete_sync(filename);
+    if (st != 0) {
+        ser_puts("  File not found.\n"); ser_flush();
+    } else {
+        ser_puts("  Deleted.\n"); ser_flush();
     }
 }
 
-static void handle_exec_close_reply(void) {
-    if (exec_loaded_bytes == 0) {
-        ser_puts("  No code loaded.\n");
-        microkit_notify(CH_SERIAL);
-        orch_state = RUNNING;
-        ser_puts("AIOS> ");
-        microkit_notify(CH_SERIAL);
+/* ── Command: exec <file.bin> ────────────────────────── */
+static void cmd_exec(const char *filename) {
+    ser_puts("Loading program: ");
+    ser_puts(filename);
+    ser_puts("\n");
+    ser_flush();
+
+    int st = fs_open_sync(filename);
+    if (st != 0) {
+        ser_puts("  File not found.\n"); ser_flush();
         return;
     }
+    uint32_t fd   = RD32(fs_data, FS_FD);
+    uint32_t size = RD32(fs_data, FS_FILESIZE);
+    ser_puts("  Program size: ");
+    ser_put_dec(size);
+    ser_puts(" bytes\n");
+    ser_flush();
+
+    if (size > 0x100000) {
+        ser_puts("  Error: program too large (max 1 MiB)\n");
+        ser_flush();
+        fs_close_sync(fd);
+        return;
+    }
+
+    /* Load into sandbox_code */
+    volatile uint8_t *code_dst = (volatile uint8_t *)sandbox_code;
+    uint32_t offset = 0;
+    while (offset < size) {
+        uint32_t chunk = size - offset;
+        if (chunk > FS_DATA_MAX) chunk = FS_DATA_MAX;
+        st = fs_read_sync(fd, offset, chunk);
+        if (st != 0 && st != 3) break;
+        uint32_t got = RD32(fs_data, FS_LENGTH);
+        if (got == 0) break;
+        volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
+        for (uint32_t i = 0; i < got; i++) code_dst[offset + i] = src[i];
+        offset += got;
+    }
+    fs_close_sync(fd);
+    exec_loaded_bytes = offset;
+
     ser_puts("  Loaded ");
     ser_put_dec(exec_loaded_bytes);
     ser_puts(" bytes into sandbox. Executing...\n");
-    microkit_notify(CH_SERIAL);
+    ser_flush();
 
     /* Tell sandbox to run */
     WR32(sandbox_io, SBX_CODE_SIZE, exec_loaded_bytes);
@@ -886,33 +347,175 @@ static void handle_exec_close_reply(void) {
     microkit_notify(CH_SANDBOX);
 }
 
-static void handle_exec_done(void) {
-    uint32_t status = RD32(sandbox_io, SBX_STATUS);
-    if (status == SBX_ST_DONE) {
-        uint32_t exit_code = RD32(sandbox_io, SBX_EXIT_CODE);
-        uint32_t out_len   = RD32(sandbox_io, SBX_OUTPUT_LEN);
+/* ── Command: load <model> ───────────────────────────── */
+static void cmd_load(const char *filename) {
+    ser_puts("Loading model: ");
+    ser_puts(filename);
+    ser_puts("\n");
+    ser_flush();
 
-        if (out_len > 0) {
-            ser_puts("--- program output ---\n");
-            microkit_notify(CH_SERIAL);
-            volatile char *out = (volatile char *)(sandbox_io + SBX_OUTPUT);
-            for (uint32_t i = 0; i < out_len && i < SBX_OUTPUT_MAX; i++)
-                ser_putc(out[i]);
-            if (out_len > 0 && out[out_len - 1] != '\n') ser_putc('\n');
-            ser_puts("--- end output ---\n");
-            microkit_notify(CH_SERIAL);
-        }
-        ser_puts("  Exit code: ");
-        ser_put_dec(exit_code);
-        ser_putc('\n');
-        microkit_notify(CH_SERIAL);
-    } else {
-        ser_puts("  Execution error.\n");
-        microkit_notify(CH_SERIAL);
+    int st = fs_open_sync(filename);
+    if (st != 0) {
+        ser_puts("  File not found.\n"); ser_flush();
+        return;
     }
-    orch_state = RUNNING;
+    uint32_t fd   = RD32(fs_data, FS_FD);
+    uint32_t size = RD32(fs_data, FS_FILESIZE);
+    ser_puts("  File size: ");
+    ser_put_dec(size);
+    ser_puts(" bytes (");
+    ser_put_dec(size / 1024);
+    ser_puts(" KiB)\n  Loading: [");
+    ser_flush();
+
+    /* Load into model_data region */
+    volatile uint8_t *llm_dst = (volatile uint8_t *)model_data;
+    uint32_t offset = 0;
+    uint32_t last_pct = 0;
+    while (offset < size) {
+        uint32_t chunk = size - offset;
+        if (chunk > FS_DATA_MAX) chunk = FS_DATA_MAX;
+        st = fs_read_sync(fd, offset, chunk);
+        if (st != 0 && st != 3) break;
+        uint32_t got = RD32(fs_data, FS_LENGTH);
+        if (got == 0) break;
+        volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
+        for (uint32_t i = 0; i < got; i++) llm_dst[offset + i] = src[i];
+        offset += got;
+        /* Progress bar: 50 '#' marks */
+        uint32_t pct = (uint32_t)((uint64_t)offset * 50 / size);
+        while (last_pct < pct) { ser_putc('#'); ser_flush(); last_pct++; }
+    }
+    ser_puts("] 100%\n");
+    ser_flush();
+    fs_close_sync(fd);
+
+    ser_puts("  Loaded ");
+    ser_put_dec(offset);
+    ser_puts(" bytes (");
+    ser_put_dec(offset / 1024);
+    ser_puts(" KiB)\n");
+    ser_flush();
+
+    /* Tell LLM server to init */
+    WR32(llm_io, 0, 1); /* LLM_CMD_INIT */
+    microkit_notify(CH_LLM);
+    llm_model_loaded = 1;
+
+    ser_puts("  Model loaded, initializing LLM...\n");
+    ser_flush();
+}
+
+/* ── Command: gen <prompt> ───────────────────────────── */
+static void cmd_gen(const char *prompt) {
+    if (!llm_model_loaded) {
+        ser_puts("  No model loaded. Use: load CODE25M.BIN\n");
+        ser_flush();
+        return;
+    }
+    /* Copy prompt to llm_io */
+    volatile char *dst = (volatile char *)(llm_io + 0x100);
+    int i = 0;
+    while (prompt[i] && i < 255) { dst[i] = prompt[i]; i++; }
+    dst[i] = '\0';
+    WR32(llm_io, 0, 2); /* LLM_CMD_GENERATE */
+    orch_state = GEN_WAITING;
+    microkit_notify(CH_LLM);
+}
+
+/* ── Command: info ───────────────────────────────────── */
+static void cmd_info(void) {
+    ser_puts("AIOS System Information:\n");
+    ser_puts("  Kernel:     seL4 14.0.0 (Microkit 2.1.0)\n");
+    ser_puts("  Arch:       AArch64 (Cortex-A53)\n");
+    ser_puts("  RAM:        2 GiB\n");
+    ser_puts("  Disk:       128 MiB FAT16\n");
+    ser_puts("  Drivers:    PL011 UART, virtio-blk\n");
+    ser_puts("  Services:   fs_server, llm_server, sandbox\n");
+    ser_puts("  LLM:        ");
+    if (llm_model_loaded) ser_puts("loaded\n");
+    else ser_puts("not loaded\n");
+    ser_flush();
+}
+
+/* ── Command: shutdown ───────────────────────────────── */
+static void cmd_shutdown(void) {
+    ser_puts("Shutting down AIOS...\n");
+    ser_puts("System halted. Press Ctrl-A then X to exit QEMU.\n");
+    ser_flush();
+    while (1) { /* halt */ }
+}
+
+/* ── Command dispatch ────────────────────────────────── */
+static void process_command(void) {
+    input_line[input_pos] = '\0';
+    if (input_pos == 0) goto prompt;
+
+    if (my_strcmp(input_line, "help") == 0) {
+        cmd_help();
+    } else if (my_strcmp(input_line, "ls") == 0 ||
+               my_strcmp(input_line, "dir") == 0) {
+        cmd_ls();
+    } else if (str_starts_with(input_line, "cat ")) {
+        char *fn = &input_line[4];
+        while (*fn == ' ') fn++;
+        if (*fn) cmd_cat(fn);
+        else { ser_puts("Usage: cat <file>\n"); ser_flush(); }
+    } else if (str_starts_with(input_line, "write ")) {
+        cmd_write(&input_line[6]);
+    } else if (str_starts_with(input_line, "rm ")) {
+        char *fn = &input_line[3];
+        while (*fn == ' ') fn++;
+        if (*fn) cmd_rm(fn);
+        else { ser_puts("Usage: rm <file>\n"); ser_flush(); }
+    } else if (str_starts_with(input_line, "exec ")) {
+        char *fn = &input_line[5];
+        while (*fn == ' ') fn++;
+        if (*fn) {
+            cmd_exec(fn);
+            input_pos = 0;
+            return; /* Don't print prompt yet — sandbox running */
+        }
+        else { ser_puts("Usage: exec <file.bin>\n"); ser_flush(); }
+    } else if (str_starts_with(input_line, "load ")) {
+        char *fn = &input_line[5];
+        while (*fn == ' ') fn++;
+        if (*fn) cmd_load(fn);
+        else { ser_puts("Usage: load <file>\n"); ser_flush(); }
+    } else if (str_starts_with(input_line, "gen ")) {
+        char *p = &input_line[4];
+        while (*p == ' ') p++;
+        if (*p) {
+            cmd_gen(p);
+            input_pos = 0;
+            return; /* Don't print prompt — waiting for LLM */
+        }
+        else { ser_puts("Usage: gen <prompt>\n"); ser_flush(); }
+    } else if (my_strcmp(input_line, "info") == 0) {
+        cmd_info();
+    } else if (my_strcmp(input_line, "shutdown") == 0) {
+        cmd_shutdown();
+    } else {
+        ser_puts("Unknown command: ");
+        ser_puts(input_line);
+        ser_puts("\nType 'help' for commands.\n");
+        ser_flush();
+    }
+
+prompt:
     ser_puts("AIOS> ");
-    microkit_notify(CH_SERIAL);
+    ser_flush();
+    input_pos = 0;
+}
+
+/* ── Serial input handler ────────────────────────────── */
+static char rx_getc_blocking(void) {
+    ring_buf_t *rx = (ring_buf_t *)rx_buf;
+    char c;
+    while (!ring_get(rx, &c)) {
+        asm volatile("wfe");
+    }
+    return c;
 }
 
 static void handle_serial_input(void) {
@@ -920,34 +523,229 @@ static void handle_serial_input(void) {
     char c;
     while (ring_get(rx, &c)) {
         if (c == '\r' || c == '\n') {
-            ser_putc('\n');
-            microkit_notify(CH_SERIAL);
+            ser_puts("\n"); ser_flush();
             process_command();
-        } else if (c == 0x7F || c == '\b') {
+        } else if (c == 0x7f || c == '\b') {
             if (input_pos > 0) {
                 input_pos--;
-                ser_putc('\b'); ser_putc(' '); ser_putc('\b');
-                microkit_notify(CH_SERIAL);
+                ser_puts("\b \b"); ser_flush();
             }
         } else if (input_pos < INPUT_MAX - 1) {
             input_line[input_pos++] = c;
-            ser_putc(c);
-            microkit_notify(CH_SERIAL);
+            ser_putc(c); ser_flush();
         }
     }
+}
+
+/* ── Handle sandbox completion ───────────────────────── */
+static void handle_exec_done(void) {
+    (void)RD32(sandbox_io, SBX_STATUS);
+    uint32_t exit_code = RD32(sandbox_io, SBX_EXIT_CODE);
+    uint32_t out_len = RD32(sandbox_io, SBX_OUTPUT_LEN);
+
+    if (out_len > 0) {
+        ser_puts("--- program output ---\n");
+        ser_flush();
+        volatile char *out = (volatile char *)(sandbox_io + SBX_OUTPUT);
+        for (uint32_t i = 0; i < out_len && i < 4096; i++) ser_putc(out[i]);
+        ser_puts("\n--- end output ---\n");
+        ser_flush();
+    }
+    ser_puts("  Exit code: ");
+    ser_put_dec(exit_code);
+    ser_puts("\n");
+    ser_flush();
+    orch_state = RUNNING;
+    ser_puts("AIOS> ");
+    ser_flush();
+}
+
+/* ── Handle LLM generation reply ─────────────────────── */
+static void handle_gen_reply(void) {
+    uint32_t status = RD32(llm_io, 0x04);
+    if (status == 1) { /* LLM_ST_TOKEN */
+        volatile char *tok = (volatile char *)(llm_io + 0x100);
+        for (int i = 0; tok[i] && i < 256; i++) ser_putc(tok[i]);
+        ser_flush();
+        /* Request next token */
+        WR32(llm_io, 0, 3); /* LLM_CMD_NEXT */
+        microkit_notify(CH_LLM);
+    } else if (status == 2) { /* LLM_ST_DONE */
+        ser_puts("\n[done]\n");
+        ser_flush();
+        orch_state = RUNNING;
+        ser_puts("AIOS> ");
+        ser_flush();
+    } else {
+        ser_puts("\n[LLM error]\n");
+        ser_flush();
+        orch_state = RUNNING;
+        ser_puts("AIOS> ");
+        ser_flush();
+    }
+}
+
+/* ── Protected procedure call handler (sandbox syscalls) */
+microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
+    if (ch != CH_SANDBOX) {
+        seL4_SetMR(0, -1);
+        return microkit_msginfo_new(0, 1);
+    }
+
+    uint64_t syscall_nr = seL4_GetMR(0);
+    int64_t result = -1;
+
+    switch (syscall_nr) {
+    case SYS_OPEN: {
+        volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        char fname[256];
+        int i = 0;
+        while (path[i] && i < 255) { fname[i] = path[i]; i++; }
+        fname[i] = '\0';
+        int st = fs_open_sync(fname);
+        if (st == 0) {
+            result = RD32(fs_data, FS_FD);
+            seL4_SetMR(1, RD32(fs_data, FS_FILESIZE));
+        } else {
+            result = -1;
+        }
+        break;
+    }
+    case SYS_READ: {
+        uint32_t fd     = (uint32_t)seL4_GetMR(1);
+        uint32_t offset = (uint32_t)seL4_GetMR(2);
+        uint32_t len    = (uint32_t)seL4_GetMR(3);
+        int st = fs_read_sync(fd, offset, len);
+        if (st == 0 || st == 3) {
+            uint32_t got = RD32(fs_data, FS_LENGTH);
+            /* Copy data to sandbox_io+0x400 */
+            volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
+            volatile uint8_t *dst = (volatile uint8_t *)(sandbox_io + 0x400);
+            for (uint32_t i = 0; i < got; i++) dst[i] = src[i];
+            result = got;
+        }
+        break;
+    }
+    case SYS_WRITE: {
+        uint32_t fd  = (uint32_t)seL4_GetMR(1);
+        uint32_t len = (uint32_t)seL4_GetMR(2);
+        /* Data is at sandbox_io+0x400 */
+        volatile uint8_t *src = (volatile uint8_t *)(sandbox_io + 0x400);
+        volatile uint8_t *dst = (volatile uint8_t *)(fs_data + FS_DATA);
+        for (uint32_t i = 0; i < len && i < FS_DATA_MAX; i++) dst[i] = src[i];
+        int st = fs_write_sync(fd, len);
+        if (st == 0) result = RD32(fs_data, FS_LENGTH);
+        break;
+    }
+    case SYS_CLOSE: {
+        uint32_t fd = (uint32_t)seL4_GetMR(1);
+        fs_close_sync(fd);
+        result = 0;
+        break;
+    }
+    case SYS_UNLINK: {
+        volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        char fname[256];
+        int i = 0;
+        while (path[i] && i < 255) { fname[i] = path[i]; i++; }
+        fname[i] = '\0';
+        int st = fs_delete_sync(fname);
+        result = (st == 0) ? 0 : -1;
+        break;
+    }
+    case SYS_READDIR: {
+        int st = fs_list_sync();
+        if (st == 0) {
+            uint32_t count = RD32(fs_data, FS_LENGTH);
+            /* Copy listing to sandbox_io+0x400 */
+            volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
+            volatile uint8_t *dst = (volatile uint8_t *)(sandbox_io + 0x400);
+            uint32_t bytes = count * 16;
+            for (uint32_t i = 0; i < bytes; i++) dst[i] = src[i];
+            result = count;
+        }
+        break;
+    }
+    case SYS_PUTC: {
+        char c = (char)seL4_GetMR(1);
+        ser_putc(c);
+        ser_flush();
+        result = 0;
+        break;
+    }
+    case 32: { /* SYS_PUTS_DIRECT */
+        volatile char *str = (volatile char *)(sandbox_io + 0x200);
+        char buf[256];
+        int i = 0;
+        while (str[i] && i < 255) { buf[i] = str[i]; i++; }
+        buf[i] = '\0';
+        ser_puts(buf);
+        ser_flush();
+        result = 0;
+        break;
+    }
+    case SYS_GETC: {
+        result = (int64_t)(unsigned char)rx_getc_blocking();
+        break;
+    }
+    case SYS_EXIT: {
+        result = 0;
+        break;
+    }
+    default:
+        result = -1;
+        break;
+    }
+
+    seL4_SetMR(0, result);
+    return microkit_msginfo_new(0, 2);
 }
 
 /* ── Microkit entry points ─────────────────────────── */
 void init(void) {
     ser_puts("\n========================================\n");
-    ser_puts("  AIOS Orchestrator v0.6\n");
+    ser_puts("  AIOS v0.7\n");
     ser_puts("  Kernel:  seL4 14.0.0 (Microkit 2.1.0)\n");
     ser_puts("  Drivers: PL011 UART, virtio-blk, FAT16\n");
     ser_puts("  LLM:     llm_server (llama2.c engine)\n");
     ser_puts("========================================\n\n");
+    ser_flush();
+
+    /* Boot: read hello.txt synchronously */
     ser_puts("Boot: reading hello.txt...\n");
-    orch_state = BOOT_OPENING;
-    fs_open("hello.txt");
+    ser_flush();
+    int st = fs_open_sync("hello.txt");
+    if (st == 0) {
+        uint32_t fd   = RD32(fs_data, FS_FD);
+        uint32_t size = RD32(fs_data, FS_FILESIZE);
+        st = fs_read_sync(fd, 0, size < FS_DATA_MAX ? size : FS_DATA_MAX);
+        if (st == 0 || st == 3) {
+            uint32_t got = RD32(fs_data, FS_LENGTH);
+            volatile char *data = (volatile char *)(fs_data + FS_DATA);
+            ser_puts("  ");
+            for (uint32_t i = 0; i < got; i++) ser_putc(data[i]);
+            ser_puts("\n");
+        }
+        fs_close_sync(fd);
+    } else {
+        ser_puts("  hello.txt not found\n");
+    }
+    ser_flush();
+
+    /* Check for AUTOEXEC.BIN */
+    st = fs_open_sync("AUTOEXEC.BIN");
+    if (st == 0) {
+        uint32_t fd = RD32(fs_data, FS_FD);
+        fs_close_sync(fd);
+        ser_puts("Boot: found AUTOEXEC.BIN, executing...\n");
+        ser_flush();
+        cmd_exec("AUTOEXEC.BIN");
+        return;
+    }
+
+    ser_puts("\nType 'help' for commands.\n");
+    ser_puts("AIOS> ");
+    ser_flush();
 }
 
 void notified(microkit_channel ch) {
@@ -957,109 +755,17 @@ void notified(microkit_channel ch) {
             handle_serial_input();
         break;
 
-    case CH_FS:
-        switch (orch_state) {
-        case BOOT_OPENING:  handle_boot_open_reply();  break;
-        case BOOT_READING:  handle_boot_read_reply();  break;
-        case BOOT_CLOSING:  handle_boot_close_reply();  break;
-        case LOAD_OPENING:  handle_load_open_reply();  break;
-        case LOAD_READING:  handle_load_read_reply();  break;
-        case LOAD_CLOSING:  handle_load_close_reply();  break;
-        case TOK_OPENING:   handle_tok_open_reply();   break;
-        case TOK_READING:   handle_tok_read_reply();   break;
-        case TOK_CLOSING:   handle_tok_close_reply();  break;
-                
-                
-/* ── Write support ──────────────────────────── */
-        case WRITE_WAIT_CREATE: {
-            int st = (int)RD32(fs_data, FS_STATUS);
-            if (st != 0) {
-                ser_puts("  Create failed\n");
-                microkit_notify(CH_SERIAL);
-                orch_state = RUNNING;
-                ser_puts("AIOS> ");
-                microkit_notify(CH_SERIAL);
-                break;
-            }
-            ser_puts("  File created, writing data...\n");
-            microkit_notify(CH_SERIAL);
-            /* Send write command — fs_data already has the data
-               from process_command */
-            WR32(fs_data, FS_LENGTH, RD32(fs_data, FS_REQLEN));
-            WR32(fs_data, FS_CMD, FS_CMD_WRITE);
-            orch_state = WRITE_WAIT_DATA;
-            microkit_notify(CH_FS);
-            break;
-        }
-        case WRITE_WAIT_DATA: {
-            int st = (int)RD32(fs_data, FS_STATUS);
-            uint32_t wrote = RD32(fs_data, FS_LENGTH);
-            if (st != 0) {
-                ser_puts("  Write failed\n");
-                microkit_notify(CH_SERIAL);
-            } else {
-                ser_puts("  Wrote ");
-                ser_put_dec(wrote);
-                ser_puts(" bytes\n");
-                microkit_notify(CH_SERIAL);
-            }
-            /* Close the file */
-            WR32(fs_data, FS_CMD, FS_CMD_CLOSE);
-            orch_state = WRITE_WAIT_CLOSE;
-            microkit_notify(CH_FS);
-            break;
-        }
-        case WRITE_WAIT_CLOSE: {
-            ser_puts("  File saved.\n");
-            microkit_notify(CH_SERIAL);
-            orch_state = RUNNING;
-            ser_puts("AIOS> ");
-            microkit_notify(CH_SERIAL);
-            break;
-        }
-        case DELETE_WAIT: {
-            int st = (int)RD32(fs_data, FS_STATUS);
-            if (st == 0)
-                ser_puts("  Deleted.\n");
-            else
-                ser_puts("  Delete failed (file not found?)\n");
-            microkit_notify(CH_SERIAL);
-            orch_state = RUNNING;
-            ser_puts("AIOS> ");
-            microkit_notify(CH_SERIAL);
-            break;
-        }
-        /* ── AI Build: file I/O ─────────────── */
-        case AI_REF_OPENING: handle_ai_ref_open_reply();      break;
-        case AI_REF_READING: handle_ai_ref_read_reply();      break;
-        case AI_REF_CLOSING: handle_ai_ref_close_reply();     break;
-        case AI_SAVE_CREATE: handle_ai_save_create_reply();   break;
-        case AI_SAVE_WRITE:  handle_ai_save_write_reply();    break;
-        case AI_SAVE_CLOSE:  handle_ai_save_close_reply();    break;
-        case EXEC_OPENING:  handle_exec_open_reply();  break;
-        case EXEC_READING:  handle_exec_read_reply();  break;
-        case EXEC_CLOSING:  handle_exec_close_reply(); break;
-        default: break;
-        }
-        break;
-
-    case CH_LLM:
-        switch (orch_state) {
-        case LOAD_NOTIFY_LLM: handle_llm_load_reply(); break;
-        case TOK_NOTIFY_LLM:  handle_tok_llm_reply();  break;
-        case GEN_WAITING:     handle_gen_reply();       break;
-        case AI_GEN_WAITING:  handle_ai_gen_reply();    break;
-        default: break;
-        }
-        break;
-
     case CH_SANDBOX:
         if (orch_state == EXEC_RUNNING)
             handle_exec_done();
+        break;
+
+    case CH_LLM:
+        if (orch_state == GEN_WAITING)
+            handle_gen_reply();
         break;
 
     default:
         break;
     }
 }
-

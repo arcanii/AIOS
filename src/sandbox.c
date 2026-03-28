@@ -15,6 +15,7 @@
 #include <microkit.h>
 #include <aios/channels.h>
 #include <aios/ipc.h>
+#include "sys/syscall.h"
 
 /* Shared memory regions (set by Microkit loader) */
 uintptr_t sandbox_io;
@@ -113,6 +114,103 @@ static void sbx_put_hex(unsigned int n) {
         sbx_putc(hex[(n >> i) & 0xf]);
 }
 
+
+/* ── File I/O syscalls (PPC to orchestrator) ─────────── */
+
+static int sbx_open(const char *path) {
+    volatile char *dst = (volatile char *)(sandbox_io + 0x200);
+    int i = 0;
+    while (path[i] && i < 255) { dst[i] = path[i]; i++; }
+    dst[i] = '\0';
+    seL4_SetMR(0, SYS_OPEN);
+    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 1));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_read(int fd, void *buf, unsigned long len) {
+    seL4_SetMR(0, SYS_READ);
+    seL4_SetMR(1, fd);
+    seL4_SetMR(2, 0);
+    seL4_SetMR(3, len);
+    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 4));
+    int got = (int)seL4_GetMR(0);
+    if (got > 0) {
+        volatile uint8_t *src = (volatile uint8_t *)(sandbox_io + 0x400);
+        uint8_t *d = (uint8_t *)buf;
+        for (int i = 0; i < got; i++) d[i] = src[i];
+    }
+    return got;
+}
+
+static int sbx_write_file(int fd, const void *buf, unsigned long len) {
+    const uint8_t *s = (const uint8_t *)buf;
+    volatile uint8_t *dst = (volatile uint8_t *)(sandbox_io + 0x400);
+    for (unsigned long i = 0; i < len && i < 4096; i++) dst[i] = s[i];
+    seL4_SetMR(0, SYS_WRITE);
+    seL4_SetMR(1, fd);
+    seL4_SetMR(2, len);
+    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 3));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_close(int fd) {
+    seL4_SetMR(0, SYS_CLOSE);
+    seL4_SetMR(1, fd);
+    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 2));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_unlink(const char *path) {
+    volatile char *dst = (volatile char *)(sandbox_io + 0x200);
+    int i = 0;
+    while (path[i] && i < 255) { dst[i] = path[i]; i++; }
+    dst[i] = '\0';
+    seL4_SetMR(0, SYS_UNLINK);
+    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 1));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_readdir(void *buf, unsigned long max_entries) {
+    seL4_SetMR(0, SYS_READDIR);
+    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 1));
+    int count = (int)seL4_GetMR(0);
+    if (count > 0) {
+        volatile uint8_t *src = (volatile uint8_t *)(sandbox_io + 0x400);
+        uint8_t *d = (uint8_t *)buf;
+        unsigned long bytes = count * 16;
+        if (bytes > max_entries * 16) bytes = max_entries * 16;
+        for (unsigned long i = 0; i < bytes; i++) d[i] = src[i];
+    }
+    return count;
+}
+
+static int sbx_filesize(void) {
+    return (int)seL4_GetMR(1);
+}
+
+/* ── Interactive I/O (PPC, immediate) ────────────────── */
+
+static int sbx_getc(void) {
+    seL4_SetMR(0, SYS_GETC);
+    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 1));
+    return (int)seL4_GetMR(0);
+}
+
+static void sbx_puts_direct(const char *s) {
+    volatile char *dst = (volatile char *)(sandbox_io + 0x200);
+    int i = 0;
+    while (s[i] && i < 255) { dst[i] = s[i]; i++; }
+    dst[i] = '\0';
+    seL4_SetMR(0, 32);
+    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 1));
+}
+
+static void sbx_putc_direct(char c) {
+    seL4_SetMR(0, SYS_PUTC);
+    seL4_SetMR(1, c);
+    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 2));
+}
+
 /* ── Syscall table (passed to user programs) ───────── */
 /*
  * User programs receive a pointer to this struct as their argument.
@@ -136,6 +234,18 @@ typedef struct {
     int   (*strcmp)(const char *a, const char *b);
     char *(*strcpy)(char *dst, const char *src);
     char *(*strncpy)(char *dst, const char *src, unsigned long n);
+    /* File I/O */
+    int   (*open)(const char *path);
+    int   (*read)(int fd, void *buf, unsigned long len);
+    int   (*write_file)(int fd, const void *buf, unsigned long len);
+    int   (*close)(int fd);
+    int   (*unlink)(const char *path);
+    int   (*readdir)(void *buf, unsigned long max_entries);
+    int   (*filesize)(void);
+    /* Interactive I/O */
+    int   (*getc)(void);
+    void  (*puts_direct)(const char *s);
+    void  (*putc_direct)(char c);
 } aios_syscalls_t;
 
 static aios_syscalls_t syscalls;
@@ -153,6 +263,18 @@ static void init_syscalls(void) {
     syscalls.strcmp   = sbx_strcmp;
     syscalls.strcpy  = sbx_strcpy;
     syscalls.strncpy = sbx_strncpy;
+    /* File I/O */
+    syscalls.open       = sbx_open;
+    syscalls.read       = sbx_read;
+    syscalls.write_file = sbx_write_file;
+    syscalls.close      = sbx_close;
+    syscalls.unlink     = sbx_unlink;
+    syscalls.readdir    = sbx_readdir;
+    syscalls.filesize   = sbx_filesize;
+    /* Interactive I/O */
+    syscalls.getc        = sbx_getc;
+    syscalls.puts_direct = sbx_puts_direct;
+    syscalls.putc_direct = sbx_putc_direct;
 }
 
 /* ── Execute code ──────────────────────────────────── */

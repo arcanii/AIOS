@@ -30,7 +30,7 @@ CFLAGS := -c -mcpu=cortex-a53 -mstrict-align \
           -nostdlib -ffreestanding \
           -g -Wall -Werror \
           -I$(MICROKIT_DIR)/include \
-          -Iinclude
+          -Iinclude -Ilibc/include
 
 LDFLAGS := -L$(MICROKIT_DIR)/lib -lmicrokit -Tmicrokit.ld
 
@@ -140,8 +140,8 @@ PROGS_SRC := $(wildcard programs/*.c)
 PROGS_BIN := $(patsubst programs/%.c,programs/%.bin,$(PROGS_SRC))
 
 programs/%.bin: programs/%.c
-	$(CC) -c -mcpu=cortex-a53 -ffreestanding -nostdlib -O2 -Iprograms $< -o /tmp/$*.o
-	$(LD) -Ttext=0x20500000 /tmp/$*.o -o /tmp/$*.elf
+	$(CC) -c -mcpu=cortex-a53 -ffreestanding -nostdlib -O2 -ffunction-sections -Iprograms $< -o /tmp/$*.o
+	$(LD) -T programs/link.ld /tmp/$*.o -o /tmp/$*.elf
 	aarch64-linux-gnu-objcopy -O binary /tmp/$*.elf $@
 	@echo "  $@: $$(wc -c < $@) bytes"
 

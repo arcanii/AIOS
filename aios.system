@@ -114,7 +114,7 @@
     </channel>
 
     <channel>
-        <end pd="orchestrator"  id="4" />
+        <end pd="orchestrator"  id="4" pp="true" />
         <end pd="fs_server"     id="4" />
     </channel>
 

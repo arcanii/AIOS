@@ -531,9 +531,10 @@ static void handle_list(void) {
             if (ent[11] == 0x0F) continue;
             if (ent[11] & 0x08) continue;  /* skip volume label */
 
-            /* Copy 8.3 name (11 bytes) + size (4 bytes) = 15 bytes per entry */
-            if (pos + 15 > FS_DATA_MAX) goto done;
+            /* Copy 8.3 name (11 bytes) + attr (1 byte) + size (4 bytes) = 16 bytes per entry */
+            if (pos + 16 > FS_DATA_MAX) goto done;
             for (int j = 0; j < 11; j++) dst[pos++] = ent[j];
+            dst[pos++] = ent[11]; /* attribute byte */
             uint32_t sz = rd32(ent + 28);
             dst[pos++] = sz & 0xFF;
             dst[pos++] = (sz >> 8) & 0xFF;
@@ -557,7 +558,13 @@ void init(void) {
 }
 
 void notified(microkit_channel ch) {
-    if (ch != CH_FS) return;
+    (void)ch;
+    /* All FS operations now handled via PPC */
+}
+
+microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
+    (void)ch;
+    (void)msginfo;
 
     uint32_t cmd = RD32(fs_data, FS_CMD);
     switch (cmd) {
@@ -570,4 +577,6 @@ void notified(microkit_channel ch) {
     case FS_CMD_LIST:   handle_list();   break;
     default: reply_status(-1); break;
     }
+
+    return microkit_msginfo_new(0, 0);
 }

@@ -2,28 +2,62 @@
 #ifndef AIOS_H
 #define AIOS_H
 
+#ifndef NULL
+#define NULL ((void *)0)
+#endif
+
 typedef unsigned long size_t;
 
 typedef struct {
+    /* Output (buffered until program exit) */
     void (*puts)(const char *s);
     void (*putc)(char c);
     void (*put_dec)(unsigned int n);
     void (*put_hex)(unsigned int n);
+    /* Memory */
     void *(*malloc)(size_t size);
     void  (*free)(void *ptr);
     void *(*memcpy)(void *dst, const void *src, size_t n);
     void *(*memset)(void *dst, int c, size_t n);
+    /* String */
     int   (*strlen)(const char *s);
     int   (*strcmp)(const char *a, const char *b);
     char *(*strcpy)(char *dst, const char *src);
     char *(*strncpy)(char *dst, const char *src, size_t n);
+    /* File I/O */
+    int   (*open)(const char *path);
+    int   (*read)(int fd, void *buf, unsigned long len);
+    int   (*write_file)(int fd, const void *buf, unsigned long len);
+    int   (*close)(int fd);
+    int   (*unlink)(const char *path);
+    int   (*readdir)(void *buf, unsigned long max_entries);
+    int   (*filesize)(void);
+    /* Interactive I/O (immediate, not buffered) */
+    int   (*getc)(void);
+    void  (*puts_direct)(const char *s);
+    void  (*putc_direct)(char c);
 } aios_syscalls_t;
 
-/* Convenience macros — use after: aios_syscalls_t *sys = ...; */
+/* Global syscall pointer — set by _start */
+static aios_syscalls_t *sys;
+
+/* Buffered output macros */
 #define puts(s)         sys->puts(s)
 #define putc(c)         sys->putc(c)
 #define put_dec(n)      sys->put_dec(n)
 #define put_hex(n)      sys->put_hex(n)
+
+/* Memory macros */
+#define aios_malloc(n)  sys->malloc(n)
+#define aios_free(p)    sys->free(p)
+#define aios_memcpy     sys->memcpy
+#define aios_memset     sys->memset
+#define aios_strlen     sys->strlen
+#define aios_strcmp      sys->strcmp
+#define aios_strcpy     sys->strcpy
+#define aios_strncpy    sys->strncpy
+
+/* Backward-compatible short macros */
 #define malloc(sz)      sys->malloc(sz)
 #define free(p)         sys->free(p)
 #define memcpy(d,s,n)   sys->memcpy(d,s,n)
@@ -33,6 +67,22 @@ typedef struct {
 #define strcpy(d,s)     sys->strcpy(d,s)
 #define strncpy(d,s,n)  sys->strncpy(d,s,n)
 
-#define NULL ((void *)0)
+/* File I/O macros */
+#define aios_open(path)          sys->open(path)
+#define aios_read(fd, buf, len)  sys->read(fd, buf, len)
+#define aios_write(fd, buf, len) sys->write_file(fd, buf, len)
+#define aios_close(fd)           sys->close(fd)
+#define aios_unlink(path)        sys->unlink(path)
+#define aios_readdir(buf, max)   sys->readdir(buf, max)
+#define aios_filesize()          sys->filesize()
 
-#endif
+/* Interactive I/O macros */
+#define aios_getc()              sys->getc()
+#define aios_puts_direct(s)      sys->puts_direct(s)
+#define aios_putc_direct(c)      sys->putc_direct(c)
+
+/* Entry point wrapper */
+#define AIOS_ENTRY int aios_main(void); int _start(aios_syscalls_t *_sys) { sys = _sys; return aios_main(); } \
+                   int aios_main(void)
+
+#endif /* AIOS_H */
