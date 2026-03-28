@@ -135,11 +135,15 @@ enum {
     RUNNING,
     EXEC_RUNNING,   /* sandbox is executing */
     GEN_WAITING,    /* LLM generating tokens */
+    LLM_INIT_MODEL, /* waiting for model init reply */
+    LLM_INIT_TOK,   /* waiting for tokenizer init reply */
 };
 static int orch_state = RUNNING;
 
 /* ── Model loading state ─────────────────────────────── */
 static uint32_t llm_model_loaded = 0;
+static uint32_t saved_tok_offset = 0;
+static uint32_t saved_tok_size = 0;
 
 /* ── Exec state ──────────────────────────────────────── */
 static uint32_t exec_loaded_bytes = 0;
@@ -397,12 +401,59 @@ static void cmd_load(const char *filename) {
     ser_puts(" KiB)\n");
     ser_flush();
 
-    /* Tell LLM server to init */
-    WR32(llm_io, 0, 1); /* LLM_CMD_INIT */
+    /* Tell LLM server model is loaded */
+    WR32(llm_io, LLM_MODELSZ, offset);
+    WR32(llm_io, LLM_CMD, LLM_CMD_LOAD_DONE);
     microkit_notify(CH_LLM);
-    llm_model_loaded = 1;
+    ser_puts("  Model weights loaded (");
+    ser_put_dec(offset / 1024);
+    ser_puts(" KiB)\n");
+    ser_flush();
 
-    ser_puts("  Model loaded, initializing LLM...\n");
+    /* Now load tokenizer (TOK.BIN) right after model in model_data */
+    uint32_t tok_offset = offset;
+    uint32_t tok_size = 0;
+    st = fs_open_sync("TOK.BIN");
+    if (st != 0) {
+        ser_puts("  TOK.BIN not found, skipping tokenizer\n");
+        ser_flush();
+    } else {
+        uint32_t tok_fd   = RD32(fs_data, FS_FD);
+        tok_size = RD32(fs_data, FS_FILESIZE);
+        ser_puts("  Loading tokenizer: ");
+        ser_put_dec(tok_size);
+        ser_puts(" bytes\n");
+        ser_flush();
+
+        uint32_t tok_off = 0;
+        while (tok_off < tok_size) {
+            uint32_t chunk = tok_size - tok_off;
+            if (chunk > FS_DATA_MAX) chunk = FS_DATA_MAX;
+            st = fs_read_sync(tok_fd, tok_off, chunk);
+            if (st != 0) break;
+            uint32_t got = RD32(fs_data, FS_LENGTH);
+            if (got == 0) break;
+            volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
+            for (uint32_t i = 0; i < got; i++)
+                llm_dst[tok_offset + tok_off + i] = src[i];
+            tok_off += got;
+        }
+        fs_close_sync(tok_fd);
+
+        ser_puts("  Tokenizer loaded\n");
+        ser_flush();
+
+    }
+
+    saved_tok_offset = tok_offset;
+    saved_tok_size = tok_size;
+
+    /* Send model init command — response handled in notified() */
+    WR32(llm_io, LLM_MODELSZ, tok_offset);
+    WR32(llm_io, LLM_CMD, LLM_CMD_LOAD_DONE);
+    orch_state = LLM_INIT_MODEL;
+    microkit_notify(CH_LLM);
+    ser_puts("  Initializing model...\n");
     ser_flush();
 }
 
@@ -414,11 +465,11 @@ static void cmd_gen(const char *prompt) {
         return;
     }
     /* Copy prompt to llm_io */
-    volatile char *dst = (volatile char *)(llm_io + 0x100);
+    volatile char *dst = (volatile char *)(llm_io + LLM_PROMPT);
     int i = 0;
     while (prompt[i] && i < 255) { dst[i] = prompt[i]; i++; }
     dst[i] = '\0';
-    WR32(llm_io, 0, 2); /* LLM_CMD_GENERATE */
+    WR32(llm_io, LLM_CMD, LLM_CMD_GENERATE);
     orch_state = GEN_WAITING;
     microkit_notify(CH_LLM);
 }
@@ -562,15 +613,15 @@ static void handle_exec_done(void) {
 
 /* ── Handle LLM generation reply ─────────────────────── */
 static void handle_gen_reply(void) {
-    uint32_t status = RD32(llm_io, 0x04);
-    if (status == 1) { /* LLM_ST_TOKEN */
-        volatile char *tok = (volatile char *)(llm_io + 0x100);
+    uint32_t status = RD32(llm_io, LLM_STATUS);
+    if (status == LLM_ST_TOKEN) {
+        volatile char *tok = (volatile char *)(llm_io + LLM_OUTPUT);
         for (int i = 0; tok[i] && i < 256; i++) ser_putc(tok[i]);
         ser_flush();
         /* Request next token */
-        WR32(llm_io, 0, 3); /* LLM_CMD_NEXT */
+        WR32(llm_io, LLM_CMD, LLM_CMD_NEXT_TOK);
         microkit_notify(CH_LLM);
-    } else if (status == 2) { /* LLM_ST_DONE */
+    } else if (status == LLM_ST_DONE) {
         ser_puts("\n[done]\n");
         ser_flush();
         orch_state = RUNNING;
@@ -761,7 +812,42 @@ void notified(microkit_channel ch) {
         break;
 
     case CH_LLM:
-        if (orch_state == GEN_WAITING)
+        if (orch_state == LLM_INIT_MODEL) {
+            if (RD32(llm_io, LLM_STATUS) != 0) {
+                ser_puts("  Model init FAILED\n");
+                ser_flush();
+                orch_state = RUNNING;
+            } else {
+                ser_puts("  Model initialized\n");
+                ser_flush();
+                if (saved_tok_size > 0) {
+                    WR32(llm_io, LLM_TOK_OFF, saved_tok_offset);
+                    WR32(llm_io, LLM_TOK_SZ, saved_tok_size);
+                    WR32(llm_io, LLM_CMD, LLM_CMD_LOAD_TOK);
+                    orch_state = LLM_INIT_TOK;
+                    microkit_notify(CH_LLM);
+                } else {
+                    llm_model_loaded = 1;
+                    ser_puts("  LLM ready!\n");
+                    ser_puts("AIOS> ");
+                    ser_flush();
+                    orch_state = RUNNING;
+                }
+            }
+        } else if (orch_state == LLM_INIT_TOK) {
+            if (RD32(llm_io, LLM_STATUS) != 0) {
+                ser_puts("  Tokenizer init FAILED\n");
+                ser_flush();
+            } else {
+                ser_puts("  Tokenizer initialized\n");
+                ser_flush();
+            }
+            llm_model_loaded = 1;
+            ser_puts("  LLM ready!\n");
+            ser_puts("AIOS> ");
+            ser_flush();
+            orch_state = RUNNING;
+        } else if (orch_state == GEN_WAITING)
             handle_gen_reply();
         break;
 
