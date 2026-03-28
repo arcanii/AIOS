@@ -17,6 +17,7 @@
 #define SYS_CLOSEDIR   13
 #define SYS_GETCWD     14
 #define SYS_CHDIR      15
+#define SYS_RENAME     16
 
 /* Process syscalls — to proc_server */
 #define SYS_EXIT       20

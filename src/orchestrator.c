@@ -130,6 +130,41 @@ static int fs_stat_sync(const char *filename) {
     return (int)seL4_GetMR(0);
 }
 
+static int fs_mkdir_sync(const char *dirname) {
+    volatile char *dst = (volatile char *)(fs_data + FS_FILENAME);
+    int i = 0;
+    while (dirname[i] && i < 63) { dst[i] = dirname[i]; i++; }
+    dst[i] = '\0';
+    WR32(fs_data, FS_CMD, FS_CMD_MKDIR);
+    microkit_ppcall(CH_FS, microkit_msginfo_new(0, 1));
+    return (int)seL4_GetMR(0);
+}
+
+static int fs_rmdir_sync(const char *dirname) {
+    volatile char *dst = (volatile char *)(fs_data + FS_FILENAME);
+    int i = 0;
+    while (dirname[i] && i < 63) { dst[i] = dirname[i]; i++; }
+    dst[i] = '\0';
+    WR32(fs_data, FS_CMD, FS_CMD_RMDIR);
+    microkit_ppcall(CH_FS, microkit_msginfo_new(0, 1));
+    return (int)seL4_GetMR(0);
+}
+
+static int fs_rename_sync(const char *oldname, const char *newname) {
+    volatile char *dst = (volatile char *)(fs_data + FS_FILENAME);
+    int i = 0;
+    while (oldname[i] && i < 63) { dst[i] = oldname[i]; i++; }
+    dst[i] = '\0';
+    i++;
+    int j = 0;
+    while (newname[j] && i < 126) { dst[i] = newname[j]; i++; j++; }
+    dst[i] = '\0';
+    WR32(fs_data, FS_CMD, FS_CMD_RENAME);
+    microkit_ppcall(CH_FS, microkit_msginfo_new(0, 1));
+    return (int)seL4_GetMR(0);
+}
+
+
 static int fs_list_sync(void) {
     WR32(fs_data, FS_CMD, FS_CMD_LIST);
     microkit_ppcall(CH_FS, microkit_msginfo_new(0, 0));
@@ -158,6 +193,7 @@ static uint32_t saved_tok_size = 0;
 
 /* ── Exec state ──────────────────────────────────────── */
 static uint32_t exec_loaded_bytes = 0;
+static char cwd[256] = "/";
 static char exec_args[256];
 
 /* ── Command: help ───────────────────────────────────── */
@@ -805,19 +841,57 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
     case SYS_MKDIR: {
-        /* Not supported yet on flat filesystems */
-        result = -1;
+        volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        char dname[256];
+        int i = 0;
+        while (path[i] && i < 255) { dname[i] = path[i]; i++; }
+        dname[i] = '\0';
+        result = fs_mkdir_sync(dname);
         break;
     }
     case SYS_RMDIR: {
-        result = -1;
+        volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        char dname[256];
+        int i = 0;
+        while (path[i] && i < 255) { dname[i] = path[i]; i++; }
+        dname[i] = '\0';
+        result = fs_rmdir_sync(dname);
+        break;
+    }
+    case SYS_RENAME: {
+        volatile char *p = (volatile char *)(sandbox_io + 0x200);
+        char oldname[128], newname[128];
+        int i = 0;
+        while (p[i] && i < 127) { oldname[i] = p[i]; i++; }
+        oldname[i] = '\0';
+        i++;
+        int j = 0;
+        while (p[i] && j < 127) { newname[j] = p[i]; i++; j++; }
+        newname[j] = '\0';
+        result = fs_rename_sync(oldname, newname);
         break;
     }
     case SYS_GETCWD: {
-        /* Write "/" to sandbox_io+0x200 */
         volatile char *dst = (volatile char *)(sandbox_io + 0x200);
-        dst[0] = '/'; dst[1] = '\0';
+        int ci = 0;
+        while (cwd[ci] && ci < 255) { dst[ci] = cwd[ci]; ci++; }
+        dst[ci] = '\0';
         result = 0;
+        break;
+    }
+    case SYS_CHDIR: {
+        volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        char dname[256];
+        int i = 0;
+        while (path[i] && i < 255) { dname[i] = path[i]; i++; }
+        dname[i] = '\0';
+        if (dname[0] == '/' && dname[1] == '\0') {
+            cwd[0] = '/'; cwd[1] = '\0';
+            result = 0;
+        } else {
+            /* For now, only "/" is supported */
+            result = -1;
+        }
         break;
     }
     case SYS_GETPID: {

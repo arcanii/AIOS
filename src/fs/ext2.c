@@ -758,6 +758,140 @@ static int ext2_stat(const char *filename, uint32_t *size_out) {
 }
 
 /* ── Export the ops table ─────────────────────────────── */
+
+/* ── mkdir: create a subdirectory ────────────────────── */
+static int ext2_mkdir(const char *dirname) {
+    /* Allocate inode for new directory */
+    uint32_t ino = alloc_inode();
+    if (ino == 0) return -1;
+
+    /* Allocate data block for directory entries (. and ..) */
+    uint32_t data_blk = alloc_block();
+    if (data_blk == 0) { free_inode(ino); return -1; }
+
+    /* Build directory block with . and .. entries */
+    uint8_t dir_data[1024];
+    my_memset(dir_data, 0, block_size);
+
+    /* "." entry — points to self */
+    uint32_t off = 0;
+    wr32(dir_data + off + 0, ino);           /* inode */
+    wr16(dir_data + off + 4, 12);            /* rec_len */
+    dir_data[off + 6] = 1;                   /* name_len */
+    dir_data[off + 7] = EXT2_FT_DIR;        /* file_type */
+    dir_data[off + 8] = '.';
+
+    /* ".." entry — points to parent (root for now) */
+    off = 12;
+    wr32(dir_data + off + 0, EXT2_ROOT_INO); /* parent inode */
+    wr16(dir_data + off + 4, block_size - 12); /* rec_len fills rest */
+    dir_data[off + 6] = 2;                   /* name_len */
+    dir_data[off + 7] = EXT2_FT_DIR;        /* file_type */
+    dir_data[off + 8] = '.';
+    dir_data[off + 9] = '.';
+
+    write_block(data_blk, dir_data);
+
+    /* Initialize inode as directory */
+    uint8_t inode_buf[128];
+    my_memset(inode_buf, 0, 128);
+    wr16(inode_buf + 0, 0x41ED);        /* mode: directory, 0755 */
+    wr32(inode_buf + 4, block_size);    /* size = one block */
+    wr16(inode_buf + 26, 2);            /* links_count (. and parent) */
+    wr32(inode_buf + 28, block_size / 512); /* blocks in 512-byte units */
+    wr32(inode_buf + 40, data_blk);     /* i_block[0] */
+    write_inode(ino, inode_buf);
+
+    /* Add entry in parent (root) directory */
+    if (dir_add_entry(EXT2_ROOT_INO, dirname, ino, EXT2_FT_DIR) != 0) {
+        free_block(data_blk);
+        free_inode(ino);
+        return -1;
+    }
+
+    /* Increment parent link count (for ..) */
+    uint8_t parent_buf[128];
+    if (read_inode(EXT2_ROOT_INO, parent_buf) == 0) {
+        uint16_t links = rd16(parent_buf + 26);
+        wr16(parent_buf + 26, links + 1);
+        write_inode(EXT2_ROOT_INO, parent_buf);
+    }
+
+    return 0;
+}
+
+/* ── rmdir: remove an empty subdirectory ────────────── */
+static int ext2_rmdir(const char *dirname) {
+    uint32_t ino;
+    if (dir_lookup(EXT2_ROOT_INO, dirname, &ino) != 0)
+        return -1;
+
+    /* Verify it is a directory */
+    uint8_t inode_buf[128];
+    if (read_inode(ino, inode_buf) != 0) return -1;
+    uint16_t mode = rd16(inode_buf + 0);
+    if ((mode & 0xF000) != 0x4000) return -1; /* not a directory */
+
+    /* Check directory is empty (only . and ..) */
+    uint32_t blk = rd32(inode_buf + 40);
+    uint8_t dir_data[1024];
+    read_block(blk, dir_data);
+
+    uint32_t off = 0;
+    int entry_count = 0;
+    while (off < block_size) {
+        uint32_t d_ino = rd32(dir_data + off);
+        uint16_t rec_len = rd16(dir_data + off + 4);
+        if (rec_len == 0) break;
+        if (d_ino != 0) {
+            uint8_t name_len = dir_data[off + 6];
+            /* Skip . and .. */
+            if (name_len == 1 && dir_data[off + 8] == '.') { off += rec_len; continue; }
+            if (name_len == 2 && dir_data[off + 8] == '.' && dir_data[off + 9] == '.') { off += rec_len; continue; }
+            entry_count++;
+        }
+        off += rec_len;
+    }
+    if (entry_count > 0) return -1; /* not empty */
+
+    /* Free data block and inode */
+    free_block(blk);
+    free_inode(ino);
+
+    /* Remove directory entry from parent */
+    dir_remove_entry(EXT2_ROOT_INO, dirname);
+
+    /* Decrement parent link count */
+    uint8_t parent_buf[128];
+    if (read_inode(EXT2_ROOT_INO, parent_buf) == 0) {
+        uint16_t links = rd16(parent_buf + 26);
+        if (links > 1) wr16(parent_buf + 26, links - 1);
+        write_inode(EXT2_ROOT_INO, parent_buf);
+    }
+
+    return 0;
+}
+
+/* ── rename: rename a file (flat, root-dir only) ──── */
+static int ext2_rename(const char *oldname, const char *newname) {
+    uint32_t ino;
+    if (dir_lookup(EXT2_ROOT_INO, oldname, &ino) != 0)
+        return -1;
+
+    /* Read inode to get file type */
+    uint8_t inode_buf[128];
+    if (read_inode(ino, inode_buf) != 0) return -1;
+    uint16_t mode = rd16(inode_buf + 0);
+    uint8_t ftype = ((mode & 0xF000) == 0x4000) ? EXT2_FT_DIR : EXT2_FT_REG_FILE;
+
+    /* Remove old entry, add new one */
+    dir_remove_entry(EXT2_ROOT_INO, oldname);
+    if (dir_add_entry(EXT2_ROOT_INO, newname, ino, ftype) != 0)
+        return -1;
+
+    return 0;
+}
+
 const aios_fs_ops_t ext2_ops = {
     .name   = "ext2",
     .mount  = ext2_mount,
@@ -770,6 +904,9 @@ const aios_fs_ops_t ext2_ops = {
     .list   = ext2_list,
     .sync   = ext2_sync,
     .stat   = ext2_stat,
+    .mkdir  = ext2_mkdir,
+    .rmdir  = ext2_rmdir,
+    .rename = ext2_rename,
 };
 
 /* ── Probe: check for ext2 magic ──────────────────────── */

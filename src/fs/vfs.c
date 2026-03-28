@@ -235,6 +235,35 @@ static void handle_sync(void) {
     int rc = active_fs->sync ? active_fs->sync() : 0;
     reply_status(rc);
 }
+static void handle_mkdir(void) {
+    char name[64];
+    get_filename(name, sizeof(name));
+    int rc = active_fs->mkdir ? active_fs->mkdir(name) : -1;
+    reply_status(rc);
+}
+
+static void handle_rmdir(void) {
+    char name[64];
+    get_filename(name, sizeof(name));
+    int rc = active_fs->rmdir ? active_fs->rmdir(name) : -1;
+    reply_status(rc);
+}
+
+static void handle_rename(void) {
+    /* Filenames packed: old\0new\0 at FS_FILENAME */
+    volatile char *p = (volatile char *)(fs_data + FS_FILENAME);
+    char oldname[64], newname[64];
+    int i = 0;
+    while (p[i] && i < 63) { oldname[i] = p[i]; i++; }
+    oldname[i] = '\0';
+    i++; /* skip null */
+    int j = 0;
+    while (p[i] && j < 63) { newname[j] = p[i]; i++; j++; }
+    newname[j] = '\0';
+    int rc = active_fs->rename ? active_fs->rename(oldname, newname) : -1;
+    reply_status(rc);
+}
+
 
 /* ═══════════════════════════════════════════════════════
  *  Microkit entry points
@@ -268,6 +297,9 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
     case FS_CMD_LIST:   handle_list();   break;
     case FS_CMD_STAT:   handle_stat();   break;
     case FS_CMD_SYNC:   handle_sync();   break;
+    case FS_CMD_MKDIR:  handle_mkdir();  break;
+    case FS_CMD_RMDIR:  handle_rmdir();  break;
+    case FS_CMD_RENAME: handle_rename(); break;
     default: reply_status(-1); break;
     }
 

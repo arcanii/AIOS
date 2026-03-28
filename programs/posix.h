@@ -118,6 +118,19 @@ static inline int unlink(const char *path) {
     return sys->unlink(path);
 }
 
+static inline int mkdir(const char *path, mode_t mode) {
+    (void)mode;
+    return sys->mkdir(path);
+}
+
+static inline int rmdir(const char *path) {
+    return sys->rmdir(path);
+}
+
+static inline int rename(const char *oldpath, const char *newpath) {
+    return sys->rename(oldpath, newpath);
+}
+
 static inline int remove(const char *path) {
     return unlink(path);
 }
@@ -191,14 +204,8 @@ static inline off_t lseek(int fd, off_t offset, int whence) {
     return (off_t)sys->lseek(fd - 3, (long)offset, whence);
 }
 
-static inline int mkdir(const char *path, mode_t mode) {
-    (void)path; (void)mode;
-    return -1;  /* not yet supported */
-}
-
-static inline int rmdir(const char *path) {
-    (void)path;
-    return -1;  /* not yet supported */
+static inline int chdir(const char *path) {
+    return sys->chdir(path);
 }
 
 static inline char *getcwd(char *buf, size_t size) {

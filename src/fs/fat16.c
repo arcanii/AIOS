@@ -138,6 +138,12 @@ static uint16_t alloc_cluster(void) {
     return 0;
 }
 
+static void free_cluster(uint16_t cluster) {
+    if (cluster >= 2 && cluster < total_clusters + 2) {
+        fat_write(cluster, 0x0000);
+    }
+}
+
 /* ── Free a cluster chain ─────────────────────────────── */
 static void free_chain(uint16_t cluster) {
     while (cluster >= 2 && cluster < 0xFFF8) {
@@ -405,6 +411,141 @@ static int fat16_stat(const char *filename, uint32_t *size_out) {
 }
 
 /* ── Export the ops table ─────────────────────────────── */
+
+/* ── mkdir: create a subdirectory in root ─────────────── */
+static int fat16_mkdir(const char *dirname) {
+    uint8_t name83[11];
+    to_name83(dirname, name83);
+
+    /* Check it doesn't already exist */
+    for (uint32_t sec = 0; sec < root_dir_sectors; sec++) {
+        blk->read_sector(root_dir_start + sec, sector_buf);
+        int entries = 512 / 32;
+        for (int i = 0; i < entries; i++) {
+            uint8_t *ent = sector_buf + i * 32;
+            if (ent[0] == 0x00) goto not_found;
+            if (ent[0] == 0xE5) continue;
+            if (my_memcmp(ent, name83, 11) == 0) return -1; /* exists */
+        }
+    }
+not_found:
+
+    /* Allocate a cluster for the directory data (. and ..) */
+    uint16_t cluster = alloc_cluster();
+    if (cluster == 0) return -1;
+
+    /* Write . and .. entries into the new cluster */
+    uint32_t dir_lba = data_start + (cluster - 2) * sectors_per_cluster;
+    uint8_t dir_buf[512];
+    my_memset(dir_buf, 0, 512);
+
+    /* "." entry */
+    uint8_t *dot = dir_buf;
+    my_memset(dot, ' ', 11);
+    dot[0] = '.';
+    dot[11] = 0x10; /* directory attribute */
+    wr16(dot + 26, cluster);
+    wr32(dot + 28, 0);
+
+    /* ".." entry */
+    uint8_t *dotdot = dir_buf + 32;
+    my_memset(dotdot, ' ', 11);
+    dotdot[0] = '.'; dotdot[1] = '.';
+    dotdot[11] = 0x10;
+    wr16(dotdot + 26, 0); /* root cluster = 0 */
+    wr32(dotdot + 28, 0);
+
+    blk->write_sector(dir_lba, dir_buf);
+
+    /* Zero remaining sectors in cluster if multi-sector */
+    for (uint32_t s = 1; s < sectors_per_cluster; s++) {
+        my_memset(dir_buf, 0, 512);
+        blk->write_sector(dir_lba + s, dir_buf);
+    }
+
+    /* Find free root directory entry and write it */
+    for (uint32_t sec = 0; sec < root_dir_sectors; sec++) {
+        blk->read_sector(root_dir_start + sec, sector_buf);
+        int entries = 512 / 32;
+        for (int i = 0; i < entries; i++) {
+            uint8_t *ent = sector_buf + i * 32;
+            if (ent[0] == 0x00 || ent[0] == 0xE5) {
+                my_memset(ent, 0, 32);
+                my_memcpy(ent, name83, 11);
+                ent[11] = 0x10; /* directory attribute */
+                wr16(ent + 26, cluster);
+                wr32(ent + 28, 0);
+                blk->write_sector(root_dir_start + sec, sector_buf);
+                return 0;
+            }
+        }
+    }
+    return -1; /* no space in root directory */
+}
+
+/* ── rmdir: remove an empty subdirectory ─────────────── */
+static int fat16_rmdir(const char *dirname) {
+    uint8_t name83[11];
+    to_name83(dirname, name83);
+
+    /* Find directory entry */
+    for (uint32_t sec = 0; sec < root_dir_sectors; sec++) {
+        blk->read_sector(root_dir_start + sec, sector_buf);
+        int entries = 512 / 32;
+        for (int i = 0; i < entries; i++) {
+            uint8_t *ent = sector_buf + i * 32;
+            if (ent[0] == 0x00) return -1;
+            if (ent[0] == 0xE5) continue;
+            if (my_memcmp(ent, name83, 11) != 0) continue;
+            if ((ent[11] & 0x10) == 0) return -1; /* not a directory */
+
+            uint16_t cluster = rd16(ent + 26);
+            uint32_t dir_lba = data_start + (cluster - 2) * sectors_per_cluster;
+
+            /* Check directory is empty (only . and ..) */
+            uint8_t dir_buf[512];
+            blk->read_sector(dir_lba, dir_buf);
+            for (int j = 2; j < 512 / 32; j++) {
+                uint8_t *de = dir_buf + j * 32;
+                if (de[0] == 0x00) break;
+                if (de[0] != 0xE5) return -1; /* not empty */
+            }
+
+            /* Free cluster */
+            free_cluster(cluster);
+
+            /* Mark entry as deleted */
+            ent[0] = 0xE5;
+            blk->write_sector(root_dir_start + sec, sector_buf);
+            return 0;
+        }
+    }
+    return -1; /* not found */
+}
+
+/* ── rename: rename a file or directory ──────────────── */
+static int fat16_rename(const char *oldname, const char *newname) {
+    uint8_t old83[11], new83[11];
+    to_name83(oldname, old83);
+    to_name83(newname, new83);
+
+    for (uint32_t sec = 0; sec < root_dir_sectors; sec++) {
+        blk->read_sector(root_dir_start + sec, sector_buf);
+        int entries = 512 / 32;
+        for (int i = 0; i < entries; i++) {
+            uint8_t *ent = sector_buf + i * 32;
+            if (ent[0] == 0x00) return -1;
+            if (ent[0] == 0xE5) continue;
+            if (my_memcmp(ent, old83, 11) == 0) {
+                my_memcpy(ent, new83, 11);
+                blk->write_sector(root_dir_start + sec, sector_buf);
+                return 0;
+            }
+        }
+    }
+    return -1;
+}
+
 const aios_fs_ops_t fat16_ops = {
     .name   = "FAT16",
     .mount  = fat16_mount,
@@ -417,6 +558,9 @@ const aios_fs_ops_t fat16_ops = {
     .list   = fat16_list,
     .sync   = fat16_sync,
     .stat   = fat16_stat,
+    .mkdir  = fat16_mkdir,
+    .rmdir  = fat16_rmdir,
+    .rename = fat16_rename,
 };
 
 /* ── Probe function: check if volume is FAT16 ────────── */

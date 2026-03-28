@@ -184,6 +184,40 @@ static int sbx_unlink(const char *path) {
     return (int)seL4_GetMR(0);
 }
 
+static int sbx_mkdir(const char *path) {
+    volatile char *dst = (volatile char *)(sandbox_io + 0x200);
+    int i = 0;
+    while (path[i] && i < 255) { dst[i] = path[i]; i++; }
+    dst[i] = '\0';
+    seL4_SetMR(0, SYS_MKDIR);
+    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 1));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_rmdir(const char *path) {
+    volatile char *dst = (volatile char *)(sandbox_io + 0x200);
+    int i = 0;
+    while (path[i] && i < 255) { dst[i] = path[i]; i++; }
+    dst[i] = '\0';
+    seL4_SetMR(0, SYS_RMDIR);
+    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 1));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_rename(const char *oldpath, const char *newpath) {
+    volatile char *dst = (volatile char *)(sandbox_io + 0x200);
+    int i = 0;
+    while (oldpath[i] && i < 127) { dst[i] = oldpath[i]; i++; }
+    dst[i] = '\0';
+    i++;
+    int j = 0;
+    while (newpath[j] && i < 255) { dst[i] = newpath[j]; i++; j++; }
+    dst[i] = '\0';
+    seL4_SetMR(0, SYS_RENAME); /* SYS_RENAME placeholder */
+    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 1));
+    return (int)seL4_GetMR(0);
+}
+
 static int sbx_readdir(void *buf, unsigned long max_entries) {
     seL4_SetMR(0, SYS_READDIR);
     microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 1));
@@ -288,12 +322,16 @@ typedef struct {
     int   (*write_file)(int fd, const void *buf, unsigned long len);
     int   (*close)(int fd);
     int   (*unlink)(const char *path);
+    int   (*mkdir)(const char *path);
+    int   (*rmdir)(const char *path);
+    int   (*rename)(const char *oldpath, const char *newpath);
     int   (*readdir)(void *buf, unsigned long max_entries);
     int   (*filesize)(void);
     /* Extended POSIX */
     int   (*stat_file)(const char *path, unsigned long *size_out);
     int   (*lseek)(int fd, long offset, int whence);
     int   (*getcwd)(char *buf, unsigned long size);
+    int   (*chdir)(const char *path);
     int   (*getpid)(void);
     /* Args */
     const char *args;
@@ -325,6 +363,9 @@ static void init_syscalls(void) {
     syscalls.write_file = sbx_write_file;
     syscalls.close      = sbx_close;
     syscalls.unlink     = sbx_unlink;
+    syscalls.mkdir      = sbx_mkdir;
+    syscalls.rmdir      = sbx_rmdir;
+    syscalls.rename     = sbx_rename;
     syscalls.readdir    = sbx_readdir;
     syscalls.filesize   = sbx_filesize;
     /* Extended POSIX */

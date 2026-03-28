@@ -62,6 +62,9 @@ static void cmd_help(void) {
     print("  stat <file>     - show file info\n");
     print("  pwd             - print working directory\n");
     print("  clear           - clear screen\n");
+    print("  mkdir <dir>     - create directory\n");
+    print("  rmdir <dir>     - remove empty directory\n");
+    print("  rename <old> <new> - rename file\n");
     print("  help            - this message\n");
     print("  exit            - exit shell\n");
 }
@@ -199,6 +202,22 @@ AIOS_ENTRY {
         else if (starts_with(line, "echo ")) cmd_echo(line + 5);
         else if (starts_with(line, "stat ")) cmd_stat(line + 5);
         else if (starts_with(line, "wc "))  cmd_wc(line + 3);
+        else if (starts_with(line, "mkdir ")) {
+            if (mkdir(line + 6, 0755) < 0) print("mkdir: failed\n");
+        }
+        else if (starts_with(line, "rmdir ")) {
+            if (rmdir(line + 6) < 0) print("rmdir: failed\n");
+        }
+        else if (starts_with(line, "rename ")) {
+            /* rename old new */
+            const char *args = line + 7;
+            char old[64]; int i = 0;
+            while (args[i] && args[i] != ' ' && i < 63) { old[i] = args[i]; i++; }
+            old[i] = '\0';
+            if (args[i] == ' ') {
+                if (rename(old, args + i + 1) < 0) print("rename: failed\n");
+            } else print("usage: rename <old> <new>\n");
+        }
         else { print(line); print(": command not found\n"); }
     }
 }

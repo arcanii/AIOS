@@ -58,6 +58,11 @@ struct aios_fs_ops {
 
     /* Optional: stat                                                 */
     int (*stat)(const char *filename, uint32_t *size_out);
+
+    /* Directory management                                           */
+    int (*mkdir)(const char *dirname);
+    int (*rmdir)(const char *dirname);
+    int (*rename)(const char *oldname, const char *newname);
 };
 
 /* ── Filesystem registration ──────────────────────────── */

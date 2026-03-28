@@ -470,6 +470,140 @@ static int fat32_stat(const char *filename, uint32_t *size_out) {
 }
 
 /* ── Export the ops table ─────────────────────────────── */
+
+/* ── mkdir: create a subdirectory ─────────────────────── */
+static int fat32_mkdir(const char *dirname) {
+    uint8_t name83[11];
+    to_name83(dirname, name83);
+
+    /* Allocate a cluster for the new directory */
+    uint32_t cluster = alloc_cluster();
+    if (cluster == 0) return -1;
+
+    /* Write . and .. entries */
+    uint32_t dir_lba = data_start + (cluster - 2) * sectors_per_cluster;
+    uint8_t buf[512];
+    my_memset(buf, 0, 512);
+
+    /* "." */
+    uint8_t *dot = buf;
+    my_memset(dot, ' ', 11);
+    dot[0] = '.';
+    dot[11] = 0x10;
+    wr16(dot + 26, cluster & 0xFFFF);
+    wr16(dot + 20, (cluster >> 16) & 0xFFFF);
+
+    /* ".." */
+    uint8_t *dotdot = buf + 32;
+    my_memset(dotdot, ' ', 11);
+    dotdot[0] = '.'; dotdot[1] = '.';
+    dotdot[11] = 0x10;
+    wr16(dotdot + 26, root_cluster & 0xFFFF);
+    wr16(dotdot + 20, (root_cluster >> 16) & 0xFFFF);
+
+    blk->write_sector(dir_lba, buf);
+    for (uint32_t s = 1; s < sectors_per_cluster; s++) {
+        my_memset(buf, 0, 512);
+        blk->write_sector(dir_lba + s, buf);
+    }
+
+    /* Mark end of chain in FAT */
+    fat_write(cluster, 0x0FFFFFF8);
+
+    /* Add entry to root directory cluster chain */
+    uint32_t cur = root_cluster;
+    while (cur >= 2 && cur < 0x0FFFFFF8) {
+        uint32_t lba = data_start + (cur - 2) * sectors_per_cluster;
+        for (uint32_t s = 0; s < sectors_per_cluster; s++) {
+            blk->read_sector(lba + s, buf);
+            for (int i = 0; i < 512 / 32; i++) {
+                uint8_t *ent = buf + i * 32;
+                if (ent[0] == 0x00 || ent[0] == 0xE5) {
+                    my_memset(ent, 0, 32);
+                    my_memcpy(ent, name83, 11);
+                    ent[11] = 0x10;
+                    wr16(ent + 26, cluster & 0xFFFF);
+                    wr16(ent + 20, (cluster >> 16) & 0xFFFF);
+                    blk->write_sector(lba + s, buf);
+                    return 0;
+                }
+            }
+        }
+        cur = fat_read(cur);
+    }
+    return -1;
+}
+
+/* ── rmdir: remove an empty subdirectory ─────────────── */
+static int fat32_rmdir(const char *dirname) {
+    uint8_t name83[11];
+    to_name83(dirname, name83);
+    uint8_t buf[512];
+
+    uint32_t cur = root_cluster;
+    while (cur >= 2 && cur < 0x0FFFFFF8) {
+        uint32_t lba = data_start + (cur - 2) * sectors_per_cluster;
+        for (uint32_t s = 0; s < sectors_per_cluster; s++) {
+            blk->read_sector(lba + s, buf);
+            for (int i = 0; i < 512 / 32; i++) {
+                uint8_t *ent = buf + i * 32;
+                if (ent[0] == 0x00) return -1;
+                if (ent[0] == 0xE5) continue;
+                if (my_memcmp(ent, name83, 11) != 0) continue;
+                if ((ent[11] & 0x10) == 0) return -1;
+
+                uint32_t dcluster = rd16(ent + 26) | ((uint32_t)rd16(ent + 20) << 16);
+                /* Check empty (only . and ..) */
+                uint32_t dlba = data_start + (dcluster - 2) * sectors_per_cluster;
+                uint8_t dbuf[512];
+                blk->read_sector(dlba, dbuf);
+                for (int j = 2; j < 512 / 32; j++) {
+                    if (dbuf[j * 32] == 0x00) break;
+                    if (dbuf[j * 32] != 0xE5) return -1;
+                }
+
+                /* Free cluster chain */
+                fat_write(dcluster, 0x00000000);
+
+                /* Delete entry */
+                ent[0] = 0xE5;
+                blk->write_sector(lba + s, buf);
+                return 0;
+            }
+        }
+        cur = fat_read(cur);
+    }
+    return -1;
+}
+
+/* ── rename: rename a file or directory ──────────────── */
+static int fat32_rename(const char *oldname, const char *newname) {
+    uint8_t old83[11], new83[11];
+    to_name83(oldname, old83);
+    to_name83(newname, new83);
+    uint8_t buf[512];
+
+    uint32_t cur = root_cluster;
+    while (cur >= 2 && cur < 0x0FFFFFF8) {
+        uint32_t lba = data_start + (cur - 2) * sectors_per_cluster;
+        for (uint32_t s = 0; s < sectors_per_cluster; s++) {
+            blk->read_sector(lba + s, buf);
+            for (int i = 0; i < 512 / 32; i++) {
+                uint8_t *ent = buf + i * 32;
+                if (ent[0] == 0x00) return -1;
+                if (ent[0] == 0xE5) continue;
+                if (my_memcmp(ent, old83, 11) == 0) {
+                    my_memcpy(ent, new83, 11);
+                    blk->write_sector(lba + s, buf);
+                    return 0;
+                }
+            }
+        }
+        cur = fat_read(cur);
+    }
+    return -1;
+}
+
 const aios_fs_ops_t fat32_ops = {
     .name   = "FAT32",
     .mount  = fat32_mount,
@@ -482,6 +616,9 @@ const aios_fs_ops_t fat32_ops = {
     .list   = fat32_list,
     .sync   = fat32_sync,
     .stat   = fat32_stat,
+    .mkdir  = fat32_mkdir,
+    .rmdir  = fat32_rmdir,
+    .rename = fat32_rename,
 };
 
 /* ── Probe function: check if volume is FAT32 ────────── */

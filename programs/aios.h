@@ -31,12 +31,16 @@ typedef struct {
     int   (*write_file)(int fd, const void *buf, unsigned long len);
     int   (*close)(int fd);
     int   (*unlink)(const char *path);
+    int   (*mkdir)(const char *path);
+    int   (*rmdir)(const char *path);
+    int   (*rename)(const char *oldpath, const char *newpath);
     int   (*readdir)(void *buf, unsigned long max_entries);
     int   (*filesize)(void);
     /* Extended POSIX */
     int   (*stat_file)(const char *path, unsigned long *size_out);
     int   (*lseek)(int fd, long offset, int whence);
     int   (*getcwd)(char *buf, unsigned long size);
+    int   (*chdir)(const char *path);
     int   (*getpid)(void);
     /* Args */
     const char *args;
