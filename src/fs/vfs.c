@@ -91,8 +91,10 @@ static void get_filename(char *buf, int max) {
 /* ── Registered filesystem backends ────────────────────── */
 extern const aios_fs_ops_t *fat16_probe(const blk_io_t *b);
 extern const aios_fs_ops_t *fat32_probe(const blk_io_t *b);
+extern const aios_fs_ops_t *ext2_probe(const blk_io_t *b);
 
 static fs_probe_fn probes[] = {
+    ext2_probe,
     fat32_probe,
     fat16_probe,
     0
