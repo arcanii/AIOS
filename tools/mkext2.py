@@ -72,9 +72,10 @@ def mkext2(img="disk_ext2.img", size_mb=64):
         inode_table_blocks = (inodes_per_group * inode_size + block_size - 1) // block_size
 
         if g == 0:
-            bb = group_start + 1  # block bitmap at block 2 (abs)
-            ib = group_start + 2  # inode bitmap at block 3
-            it = group_start + 3  # inode table at block 4
+            # block 1=sb, block 2=bgdt, block 3=bb, block 4=ib, block 5=inode table
+            bb = group_start + 2  # block bitmap at block 3 (abs)
+            ib = group_start + 3  # inode bitmap at block 4
+            it = group_start + 4  # inode table at block 5
         else:
             bb = group_start + 0
             ib = group_start + 1
@@ -84,7 +85,7 @@ def mkext2(img="disk_ext2.img", size_mb=64):
 
         # Overhead blocks
         if g == 0:
-            overhead = 1 + 1 + 1 + 1 + inode_table_blocks  # sb + bgdt + bb + ib + it
+            overhead = 1 + 1 + 1 + 1 + 1 + inode_table_blocks  # sb + bgdt + bb + ib + padding + it
         else:
             overhead = 1 + 1 + inode_table_blocks  # bb + ib + it
 
@@ -146,8 +147,8 @@ def mkext2(img="disk_ext2.img", size_mb=64):
     data[2048:2048 + len(bgdt)] = bgdt
 
     # ── Root directory inode (inode 2) ──
-    # Inode table for group 0 starts at block 4 (offset 4096)
-    it0 = 4  # block number
+    # Inode table for group 0 — read from BGDT
+    it0 = struct.unpack_from('<I', bgdt, 8)[0]  # bg_inode_table
     inode_off = it0 * block_size + (2 - 1) * inode_size  # inode 2, 0-indexed from 1
 
     root_inode = bytearray(inode_size)

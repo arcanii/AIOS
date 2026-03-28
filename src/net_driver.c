@@ -259,8 +259,10 @@ static int net_recv(uint8_t *out_buf, uint32_t *out_len) {
 
 void init(void) {
     if (virtio_net_init() == 0) {
+        WR32(net_data, NET_STATUS, NET_ST_OK);
         microkit_dbg_puts("NET: driver ready\n");
     } else {
+        WR32(net_data, NET_STATUS, NET_ST_ERR);
         microkit_dbg_puts("NET: init FAILED\n");
     }
 }

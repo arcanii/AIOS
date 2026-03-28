@@ -419,19 +419,30 @@ static void handle_packet(const uint8_t *pkt, uint32_t len) {
 
 /* ── Microkit entry points ───────────────────────────── */
 
+static int net_up = 0;
+
 void init(void) {
+    /* Check if net_driver initialized successfully */
+    int32_t drv_status = *(volatile int32_t *)(net_data + NET_STATUS);
+    if (drv_status != NET_ST_OK) {
+        microkit_dbg_puts("NET_SRV: no network device, skipping\n");
+        net_up = 0;
+        return;
+    }
+
     /* Get MAC from net_driver */
     *(volatile uint32_t *)(net_data + NET_CMD) = NET_CMD_GET_MAC;
     microkit_notify(CH_NET);
-    /* Small delay for driver to respond */
     for (volatile int i = 0; i < 100000; i++);
     volatile uint8_t *mac = (volatile uint8_t *)(net_data + NET_MAC_OFF);
     for (int i = 0; i < 6; i++) my_mac[i] = mac[i];
 
+    net_up = 1;
     microkit_dbg_puts("NET_SRV: IP stack ready, IP=10.0.2.15\n");
 }
 
 void notified(microkit_channel ch) {
+    if (!net_up) return;
     if (ch == CH_NET) {
         uint32_t cmd = *(volatile uint32_t *)(net_data + NET_CMD);
         if (cmd == NET_CMD_RECV) {

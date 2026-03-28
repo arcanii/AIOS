@@ -247,7 +247,12 @@ static uint32_t alloc_block(void) {
         if (g == num_groups - 1)
             blocks_in_group = total_blocks - g * blocks_per_group;
 
-        for (uint32_t b = 0; b < blocks_in_group; b++) {
+        /* Skip overhead: superblock, BGDT, bitmaps, inode table */
+        uint32_t inode_table_blocks = (inodes_per_group * inode_size + block_size - 1) / block_size;
+        uint32_t overhead = (bg_cache[g].inode_table - (first_data_block + g * blocks_per_group))
+                            + inode_table_blocks;
+
+        for (uint32_t b = overhead; b < blocks_in_group; b++) {
             if (!(bmp[b / 8] & (1 << (b % 8)))) {
                 bmp[b / 8] |= (1 << (b % 8));
                 write_block(bg_cache[g].block_bitmap, bmp);
