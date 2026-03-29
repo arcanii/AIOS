@@ -200,6 +200,13 @@ static int fs_rename_sync(const char *oldname, const char *newname) {
 }
 
 
+static const char *fs_fsinfo_sync(void) {
+    volatile uint8_t *sh = (volatile uint8_t *)fs_data;
+    WR32(fs_data, FS_CMD, FS_CMD_FSINFO);
+    microkit_ppcall(CH_FS, microkit_msginfo_new(0, 0));
+    return (const char *)(sh + FS_FILENAME);
+}
+
 static int fs_list_sync(void) {
     WR32(fs_data, FS_CMD, FS_CMD_LIST);
     microkit_ppcall(CH_FS, microkit_msginfo_new(0, 0));
@@ -231,6 +238,27 @@ static uint32_t exec_loaded_bytes = 0;
 static char cwd[256] = "/";
 static char exec_args[256];
 
+/* ── Command: ps ─────────────────────────────────────── */
+static void cmd_ps(void) {
+    ser_puts("  SLOT  PID  NAME\n");
+    int any = 0;
+    for (int i = 0; i < NUM_SANDBOXES; i++) {
+        if (proctab[i].in_use) {
+            ser_puts("  ");
+            ser_put_dec((unsigned int)i);
+            ser_puts("     ");
+            ser_put_dec(proctab[i].pid);
+            ser_puts("  ");
+            ser_puts(proctab[i].name);
+            if (proctab[i].foreground) ser_puts(" (fg)");
+            else ser_puts(" (bg)");
+            ser_puts("\n");
+            any = 1;
+        }
+    }
+    if (!any) ser_puts("  (no running processes)\n");
+}
+
 /* ── Command: help ───────────────────────────────────── */
 static void cmd_help(void) {
     ser_puts("Commands:\n");
@@ -243,6 +271,7 @@ static void cmd_help(void) {
     ser_puts("  gen <prompt>    - generate text\n");
     ser_puts("  exec <file.bin> - run a sandbox program\n");
     ser_puts("  info            - system info\n");
+    ser_puts("  ps              Show running processes\n");
     ser_puts("  shutdown        - halt system\n");
     ser_flush();
 }
@@ -381,6 +410,22 @@ static void cmd_rm(const char *filename) {
 
 /* ── Command: exec <file.bin> ────────────────────────── */
 static void cmd_exec(const char *filename) {
+    /* Check for background execution */
+    int background = 0;
+    char fname_buf[256];
+    {
+        int len = 0;
+        while (filename[len] && len < 255) { fname_buf[len] = filename[len]; len++; }
+        fname_buf[len] = 0;
+        /* Strip trailing spaces and & */
+        while (len > 0 && fname_buf[len-1] == ' ') fname_buf[--len] = 0;
+        if (len > 0 && fname_buf[len-1] == '&') {
+            fname_buf[--len] = 0;
+            while (len > 0 && fname_buf[len-1] == ' ') fname_buf[--len] = 0;
+            background = 1;
+        }
+        filename = fname_buf;
+    }
     ser_puts("Loading program: ");
     ser_puts(filename);
     ser_puts("\n");
@@ -452,14 +497,24 @@ static void cmd_exec(const char *filename) {
     proctab[slot].in_use = 1;
     proctab[slot].pid = next_pid++;
     proctab[slot].loaded_bytes = exec_loaded_bytes;
-    proctab[slot].foreground = 1;
+    proctab[slot].foreground = background ? 0 : 1;
     {
         int ni = 0;
         const char *fn = filename;
         while (*fn && ni < 63) proctab[slot].name[ni++] = *fn++;
         proctab[slot].name[ni] = 0;
     }
-    orch_state = EXEC_RUNNING;
+    if (!background) {
+        orch_state = EXEC_RUNNING;
+    } else {
+        ser_puts("  [");
+        ser_put_dec((unsigned int)slot);
+        ser_puts("] PID ");
+        ser_put_dec(proctab[slot].pid);
+        ser_puts("\n");
+        ser_puts("AIOS> ");
+        ser_flush();
+    }
     microkit_notify(CH_SBX_BASE + slot);
 }
 
@@ -592,7 +647,9 @@ static void cmd_info(void) {
     ser_puts("  Kernel:     seL4 14.0.0 (Microkit 2.1.0)\n");
     ser_puts("  Arch:       AArch64 (Cortex-A53)\n");
     ser_puts("  RAM:        2 GiB\n");
-    ser_puts("  Disk:       128 MiB FAT16\n");
+    ser_puts("  FS:         ");
+    ser_puts(fs_fsinfo_sync());
+    ser_puts("\n");
     ser_puts("  Drivers:    PL011 UART, virtio-blk\n");
     ser_puts("  Services:   fs_server, llm_server, sandbox\n");
     ser_puts("  LLM:        ");
@@ -667,6 +724,8 @@ static void process_command(void) {
         else { ser_puts("Usage: gen <prompt>\n"); ser_flush(); }
     } else if (my_strcmp(input_line, "info") == 0) {
         cmd_info();
+    } else if (my_strcmp(input_line, "ps") == 0) {
+        cmd_ps();
     } else if (my_strcmp(input_line, "shutdown") == 0) {
         cmd_shutdown();
     } else {
@@ -730,10 +789,20 @@ static void handle_exec_done(int slot) {
     ser_put_dec(exit_code);
     ser_puts("\n");
     ser_flush();
+    if (proctab[slot].foreground) {
+        orch_state = RUNNING;
+        ser_puts("AIOS> ");
+        ser_flush();
+    } else {
+        ser_puts("\n[");
+        ser_put_dec((unsigned int)slot);
+        ser_puts("] Done (PID ");
+        ser_put_dec(proctab[slot].pid);
+        ser_puts(", exit ");
+        ser_put_dec(exit_code);
+        ser_puts(")\n");
+    }
     proctab[slot].in_use = 0;
-    orch_state = RUNNING;
-    ser_puts("AIOS> ");
-    ser_flush();
 }
 
 /* ── Handle LLM generation reply ─────────────────────── */
@@ -954,7 +1023,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
     case SYS_GETPID: {
-        result = 1; /* single process */
+        result = (int64_t)proctab[slot].pid;
         break;
     }
     case SYS_SLEEP: {
@@ -1040,6 +1109,10 @@ void init(void) {
     ser_puts("  Sandbox: ");
     ser_put_dec(NUM_SANDBOXES);
     ser_puts(" process slots\n");
+    const char *fsname = fs_fsinfo_sync();
+    ser_puts("  FS:      ");
+    ser_puts(fsname);
+    ser_puts("\n");
     ser_puts("  Drivers: PL011 UART, virtio-blk, virtio-net\n");
     ser_puts("  LLM:     llm_server (llama2.c engine)\n");
     ser_puts("============ Open Aries ================\n\n");

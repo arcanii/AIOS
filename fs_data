@@ -1,0 +1,61 @@
+        char fname[256];
+        int i = 0;
+        while (path[i] && i < 255) { fname[i] = path[i]; i++; }
+        fname[i] = '\0';
+        int st = fs_delete_sync(fname);
+        result = (st == 0) ? 0 : -1;
+        break;
+    }
+    case SYS_READDIR: {
+        int st = fs_list_sync();
+        if (st == 0) {
+            uint32_t count = RD32(fs_data, FS_LENGTH);
+            /* Copy listing to sandbox_io+0x400 */
+            volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
+            volatile uint8_t *dst = (volatile uint8_t *)(sio + 0x400);
+            uint32_t bytes = count * 16;
+            for (uint32_t i = 0; i < bytes; i++) dst[i] = src[i];
+            result = count;
+        }
+        break;
+    }
+    case SYS_PUTC: {
+        char c = (char)seL4_GetMR(1);
+        ser_putc(c);
+        ser_flush();
+        result = 0;
+        break;
+    }
+    case 32: { /* SYS_PUTS_DIRECT */
+        volatile char *str = (volatile char *)(sio + 0x200);
+        char buf[256];
+        int i = 0;
+        while (str[i] && i < 255) { buf[i] = str[i]; i++; }
+        buf[i] = '\0';
+        ser_puts(buf);
+        ser_flush();
+        result = 0;
+        break;
+    }
+    case SYS_GETC: {
+        result = (int64_t)(unsigned char)rx_getc_blocking();
+        break;
+    }
+    case SYS_STAT: {
+        volatile char *path = (volatile char *)(sio + 0x200);
+        char fname[256];
+        int i = 0;
+        while (path[i] && i < 255) { fname[i] = path[i]; i++; }
+        fname[i] = '\0';
+        int st = fs_stat_sync(fname);
+        if (st == 0) {
+            result = 0;
+            seL4_SetMR(1, RD32(fs_data, FS_FILESIZE));
+        } else {
+            result = -1;
+        }
+        break;
+    }
+    case SYS_FSTAT: {
+        /* Return file size for open fd */
+        result = 0;

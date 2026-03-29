@@ -297,6 +297,16 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
     case FS_CMD_DELETE: handle_delete(); break;
     case FS_CMD_LIST:   handle_list();   break;
     case FS_CMD_STAT:   handle_stat();   break;
+    case FS_CMD_FSINFO: {
+        /* Return filesystem name */
+        const char *fsname = active_fs ? active_fs->name : "none";
+        char *dst = (char *)(fs_data + FS_FILENAME);
+        int i = 0;
+        while (fsname[i] && i < 63) { dst[i] = fsname[i]; i++; }
+        dst[i] = 0;
+        WR32(fs_data, FS_STATUS, 0);
+        break;
+    }
     case FS_CMD_SYNC:   handle_sync();   break;
     case FS_CMD_MKDIR:  handle_mkdir();  break;
     case FS_CMD_RMDIR:  handle_rmdir();  break;

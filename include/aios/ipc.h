@@ -36,9 +36,10 @@
 #define FS_CMD_LIST      7
 #define FS_CMD_STAT      8
 #define FS_CMD_SYNC      9
-#define FS_CMD_MKDIR    10
-#define FS_CMD_RMDIR    11
-#define FS_CMD_RENAME   12
+#define FS_CMD_FSINFO   10   /* returns FS name in FS_FILENAME */
+#define FS_CMD_MKDIR    11
+#define FS_CMD_RMDIR    12
+#define FS_CMD_RENAME   13
 
 /* fs status codes */
 #define FS_ST_OK        0
