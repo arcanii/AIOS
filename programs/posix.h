@@ -58,7 +58,7 @@ struct stat {
 };
 
 /* ── Directory ───────────────────────────────────────── */
-#define NAME_MAX 12
+#define NAME_MAX 255
 
 struct dirent {
     ino_t  d_ino;
@@ -164,25 +164,29 @@ typedef struct {
 
 static DIR _posix_dir;
 
-static inline DIR *opendir(const char *name) {
-    (void)name;
-    /* Use the raw 16-byte entry format from sandbox readdir */
-    unsigned char raw[64 * 16];
-    int count = sys->readdir(raw, 64);
-    if (count < 0) return NULL;
-    _posix_dir.count = count;
+static inline DIR *opendir(const char *path) {
+    (void)path;
+    /* Raw buffer for variable-length entries */
+    static unsigned char raw[3072];
+    int count = sys->readdir(raw, sizeof(raw));
+    if (count <= 0) return (void *)0;
+    _posix_dir.count = 0;
     _posix_dir.pos = 0;
-    for (int i = 0; i < count; i++) {
-        unsigned char *e = raw + i * 16;
-        int j;
-        for (j = 0; j < 12 && e[j]; j++)
-            _posix_dir.entries[i].d_name[j] = (char)e[j];
-        _posix_dir.entries[i].d_name[j] = '\0';
-        _posix_dir.entries[i].d_ino = (ino_t)(i + 1);
-        /* Bytes 12-15: file size (little-endian) */
-        _posix_dir.entries[i].d_size =
-            (unsigned long)e[12] | ((unsigned long)e[13] << 8) |
-            ((unsigned long)e[14] << 16) | ((unsigned long)e[15] << 24);
+    /* Parse variable-length entries: [2B entry_len][1B name_len][1B type][4B size][name][NUL] */
+    int off = 0;
+    for (int i = 0; i < count && i < 64; i++) {
+        unsigned short elen = raw[off] | (raw[off+1] << 8);
+        if (elen == 0) break;
+        unsigned char nlen = raw[off + 2];
+        /* skip type at off+3 */
+        unsigned long fsize = raw[off+4] | (raw[off+5]<<8) | (raw[off+6]<<16) | (raw[off+7]<<24);
+        _posix_dir.entries[i].d_size = fsize;
+        int cplen = nlen < NAME_MAX ? nlen : NAME_MAX;
+        for (int j = 0; j < cplen; j++)
+            _posix_dir.entries[i].d_name[j] = (char)raw[off + 8 + j];
+        _posix_dir.entries[i].d_name[cplen] = '\0';
+        _posix_dir.count++;
+        off += elen;
     }
     return &_posix_dir;
 }

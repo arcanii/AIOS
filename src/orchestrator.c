@@ -850,32 +850,29 @@ static void cmd_ls(void) {
         ser_flush();
         return;
     }
-    /* fs_data+FS_DATA has directory listing: 16-byte entries (11 name + 1 attr + 4 size) */
+    /* Variable-length entries: [2B entry_len][1B name_len][1B type][4B size][name][NUL] */
     uint32_t count = RD32(fs_data, FS_LENGTH);
+    uint32_t total_bytes = RD32(fs_data, FS_FILESIZE);
+    uint32_t off = 0;
     uint8_t *entries = (uint8_t *)(fs_data + FS_DATA);
     for (uint32_t i = 0; i < count; i++) {
-        uint8_t *ent = entries + i * 16;
-        /* 8.3 name */
-        char name[13];
-        int p = 0;
-        for (int j = 0; j < 8; j++) {
-            if (ent[j] != ' ') name[p++] = ent[j];
-        }
-        if (ent[8] != ' ') {
-            name[p++] = '.';
-            for (int j = 8; j < 11; j++) {
-                if (ent[j] != ' ') name[p++] = ent[j];
-            }
-        }
+        if (off + 8 > total_bytes) break;
+        uint16_t elen = entries[off] | (entries[off+1] << 8);
+        if (elen == 0) break;
+        uint8_t nlen = entries[off + 2];
+        uint32_t size = entries[off+4] | (entries[off+5]<<8) | (entries[off+6]<<16) | (entries[off+7]<<24);
+        char name[256];
+        int p = nlen < 255 ? nlen : 255;
+        for (int j = 0; j < p; j++) name[j] = (char)entries[off + 8 + j];
         name[p] = '\0';
-        uint32_t size = ent[12] | (ent[13]<<8) | (ent[14]<<16) | (ent[15]<<24);
         /* Format: name     size */
         ser_puts("  ");
         ser_puts(name);
         /* Pad to 16 chars */
-        for (int j = p; j < 14; j++) ser_putc(' ');
+        for (int j = p; j < 16; j++) ser_putc(' ');
         ser_put_dec(size);
         ser_puts(" bytes\n");
+        off += elen;
     }
     ser_flush();
 }
@@ -1926,11 +1923,13 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         int st = fs_list_sync();
         if (st == 0) {
             uint32_t count = RD32(fs_data, FS_LENGTH);
-            /* Copy listing to sandbox_io+0x400 */
+            uint32_t total_bytes = RD32(fs_data, FS_FILESIZE);
+            /* Copy variable-length listing to sandbox_io+0x400 (max 0xC00) */
             volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
             volatile uint8_t *dst = (volatile uint8_t *)(sio + 0x400);
-            uint32_t bytes = count * 16;
-            for (uint32_t i = 0; i < bytes; i++) dst[i] = src[i];
+            if (total_bytes > 0xC00) total_bytes = 0xC00;
+            for (uint32_t i = 0; i < total_bytes; i++) dst[i] = src[i];
+            seL4_SetMR(1, total_bytes);
             result = count;
         }
         break;

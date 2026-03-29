@@ -230,12 +230,12 @@ static int sbx_readdir(void *buf, unsigned long max_entries) {
     seL4_SetMR(0, SYS_READDIR);
     microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
     int count = (int)seL4_GetMR(0);
-    if (count > 0) {
+    unsigned long total_bytes = (unsigned long)seL4_GetMR(1);
+    if (count > 0 && total_bytes > 0) {
         volatile uint8_t *src = (volatile uint8_t *)(sandbox_io + 0x400);
         uint8_t *d = (uint8_t *)buf;
-        unsigned long bytes = count * 16;
-        if (bytes > max_entries * 16) bytes = max_entries * 16;
-        for (unsigned long i = 0; i < bytes; i++) d[i] = src[i];
+        if (total_bytes > max_entries) total_bytes = max_entries;
+        for (unsigned long i = 0; i < total_bytes; i++) d[i] = src[i];
     }
     return count;
 }
@@ -667,6 +667,14 @@ static void run_program(void) {
     /* Reset output buffer and heap */
     out_len = 0;
     sbx_heap_reset();
+
+    /* Zero BSS: clear memory from end of code to code_size + 64KB */
+    {
+        volatile uint8_t *bss_start = (volatile uint8_t *)(sandbox_code + code_size);
+        uint32_t bss_clear = 64 * 1024;  /* zero 64KB beyond code for BSS */
+        if (code_size + bss_clear > 1024 * 1024) bss_clear = (1024 * 1024) - code_size;
+        for (uint32_t i = 0; i < bss_clear; i++) bss_start[i] = 0;
+    }
 
     WR32(sandbox_io, SBX_STATUS, SBX_ST_RUNNING);
 

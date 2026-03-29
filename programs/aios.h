@@ -139,7 +139,7 @@ static aios_syscalls_t *sys;
 #define aios_putc_direct(c)      sys->putc_direct(c)
 
 /* Entry point wrapper */
-#define AIOS_ENTRY int aios_main(void); __attribute__((section(".text._start"))) int _start(aios_syscalls_t *_sys) { sys = _sys; return aios_main(); } \
-                   int aios_main(void)
+#define AIOS_ENTRY __attribute__((section(".text.zmain"))) int aios_main(void); __attribute__((section(".text._start"))) int _start(aios_syscalls_t *_sys) { sys = _sys; return aios_main(); } \
+                   __attribute__((section(".text.zmain"))) int aios_main(void)
 
 #endif /* AIOS_H */

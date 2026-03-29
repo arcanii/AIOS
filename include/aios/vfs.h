@@ -51,7 +51,7 @@ struct aios_fs_ops {
     int (*delete)(const char *filename);
 
     /* Directory operations                                           */
-    int (*list)(uint8_t *buf, uint32_t buf_size, uint32_t *count);
+    int (*list)(uint8_t *buf, uint32_t buf_size, uint32_t *count, uint32_t *total_bytes_out);
 
     /* Optional: sync/flush                                           */
     int (*sync)(void);

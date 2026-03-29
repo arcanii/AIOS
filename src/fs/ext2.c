@@ -737,7 +737,7 @@ static int ext2_delete(const char *filename) {
     return 0;
 }
 
-static int ext2_list(uint8_t *buf, uint32_t buf_size, uint32_t *count) {
+static int ext2_list(uint8_t *buf, uint32_t buf_size, uint32_t *count, uint32_t *total_bytes_out) {
     uint8_t inode_buf[128];
     if (read_inode(EXT2_ROOT_INO, inode_buf) != 0) { *count = 0; return -1; }
 
@@ -765,47 +765,30 @@ static int ext2_list(uint8_t *buf, uint32_t buf_size, uint32_t *count) {
 
             /* Skip . and .. and deleted entries */
             if (d_ino != 0 && d_name_len > 0 && d_ftype != EXT2_FT_DIR) {
-                if (out_pos + 16 > buf_size) goto done;
+                /* size check moved below */
 
-                /* Convert name to 8.3 format for compatibility */
-                uint8_t name83[11];
-                my_memset(name83, ' ', 11);
-                int ni = 0, no = 0;
-                int dot_pos = -1;
-
-                /* Find last dot */
-                for (int j = 0; j < d_name_len; j++) {
-                    if (tmp[off + 8 + j] == '.') dot_pos = j;
-                }
-
-                /* Copy name part */
-                for (ni = 0; ni < d_name_len && no < 8; ni++) {
-                    if (ni == dot_pos) break;
-                    name83[no++] = my_toupper(tmp[off + 8 + ni]);
-                }
-                /* Copy extension */
-                if (dot_pos >= 0) {
-                    int eo = 8;
-                    for (int j = dot_pos + 1; j < d_name_len && eo < 11; j++) {
-                        name83[eo++] = my_toupper(tmp[off + 8 + j]);
-                    }
-                }
-
-                my_memcpy(buf + out_pos, name83, 11);
-                buf[out_pos + 11] = 0x20; /* archive attribute */
-
-                /* Get file size from inode */
+                /* Variable-length entry: [2B total_len][1B name_len][1B type][4B size][name][NUL][pad] */
                 uint8_t child_inode[128];
                 uint32_t fsize = 0;
                 if (read_inode(d_ino, child_inode) == 0) {
                     fsize = inode_size_field(child_inode);
                 }
-                buf[out_pos + 12] = fsize & 0xFF;
-                buf[out_pos + 13] = (fsize >> 8) & 0xFF;
-                buf[out_pos + 14] = (fsize >> 16) & 0xFF;
-                buf[out_pos + 15] = (fsize >> 24) & 0xFF;
+                int nlen = d_name_len < 255 ? d_name_len : 255;
+                uint16_t elen = (uint16_t)((8 + nlen + 1 + 3) & ~3);  /* align to 4 */
+                if (out_pos + elen > buf_size) goto done;
 
-                out_pos += 16;
+                buf[out_pos + 0] = elen & 0xFF;
+                buf[out_pos + 1] = (elen >> 8) & 0xFF;
+                buf[out_pos + 2] = (uint8_t)nlen;
+                buf[out_pos + 3] = d_ftype;
+                buf[out_pos + 4] = fsize & 0xFF;
+                buf[out_pos + 5] = (fsize >> 8) & 0xFF;
+                buf[out_pos + 6] = (fsize >> 16) & 0xFF;
+                buf[out_pos + 7] = (fsize >> 24) & 0xFF;
+                my_memcpy(buf + out_pos + 8, tmp + off + 8, nlen);
+                buf[out_pos + 8 + nlen] = 0;
+
+                out_pos += elen;
                 file_count++;
             }
             off += rec_len;
@@ -814,6 +797,7 @@ static int ext2_list(uint8_t *buf, uint32_t buf_size, uint32_t *count) {
     }
 done:
     *count = file_count;
+    if (total_bytes_out) *total_bytes_out = out_pos;
     return 0;
 }
 
