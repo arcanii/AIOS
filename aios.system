@@ -34,6 +34,8 @@
     <memory_region name="sbx3_code" size="0x100000" />
 
     <!-- ── Serial driver (priority 254) ── -->
+    <memory_region name="auth_io" size="0x1000" />
+
     <protection_domain name="serial_driver" priority="254">
         <program_image path="serial_driver.elf" />
         <map mr="uart_mmio" vaddr="0x4000000" perms="rw" cached="false"
@@ -98,6 +100,9 @@
              setvar_vaddr="sbx3_code" />
 
         <!-- ── Child sandbox PD 0 ── -->
+        <map mr="auth_io" vaddr="0x6200000" perms="rw" cached="false"
+             setvar_vaddr="auth_io" />
+
         <protection_domain name="sbx0" priority="150" id="0"
                            budget="5000" period="10000" cpu="1">
             <program_image path="sandbox.elf" />
@@ -213,6 +218,14 @@
     <memory_region name="net_data"  size="0x10000" />
 
     <!-- ── Network driver (priority 230) ── -->
+
+    <!-- ── Auth server (priority 210) ── -->
+    <protection_domain name="auth_server" priority="210">
+        <program_image path="auth_server.elf" />
+        <map mr="auth_io" vaddr="0x30000000" perms="rw" cached="false"
+             setvar_vaddr="auth_io" />
+    </protection_domain>
+
     <protection_domain name="net_driver" priority="230">
         <program_image path="net_driver.elf" />
         <map mr="blk_mmio" vaddr="0x5200000" perms="rw" cached="false"
@@ -223,6 +236,13 @@
              setvar_vaddr="net_data" />
         <irq irq="78" id="9" />
     </protection_domain>
+
+
+    <!-- orchestrator <-> auth_server (PPC) -->
+    <channel>
+        <end pd="orchestrator"  id="11" pp="true" />
+        <end pd="auth_server"   id="1" />
+    </channel>
 
     <!-- net_driver <-> net_server -->
     <channel>

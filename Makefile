@@ -40,7 +40,7 @@ SRC      := src
 DISK_IMG := disk.img
 
 # ── Protection domains ──────────────────────────────────
-PDS := serial_driver blk_driver fs_server orchestrator llm_server echo_server sandbox net_driver net_server
+PDS := serial_driver blk_driver fs_server orchestrator llm_server echo_server sandbox net_driver net_server auth_server
 
 OBJS := $(patsubst %,$(BUILD)/%.o,$(PDS))
 ELFS := $(patsubst %,$(BUILD)/%.elf,$(PDS))

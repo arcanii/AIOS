@@ -5,6 +5,7 @@
 #include <microkit.h>
 #include "aios/ipc.h"
 #include "aios/channels.h"
+#include "aios/auth.h"
 #include "sys/syscall.h"
 #include "aios/version.h"
 #include <kernel/gen_config.h>
@@ -16,6 +17,7 @@ uintptr_t rx_buf;
 uintptr_t fs_data;
 uintptr_t model_data;
 uintptr_t llm_io;
+uintptr_t auth_io;
 /* Per-sandbox memory regions (set by Microkit loader via setvar) */
 uintptr_t sbx0_io;
 uintptr_t sbx0_code;
@@ -36,6 +38,7 @@ typedef struct {
     uint32_t pid;
     uint32_t loaded_bytes;
     int foreground;
+    uint32_t owner_uid;
     char name[64];
 } process_t;
 static process_t proctab[NUM_SANDBOXES];
@@ -219,6 +222,21 @@ static char input_line[INPUT_MAX];
 static int  input_pos = 0;
 
 /* ── Orchestrator state (minimal — only for async ops) ─ */
+
+/* ── Auth state machine ────────────────────────────── */
+enum {
+    AUTH_LOGIN_USER,    /* waiting for username */
+    AUTH_LOGIN_PASS,    /* waiting for password */
+    AUTH_AUTHENTICATED  /* logged in */
+};
+static int auth_state = AUTH_LOGIN_USER;
+static uint32_t current_session = 0;
+static uint32_t current_uid = 0;
+static uint32_t current_gid = 0;
+static int      current_is_root = 0;
+static char     current_username[32] = {0};
+static char     login_username[32] = {0};
+
 enum {
     RUNNING,
     EXEC_RUNNING,   /* sandbox is executing */
@@ -294,6 +312,66 @@ static void cmd_ps(void) {
 }
 
 /* ── Command: help ───────────────────────────────────── */
+
+/* ── Auth server helpers (PPC via CH_AUTH) ──────────── */
+static int auth_login_sync(const char *username, const char *password) {
+    volatile char *u = (volatile char *)(auth_io + AUTH_USERNAME);
+    volatile char *p = (volatile char *)(auth_io + AUTH_PASSWORD);
+    int i = 0;
+    while (username[i] && i < 31) { u[i] = username[i]; i++; }
+    u[i] = '\0';
+    i = 0;
+    while (password[i] && i < 63) { p[i] = password[i]; i++; }
+    p[i] = '\0';
+    WR32(auth_io, AUTH_CMD, AUTH_CMD_LOGIN);
+    microkit_ppcall(CH_AUTH, microkit_msginfo_new(0, 0));
+    int status = (int)(int32_t)RD32(auth_io, AUTH_STATUS);
+    if (status == 0) {
+        current_session = RD32(auth_io, AUTH_SESSION);
+        current_uid = RD32(auth_io, AUTH_UID);
+        current_gid = RD32(auth_io, AUTH_GID);
+        current_is_root = (current_uid == 0) ? 1 : 0;
+        /* Copy username */
+        int j = 0;
+        while (username[j] && j < 31) { current_username[j] = username[j]; j++; }
+        current_username[j] = '\0';
+    }
+    return status;
+}
+
+static void print_prompt(void);
+static int __attribute__((unused)) auth_check_priv_sync(void) {
+    WR32(auth_io, AUTH_SESSION, current_session);
+    WR32(auth_io, AUTH_CMD, AUTH_CMD_CHECK_PRIV);
+    microkit_ppcall(CH_AUTH, microkit_msginfo_new(0, 0));
+    return (int)(int32_t)RD32(auth_io, AUTH_STATUS);
+}
+
+static int __attribute__((unused)) auth_check_kill_sync(uint32_t target_uid) {
+    WR32(auth_io, AUTH_SESSION, current_session);
+    WR32(auth_io, AUTH_UID, target_uid);
+    WR32(auth_io, AUTH_CMD, AUTH_CMD_CHECK_KILL);
+    microkit_ppcall(CH_AUTH, microkit_msginfo_new(0, 0));
+    return (int)(int32_t)RD32(auth_io, AUTH_STATUS);
+}
+
+static void auth_logout_sync(void) {
+    WR32(auth_io, AUTH_SESSION, current_session);
+    WR32(auth_io, AUTH_CMD, AUTH_CMD_LOGOUT);
+    microkit_ppcall(CH_AUTH, microkit_msginfo_new(0, 0));
+    current_session = 0;
+    current_uid = 0;
+    current_gid = 0;
+    current_is_root = 0;
+    current_username[0] = '\0';
+}
+
+static void __attribute__((unused)) auth_whoami_sync(void) {
+    WR32(auth_io, AUTH_SESSION, current_session);
+    WR32(auth_io, AUTH_CMD, AUTH_CMD_WHOAMI);
+    microkit_ppcall(CH_AUTH, microkit_msginfo_new(0, 0));
+}
+
 static void cmd_help(void) {
     ser_puts("Commands:\n");
     ser_puts("  help            - this message\n");
@@ -305,6 +383,8 @@ static void cmd_help(void) {
     ser_puts("  gen <prompt>    - generate text\n");
     ser_puts("  exec <file.bin> - run a sandbox program\n");
     ser_puts("  info            - system info\n");
+    ser_puts("  whoami              - show current user\n");
+    ser_puts("  logout              - log out\n");
     ser_puts("  ps              Show running processes\n");
     ser_puts("  kill <pid>      Terminate a process\n");
     ser_puts("  shutdown        - halt system\n");
@@ -530,6 +610,7 @@ static void cmd_exec(const char *filename) {
     WR32(cur_sio, SBX_CODE_SIZE, exec_loaded_bytes);
     WR32(cur_sio, SBX_CMD, SBX_CMD_RUN);
     proctab[slot].in_use = 1;
+    proctab[slot].owner_uid = current_uid;
     proctab[slot].pid = next_pid++;
     proctab[slot].loaded_bytes = exec_loaded_bytes;
     proctab[slot].foreground = background ? 0 : 1;
@@ -547,8 +628,7 @@ static void cmd_exec(const char *filename) {
         ser_puts("] PID ");
         ser_put_dec(proctab[slot].pid);
         ser_puts("\n");
-        ser_puts("AIOS> ");
-        ser_flush();
+        print_prompt();
     }
     microkit_notify(CH_SBX_BASE + slot);
 }
@@ -778,10 +858,29 @@ static void process_command(void) {
         cmd_info();
     } else if (my_strcmp(input_line, "ps") == 0) {
         cmd_ps();
+    } else if (my_strcmp(input_line, "whoami") == 0) {
+        ser_puts(current_username);
+        ser_puts(" (uid=");
+        ser_put_dec(current_uid);
+        ser_puts(")\n");
+        ser_flush();
+    } else if (my_strcmp(input_line, "logout") == 0) {
+        auth_logout_sync();
+        auth_state = AUTH_LOGIN_USER;
+        input_pos = 0;
+        input_line[0] = '\0';
+        ser_puts("Logged out.\n\nLogin: ");
+        ser_flush();
+        return;
     } else if (str_starts_with(input_line, "kill ")) {
         cmd_kill(input_line + 5);
     } else if (my_strcmp(input_line, "shutdown") == 0) {
-        cmd_shutdown();
+        if (auth_check_priv_sync() != 0) {
+            ser_puts("Permission denied: root required\n");
+            ser_flush();
+        } else {
+            cmd_shutdown();
+        }
     } else {
         ser_puts("Unknown command: ");
         ser_puts(input_line);
@@ -790,8 +889,7 @@ static void process_command(void) {
     }
 
 prompt:
-    ser_puts("AIOS> ");
-    ser_flush();
+    print_prompt();
     input_pos = 0;
 }
 
@@ -803,6 +901,88 @@ static char rx_getc_blocking(void) {
         asm volatile("wfe");
     }
     return c;
+}
+
+
+/* ── Login input handler ───────────────────────────── */
+static char login_buf[64];
+static int  login_pos = 0;
+
+static void handle_login_input(void) {
+    ring_buf_t *rx = (ring_buf_t *)rx_buf;
+    char c;
+    while (ring_get(rx, &c)) {
+        if (auth_state == AUTH_LOGIN_USER) {
+            if (c == '\r' || c == '\n') {
+                login_buf[login_pos] = '\0';
+                ser_puts("\n");
+                if (login_pos > 0) {
+                    int i = 0;
+                    while (login_buf[i] && i < 31) {
+                        login_username[i] = login_buf[i]; i++;
+                    }
+                    login_username[i] = '\0';
+                    auth_state = AUTH_LOGIN_PASS;
+                    ser_puts("Password: ");
+                    ser_flush();
+                }
+                login_pos = 0;
+            } else if (c == 127 || c == '\b') {
+                if (login_pos > 0) {
+                    login_pos--;
+                    ser_puts("\b \b");
+                    ser_flush();
+                }
+            } else if (login_pos < 62) {
+                login_buf[login_pos++] = c;
+                ser_putc(c);  /* echo username */
+                ser_flush();
+            }
+        } else if (auth_state == AUTH_LOGIN_PASS) {
+            if (c == '\r' || c == '\n') {
+                login_buf[login_pos] = '\0';
+                ser_puts("\n");
+                ser_flush();
+                int rc = auth_login_sync(login_username, login_buf);
+                /* Clear password buffer */
+                for (int i = 0; i < 64; i++) login_buf[i] = 0;
+                login_pos = 0;
+                if (rc == 0) {
+                    auth_state = AUTH_AUTHENTICATED;
+                    ser_puts("\nWelcome, ");
+                    ser_puts(current_username);
+                    if (current_is_root) ser_puts(" (root)");
+                    ser_puts("\n\n");
+                    print_prompt();
+                } else {
+                    ser_puts("Login incorrect\n\n");
+                    ser_puts("Login: ");
+                    ser_flush();
+                    auth_state = AUTH_LOGIN_USER;
+                }
+            } else if (c == 127 || c == '\b') {
+                if (login_pos > 0) {
+                    login_pos--;
+                    ser_puts("\b \b");
+                    ser_flush();
+                }
+            } else if (login_pos < 62) {
+                login_buf[login_pos++] = c;
+                ser_puts("*");  /* mask password */
+                ser_flush();
+            }
+        }
+    }
+}
+
+
+static void print_prompt(void) {
+    ser_puts(current_username);
+    if (current_is_root)
+        ser_puts("@aios# ");
+    else
+        ser_puts("@aios$ ");
+    ser_flush();
 }
 
 static void handle_serial_input(void) {
@@ -845,8 +1025,7 @@ static void handle_exec_done(int slot) {
     ser_flush();
     if (proctab[slot].foreground) {
         orch_state = RUNNING;
-        ser_puts("AIOS> ");
-        ser_flush();
+        print_prompt();
     } else {
         ser_puts("\n[");
         ser_put_dec((unsigned int)slot);
@@ -873,14 +1052,12 @@ static void handle_gen_reply(void) {
         ser_puts("\n[done]\n");
         ser_flush();
         orch_state = RUNNING;
-        ser_puts("AIOS> ");
-        ser_flush();
+        print_prompt();
     } else {
         ser_puts("\n[LLM error]\n");
         ser_flush();
         orch_state = RUNNING;
-        ser_puts("AIOS> ");
-        ser_flush();
+        print_prompt();
     }
 }
 
@@ -1211,16 +1388,17 @@ void init(void) {
         return;
     }
 
-    ser_puts("\nType 'help' for commands.\n");
-    ser_puts("AIOS> ");
-    ser_flush();
+    ser_puts("\nLogin: ");
 }
 
 void notified(microkit_channel ch) {
     switch (ch) {
     case CH_SERIAL:
-        if (orch_state == RUNNING)
+        if (auth_state != AUTH_AUTHENTICATED) {
+            handle_login_input();
+        } else if (orch_state == RUNNING) {
             handle_serial_input();
+        }
         break;
 
     case CH_SBX0:
@@ -1251,8 +1429,7 @@ void notified(microkit_channel ch) {
                 } else {
                     llm_model_loaded = 1;
                     ser_puts("  LLM ready!\n");
-                    ser_puts("AIOS> ");
-                    ser_flush();
+                    print_prompt();
                     orch_state = RUNNING;
                 }
             }
@@ -1266,7 +1443,7 @@ void notified(microkit_channel ch) {
             }
             llm_model_loaded = 1;
             ser_puts("  LLM ready!\n");
-            ser_puts("AIOS> ");
+            print_prompt();
             ser_flush();
             orch_state = RUNNING;
         } else if (orch_state == GEN_WAITING)
@@ -1292,7 +1469,7 @@ seL4_Bool fault(microkit_child child, microkit_msginfo msginfo, microkit_msginfo
         ser_flush();
         if (proctab[slot].foreground) {
             orch_state = RUNNING;
-            ser_puts("AIOS> ");
+            print_prompt();
             ser_flush();
         }
     }

@@ -26,6 +26,9 @@
 #define CH_SBX_BASE     CH_SBX0  /* first sandbox channel ID   */
 
 /* Network */
+/* Auth server */
+#define CH_AUTH        11   /* orchestrator <-> auth_server    */
+
 #define CH_NET          8   /* net_driver <-> net_server        */
 #define CH_NET_IRQ      9   /* net_driver <- hardware IRQ       */
 
