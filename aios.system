@@ -33,6 +33,23 @@
     <memory_region name="sbx3_heap" size="0x400000" />
     <memory_region name="sbx3_code" size="0x100000" />
 
+    <memory_region name="sbx4_io"   size="0x1000" />
+    <memory_region name="sbx4_heap" size="0x400000" />
+    <memory_region name="sbx4_code" size="0x100000" />
+
+    <memory_region name="sbx5_io"   size="0x1000" />
+    <memory_region name="sbx5_heap" size="0x400000" />
+    <memory_region name="sbx5_code" size="0x100000" />
+
+    <memory_region name="sbx6_io"   size="0x1000" />
+    <memory_region name="sbx6_heap" size="0x400000" />
+    <memory_region name="sbx6_code" size="0x100000" />
+
+    <memory_region name="sbx7_io"   size="0x1000" />
+    <memory_region name="sbx7_heap" size="0x400000" />
+    <memory_region name="sbx7_code" size="0x100000" />
+
+
     <!-- ── Serial driver (priority 254) ── -->
     <memory_region name="auth_io" size="0x1000" />
     <memory_region name="auth_store" size="0x10000" />
@@ -99,6 +116,22 @@
              setvar_vaddr="sbx3_io" />
         <map mr="sbx3_code" vaddr="0x23500000" perms="rw" cached="false"
              setvar_vaddr="sbx3_code" />
+            <map mr="sbx4_io"   vaddr="0x24000000" perms="rw" cached="false"
+                 setvar_vaddr="sbx4_io" />
+            <map mr="sbx4_code" vaddr="0x24500000" perms="rw" cached="false"
+                 setvar_vaddr="sbx4_code" />
+            <map mr="sbx5_io"   vaddr="0x25000000" perms="rw" cached="false"
+                 setvar_vaddr="sbx5_io" />
+            <map mr="sbx5_code" vaddr="0x25500000" perms="rw" cached="false"
+                 setvar_vaddr="sbx5_code" />
+            <map mr="sbx6_io"   vaddr="0x26000000" perms="rw" cached="false"
+                 setvar_vaddr="sbx6_io" />
+            <map mr="sbx6_code" vaddr="0x26500000" perms="rw" cached="false"
+                 setvar_vaddr="sbx6_code" />
+            <map mr="sbx7_io"   vaddr="0x27000000" perms="rw" cached="false"
+                 setvar_vaddr="sbx7_io" />
+            <map mr="sbx7_code" vaddr="0x27500000" perms="rw" cached="false"
+                 setvar_vaddr="sbx7_code" />
 
         <!-- ── Child sandbox PD 0 ── -->
         <map mr="auth_io" vaddr="0x6200000" perms="rw" cached="false"
@@ -148,6 +181,50 @@
             <map mr="sbx3_heap" vaddr="0x20100000" perms="rw" cached="true"
                  setvar_vaddr="sandbox_heap" />
             <map mr="sbx3_code" vaddr="0x20500000" perms="rwx" cached="false"
+                 setvar_vaddr="sandbox_code" />
+        </protection_domain>
+
+        <protection_domain name="sbx4" priority="150" id="4"
+                           budget="5000" period="10000" cpu="0">
+            <program_image path="sandbox.elf" />
+            <map mr="sbx4_io"   vaddr="0x20000000" perms="rw" cached="false"
+                 setvar_vaddr="sandbox_io" />
+            <map mr="sbx4_heap" vaddr="0x20100000" perms="rw" cached="true"
+                 setvar_vaddr="sandbox_heap" />
+            <map mr="sbx4_code" vaddr="0x20500000" perms="rwx" cached="false"
+                 setvar_vaddr="sandbox_code" />
+        </protection_domain>
+
+        <protection_domain name="sbx5" priority="150" id="5"
+                           budget="5000" period="10000" cpu="1">
+            <program_image path="sandbox.elf" />
+            <map mr="sbx5_io"   vaddr="0x20000000" perms="rw" cached="false"
+                 setvar_vaddr="sandbox_io" />
+            <map mr="sbx5_heap" vaddr="0x20100000" perms="rw" cached="true"
+                 setvar_vaddr="sandbox_heap" />
+            <map mr="sbx5_code" vaddr="0x20500000" perms="rwx" cached="false"
+                 setvar_vaddr="sandbox_code" />
+        </protection_domain>
+
+        <protection_domain name="sbx6" priority="150" id="6"
+                           budget="5000" period="10000" cpu="2">
+            <program_image path="sandbox.elf" />
+            <map mr="sbx6_io"   vaddr="0x20000000" perms="rw" cached="false"
+                 setvar_vaddr="sandbox_io" />
+            <map mr="sbx6_heap" vaddr="0x20100000" perms="rw" cached="true"
+                 setvar_vaddr="sandbox_heap" />
+            <map mr="sbx6_code" vaddr="0x20500000" perms="rwx" cached="false"
+                 setvar_vaddr="sandbox_code" />
+        </protection_domain>
+
+        <protection_domain name="sbx7" priority="150" id="7"
+                           budget="5000" period="10000" cpu="3">
+            <program_image path="sandbox.elf" />
+            <map mr="sbx7_io"   vaddr="0x20000000" perms="rw" cached="false"
+                 setvar_vaddr="sandbox_io" />
+            <map mr="sbx7_heap" vaddr="0x20100000" perms="rw" cached="true"
+                 setvar_vaddr="sandbox_heap" />
+            <map mr="sbx7_code" vaddr="0x20500000" perms="rwx" cached="false"
                  setvar_vaddr="sandbox_code" />
         </protection_domain>
     </protection_domain>
@@ -212,6 +289,22 @@
     <channel>
         <end pd="orchestrator"  id="10" />
         <end pd="sbx3"          id="10" pp="true" />
+    </channel>
+    <channel>
+        <end pd="orchestrator"  id="14" />
+        <end pd="sbx4"          id="14" pp="true" />
+    </channel>
+    <channel>
+        <end pd="orchestrator"  id="15" />
+        <end pd="sbx5"          id="15" pp="true" />
+    </channel>
+    <channel>
+        <end pd="orchestrator"  id="16" />
+        <end pd="sbx6"          id="16" pp="true" />
+    </channel>
+    <channel>
+        <end pd="orchestrator"  id="17" />
+        <end pd="sbx7"          id="17" pp="true" />
     </channel>
 
     <!-- ── Memory regions for network ── -->

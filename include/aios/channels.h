@@ -22,7 +22,11 @@
 #define CH_SBX2         9   /* orchestrator <-> sbx2            */
 #define CH_SBX3        10   /* orchestrator <-> sbx3            */
 
-#define NUM_SANDBOXES   4
+#define NUM_SANDBOXES   8
+#define CH_SBX4        14   /* orchestrator <-> sbx4            */
+#define CH_SBX5        15   /* orchestrator <-> sbx5            */
+#define CH_SBX6        16   /* orchestrator <-> sbx6            */
+#define CH_SBX7        17   /* orchestrator <-> sbx7            */
 #define CH_SBX_BASE     CH_SBX0  /* first sandbox channel ID   */
 
 /* Network */

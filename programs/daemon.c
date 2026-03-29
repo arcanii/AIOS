@@ -15,13 +15,19 @@ static void put_num(int n) {
 __attribute__((section(".text._start")))
 int _start(aios_syscalls_t *_sys) {
     sys = _sys;
-    sys->puts_direct("daemon: starting (ticking every 5s)\n");
+    const char *name = sys->args;
+    if (!name || name[0] == '\0') name = "daemon";
+
+    sys->puts_direct(name);
+    sys->puts_direct(": starting (ticking every 5s)\n");
     for (int i = 1; i <= 100; i++) {
         sleep(5);
-        sys->puts_direct("daemon: tick ");
+        sys->puts_direct(name);
+        sys->puts_direct(": tick ");
         put_num(i);
         sys->puts_direct("\n");
     }
-    sys->puts_direct("daemon: finished\n");
+    sys->puts_direct(name);
+    sys->puts_direct(": finished\n");
     return 0;
 }

@@ -651,7 +651,12 @@ static void run_program(void) {
 /* ── Microkit entry points ─────────────────────────── */
 void init(void) {
     /* Derive our channel ID from PD name: sbx0->7, sbx1->8, etc. */
-    my_channel = CH_SBX_BASE + (microkit_name[3] - '0');
+    /* Channel mapping: sbx0-3 use channels 7-10, sbx4-7 use channels 14-17 */
+    int sbx_id = microkit_name[3] - '0';
+    if (sbx_id < 4)
+        my_channel = CH_SBX_BASE + sbx_id;       /* 7, 8, 9, 10 */
+    else
+        my_channel = CH_SBX4 + (sbx_id - 4);     /* 14, 15, 16, 17 */
     init_syscalls();
     microkit_dbg_puts("SBX: sandbox PD ready\n");
     WR32(sandbox_io, SBX_STATUS, SBX_ST_IDLE);

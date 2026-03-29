@@ -29,6 +29,14 @@ uintptr_t sbx2_io;
 uintptr_t sbx2_code;
 uintptr_t sbx3_io;
 uintptr_t sbx3_code;
+uintptr_t sbx4_io;
+uintptr_t sbx4_code;
+uintptr_t sbx5_io;
+uintptr_t sbx5_code;
+uintptr_t sbx6_io;
+uintptr_t sbx6_code;
+uintptr_t sbx7_io;
+uintptr_t sbx7_code;
 
 /* Runtime arrays initialized in init() */
 static uintptr_t sbx_io[NUM_SANDBOXES];
@@ -38,6 +46,7 @@ static uintptr_t sbx_code[NUM_SANDBOXES];
 typedef struct {
     int in_use;
     uint32_t pid;
+    uint32_t parent_pid;
     uint32_t loaded_bytes;
     int foreground;
     uint32_t owner_uid;
@@ -46,6 +55,13 @@ typedef struct {
 static process_t proctab[NUM_SANDBOXES];
 static uint32_t next_pid = 1;
 
+
+/* Slot-to-channel mapping (not contiguous due to other PD channels) */
+static const int sbx_channel[NUM_SANDBOXES] = {
+    CH_SBX0, CH_SBX1, CH_SBX2, CH_SBX3,
+    CH_SBX4, CH_SBX5, CH_SBX6, CH_SBX7,
+};
+
 static int find_free_slot(void) {
     for (int i = 0; i < NUM_SANDBOXES; i++)
         if (!proctab[i].in_use) return i;
@@ -53,7 +69,10 @@ static int find_free_slot(void) {
 }
 
 static int ch_to_slot(microkit_channel ch) {
-    int s = (int)ch - CH_SBX_BASE;
+    int s = -1;
+    for (int i = 0; i < NUM_SANDBOXES; i++) {
+        if (sbx_channel[i] == (int)ch) { s = i; break; }
+    }
     if (s >= 0 && s < NUM_SANDBOXES) return s;
     return -1;
 }
@@ -308,8 +327,7 @@ typedef struct {
 } pipe_fd_t;
 
 /* Per-sandbox pipe fd table */
-#define NUM_SANDBOXES 4
-static pipe_fd_t pipe_fds[4][MAX_PIPE_FDS];
+static pipe_fd_t pipe_fds[NUM_SANDBOXES][MAX_PIPE_FDS];
 
 /* Per-session umask */
 static uint32_t current_umask = 022;
@@ -1164,7 +1182,7 @@ static void cmd_exec(const char *filename) {
         ser_puts("\n");
         print_prompt();
     }
-    microkit_notify(CH_SBX_BASE + slot);
+    microkit_notify(sbx_channel[slot]);
 }
 
 /* ── Command: load <model> ───────────────────────────── */
@@ -2167,6 +2185,14 @@ void init(void) {
     sbx_io[1] = sbx1_io; sbx_code[1] = sbx1_code;
     sbx_io[2] = sbx2_io; sbx_code[2] = sbx2_code;
     sbx_io[3] = sbx3_io; sbx_code[3] = sbx3_code;
+    sbx_io[4]   = sbx4_io;
+    sbx_code[4] = sbx4_code;
+    sbx_io[5]   = sbx5_io;
+    sbx_code[5] = sbx5_code;
+    sbx_io[6]   = sbx6_io;
+    sbx_code[6] = sbx6_code;
+    sbx_io[7]   = sbx7_io;
+    sbx_code[7] = sbx7_code;
     for (int i = 0; i < NUM_SANDBOXES; i++) proctab[i].in_use = 0;
 
     /* Boot: read hello.txt synchronously */
@@ -2267,8 +2293,16 @@ void notified(microkit_channel ch) {
     case CH_SBX0:
     case CH_SBX1:
     case CH_SBX2:
-    case CH_SBX3: {
-        int slot = (int)ch - CH_SBX_BASE;
+    case CH_SBX3:
+    case CH_SBX4:
+    case CH_SBX5:
+    case CH_SBX6:
+    case CH_SBX7: {
+        int slot = -1;
+        for (int i = 0; i < NUM_SANDBOXES; i++) {
+            if (sbx_channel[i] == (int)ch) { slot = i; break; }
+        }
+        if (slot < 0) break;
         if (orch_state == EXEC_RUNNING)
             handle_exec_done(slot);
         break;
