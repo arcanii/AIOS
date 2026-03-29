@@ -2041,9 +2041,41 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         if (dname[0] == '/' && dname[1] == '\0') {
             cwd[0] = '/'; cwd[1] = '\0';
             result = 0;
+        } else if (dname[0] == '.' && dname[1] == '.' && dname[2] == '\0') {
+            /* cd .. : go up one level */
+            int len = 0;
+            while (cwd[len]) len++;
+            if (len > 1) {
+                len--;
+                while (len > 0 && cwd[len] != '/') len--;
+                if (len == 0) len = 1;
+                cwd[len] = '\0';
+            }
+            result = 0;
         } else {
-            /* For now, only "/" is supported */
-            result = -1;
+            /* Build absolute path */
+            char abspath[256];
+            int j = 0;
+            if (dname[0] == '/') {
+                while (dname[j] && j < 255) { abspath[j] = dname[j]; j++; }
+            } else {
+                int k = 0;
+                while (cwd[k] && j < 254) abspath[j++] = cwd[k++];
+                if (j > 1) abspath[j++] = '/';
+                k = 0;
+                while (dname[k] && j < 255) abspath[j++] = dname[k++];
+            }
+            abspath[j] = '\0';
+            /* Verify directory exists */
+            int st = fs_stat_sync(abspath);
+            if (st == 0) {
+                j = 0;
+                while (abspath[j] && j < 255) { cwd[j] = abspath[j]; j++; }
+                cwd[j] = '\0';
+                result = 0;
+            } else {
+                result = -1;
+            }
         }
         break;
     }

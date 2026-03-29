@@ -269,8 +269,26 @@ static int sbx_lseek(int fd, long offset, int whence) {
 }
 
 static int sbx_getcwd(char *buf, unsigned long size) {
-    if (buf && size >= 2) { buf[0] = '/'; buf[1] = '\0'; }
-    return 0;
+    seL4_SetMR(0, SYS_GETCWD);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
+    if (buf && size > 0) {
+        volatile char *sio = (volatile char *)sandbox_io;
+        unsigned long i = 0;
+        while (sio[0x200 + i] && i < size - 1) { buf[i] = sio[0x200 + i]; i++; }
+        buf[i] = '\0';
+    }
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_chdir(const char *path) {
+    volatile char *sio = (volatile char *)sandbox_io;
+    /* Copy path to sandbox_io+0x200 */
+    int i = 0;
+    while (path[i] && i < 255) { sio[0x200 + i] = path[i]; i++; }
+    sio[0x200 + i] = 0;
+    seL4_SetMR(0, SYS_CHDIR);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
+    return (int)seL4_GetMR(0);
 }
 
 static int sbx_getpid(void) {
@@ -630,6 +648,7 @@ static void init_syscalls(void) {
     syscalls.stat_file  = sbx_stat;
     syscalls.lseek      = sbx_lseek;
     syscalls.getcwd     = sbx_getcwd;
+    syscalls.chdir      = sbx_chdir;
     syscalls.getpid     = sbx_getpid;
     /* Args */
     syscalls.getc        = sbx_getc;

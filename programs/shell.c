@@ -69,8 +69,45 @@ static void print_dec(unsigned long n) {
     while (i--) printc(buf[i]);
 }
 
+#define HIST_MAX 8
+static char history[HIST_MAX][LINE_MAX];
+static int hist_count = 0;
+static int hist_pos = 0;
+
+static void save_history(void) {
+    if (line_len == 0) return;
+    /* Don't save duplicates */
+    if (hist_count > 0) {
+        int prev = (hist_count - 1) % HIST_MAX;
+        int same = 1;
+        for (int i = 0; i < line_len; i++) {
+            if (history[prev][i] != line[i]) { same = 0; break; }
+        }
+        if (same && history[prev][line_len] == 0) return;
+    }
+    int idx = hist_count % HIST_MAX;
+    for (int i = 0; i < line_len; i++) history[idx][i] = line[i];
+    history[idx][line_len] = 0;
+    hist_count++;
+}
+
+static void clear_line(void) {
+    while (line_len > 0) { print("\b \b"); line_len--; }
+}
+
+static void set_line_from_hist(int idx) {
+    clear_line();
+    int hi = idx % HIST_MAX;
+    int i = 0;
+    while (history[hi][i]) { line[i] = history[hi][i]; i++; }
+    line[i] = 0;
+    line_len = i;
+    write(STDOUT_FILENO, line, (size_t)line_len);
+}
+
 static void read_line(void) {
     line_len = 0;
+    hist_pos = hist_count;
     while (1) {
         char c;
         ssize_t r = read(STDIN_FILENO, &c, 1);
@@ -78,11 +115,35 @@ static void read_line(void) {
         if (c == '\r' || c == '\n') {
             printc('\n');
             line[line_len] = '\0';
+            save_history();
             return;
         }
         if ((c == 0x7f || c == '\b') && line_len > 0) {
             line_len--;
             print("\b \b");
+            continue;
+        }
+        /* Arrow keys: ESC [ A/B */
+        if (c == 0x1b) {
+            char seq[2];
+            if (read(STDIN_FILENO, &seq[0], 1) <= 0) continue;
+            if (read(STDIN_FILENO, &seq[1], 1) <= 0) continue;
+            if (seq[0] == '[') {
+                if (seq[1] == 'A') {  /* Up arrow */
+                    if (hist_pos > 0 && hist_pos > hist_count - HIST_MAX) {
+                        hist_pos--;
+                        set_line_from_hist(hist_pos);
+                    }
+                } else if (seq[1] == 'B') {  /* Down arrow */
+                    if (hist_pos < hist_count - 1) {
+                        hist_pos++;
+                        set_line_from_hist(hist_pos);
+                    } else if (hist_pos == hist_count - 1) {
+                        hist_pos = hist_count;
+                        clear_line();
+                    }
+                }
+            }
             continue;
         }
         if (c >= 0x20 && line_len < LINE_MAX - 1) {
@@ -94,6 +155,16 @@ static void read_line(void) {
 
 /* ── Built-in commands ────────────────────────────────── */
 
+static void cmd_cd(const char *path) {
+    if (!path || !path[0]) {
+        if (chdir("/") < 0) print("cd: failed\n");
+        return;
+    }
+    if (chdir(path) < 0) {
+        print("cd: "); print(path); print(": not found\n");
+    }
+}
+
 static void cmd_help(void) {
     print("AIOS Shell Commands:\n");
     print("  ls              - list files\n");
@@ -104,6 +175,7 @@ static void cmd_help(void) {
     print("  echo <text>     - print text\n");
     print("  wc <file>       - count lines/words/bytes\n");
     print("  stat <file>     - show file info\n");
+    print("  cd [dir]        - change directory\n");
     print("  pwd             - print working directory\n");
     print("  clear           - clear screen\n");
     print("  mkdir <dir>     - create directory\n");
@@ -129,9 +201,14 @@ static void cmd_ls(void) {
         int len = 0;
         const char *p = ent->d_name;
         while (*p++) len++;
+        if (ent->d_type == 2) { print("/"); len++; }
         for (int pad = len; pad < 18; pad++) printc(' ');
-        print_dec(ent->d_size);
-        print(" bytes\n");
+        if (ent->d_type == 2)
+            print("<DIR>\n");
+        else {
+            print_dec(ent->d_size);
+            print(" bytes\n");
+        }
     }
     closedir(d);
 }
@@ -400,6 +477,8 @@ static void dispatch(void) {
     else if (str_eq(line, "pwd"))       cmd_pwd();
     else if (str_eq(line, "clear"))     cmd_clear();
     else if (str_eq(line, "exit"))      { shell_exit = 1; }
+    else if (str_eq(line, "cd"))         cmd_cd("");
+    else if (starts_with(line, "cd "))    cmd_cd(line + 3);
     else if (starts_with(line, "source ")) cmd_source(line + 7);
     else if (starts_with(line, "sh "))     cmd_source(line + 3);
     else if (str_eq(line, "cat"))        cmd_cat("");

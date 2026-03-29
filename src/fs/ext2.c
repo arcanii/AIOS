@@ -764,7 +764,10 @@ static int ext2_list(uint8_t *buf, uint32_t buf_size, uint32_t *count, uint32_t 
             if (rec_len == 0) goto done;
 
             /* Skip . and .. and deleted entries */
-            if (d_ino != 0 && d_name_len > 0 && d_ftype != EXT2_FT_DIR) {
+            if (d_ino != 0 && d_name_len > 0) {
+                /* Skip . and .. */
+                if (d_name_len == 1 && tmp[off+8] == '.') { off += rec_len; pos += rec_len; continue; }
+                if (d_name_len == 2 && tmp[off+8] == '.' && tmp[off+9] == '.') { off += rec_len; pos += rec_len; continue; }
                 /* size check moved below */
 
                 /* Variable-length entry: [2B total_len][1B name_len][1B type][4B size][name][NUL][pad] */

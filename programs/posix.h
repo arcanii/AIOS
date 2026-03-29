@@ -62,6 +62,7 @@ struct stat {
 
 struct dirent {
     ino_t  d_ino;
+    unsigned char d_type;
     char   d_name[NAME_MAX + 1];
     unsigned long d_size;      /* AIOS extension: file size */
 };
@@ -178,6 +179,7 @@ static inline DIR *opendir(const char *path) {
         unsigned short elen = raw[off] | (raw[off+1] << 8);
         if (elen == 0) break;
         unsigned char nlen = raw[off + 2];
+        unsigned char dtype = raw[off + 3];
         /* skip type at off+3 */
         unsigned long fsize = raw[off+4] | (raw[off+5]<<8) | (raw[off+6]<<16) | (raw[off+7]<<24);
         _posix_dir.entries[i].d_size = fsize;
@@ -185,6 +187,7 @@ static inline DIR *opendir(const char *path) {
         for (int j = 0; j < cplen; j++)
             _posix_dir.entries[i].d_name[j] = (char)raw[off + 8 + j];
         _posix_dir.entries[i].d_name[cplen] = '\0';
+        _posix_dir.entries[i].d_type = dtype;
         _posix_dir.count++;
         off += elen;
     }
