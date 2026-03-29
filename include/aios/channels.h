@@ -1,7 +1,7 @@
 /*
- * AIOS – Channel IDs
+ * Open Aries – Channel IDs
  *
- * Every PD-to-PD channel in hello.system must use these IDs.
+ * Every PD-to-PD channel in aios.system must use these IDs.
  * Both endpoints of a channel share the same numeric ID.
  */
 #ifndef AIOS_CHANNELS_H
@@ -12,14 +12,21 @@
 #define CH_ECHO         3   /* orchestrator  <-> echo_server    */
 #define CH_FS           4   /* orchestrator  <-> fs_server      */
 #define CH_FS_BLK       5   /* fs_server     <-> blk_driver     */
-#define CH_FS_BLK_PPC  10   /* fs_server -> blk_driver (PPC) */
 #define CH_LLM          6   /* orchestrator  <-> llm_server     */
 #define CH_UART_IRQ     2   /* serial_driver <- hardware IRQ    */
+#define CH_FS_BLK_PPC  10  /* fs_server -> blk_driver (PPC)    */
 
-#endif /* AIOS_CHANNELS_H */
+/* Sandbox channels — one per slot */
+#define CH_SBX0         7   /* orchestrator <-> sbx0            */
+#define CH_SBX1         8   /* orchestrator <-> sbx1            */
+#define CH_SBX2         9   /* orchestrator <-> sbx2            */
+#define CH_SBX3        10   /* orchestrator <-> sbx3            */
 
-#define CH_SANDBOX      7   /* orchestrator  <-> sandbox        */
+#define NUM_SANDBOXES   4
+#define CH_SBX_BASE     CH_SBX0  /* first sandbox channel ID   */
 
 /* Network */
-#define CH_NET         8    /* net_driver <-> net_server      */
-#define CH_NET_IRQ     9    /* net_driver <- hardware IRQ     */
+#define CH_NET          8   /* net_driver <-> net_server        */
+#define CH_NET_IRQ      9   /* net_driver <- hardware IRQ       */
+
+#endif /* AIOS_CHANNELS_H */

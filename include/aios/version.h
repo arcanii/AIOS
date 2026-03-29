@@ -12,8 +12,8 @@
  */
 
 #define AIOS_VERSION_MAJOR  0
-#define AIOS_VERSION_MINOR  1
-#define AIOS_VERSION_PATCH  19
+#define AIOS_VERSION_MINOR  2
+#define AIOS_VERSION_PATCH  0
 
 /* Build number — auto-generated, do NOT edit by hand */
 #include "build_number.h"

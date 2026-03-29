@@ -15,6 +15,8 @@
 #include <microkit.h>
 #include <aios/channels.h>
 #include <aios/ipc.h>
+
+static microkit_channel my_channel;
 #include "sys/syscall.h"
 
 /* Shared memory regions (set by Microkit loader) */
@@ -129,7 +131,7 @@ static int sbx_open_flags(const char *path, int flags) {
     dst[i] = '\0';
     seL4_SetMR(0, SYS_OPEN);
     seL4_SetMR(1, (seL4_Word)flags);
-    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 2));
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 2));
     int fd = (int)seL4_GetMR(0);
     if (fd >= 0 && fd < MAX_FDS) {
         fd_pos[fd] = 0;
@@ -148,7 +150,7 @@ static int sbx_read(int fd, void *buf, unsigned long len) {
     seL4_SetMR(1, fd);
     seL4_SetMR(2, offset);
     seL4_SetMR(3, len);
-    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 4));
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 4));
     int got = (int)seL4_GetMR(0);
     if (got > 0) {
         volatile uint8_t *src = (volatile uint8_t *)(sandbox_io + 0x400);
@@ -166,7 +168,7 @@ static int sbx_write_file(int fd, const void *buf, unsigned long len) {
     seL4_SetMR(0, SYS_WRITE);
     seL4_SetMR(1, fd);
     seL4_SetMR(2, len);
-    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 3));
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 3));
     return (int)seL4_GetMR(0);
 }
 
@@ -174,7 +176,7 @@ static int sbx_close(int fd) {
     if (fd >= 0 && fd < MAX_FDS) { fd_pos[fd] = 0; fd_size[fd] = 0; }
     seL4_SetMR(0, SYS_CLOSE);
     seL4_SetMR(1, fd);
-    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 2));
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 2));
     return (int)seL4_GetMR(0);
 }
 
@@ -184,7 +186,7 @@ static int sbx_unlink(const char *path) {
     while (path[i] && i < 255) { dst[i] = path[i]; i++; }
     dst[i] = '\0';
     seL4_SetMR(0, SYS_UNLINK);
-    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 1));
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
     return (int)seL4_GetMR(0);
 }
 
@@ -194,7 +196,7 @@ static int sbx_mkdir(const char *path) {
     while (path[i] && i < 255) { dst[i] = path[i]; i++; }
     dst[i] = '\0';
     seL4_SetMR(0, SYS_MKDIR);
-    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 1));
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
     return (int)seL4_GetMR(0);
 }
 
@@ -204,7 +206,7 @@ static int sbx_rmdir(const char *path) {
     while (path[i] && i < 255) { dst[i] = path[i]; i++; }
     dst[i] = '\0';
     seL4_SetMR(0, SYS_RMDIR);
-    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 1));
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
     return (int)seL4_GetMR(0);
 }
 
@@ -218,7 +220,7 @@ static int sbx_rename(const char *oldpath, const char *newpath) {
     while (newpath[j] && i < 255) { dst[i] = newpath[j]; i++; j++; }
     dst[i] = '\0';
     seL4_SetMR(0, SYS_RENAME); /* SYS_RENAME placeholder */
-    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 1));
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
     return (int)seL4_GetMR(0);
 }
 
@@ -226,7 +228,7 @@ static int sbx_rename(const char *oldpath, const char *newpath) {
 
 static int sbx_readdir(void *buf, unsigned long max_entries) {
     seL4_SetMR(0, SYS_READDIR);
-    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 1));
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
     int count = (int)seL4_GetMR(0);
     if (count > 0) {
         volatile uint8_t *src = (volatile uint8_t *)(sandbox_io + 0x400);
@@ -250,7 +252,7 @@ static int sbx_stat(const char *path, unsigned long *size_out) {
     while (path[i] && i < 255) { dst[i] = path[i]; i++; }
     dst[i] = '\0';
     seL4_SetMR(0, SYS_STAT);
-    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 1));
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
     int r = (int)seL4_GetMR(0);
     if (r == 0 && size_out) *size_out = (unsigned long)seL4_GetMR(1);
     return r;
@@ -279,7 +281,7 @@ static int sbx_getpid(void) {
 
 static int sbx_getc(void) {
     seL4_SetMR(0, SYS_GETC);
-    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 1));
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
     return (int)seL4_GetMR(0);
 }
 
@@ -289,13 +291,13 @@ static void sbx_puts_direct(const char *s) {
     while (s[i] && i < 255) { dst[i] = s[i]; i++; }
     dst[i] = '\0';
     seL4_SetMR(0, 32);
-    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 1));
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
 }
 
 static void sbx_putc_direct(char c) {
     seL4_SetMR(0, SYS_PUTC);
     seL4_SetMR(1, c);
-    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 2));
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 2));
 }
 
 /* ── Syscall table (passed to user programs) ───────── */
@@ -374,7 +376,7 @@ static int sbx_exec(const char *path, const char *args) {
 
     /* PPC to orchestrator: load child into sandbox_code */
     seL4_SetMR(0, SYS_EXEC);
-    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 1));
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
     int64_t magic = (int64_t)seL4_GetMR(0);
 
     if (magic != (int64_t)SBX_EXEC_MAGIC) {
@@ -435,7 +437,7 @@ static int sbx_exec(const char *path, const char *args) {
     /* Tell orchestrator we are done, pass child exit code */
     seL4_SetMR(0, SYS_EXEC_DONE);
     seL4_SetMR(1, (uint64_t)(uint32_t)child_exit);
-    microkit_ppcall(CH_SANDBOX, microkit_msginfo_new(0, 2));
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 2));
 
     /* Restore args pointer for parent */
     syscalls.args = (const char *)(sandbox_io + SBX_ARGS);
@@ -533,18 +535,20 @@ static void run_program(void) {
 
 /* ── Microkit entry points ─────────────────────────── */
 void init(void) {
+    /* Derive our channel ID from PD name: sbx0->7, sbx1->8, etc. */
+    my_channel = CH_SBX_BASE + (microkit_name[3] - '0');
     init_syscalls();
     microkit_dbg_puts("SBX: sandbox PD ready\n");
     WR32(sandbox_io, SBX_STATUS, SBX_ST_IDLE);
 }
 
 void notified(microkit_channel ch) {
-    if (ch == CH_SANDBOX) {
+    if (ch == my_channel) {
         uint32_t cmd = RD32(sandbox_io, SBX_CMD);
         switch (cmd) {
         case SBX_CMD_RUN:
             run_program();
-            microkit_notify(CH_SANDBOX);
+            microkit_notify(my_channel);
             break;
         case SBX_CMD_HALT:
             microkit_dbg_puts("SBX: halt\n");

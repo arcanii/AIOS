@@ -7,6 +7,7 @@
 #include "aios/channels.h"
 #include "sys/syscall.h"
 #include "aios/version.h"
+#include <kernel/gen_config.h>
 #include "aios/ring.h"
 
 /* ── Shared memory regions (set by Microkit loader) ─── */
@@ -15,8 +16,42 @@ uintptr_t rx_buf;
 uintptr_t fs_data;
 uintptr_t model_data;
 uintptr_t llm_io;
-uintptr_t sandbox_io;
-uintptr_t sandbox_code;
+/* Per-sandbox memory regions (set by Microkit loader via setvar) */
+uintptr_t sbx0_io;
+uintptr_t sbx0_code;
+uintptr_t sbx1_io;
+uintptr_t sbx1_code;
+uintptr_t sbx2_io;
+uintptr_t sbx2_code;
+uintptr_t sbx3_io;
+uintptr_t sbx3_code;
+
+/* Runtime arrays initialized in init() */
+static uintptr_t sbx_io[NUM_SANDBOXES];
+static uintptr_t sbx_code[NUM_SANDBOXES];
+
+/* Process table */
+typedef struct {
+    int in_use;
+    uint32_t pid;
+    uint32_t loaded_bytes;
+    int foreground;
+    char name[64];
+} process_t;
+static process_t proctab[NUM_SANDBOXES];
+static uint32_t next_pid = 1;
+
+static int find_free_slot(void) {
+    for (int i = 0; i < NUM_SANDBOXES; i++)
+        if (!proctab[i].in_use) return i;
+    return -1;
+}
+
+static int ch_to_slot(microkit_channel ch) {
+    int s = (int)ch - CH_SBX_BASE;
+    if (s >= 0 && s < NUM_SANDBOXES) return s;
+    return -1;
+}
 
 /* ── Memory helpers ──────────────────────────────────── */
 static __attribute__((unused)) void my_memcpy(void *dst, const void *src, unsigned long n) {
@@ -371,7 +406,16 @@ static void cmd_exec(const char *filename) {
     }
 
     /* Load into sandbox_code */
-    volatile uint8_t *code_dst = (volatile uint8_t *)sandbox_code;
+    int slot = find_free_slot();
+    if (slot < 0) {
+        ser_puts("  Error: no free process slots\n");
+        ser_flush();
+        fs_close_sync(fd);
+        return;
+    }
+    uintptr_t cur_sio = sbx_io[slot];
+    uintptr_t cur_scode = sbx_code[slot];
+    volatile uint8_t *code_dst = (volatile uint8_t *)cur_scode;
     uint32_t offset = 0;
     while (offset < size) {
         uint32_t chunk = size - offset;
@@ -394,7 +438,7 @@ static void cmd_exec(const char *filename) {
 
     /* Copy args to sandbox_io for the program */
     {
-        volatile char *adst = (volatile char *)(sandbox_io + SBX_ARGS);
+        volatile char *adst = (volatile char *)(cur_sio + SBX_ARGS);
         int ai = 0;
         while (exec_args[ai] && ai < SBX_ARGS_MAX - 1) {
             adst[ai] = exec_args[ai]; ai++;
@@ -403,10 +447,20 @@ static void cmd_exec(const char *filename) {
     }
 
     /* Tell sandbox to run */
-    WR32(sandbox_io, SBX_CODE_SIZE, exec_loaded_bytes);
-    WR32(sandbox_io, SBX_CMD, SBX_CMD_RUN);
+    WR32(cur_sio, SBX_CODE_SIZE, exec_loaded_bytes);
+    WR32(cur_sio, SBX_CMD, SBX_CMD_RUN);
+    proctab[slot].in_use = 1;
+    proctab[slot].pid = next_pid++;
+    proctab[slot].loaded_bytes = exec_loaded_bytes;
+    proctab[slot].foreground = 1;
+    {
+        int ni = 0;
+        const char *fn = filename;
+        while (*fn && ni < 63) proctab[slot].name[ni++] = *fn++;
+        proctab[slot].name[ni] = 0;
+    }
     orch_state = EXEC_RUNNING;
-    microkit_notify(CH_SANDBOX);
+    microkit_notify(CH_SBX_BASE + slot);
 }
 
 /* ── Command: load <model> ───────────────────────────── */
@@ -658,15 +712,16 @@ static void handle_serial_input(void) {
 }
 
 /* ── Handle sandbox completion ───────────────────────── */
-static void handle_exec_done(void) {
-    (void)RD32(sandbox_io, SBX_STATUS);
-    uint32_t exit_code = RD32(sandbox_io, SBX_EXIT_CODE);
-    uint32_t out_len = RD32(sandbox_io, SBX_OUTPUT_LEN);
+static void handle_exec_done(int slot) {
+    uintptr_t sio = sbx_io[slot];
+    (void)RD32(sio, SBX_STATUS);
+    uint32_t exit_code = RD32(sio, SBX_EXIT_CODE);
+    uint32_t out_len = RD32(sio, SBX_OUTPUT_LEN);
 
     if (out_len > 0) {
         ser_puts("--- program output ---\n");
         ser_flush();
-        volatile char *out = (volatile char *)(sandbox_io + SBX_OUTPUT);
+        volatile char *out = (volatile char *)(sio + SBX_OUTPUT);
         for (uint32_t i = 0; i < out_len && i < 4096; i++) ser_putc(out[i]);
         ser_puts("\n--- end output ---\n");
         ser_flush();
@@ -675,6 +730,7 @@ static void handle_exec_done(void) {
     ser_put_dec(exit_code);
     ser_puts("\n");
     ser_flush();
+    proctab[slot].in_use = 0;
     orch_state = RUNNING;
     ser_puts("AIOS> ");
     ser_flush();
@@ -707,17 +763,20 @@ static void handle_gen_reply(void) {
 
 /* ── Protected procedure call handler (sandbox syscalls) */
 microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
-    if (ch != CH_SANDBOX) {
+    int slot = ch_to_slot(ch);
+    if (slot < 0) {
         seL4_SetMR(0, -1);
         return microkit_msginfo_new(0, 1);
     }
+    uintptr_t sio = sbx_io[slot];
+    uintptr_t scode = sbx_code[slot];
 
     uint64_t syscall_nr = seL4_GetMR(0);
     int64_t result = -1;
 
     switch (syscall_nr) {
     case SYS_OPEN: {
-        volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        volatile char *path = (volatile char *)(sio + 0x200);
         uint32_t flags = (uint32_t)seL4_GetMR(1);
         char fname[256];
         int i = 0;
@@ -746,7 +805,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
             uint32_t got = RD32(fs_data, FS_LENGTH);
             /* Copy data to sandbox_io+0x400 */
             volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
-            volatile uint8_t *dst = (volatile uint8_t *)(sandbox_io + 0x400);
+            volatile uint8_t *dst = (volatile uint8_t *)(sio + 0x400);
             for (uint32_t i = 0; i < got; i++) dst[i] = src[i];
             result = got;
         }
@@ -756,7 +815,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         uint32_t fd  = (uint32_t)seL4_GetMR(1);
         uint32_t len = (uint32_t)seL4_GetMR(2);
         /* Data is at sandbox_io+0x400 */
-        volatile uint8_t *src = (volatile uint8_t *)(sandbox_io + 0x400);
+        volatile uint8_t *src = (volatile uint8_t *)(sio + 0x400);
         volatile uint8_t *dst = (volatile uint8_t *)(fs_data + FS_DATA);
         for (uint32_t i = 0; i < len && i < FS_DATA_MAX; i++) dst[i] = src[i];
         int st = fs_write_sync(fd, len);
@@ -770,7 +829,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
     case SYS_UNLINK: {
-        volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        volatile char *path = (volatile char *)(sio + 0x200);
         char fname[256];
         int i = 0;
         while (path[i] && i < 255) { fname[i] = path[i]; i++; }
@@ -785,7 +844,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
             uint32_t count = RD32(fs_data, FS_LENGTH);
             /* Copy listing to sandbox_io+0x400 */
             volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
-            volatile uint8_t *dst = (volatile uint8_t *)(sandbox_io + 0x400);
+            volatile uint8_t *dst = (volatile uint8_t *)(sio + 0x400);
             uint32_t bytes = count * 16;
             for (uint32_t i = 0; i < bytes; i++) dst[i] = src[i];
             result = count;
@@ -800,7 +859,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
     case 32: { /* SYS_PUTS_DIRECT */
-        volatile char *str = (volatile char *)(sandbox_io + 0x200);
+        volatile char *str = (volatile char *)(sio + 0x200);
         char buf[256];
         int i = 0;
         while (str[i] && i < 255) { buf[i] = str[i]; i++; }
@@ -815,7 +874,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
     case SYS_STAT: {
-        volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        volatile char *path = (volatile char *)(sio + 0x200);
         char fname[256];
         int i = 0;
         while (path[i] && i < 255) { fname[i] = path[i]; i++; }
@@ -841,7 +900,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
     case SYS_MKDIR: {
-        volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        volatile char *path = (volatile char *)(sio + 0x200);
         char dname[256];
         int i = 0;
         while (path[i] && i < 255) { dname[i] = path[i]; i++; }
@@ -850,7 +909,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
     case SYS_RMDIR: {
-        volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        volatile char *path = (volatile char *)(sio + 0x200);
         char dname[256];
         int i = 0;
         while (path[i] && i < 255) { dname[i] = path[i]; i++; }
@@ -859,7 +918,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
     case SYS_RENAME: {
-        volatile char *p = (volatile char *)(sandbox_io + 0x200);
+        volatile char *p = (volatile char *)(sio + 0x200);
         char oldname[128], newname[128];
         int i = 0;
         while (p[i] && i < 127) { oldname[i] = p[i]; i++; }
@@ -872,7 +931,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
     case SYS_GETCWD: {
-        volatile char *dst = (volatile char *)(sandbox_io + 0x200);
+        volatile char *dst = (volatile char *)(sio + 0x200);
         int ci = 0;
         while (cwd[ci] && ci < 255) { dst[ci] = cwd[ci]; ci++; }
         dst[ci] = '\0';
@@ -880,7 +939,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
     case SYS_CHDIR: {
-        volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        volatile char *path = (volatile char *)(sio + 0x200);
         char dname[256];
         int i = 0;
         while (path[i] && i < 255) { dname[i] = path[i]; i++; }
@@ -908,7 +967,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
     }
     case SYS_EXEC: {
         /* Chaining exec: load child program into sandbox_code */
-        volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        volatile char *path = (volatile char *)(sio + 0x200);
         char fname[256];
         int i = 0;
         while (path[i] && i < 255) { fname[i] = path[i]; i++; }
@@ -926,10 +985,10 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         }
 
         /* Store parent size so sandbox can back it up */
-        WR32(sandbox_io, SBX_EXEC_PARENT_SIZE, exec_loaded_bytes);
+        WR32(sio, SBX_EXEC_PARENT_SIZE, exec_loaded_bytes);
 
         /* Load child into sandbox_code (overwriting parent) */
-        volatile uint8_t *code = (volatile uint8_t *)sandbox_code;
+        volatile uint8_t *code = (volatile uint8_t *)scode;
         uint32_t offset = 0;
         while (offset < child_size) {
             uint32_t chunk = child_size - offset;
@@ -944,7 +1003,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         }
         fs_close_sync(fd);
 
-        WR32(sandbox_io, SBX_EXEC_CHILD_SIZE, offset);
+        WR32(sio, SBX_EXEC_CHILD_SIZE, offset);
         exec_loaded_bytes = offset;
 
         result = SBX_EXEC_MAGIC;
@@ -952,7 +1011,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
     }
     case SYS_EXEC_DONE: {
         /* Child finished — sandbox already restored parent code */
-        exec_loaded_bytes = RD32(sandbox_io, SBX_EXEC_PARENT_SIZE);
+        exec_loaded_bytes = RD32(sio, SBX_EXEC_PARENT_SIZE);
         /* Return the child exit code (passed in MR1) */
         result = (int64_t)(int32_t)seL4_GetMR(1);
         break;
@@ -975,10 +1034,23 @@ void init(void) {
     ser_puts("\n============ Open Aries ================\n");
     ser_puts("  " AIOS_VERSION_FULL "\n");
     ser_puts("  Kernel:  seL4 14.0.0 (Microkit 2.1.0)\n");
-    ser_puts("  Drivers: PL011 UART, virtio-blk, FAT16\n");
+    ser_puts("  CPUs:    ");
+    ser_put_dec(CONFIG_MAX_NUM_NODES);
+    ser_puts(" cores (SMP)\n");
+    ser_puts("  Sandbox: ");
+    ser_put_dec(NUM_SANDBOXES);
+    ser_puts(" process slots\n");
+    ser_puts("  Drivers: PL011 UART, virtio-blk, virtio-net\n");
     ser_puts("  LLM:     llm_server (llama2.c engine)\n");
     ser_puts("============ Open Aries ================\n\n");
     ser_flush();
+
+    /* Initialize sandbox slot tables */
+    sbx_io[0] = sbx0_io; sbx_code[0] = sbx0_code;
+    sbx_io[1] = sbx1_io; sbx_code[1] = sbx1_code;
+    sbx_io[2] = sbx2_io; sbx_code[2] = sbx2_code;
+    sbx_io[3] = sbx3_io; sbx_code[3] = sbx3_code;
+    for (int i = 0; i < NUM_SANDBOXES; i++) proctab[i].in_use = 0;
 
     /* Boot: read hello.txt synchronously */
     ser_puts("Boot: reading hello.txt...\n");
@@ -1024,10 +1096,15 @@ void notified(microkit_channel ch) {
             handle_serial_input();
         break;
 
-    case CH_SANDBOX:
+    case CH_SBX0:
+    case CH_SBX1:
+    case CH_SBX2:
+    case CH_SBX3: {
+        int slot = (int)ch - CH_SBX_BASE;
         if (orch_state == EXEC_RUNNING)
-            handle_exec_done();
+            handle_exec_done(slot);
         break;
+    }
 
     case CH_LLM:
         if (orch_state == LLM_INIT_MODEL) {
@@ -1072,4 +1149,25 @@ void notified(microkit_channel ch) {
     default:
         break;
     }
+}
+
+seL4_Bool fault(microkit_child child, microkit_msginfo msginfo, microkit_msginfo *reply_msginfo) {
+    (void)msginfo;
+    (void)reply_msginfo;
+    int slot = (int)child;
+    if (slot >= 0 && slot < NUM_SANDBOXES) {
+        proctab[slot].in_use = 0;
+        ser_puts("FAULT: sandbox ");
+        ser_put_dec((unsigned int)slot);
+        ser_puts(" crashed (PID ");
+        ser_put_dec(proctab[slot].pid);
+        ser_puts("), slot freed\n");
+        ser_flush();
+        if (proctab[slot].foreground) {
+            orch_state = RUNNING;
+            ser_puts("AIOS> ");
+            ser_flush();
+        }
+    }
+    return seL4_False;
 }

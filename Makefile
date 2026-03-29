@@ -11,7 +11,7 @@
 # ── SDK & Board ──────────────────────────────────────────
 MICROKIT_SDK ?= $(HOME)/microkit/microkit-sdk-2.1.0
 BOARD        := qemu_virt_aarch64
-CONFIG       := debug
+CONFIG       := smp-debug
 MICROKIT_DIR := $(MICROKIT_SDK)/board/$(BOARD)/$(CONFIG)
 
 # ── Toolchain (auto-detect available cross-compiler) ─────
