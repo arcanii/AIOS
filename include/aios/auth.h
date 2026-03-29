@@ -16,6 +16,8 @@
 #define AUTH_PASSWORD   0x080
 #define AUTH_PATH       0x0C0
 #define AUTH_MODE       0x100
+#define AUTH_DATA       0x200  /* passwd file contents (up to 3584 bytes) */
+#define AUTH_DATA_MAX   3584
 
 /* ── Commands ──────────────────────────────────────── */
 #define AUTH_CMD_LOGIN      1
@@ -23,9 +25,11 @@
 #define AUTH_CMD_CHECK_KILL 3
 #define AUTH_CMD_CHECK_PRIV 4
 #define AUTH_CMD_LOGOUT     5
-#define AUTH_CMD_PASSWD     6
 #define AUTH_CMD_WHOAMI     7
 #define AUTH_CMD_USERADD    8
+#define AUTH_CMD_LOAD_PASSWD 9  /* orchestrator sends /etc/passwd contents */
+#define AUTH_CMD_PASSWD     10  /* change password */
+#define AUTH_CMD_SU         11  /* switch user */
 
 /* ── Access modes for CHECK_FILE ───────────────────── */
 #define ACCESS_READ     0x04

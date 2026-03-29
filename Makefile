@@ -82,6 +82,12 @@ $(BUILD)/fs_ext2.o: src/fs/ext2.c
 $(BUILD)/fs_server.elf: $(BUILD)/fs_server.o $(BUILD)/fs_fat16.o $(BUILD)/fs_fat32.o $(BUILD)/fs_ext2.o
 	$(LD) $^ $(LDFLAGS) -o $@
 
+$(BUILD)/orchestrator.elf: $(BUILD)/orchestrator.o $(BUILD)/memset.o
+	$(LD) $^ $(LDFLAGS) -o $@
+
+$(BUILD)/memset.o: src/memset.c | $(BUILD)
+	$(CC) $(CFLAGS) $< -o $@
+
 $(BUILD)/%.elf: $(BUILD)/%.o
 	$(LD) $< $(LDFLAGS) -o $@
 

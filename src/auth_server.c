@@ -36,15 +36,19 @@ uintptr_t auth_store;  /* 64 KiB private credential store — no other PD can ac
 #define AUTH_PATH       0x0C0
 #define AUTH_MODE       0x100
 
+#define AUTH_DATA       0x200
+#define AUTH_DATA_MAX   3584
 /* ── Commands ──────────────────────────────────────── */
 #define AUTH_CMD_LOGIN      1
 #define AUTH_CMD_CHECK_FILE 2
 #define AUTH_CMD_CHECK_KILL 3
 #define AUTH_CMD_CHECK_PRIV 4
 #define AUTH_CMD_LOGOUT     5
-#define AUTH_CMD_PASSWD     6
+#define AUTH_CMD_PASSWD     10
 #define AUTH_CMD_WHOAMI     7
 #define AUTH_CMD_USERADD    8
+#define AUTH_CMD_LOAD_PASSWD 9
+#define AUTH_CMD_SU         11
 
 /* ── Access modes ──────────────────────────────────── */
 #define ACCESS_READ     0x04
@@ -436,6 +440,206 @@ void handle_useradd(void) {
     WR32(auth_io, AUTH_STATUS, 0);
 }
 
+
+/* AUTH_CMD_LOAD_PASSWD: parse /etc/passwd from auth_io+AUTH_DATA
+ * Format: "username:sha256hash:uid:gid\n" per line
+ */
+static int parse_uint(const char *s, int *pos) {
+    int val = 0;
+    while (s[*pos] >= '0' && s[*pos] <= '9') {
+        val = val * 10 + (s[*pos] - '0');
+        (*pos)++;
+    }
+    return val;
+}
+
+void handle_load_passwd(void) {
+    volatile char *data = (volatile char *)(auth_io + AUTH_DATA);
+    char buf[3584];
+    int i = 0;
+    while (data[i] && i < 3583) { buf[i] = data[i]; i++; }
+    buf[i] = '\0';
+
+    /* Reset user database */
+    my_memset(users, 0, sizeof(users));
+    num_users = 0;
+
+    /* Parse line by line */
+    int pos = 0;
+    while (buf[pos] && num_users < MAX_USERS) {
+        /* username */
+        int start = pos;
+        while (buf[pos] && buf[pos] != ':') pos++;
+        if (buf[pos] != ':') break;
+        int ulen = pos - start;
+        if (ulen > 31) ulen = 31;
+
+        user_entry_t *u = &users[num_users];
+        for (int j = 0; j < ulen; j++) u->username[j] = buf[start + j];
+        u->username[ulen] = '\0';
+        pos++; /* skip : */
+
+        /* password hash */
+        start = pos;
+        while (buf[pos] && buf[pos] != ':') pos++;
+        if (buf[pos] != ':') break;
+        int hlen = pos - start;
+        if (hlen > 64) hlen = 64;
+        for (int j = 0; j < hlen; j++) u->passhash[j] = buf[start + j];
+        u->passhash[hlen] = '\0';
+        pos++; /* skip : */
+
+        /* uid */
+        u->uid = (uint32_t)parse_uint(buf, &pos);
+        if (buf[pos] == ':') pos++;
+
+        /* gid */
+        u->gid = (uint32_t)parse_uint(buf, &pos);
+
+        u->active = 1;
+        u->is_root = (u->uid == 0) ? 1 : 0;
+        num_users++;
+
+        /* Skip to next line */
+        while (buf[pos] && buf[pos] != '\n') pos++;
+        if (buf[pos] == '\n') pos++;
+    }
+
+    /* Clear data from shared memory */
+    for (int j = 0; j < 3584; j++) data[j] = 0;
+
+    microkit_dbg_puts("AUTH: loaded ");
+    char nb[4]; int n = num_users; int ni = 0;
+    if (n == 0) { nb[ni++] = '0'; }
+    else { while (n > 0) { nb[ni++] = '0' + (n % 10); n /= 10; } }
+    for (int j = ni - 1; j >= 0; j--) microkit_dbg_putc(nb[j]);
+    microkit_dbg_puts(" users from /etc/passwd\n");
+
+    WR32(auth_io, AUTH_STATUS, 0);
+}
+
+/* AUTH_CMD_PASSWD: change password for a user
+ * AUTH_USERNAME = target user, AUTH_PASSWORD = new password
+ * Caller must be root OR target user (old password verified via session)
+ */
+void handle_passwd_change(void) {
+    uint32_t token = RD32(auth_io, AUTH_SESSION);
+    volatile char *uname  = (volatile char *)(auth_io + AUTH_USERNAME);
+    volatile char *passwd = (volatile char *)(auth_io + AUTH_PASSWORD);
+
+    /* Find session */
+    session_t *sess = 0;
+    for (int i = 0; i < MAX_SESSIONS; i++) {
+        if (sessions[i].active && sessions[i].token == token) {
+            sess = &sessions[i]; break;
+        }
+    }
+    if (!sess) { WR32(auth_io, AUTH_STATUS, (uint32_t)-1); return; }
+
+    char u[32], p[64];
+    int i = 0;
+    while (uname[i] && i < 31) { u[i] = uname[i]; i++; }
+    u[i] = '\0';
+    i = 0;
+    while (passwd[i] && i < 63) { p[i] = passwd[i]; i++; }
+    p[i] = '\0';
+
+    /* Only root can change other users' passwords */
+    if (!sess->is_root && my_strcmp(sess->username, u) != 0) {
+        for (int j = 0; j < 64; j++) passwd[j] = 0;
+        WR32(auth_io, AUTH_STATUS, (uint32_t)-1);
+        return;
+    }
+
+    /* Find target user */
+    for (int ui = 0; ui < num_users; ui++) {
+        if (users[ui].active && my_strcmp(users[ui].username, u) == 0) {
+            /* Hash new password */
+            uint8_t hash[32];
+            sha256((const uint8_t *)p, (uint32_t)my_strlen(p), hash);
+            char hex[65];
+            hash_to_hex(hash, hex);
+            my_strcpy(users[ui].passhash, hex);
+            /* Clear password from shared memory */
+            for (int j = 0; j < 64; j++) passwd[j] = 0;
+            WR32(auth_io, AUTH_STATUS, 0);
+            return;
+        }
+    }
+    for (int j = 0; j < 64; j++) passwd[j] = 0;
+    WR32(auth_io, AUTH_STATUS, (uint32_t)-2); /* user not found */
+}
+
+
+/* AUTH_CMD_SU: switch user — verify password, update session */
+void handle_su(void) {
+    volatile char *uname  = (volatile char *)(auth_io + AUTH_USERNAME);
+    volatile char *passwd = (volatile char *)(auth_io + AUTH_PASSWORD);
+    uint32_t token = RD32(auth_io, AUTH_SESSION);
+
+    char u[32], p[64];
+    int i = 0;
+    while (uname[i] && i < 31) { u[i] = uname[i]; i++; }
+    u[i] = '\0';
+    i = 0;
+    while (passwd[i] && i < 63) { p[i] = passwd[i]; i++; }
+    p[i] = '\0';
+
+    /* Find current session */
+    session_t *sess = 0;
+    for (int si = 0; si < MAX_SESSIONS; si++) {
+        if (sessions[si].active && sessions[si].token == token) {
+            sess = &sessions[si]; break;
+        }
+    }
+    if (!sess) {
+        for (int j = 0; j < 64; j++) passwd[j] = 0;
+        WR32(auth_io, AUTH_STATUS, (uint32_t)-1);
+        return;
+    }
+
+    /* Root can su without password */
+    if (sess->is_root && p[0] == '\0') {
+        /* Find target user */
+        for (int ui = 0; ui < num_users; ui++) {
+            if (users[ui].active && my_strcmp(users[ui].username, u) == 0) {
+                sess->uid = users[ui].uid;
+                sess->gid = users[ui].gid;
+                sess->is_root = users[ui].is_root;
+                my_strcpy(sess->username, users[ui].username);
+                WR32(auth_io, AUTH_UID, users[ui].uid);
+                WR32(auth_io, AUTH_GID, users[ui].gid);
+                WR32(auth_io, AUTH_STATUS, 0);
+                return;
+            }
+        }
+        WR32(auth_io, AUTH_STATUS, (uint32_t)-2);
+        return;
+    }
+
+    /* Non-root must provide password */
+    uint8_t hash[32];
+    sha256((const uint8_t *)p, (uint32_t)my_strlen(p), hash);
+    char hex[65];
+    hash_to_hex(hash, hex);
+    for (int j = 0; j < 64; j++) passwd[j] = 0;
+
+    for (int ui = 0; ui < num_users; ui++) {
+        if (users[ui].active && my_strcmp(users[ui].username, u) == 0 &&
+            my_strcmp(users[ui].passhash, hex) == 0) {
+            sess->uid = users[ui].uid;
+            sess->gid = users[ui].gid;
+            sess->is_root = users[ui].is_root;
+            my_strcpy(sess->username, users[ui].username);
+            WR32(auth_io, AUTH_UID, users[ui].uid);
+            WR32(auth_io, AUTH_GID, users[ui].gid);
+            WR32(auth_io, AUTH_STATUS, 0);
+            return;
+        }
+    }
+    WR32(auth_io, AUTH_STATUS, (uint32_t)-1);
+}
+
 /* ═══════════════════════════════════════════════════════
  *  Microkit entry points
  * ═══════════════════════════════════════════════════════ */
@@ -470,6 +674,9 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
     case AUTH_CMD_LOGOUT:     handle_logout();     break;
     case AUTH_CMD_WHOAMI:     handle_whoami();     break;
     case AUTH_CMD_USERADD:    handle_useradd();    break;
+    case AUTH_CMD_LOAD_PASSWD: handle_load_passwd(); break;
+    case AUTH_CMD_PASSWD:     handle_passwd_change(); break;
+    case AUTH_CMD_SU:         handle_su();          break;
     default:
         WR32(auth_io, AUTH_STATUS, (uint32_t)-1);
         break;

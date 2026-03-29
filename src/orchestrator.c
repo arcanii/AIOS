@@ -6,6 +6,8 @@
 #include "aios/ipc.h"
 #include "aios/channels.h"
 #include "aios/auth.h"
+
+#define SBX_ENTRY_POINT 0x200000  /* sandbox.elf entry point */
 #include "sys/syscall.h"
 #include "aios/version.h"
 #include <kernel/gen_config.h>
@@ -62,6 +64,9 @@ static __attribute__((unused)) void my_memcpy(void *dst, const void *src, unsign
     while (n--) *d++ = *s++;
 }
 static __attribute__((unused)) void my_memset(void *dst, int c, unsigned long n) {
+
+/* Provide memset for microkit_pd_restart (seL4_UserContext = {0}) */
+
     char *d = dst;
     while (n--) *d++ = (char)c;
 }
@@ -281,6 +286,7 @@ static void cmd_kill(const char *arg) {
                 return;
             }
             microkit_pd_stop(s);
+            microkit_pd_restart(s, SBX_ENTRY_POINT);
             ser_puts("  Killed PID ");
             ser_put_dec(pid);
             ser_puts(" (");
@@ -393,6 +399,199 @@ static void __attribute__((unused)) auth_whoami_sync(void) {
     microkit_ppcall(CH_AUTH, microkit_msginfo_new(0, 0));
 }
 
+
+/* ── Command: useradd <username> <password> <uid> ──── */
+static void cmd_useradd(const char *args) {
+    if (auth_check_priv_sync() != 0) {
+        ser_puts("Permission denied: root required\n");
+        ser_flush();
+        return;
+    }
+    /* Parse: username password uid */
+    char uname[32], passwd[64];
+    uint32_t uid = 0;
+    int i = 0, j;
+    while (args[i] == ' ') i++;
+    j = 0;
+    while (args[i] && args[i] != ' ' && j < 31) uname[j++] = args[i++];
+    uname[j] = '\0';
+    while (args[i] == ' ') i++;
+    j = 0;
+    while (args[i] && args[i] != ' ' && j < 63) passwd[j++] = args[i++];
+    passwd[j] = '\0';
+    while (args[i] == ' ') i++;
+    while (args[i] >= '0' && args[i] <= '9') { uid = uid * 10 + (args[i] - '0'); i++; }
+
+    if (uname[0] == '\0' || passwd[0] == '\0') {
+        ser_puts("Usage: useradd <username> <password> <uid>\n");
+        ser_flush();
+        return;
+    }
+    if (uid == 0) uid = 1001; /* default uid */
+
+    /* Send to auth_server */
+    volatile char *u = (volatile char *)(auth_io + AUTH_USERNAME);
+    volatile char *p = (volatile char *)(auth_io + AUTH_PASSWORD);
+    j = 0; while (uname[j]) { u[j] = uname[j]; j++; } u[j] = '\0';
+    j = 0; while (passwd[j]) { p[j] = passwd[j]; j++; } p[j] = '\0';
+    WR32(auth_io, AUTH_SESSION, current_session);
+    WR32(auth_io, AUTH_UID, uid);
+    WR32(auth_io, AUTH_GID, uid);
+    WR32(auth_io, AUTH_CMD, AUTH_CMD_USERADD);
+    microkit_ppcall(CH_AUTH, microkit_msginfo_new(0, 0));
+    int rc = (int)(int32_t)RD32(auth_io, AUTH_STATUS);
+    if (rc == 0) {
+        ser_puts("User '");
+        ser_puts(uname);
+        ser_puts("' added (uid=");
+        ser_put_dec(uid);
+        ser_puts(")\n");
+    } else if (rc == (int)(int32_t)(uint32_t)-3) {
+        ser_puts("Error: user already exists\n");
+    } else {
+        ser_puts("Error adding user\n");
+    }
+    ser_flush();
+}
+
+/* ── Command: su [username] ────────────────────────── */
+static void cmd_su(const char *args) {
+    char target[32];
+    int i = 0;
+    while (args[i] == ' ') i++;
+    int j = 0;
+    while (args[i] && args[i] != ' ' && j < 31) target[j++] = args[i++];
+    target[j] = '\0';
+
+    if (target[0] == '\0') {
+        /* Default: su to root */
+        target[0] = 'r'; target[1] = 'o'; target[2] = 'o'; target[3] = 't'; target[4] = '\0';
+    }
+
+    char supass[64];
+    int sp = 0;
+    supass[0] = '\0';
+
+    /* Root doesn't need password */
+    if (!current_is_root) {
+        ser_puts("Password: ");
+        ser_flush();
+        ring_buf_t *rx = (ring_buf_t *)rx_buf;
+        char c;
+        for (;;) {
+            while (!ring_get(rx, &c)) { asm volatile("wfe"); }
+            if (c == '\r' || c == '\n') break;
+            if ((c == 127 || c == '\b') && sp > 0) {
+                sp--;
+                ser_puts("\b \b");
+                ser_flush();
+            } else if (sp < 63) {
+                supass[sp++] = c;
+                ser_puts("*");
+                ser_flush();
+            }
+        }
+        supass[sp] = '\0';
+        ser_puts("\n");
+    }
+
+    /* Send to auth_server */
+    volatile char *u = (volatile char *)(auth_io + AUTH_USERNAME);
+    volatile char *p = (volatile char *)(auth_io + AUTH_PASSWORD);
+    j = 0; while (target[j]) { u[j] = target[j]; j++; } u[j] = '\0';
+    j = 0; while (supass[j]) { p[j] = supass[j]; j++; } p[j] = '\0';
+    WR32(auth_io, AUTH_SESSION, current_session);
+    WR32(auth_io, AUTH_CMD, AUTH_CMD_SU);
+    microkit_ppcall(CH_AUTH, microkit_msginfo_new(0, 0));
+    int rc = (int)(int32_t)RD32(auth_io, AUTH_STATUS);
+
+    /* Clear password */
+    for (int k = 0; k < 64; k++) supass[k] = 0;
+    for (int k = 0; k < 64; k++) p[k] = 0;
+
+    if (rc == 0) {
+        current_uid = RD32(auth_io, AUTH_UID);
+        current_gid = RD32(auth_io, AUTH_GID);
+        current_is_root = (current_uid == 0) ? 1 : 0;
+        j = 0;
+        while (target[j] && j < 31) { current_username[j] = target[j]; j++; }
+        current_username[j] = '\0';
+        ser_puts("Switched to ");
+        ser_puts(current_username);
+        ser_puts("\n");
+    } else {
+        ser_puts("su: authentication failure\n");
+    }
+    ser_flush();
+}
+
+/* ── Command: passwd [username] ────────────────────── */
+static void cmd_passwd(const char *args) {
+    char target[32];
+    int i = 0;
+    while (args[i] == ' ') i++;
+    int j = 0;
+    while (args[i] && args[i] != ' ' && j < 31) target[j++] = args[i++];
+    target[j] = '\0';
+
+    /* If no target, change own password */
+    if (target[0] == '\0') {
+        j = 0;
+        while (current_username[j] && j < 31) { target[j] = current_username[j]; j++; }
+        target[j] = '\0';
+    }
+
+    /* Non-root can only change own password */
+    if (!current_is_root && my_strcmp(target, current_username) != 0) {
+        ser_puts("Permission denied\n");
+        ser_flush();
+        return;
+    }
+
+    ser_puts("New password: ");
+    ser_flush();
+    /* Read password (blocking) */
+    char newpass[64];
+    int np = 0;
+    ring_buf_t *rx = (ring_buf_t *)rx_buf;
+    char c;
+    for (;;) {
+        while (!ring_get(rx, &c)) { asm volatile("wfe"); }
+        if (c == '\r' || c == '\n') break;
+        if ((c == 127 || c == '\b') && np > 0) {
+            np--;
+            ser_puts("\b \b");
+            ser_flush();
+        } else if (np < 63) {
+            newpass[np++] = c;
+            ser_puts("*");
+            ser_flush();
+        }
+    }
+    newpass[np] = '\0';
+    ser_puts("\n");
+
+    /* Send to auth_server */
+    volatile char *u = (volatile char *)(auth_io + AUTH_USERNAME);
+    volatile char *p = (volatile char *)(auth_io + AUTH_PASSWORD);
+    j = 0; while (target[j]) { u[j] = target[j]; j++; } u[j] = '\0';
+    j = 0; while (newpass[j]) { p[j] = newpass[j]; j++; } p[j] = '\0';
+    WR32(auth_io, AUTH_SESSION, current_session);
+    WR32(auth_io, AUTH_CMD, AUTH_CMD_PASSWD);
+    microkit_ppcall(CH_AUTH, microkit_msginfo_new(0, 0));
+    int rc = (int)(int32_t)RD32(auth_io, AUTH_STATUS);
+    if (rc == 0) {
+        ser_puts("Password changed for ");
+        ser_puts(target);
+        ser_puts("\n");
+    } else {
+        ser_puts("Error changing password\n");
+    }
+    /* Clear password */
+    for (int k = 0; k < 64; k++) newpass[k] = 0;
+    ser_flush();
+}
+
 static void cmd_help(void) {
     ser_puts("Commands:\n");
     ser_puts("  help            - this message\n");
@@ -405,6 +604,9 @@ static void cmd_help(void) {
     ser_puts("  exec <file.bin> - run a sandbox program\n");
     ser_puts("  info            - system info\n");
     ser_puts("  whoami              - show current user\n");
+    ser_puts("  su [user]           - switch user\n");
+    ser_puts("  passwd [user]       - change password\n");
+    ser_puts("  useradd <u> <p> <uid> - add user (root)\n");
     ser_puts("  logout              - log out\n");
     ser_puts("  ps              Show running processes\n");
     ser_puts("  kill <pid>      Terminate a process\n");
@@ -885,6 +1087,12 @@ static void process_command(void) {
         ser_put_dec(current_uid);
         ser_puts(")\n");
         ser_flush();
+    } else if (str_starts_with(input_line, "useradd ")) {
+        cmd_useradd(input_line + 8);
+    } else if (str_starts_with(input_line, "passwd")) {
+        cmd_passwd(input_line + 6);
+    } else if (str_starts_with(input_line, "su")) {
+        cmd_su(input_line + 2);
     } else if (my_strcmp(input_line, "logout") == 0) {
         auth_logout_sync();
         auth_state = AUTH_LOGIN_USER;
@@ -1013,6 +1221,35 @@ static void handle_serial_input(void) {
     ring_buf_t *rx = (ring_buf_t *)rx_buf;
     char c;
     while (ring_get(rx, &c)) {
+        /* Ctrl-C: interrupt foreground process */
+        if (c == 0x03) {
+            if (orch_state == EXEC_RUNNING) {
+                /* Find foreground process and kill it */
+                for (int s = 0; s < NUM_SANDBOXES; s++) {
+                    if (proctab[s].in_use && proctab[s].foreground) {
+                        microkit_pd_stop(s);
+                        microkit_pd_restart(s, SBX_ENTRY_POINT);
+                        ser_puts("^C\n");
+                        ser_puts("  Interrupted PID ");
+                        ser_put_dec(proctab[s].pid);
+                        ser_puts(" (");
+                        ser_puts(proctab[s].name);
+                        ser_puts(")\n");
+                        proctab[s].in_use = 0;
+                        orch_state = RUNNING;
+                        print_prompt();
+                        break;
+                    }
+                }
+            } else {
+                /* Just print ^C and new prompt */
+                ser_puts("^C\n");
+                input_pos = 0;
+                input_line[0] = '\0';
+                print_prompt();
+            }
+            continue;
+        }
         if (c == '\r' || c == '\n') {
             ser_puts("\n"); ser_flush();
             process_command();
@@ -1434,6 +1671,31 @@ void init(void) {
         return;
     }
 
+
+    /* Load /etc/passwd into auth_server */
+    ser_puts("Boot: loading /etc/passwd...\n");
+    ser_flush();
+    st = fs_open_sync("PASSWD");
+    if (st == 0) {
+        uint32_t fd = RD32(fs_data, FS_FD);
+        uint32_t sz = RD32(fs_data, FS_FILESIZE);
+        if (sz > 3584) sz = 3584;
+        fs_read_sync(fd, 0, sz);
+        /* Copy file data to auth_io DATA area */
+        volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
+        volatile uint8_t *dst = (volatile uint8_t *)(auth_io + AUTH_DATA);
+        for (uint32_t i = 0; i < sz; i++) dst[i] = src[i];
+        dst[sz] = 0;
+        fs_close_sync(fd);
+        /* Tell auth_server to parse it */
+        WR32(auth_io, AUTH_CMD, AUTH_CMD_LOAD_PASSWD);
+        microkit_ppcall(CH_AUTH, microkit_msginfo_new(0, 0));
+        ser_puts("  Loaded user database\n");
+    } else {
+        ser_puts("  /etc/passwd not found, using defaults\n");
+    }
+    ser_flush();
+
     ser_puts("\nLogin: ");
 }
 
@@ -1444,6 +1706,31 @@ void notified(microkit_channel ch) {
             handle_login_input();
         } else if (orch_state == RUNNING) {
             handle_serial_input();
+        } else if (orch_state == EXEC_RUNNING) {
+            /* Check for Ctrl-C while foreground process runs */
+            ring_buf_t *rx_check = (ring_buf_t *)rx_buf;
+            char cc;
+            while (ring_get(rx_check, &cc)) {
+                if (cc == 0x03) { /* Ctrl-C */
+                    for (int s = 0; s < NUM_SANDBOXES; s++) {
+                        if (proctab[s].in_use && proctab[s].foreground) {
+                            microkit_pd_stop(s);
+                            microkit_pd_restart(s, SBX_ENTRY_POINT);
+                            ser_puts("^C\n");
+                            ser_puts("  Interrupted PID ");
+                            ser_put_dec(proctab[s].pid);
+                            ser_puts(" (");
+                            ser_puts(proctab[s].name);
+                            ser_puts(")\n");
+                            proctab[s].in_use = 0;
+                            orch_state = RUNNING;
+                            print_prompt();
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
         }
         break;
 
@@ -1507,6 +1794,7 @@ seL4_Bool fault(microkit_child child, microkit_msginfo msginfo, microkit_msginfo
     int slot = (int)child;
     if (slot >= 0 && slot < NUM_SANDBOXES) {
         proctab[slot].in_use = 0;
+        microkit_pd_restart(slot, SBX_ENTRY_POINT);
         ser_puts("FAULT: sandbox ");
         ser_put_dec((unsigned int)slot);
         ser_puts(" crashed (PID ");
