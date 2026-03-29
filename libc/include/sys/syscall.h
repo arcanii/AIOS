@@ -43,4 +43,21 @@
 #define SYS_BRK        50
 #define SYS_MMAP       51
 
+
+/* POSIX identity */
+#define SYS_GETUID     25
+#define SYS_GETGID     26
+#define SYS_GETEUID    27
+#define SYS_GETEGID    28
+#define SYS_GETPPID    29
+
+/* POSIX file */
+#define SYS_ACCESS     17
+#define SYS_UMASK      18
+#define SYS_DUP        19
+#define SYS_DUP2       60
+#define SYS_TRUNCATE   61
+#define SYS_PIPE       62
+#define SYS_TIME       63
+
 #endif

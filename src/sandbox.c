@@ -305,6 +305,88 @@ static void sbx_putc_direct(char c) {
  * User programs receive a pointer to this struct as their argument.
  * This gives them access to libc-like functions without linking.
  */
+
+/* ── POSIX identity syscalls ─────────────────────────── */
+static int sbx_getuid(void) {
+    seL4_SetMR(0, SYS_GETUID);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_getgid(void) {
+    seL4_SetMR(0, SYS_GETGID);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_geteuid(void) {
+    seL4_SetMR(0, SYS_GETEUID);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_getegid(void) {
+    seL4_SetMR(0, SYS_GETEGID);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_getppid(void) {
+    seL4_SetMR(0, SYS_GETPPID);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_access(const char *path, int amode) {
+    volatile char *dst = (volatile char *)(sandbox_io + 0x200);
+    int i = 0;
+    while (path[i] && i < 255) { dst[i] = path[i]; i++; }
+    dst[i] = '\0';
+    seL4_SetMR(0, SYS_ACCESS);
+    seL4_SetMR(1, (seL4_Word)amode);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 2));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_umask(int mask) {
+    seL4_SetMR(0, SYS_UMASK);
+    seL4_SetMR(1, (seL4_Word)mask);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 2));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_dup(int oldfd) {
+    seL4_SetMR(0, SYS_DUP);
+    seL4_SetMR(1, (seL4_Word)oldfd);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 2));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_dup2(int oldfd, int newfd) {
+    seL4_SetMR(0, SYS_DUP2);
+    seL4_SetMR(1, (seL4_Word)oldfd);
+    seL4_SetMR(2, (seL4_Word)newfd);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 3));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_pipe(int pipefd[2]) {
+    seL4_SetMR(0, SYS_PIPE);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
+    int rc = (int)seL4_GetMR(0);
+    if (rc == 0) {
+        pipefd[0] = (int)seL4_GetMR(1);
+        pipefd[1] = (int)seL4_GetMR(2);
+    }
+    return rc;
+}
+
+static long sbx_time(void) {
+    seL4_SetMR(0, SYS_TIME);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
+    return (long)seL4_GetMR(0);
+}
+
 typedef struct {
     /* Console I/O */
     void (*puts)(const char *s);
@@ -349,6 +431,18 @@ typedef struct {
     void  (*puts_direct)(const char *s);
     void  (*putc_direct)(char c);
     int   (*sleep)(unsigned int seconds);
+    /* POSIX extensions */
+    int   (*getuid)(void);
+    int   (*getgid)(void);
+    int   (*geteuid)(void);
+    int   (*getegid)(void);
+    int   (*getppid)(void);
+    int   (*access)(const char *path, int amode);
+    int   (*umask)(int mask);
+    int   (*dup)(int oldfd);
+    int   (*dup2)(int oldfd, int newfd);
+    int   (*pipe)(int pipefd[2]);
+    long  (*time)(void);
 } aios_syscalls_t;
 typedef int (*program_entry_t)(aios_syscalls_t *sys);
 
@@ -490,6 +584,18 @@ static void init_syscalls(void) {
     syscalls.puts_direct = sbx_puts_direct;
     syscalls.putc_direct = sbx_putc_direct;
     syscalls.sleep       = sbx_sleep;
+    /* POSIX extensions */
+    syscalls.getuid     = sbx_getuid;
+    syscalls.getgid     = sbx_getgid;
+    syscalls.geteuid    = sbx_geteuid;
+    syscalls.getegid    = sbx_getegid;
+    syscalls.getppid    = sbx_getppid;
+    syscalls.access     = sbx_access;
+    syscalls.umask      = sbx_umask;
+    syscalls.dup        = sbx_dup;
+    syscalls.dup2       = sbx_dup2;
+    syscalls.pipe       = sbx_pipe;
+    syscalls.time       = sbx_time;
 }
 
 /* ── Execute code ──────────────────────────────────── */

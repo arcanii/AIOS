@@ -50,10 +50,42 @@ typedef struct {
     void  (*puts_direct)(const char *s);
     void  (*putc_direct)(char c);
     int   (*sleep)(unsigned int seconds);
+    /* POSIX extensions */
+    int   (*getuid)(void);
+    int   (*getgid)(void);
+    int   (*geteuid)(void);
+    int   (*getegid)(void);
+    int   (*getppid)(void);
+    int   (*access)(const char *path, int amode);
+    int   (*umask)(int mask);
+    int   (*dup)(int oldfd);
+    int   (*dup2)(int oldfd, int newfd);
+    int   (*pipe)(int pipefd[2]);
+    long  (*time)(void);
 } aios_syscalls_t;
 
 /* Global syscall pointer — set by _start */
 static aios_syscalls_t *sys;
+
+/* Buffered output macros */
+/* POSIX identity macros */
+#define getuid()       sys->getuid()
+#define getgid()       sys->getgid()
+#define geteuid()      sys->geteuid()
+#define getegid()      sys->getegid()
+#define getppid()      sys->getppid()
+#define access(p,m)    sys->access(p,m)
+#define umask(m)       sys->umask(m)
+#define dup(fd)        sys->dup(fd)
+#define dup2(a,b)      sys->dup2(a,b)
+#define pipe(fds)      sys->pipe(fds)
+#define time()         sys->time()
+
+/* Access mode constants */
+#define F_OK 0
+#define R_OK 4
+#define W_OK 2
+#define X_OK 1
 
 /* Buffered output macros */
 #define puts(s)         sys->puts(s)

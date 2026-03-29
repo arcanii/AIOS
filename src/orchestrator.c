@@ -283,6 +283,38 @@ static int auth_state = AUTH_LOGIN_USER;
 static uint32_t current_session = 0;
 static uint32_t current_uid = 0;
 static uint32_t current_gid = 0;
+
+/* ── Pipe infrastructure ──────────────────────────────── */
+#define MAX_PIPES 8
+#define PIPE_BUF_SIZE 4096
+#define MAX_PIPE_FDS 8
+#define PIPE_FD_BASE 100  /* pipe fds start at 100 to avoid fs fd clash */
+
+typedef struct {
+    int active;
+    uint8_t buf[PIPE_BUF_SIZE];
+    uint32_t read_pos;
+    uint32_t write_pos;
+    int closed_write;
+    int closed_read;
+} pipe_t;
+
+static pipe_t pipes[MAX_PIPES];
+
+typedef struct {
+    int active;
+    int pipe_idx;
+    int is_write;  /* 0=read end, 1=write end */
+} pipe_fd_t;
+
+/* Per-sandbox pipe fd table */
+#define NUM_SANDBOXES 4
+static pipe_fd_t pipe_fds[4][MAX_PIPE_FDS];
+
+/* Per-session umask */
+static uint32_t current_umask = 022;
+
+
 static int      current_is_root = 0;
 static char     current_username[32] = {0};
 static char     login_username[32] = {0};
@@ -1658,6 +1690,33 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
     case SYS_READ: {
+
+        /* Check if this is a pipe fd */
+        {
+            int rfd = (int)seL4_GetMR(1);
+            if (rfd >= PIPE_FD_BASE && rfd < PIPE_FD_BASE + MAX_PIPE_FDS) {
+                int pi_idx = rfd - PIPE_FD_BASE;
+                if (pi_idx >= 0 && pi_idx < MAX_PIPE_FDS && pipe_fds[slot][pi_idx].active) {
+                    int pidx = pipe_fds[slot][pi_idx].pipe_idx;
+                    pipe_t *pp = &pipes[pidx];
+                    uint32_t avail = pp->write_pos - pp->read_pos;
+                    if (avail == 0 && pp->closed_write) {
+                        result = 0;  /* EOF */
+                    } else if (avail > 0) {
+                        uint32_t req = (uint32_t)seL4_GetMR(3);
+                        if (req > avail) req = avail;
+                        volatile uint8_t *dst = (volatile uint8_t *)(sio + 0x400);
+                        for (uint32_t bi = 0; bi < req; bi++)
+                            dst[bi] = pp->buf[(pp->read_pos + bi) % PIPE_BUF_SIZE];
+                        pp->read_pos += req;
+                        result = (int64_t)req;
+                    } else {
+                        result = 0;  /* would block — return 0 for now */
+                    }
+                    break;
+                }
+            }
+        }
         uint32_t fd     = (uint32_t)seL4_GetMR(1);
         uint32_t offset = (uint32_t)seL4_GetMR(2);
         uint32_t len    = (uint32_t)seL4_GetMR(3);
@@ -1673,6 +1732,28 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
     case SYS_WRITE: {
+
+        /* Check if this is a pipe fd */
+        {
+            int wfd = (int)seL4_GetMR(1);
+            if (wfd >= PIPE_FD_BASE && wfd < PIPE_FD_BASE + MAX_PIPE_FDS) {
+                int pi_idx = wfd - PIPE_FD_BASE;
+                if (pi_idx >= 0 && pi_idx < MAX_PIPE_FDS && pipe_fds[slot][pi_idx].active) {
+                    int pidx = pipe_fds[slot][pi_idx].pipe_idx;
+                    pipe_t *pp = &pipes[pidx];
+                    if (pp->closed_read) { result = -1; break; }  /* broken pipe */
+                    volatile uint8_t *src = (volatile uint8_t *)(sio + 0x400);
+                    uint32_t len = (uint32_t)seL4_GetMR(2);
+                    uint32_t space = PIPE_BUF_SIZE - (pp->write_pos - pp->read_pos);
+                    if (len > space) len = space;
+                    for (uint32_t bi = 0; bi < len; bi++)
+                        pp->buf[(pp->write_pos + bi) % PIPE_BUF_SIZE] = src[bi];
+                    pp->write_pos += len;
+                    result = (int64_t)len;
+                    break;
+                }
+            }
+        }
         uint32_t fd  = (uint32_t)seL4_GetMR(1);
         uint32_t len = (uint32_t)seL4_GetMR(2);
         /* Data is at sandbox_io+0x400 */
@@ -1684,6 +1765,27 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
     case SYS_CLOSE: {
+
+        /* Check if this is a pipe fd */
+        {
+            int cfd = (int)seL4_GetMR(1);
+            if (cfd >= PIPE_FD_BASE && cfd < PIPE_FD_BASE + MAX_PIPE_FDS) {
+                int pi_idx = cfd - PIPE_FD_BASE;
+                if (pi_idx >= 0 && pi_idx < MAX_PIPE_FDS && pipe_fds[slot][pi_idx].active) {
+                    int pidx = pipe_fds[slot][pi_idx].pipe_idx;
+                    if (pipe_fds[slot][pi_idx].is_write)
+                        pipes[pidx].closed_write = 1;
+                    else
+                        pipes[pidx].closed_read = 1;
+                    pipe_fds[slot][pi_idx].active = 0;
+                    /* Free pipe if both ends closed */
+                    if (pipes[pidx].closed_read && pipes[pidx].closed_write)
+                        pipes[pidx].active = 0;
+                    result = 0;
+                    break;
+                }
+            }
+        }
         uint32_t fd = (uint32_t)seL4_GetMR(1);
         fs_close_sync(fd);
         result = 0;
@@ -1894,16 +1996,150 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
     case SYS_EXIT: {
+
+        /* Clean up any pipe fds for this slot */
+        for (int pi = 0; pi < MAX_PIPE_FDS; pi++) {
+            if (pipe_fds[slot][pi].active) {
+                int pidx = pipe_fds[slot][pi].pipe_idx;
+                if (pipe_fds[slot][pi].is_write)
+                    pipes[pidx].closed_write = 1;
+                else
+                    pipes[pidx].closed_read = 1;
+                pipe_fds[slot][pi].active = 0;
+                if (pipes[pidx].closed_read && pipes[pidx].closed_write)
+                    pipes[pidx].active = 0;
+            }
+        }
         result = 0;
         break;
     }
+
+    case SYS_GETUID: {
+        result = (int64_t)current_uid;
+        break;
+    }
+    case SYS_GETGID: {
+        result = (int64_t)current_gid;
+        break;
+    }
+    case SYS_GETEUID: {
+        result = (int64_t)current_uid;  /* no suid support */
+        break;
+    }
+    case SYS_GETEGID: {
+        result = (int64_t)current_gid;
+        break;
+    }
+    case SYS_GETPPID: {
+        result = 1;  /* orchestrator is always parent */
+        break;
+    }
+    case SYS_ACCESS: {
+        volatile char *path = (volatile char *)(sio + 0x200);
+        uint32_t amode = (uint32_t)seL4_GetMR(1);
+        char fname[256];
+        int i = 0;
+        while (path[i] && i < 255) { fname[i] = path[i]; i++; }
+        fname[i] = '\0';
+        /* Convert access mode: F_OK=0, R_OK=4, W_OK=2, X_OK=1 */
+        uint32_t check = 0;
+        if (amode & 4) check |= ACCESS_READ;
+        if (amode & 2) check |= ACCESS_WRITE;
+        if (amode == 0) {
+            /* F_OK: just check existence */
+            int st = fs_stat_sync(fname);
+            result = (st == 0) ? 0 : -1;
+            break;
+        }
+        result = auth_check_file_sync(fname, check);
+        break;
+    }
+    case SYS_UMASK: {
+        uint32_t new_mask = (uint32_t)seL4_GetMR(1);
+        result = (int64_t)current_umask;
+        current_umask = new_mask & 0777;
+        break;
+    }
+    case SYS_DUP: {
+        int oldfd = (int)seL4_GetMR(1);
+        /* Find lowest free fd in sandbox fd table */
+        int newfd = -1;
+        for (int i = 0; i < MAX_PIPE_FDS; i++) {
+            if (!pipe_fds[slot][i].active) {
+                newfd = i + PIPE_FD_BASE;
+                pipe_fds[slot][i] = pipe_fds[slot][oldfd >= PIPE_FD_BASE ? oldfd - PIPE_FD_BASE : 0];
+                break;
+            }
+        }
+        result = newfd;
+        break;
+    }
+    case SYS_DUP2: {
+        int oldfd = (int)seL4_GetMR(1);
+        int newfd = (int)seL4_GetMR(2);
+        if (newfd >= PIPE_FD_BASE && newfd < PIPE_FD_BASE + MAX_PIPE_FDS) {
+            pipe_fds[slot][newfd - PIPE_FD_BASE] = pipe_fds[slot][oldfd >= PIPE_FD_BASE ? oldfd - PIPE_FD_BASE : 0];
+            result = newfd;
+        } else {
+            result = -1;
+        }
+        break;
+    }
+    case SYS_PIPE: {
+        /* Allocate a pipe */
+        int pi = -1;
+        for (int i = 0; i < MAX_PIPES; i++) {
+            if (!pipes[i].active) { pi = i; break; }
+        }
+        if (pi < 0) { result = -1; break; }
+        pipes[pi].active = 1;
+        pipes[pi].read_pos = 0;
+        pipes[pi].write_pos = 0;
+        pipes[pi].closed_write = 0;
+        pipes[pi].closed_read = 0;
+        /* Return read fd in MR1, write fd in MR2 */
+        int rfd = -1, wfd = -1;
+        for (int i = 0; i < MAX_PIPE_FDS; i++) {
+            if (!pipe_fds[slot][i].active) {
+                if (rfd < 0) {
+                    rfd = i;
+                    pipe_fds[slot][i].active = 1;
+                    pipe_fds[slot][i].pipe_idx = pi;
+                    pipe_fds[slot][i].is_write = 0;
+                } else if (wfd < 0) {
+                    wfd = i;
+                    pipe_fds[slot][i].active = 1;
+                    pipe_fds[slot][i].pipe_idx = pi;
+                    pipe_fds[slot][i].is_write = 1;
+                    break;
+                }
+            }
+        }
+        if (rfd < 0 || wfd < 0) {
+            pipes[pi].active = 0;
+            result = -1;
+            break;
+        }
+        seL4_SetMR(1, (seL4_Word)(rfd + PIPE_FD_BASE));
+        seL4_SetMR(2, (seL4_Word)(wfd + PIPE_FD_BASE));
+        result = 0;
+        break;
+    }
+    case SYS_TIME: {
+        /* Return a monotonic tick counter (no RTC on virt) */
+        static uint64_t tick_counter = 1711670400;  /* ~2024-03-29 epoch approx */
+        tick_counter += 1;
+        result = (int64_t)tick_counter;
+        break;
+    }
+
     default:
         result = -1;
         break;
     }
 
     seL4_SetMR(0, result);
-    return microkit_msginfo_new(0, 2);
+    return microkit_msginfo_new(0, 3);
 }
 
 /* ── Microkit entry points ─────────────────────────── */
