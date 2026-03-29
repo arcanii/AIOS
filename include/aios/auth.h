@@ -36,4 +36,7 @@
 #define ACCESS_WRITE    0x02
 #define ACCESS_EXEC     0x01
 
+#define AUTH_CMD_GROUPS     12
+#define AUTH_CMD_USERMOD    13
+
 #endif /* AIOS_AUTH_H */

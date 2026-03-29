@@ -51,6 +51,8 @@ uintptr_t auth_store;  /* 64 KiB private credential store — no other PD can ac
 #define AUTH_CMD_USERADD    8
 #define AUTH_CMD_LOAD_PASSWD 9
 #define AUTH_CMD_SU         11
+#define AUTH_CMD_GROUPS     12
+#define AUTH_CMD_USERMOD    13
 
 /* ── Access modes ──────────────────────────────────── */
 #define ACCESS_READ     0x04
@@ -164,6 +166,7 @@ static void hash_to_hex(const uint8_t hash[32], char hex[65]) {
  *  User database (in-memory, loaded at boot)
  * ═══════════════════════════════════════════════════════ */
 #define MAX_USERS 16
+#define MAX_GROUPS_PER_USER 16
 
 typedef struct {
     int    active;
@@ -171,6 +174,8 @@ typedef struct {
     char   passhash[65];  /* SHA-256 hex */
     uint32_t uid;
     uint32_t gid;
+    uint32_t groups[MAX_GROUPS_PER_USER];  /* supplementary groups */
+    int      ngroups;                       /* count of supplementary groups */
     int    is_root;
 } user_entry_t;
 
@@ -185,6 +190,8 @@ typedef struct {
     uint32_t token;
     uint32_t uid;
     uint32_t gid;
+    uint32_t groups[MAX_GROUPS_PER_USER];  /* supplementary groups */
+    int      ngroups;
     int      is_root;
     char     username[32];
 } session_t;
@@ -202,6 +209,7 @@ static void init_default_users(void) {
         "4813494d137e1631bba301d5acab6e7bb7aa74ce1185d456565ef51d737677b2");
     users[0].uid = 0;
     users[0].gid = 0;
+    users[0].ngroups = 0;
     users[0].is_root = 1;
 
     /* user:user */
@@ -212,6 +220,7 @@ static void init_default_users(void) {
         "04f8996da763b7a969b1028ee3007569eaf3a635486ddab211d512c85b9df8fb");
     users[1].uid = 1000;
     users[1].gid = 1000;
+    users[1].ngroups = 0;
     users[1].is_root = 0;
 
     num_users = 2;
@@ -256,6 +265,9 @@ void handle_login(void) {
                     sessions[si].token = next_token++;
                     sessions[si].uid = users[ui].uid;
                     sessions[si].gid = users[ui].gid;
+                    sessions[si].ngroups = users[ui].ngroups;
+                    for (int gi = 0; gi < users[ui].ngroups; gi++)
+                        sessions[si].groups[gi] = users[ui].groups[gi];
                     sessions[si].is_root = users[ui].is_root;
                     my_strcpy(sessions[si].username, users[ui].username);
                     WR32(auth_io, AUTH_STATUS, 0);
@@ -285,6 +297,15 @@ void handle_logout(void) {
         }
     }
     WR32(auth_io, AUTH_STATUS, (uint32_t)-1);
+}
+
+/* Check if session user belongs to a given group */
+static int user_in_group(session_t *sess, uint32_t gid) {
+    if (sess->gid == gid) return 1;  /* primary group */
+    for (int i = 0; i < sess->ngroups; i++) {
+        if (sess->groups[i] == gid) return 1;
+    }
+    return 0;
 }
 
 /* AUTH_CMD_CHECK_FILE: verify file access permission */
@@ -328,7 +349,7 @@ void handle_check_file(void) {
     uint16_t perm_bits;
     if (sess->uid == file_uid) {
         perm_bits = (file_mode >> 6) & 0x7;  /* owner bits */
-    } else if (sess->gid == file_gid) {
+    } else if (user_in_group(sess, file_gid)) {
         perm_bits = (file_mode >> 3) & 0x7;  /* group bits */
     } else {
         perm_bits = file_mode & 0x7;          /* other bits */
@@ -633,6 +654,9 @@ void handle_su(void) {
                 sess->uid = users[ui].uid;
                 sess->gid = users[ui].gid;
                 sess->is_root = users[ui].is_root;
+                sess->ngroups = users[ui].ngroups;
+                for (int gi = 0; gi < users[ui].ngroups; gi++)
+                    sess->groups[gi] = users[ui].groups[gi];
                 my_strcpy(sess->username, users[ui].username);
                 WR32(auth_io, AUTH_UID, users[ui].uid);
                 WR32(auth_io, AUTH_GID, users[ui].gid);
@@ -656,6 +680,10 @@ void handle_su(void) {
             my_strcmp(users[ui].passhash, hex) == 0) {
             sess->uid = users[ui].uid;
             sess->gid = users[ui].gid;
+            sess->ngroups = users[ui].ngroups;
+            microkit_dbg_puts("\n");
+            for (int gi = 0; gi < users[ui].ngroups; gi++)
+                sess->groups[gi] = users[ui].groups[gi];
             sess->is_root = users[ui].is_root;
             my_strcpy(sess->username, users[ui].username);
             WR32(auth_io, AUTH_UID, users[ui].uid);
@@ -688,6 +716,86 @@ void notified(microkit_channel ch) {
     (void)ch;
 }
 
+
+/* AUTH_CMD_GROUPS: return supplementary groups for session user */
+static void handle_groups(void) {
+    uint32_t token = RD32(auth_io, AUTH_SESSION);
+    session_t *sess = 0;
+    for (int i = 0; i < MAX_SESSIONS; i++) {
+        if (sessions[i].active && sessions[i].token == token) {
+            sess = &sessions[i];
+            break;
+        }
+    }
+    if (!sess) { WR32(auth_io, AUTH_STATUS, (uint32_t)-1); return; }
+
+    /* Write primary gid + supplementary groups into auth_io DATA area */
+    volatile uint32_t *out = (volatile uint32_t *)(auth_io + AUTH_DATA);
+    out[0] = sess->gid;  /* primary group */
+    int total = 1;
+    for (int i = 0; i < sess->ngroups && total < 32; i++) {
+        /* Avoid duplicating primary gid */
+        if (sess->groups[i] != sess->gid) {
+            out[total++] = sess->groups[i];
+        }
+    }
+    WR32(auth_io, AUTH_UID, (uint32_t)total);  /* count of groups */
+    WR32(auth_io, AUTH_STATUS, 0);
+}
+
+/* AUTH_CMD_USERMOD: add user to supplementary group (root only) */
+static void handle_usermod(void) {
+    uint32_t token = RD32(auth_io, AUTH_SESSION);
+    uint32_t target_uid = RD32(auth_io, AUTH_UID);
+    uint32_t new_gid = RD32(auth_io, AUTH_GID);
+
+    /* Verify caller is root */
+    session_t *sess = 0;
+    for (int i = 0; i < MAX_SESSIONS; i++) {
+        if (sessions[i].active && sessions[i].token == token) {
+            sess = &sessions[i];
+            break;
+        }
+    }
+    if (!sess || !sess->is_root) {
+        WR32(auth_io, AUTH_STATUS, (uint32_t)-1);
+        return;
+    }
+
+    /* Find target user */
+    user_entry_t *u = 0;
+    for (int i = 0; i < num_users; i++) {
+        if (users[i].active && users[i].uid == target_uid) {
+            u = &users[i];
+            break;
+        }
+    }
+    if (!u) { WR32(auth_io, AUTH_STATUS, (uint32_t)-1); return; }
+
+    /* Check if already in group */
+    for (int i = 0; i < u->ngroups; i++) {
+        if (u->groups[i] == new_gid) {
+            WR32(auth_io, AUTH_STATUS, 0); /* already member */
+            return;
+        }
+    }
+    if (u->ngroups >= MAX_GROUPS_PER_USER) {
+        WR32(auth_io, AUTH_STATUS, (uint32_t)-2); /* too many groups */
+        return;
+    }
+
+    u->groups[u->ngroups++] = new_gid;
+
+    /* Update active session if any */
+    for (int i = 0; i < MAX_SESSIONS; i++) {
+        if (sessions[i].active && sessions[i].uid == target_uid) {
+            sessions[i].groups[sessions[i].ngroups++] = new_gid;
+        }
+    }
+
+    WR32(auth_io, AUTH_STATUS, 0);
+}
+
 microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
     (void)ch;
     (void)msginfo;
@@ -704,6 +812,8 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
     case AUTH_CMD_LOAD_PASSWD: handle_load_passwd(); break;
     case AUTH_CMD_PASSWD:     handle_passwd_change(); break;
     case AUTH_CMD_SU:         handle_su();          break;
+    case AUTH_CMD_GROUPS:  handle_groups();  break;
+    case AUTH_CMD_USERMOD: handle_usermod(); break;
     default:
         WR32(auth_io, AUTH_STATUS, (uint32_t)-1);
         break;

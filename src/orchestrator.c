@@ -787,6 +787,8 @@ static void cmd_help(void) {
     ser_puts("  ps              Show running processes\n");
     ser_puts("  kill <pid>      Terminate a process\n");
     ser_puts("  shutdown        - halt system\n");
+    ser_puts("  groups          - show group memberships\n");
+    ser_puts("  usermod <uid> <gid> - add user to group (root)\n");
     ser_flush();
 }
 
@@ -829,6 +831,70 @@ static void cmd_ls(void) {
 }
 
 /* ── Command: cat <file> ─────────────────────────────── */
+
+static void auth_groups_sync(void);
+static int auth_usermod_sync(uint32_t target_uid, uint32_t gid);
+static void cmd_groups(void) {
+    auth_groups_sync();
+    int st = (int)RD32(auth_io, AUTH_STATUS);
+    if (st != 0) {
+        ser_puts("Error querying groups\n"); ser_flush();
+        return;
+    }
+    uint32_t count = RD32(auth_io, AUTH_UID);
+    volatile uint32_t *gids = (volatile uint32_t *)(auth_io + AUTH_DATA);
+    for (uint32_t i = 0; i < count; i++) {
+        if (i > 0) ser_puts(" ");
+        ser_put_dec(gids[i]);
+    }
+    ser_puts("\n"); ser_flush();
+}
+
+static void cmd_usermod(const char *args) {
+    /* Parse: usermod <username> <gid> */
+    char uname[32];
+    int i = 0;
+    while (args[i] && args[i] != ' ' && i < 31) { uname[i] = args[i]; i++; }
+    uname[i] = '\0';
+    while (args[i] == ' ') i++;
+
+    /* Parse gid */
+    uint32_t gid = 0;
+    while (args[i] >= '0' && args[i] <= '9') {
+        gid = gid * 10 + (args[i] - '0');
+        i++;
+    }
+    if (gid == 0 && args[i-1] != '0') {
+        ser_puts("Usage: usermod <username> <gid>\n"); ser_flush();
+        return;
+    }
+
+    /* Look up uid by username — ask auth server via whoami-style query */
+    /* For simplicity, find uid from /etc/passwd convention:
+       root=0, user=1000, guest=1001 or use uid directly */
+    /* Actually use the username field in auth_io to look up */
+    /* For now, require uid directly: usermod <uid> <gid> */
+    uint32_t target_uid = 0;
+    int j = 0;
+    while (uname[j] >= '0' && uname[j] <= '9') {
+        target_uid = target_uid * 10 + (uname[j] - '0');
+        j++;
+    }
+    if (j == 0) {
+        ser_puts("Usage: usermod <uid> <gid>\n"); ser_flush();
+        return;
+    }
+
+    int rc = auth_usermod_sync(target_uid, gid);
+    if (rc == 0) {
+        ser_puts("Added uid "); ser_put_dec(target_uid);
+        ser_puts(" to group "); ser_put_dec(gid);
+        ser_puts("\n"); ser_flush();
+    } else {
+        ser_puts("Failed (not root or user not found)\n"); ser_flush();
+    }
+}
+
 static void cmd_cat(const char *filename) {
     /* Permission check */
     if (auth_check_file_sync(filename, ACCESS_READ) != 0) {
@@ -939,6 +1005,24 @@ static void cmd_rm(const char *filename) {
     } else {
         ser_puts("  Deleted.\n"); ser_flush();
     }
+}
+
+
+/* ── Groups query ─────────────────────────────────────── */
+void auth_groups_sync(void) {
+    WR32(auth_io, AUTH_CMD, AUTH_CMD_GROUPS);
+    WR32(auth_io, AUTH_SESSION, current_session);
+    microkit_ppcall(CH_AUTH, microkit_msginfo_new(0, 0));
+}
+
+/* ── Usermod: add user to group ──────────────────────── */
+int auth_usermod_sync(uint32_t target_uid, uint32_t gid) {
+    WR32(auth_io, AUTH_CMD, AUTH_CMD_USERMOD);
+    WR32(auth_io, AUTH_SESSION, current_session);
+    WR32(auth_io, AUTH_UID, target_uid);
+    WR32(auth_io, AUTH_GID, gid);
+    microkit_ppcall(CH_AUTH, microkit_msginfo_new(0, 0));
+    return (int)RD32(auth_io, AUTH_STATUS);
 }
 
 /* ── Command: exec <file.bin> ────────────────────────── */
@@ -1304,6 +1388,10 @@ static void process_command(void) {
         return;
     } else if (str_starts_with(input_line, "kill ")) {
         cmd_kill(input_line + 5);
+    } else if (my_strcmp(input_line, "groups") == 0) {
+        cmd_groups();
+    } else if (str_starts_with(input_line, "usermod ")) {
+        cmd_usermod(input_line + 8);
     } else if (my_strcmp(input_line, "shutdown") == 0) {
         if (auth_check_priv_sync() != 0) {
             ser_puts("Permission denied: root required\n");
