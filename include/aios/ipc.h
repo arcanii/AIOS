@@ -21,6 +21,11 @@
 #define FS_REQLEN    0x010
 #define FS_READLEN   0x014
 #define FS_OFFSET    0x018   /* dedicated field: file offset    */
+#define FS_UID       0x020   /* file owner uid                  */
+#define FS_GID       0x024   /* file owner gid                  */
+#define FS_MODE      0x028   /* file permission mode            */
+#define FS_CREAT_UID 0x02C   /* uid for file creation           */
+#define FS_CREAT_GID 0x030   /* gid for file creation           */   /* dedicated field: file offset    */
 #define FS_LENGTH    0x01C   /* dedicated field: request length */
 #define FS_FILENAME  0x040
 #define FS_DATA      0x200
@@ -40,6 +45,9 @@
 #define FS_CMD_MKDIR    11
 #define FS_CMD_RMDIR    12
 #define FS_CMD_RENAME   13
+#define FS_CMD_CHMOD    14
+#define FS_CMD_CHOWN    15
+#define FS_CMD_STAT_EX  16   /* extended stat: returns uid/gid/mode */
 
 /* fs status codes */
 #define FS_ST_OK        0

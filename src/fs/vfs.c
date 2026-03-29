@@ -181,6 +181,12 @@ static void handle_create(void) {
     }
     if (fd_idx < 0) { reply_status(-1); return; }
 
+    /* Set file owner from creator fields */
+    if (active_fs->set_creator) {
+        uint16_t cuid = (uint16_t)RD32(fs_data, FS_CREAT_UID);
+        uint16_t cgid = (uint16_t)RD32(fs_data, FS_CREAT_GID);
+        active_fs->set_creator(cuid, cgid);
+    }
     int rc = active_fs->create(name, &open_files[fd_idx]);
     if (rc == 0) {
         WR32(fs_data, FS_FD, fd_idx);
@@ -239,6 +245,12 @@ static void handle_sync(void) {
 static void handle_mkdir(void) {
     char name[64];
     get_filename(name, sizeof(name));
+    /* Set directory owner from creator fields */
+    if (active_fs->set_creator) {
+        uint16_t cuid = (uint16_t)RD32(fs_data, FS_CREAT_UID);
+        uint16_t cgid = (uint16_t)RD32(fs_data, FS_CREAT_GID);
+        active_fs->set_creator(cuid, cgid);
+    }
     int rc = active_fs->mkdir ? active_fs->mkdir(name) : -1;
     reply_status(rc);
 }
@@ -249,6 +261,42 @@ static void handle_rmdir(void) {
     int rc = active_fs->rmdir ? active_fs->rmdir(name) : -1;
     reply_status(rc);
 }
+
+
+static void handle_stat_ex(void) {
+    char name[64];
+    get_filename(name, sizeof(name));
+    uint32_t size = 0;
+    uint16_t uid = 0, gid = 0, mode = 0;
+    int rc = -1;
+    if (active_fs->stat_ex)
+        rc = active_fs->stat_ex(name, &size, &uid, &gid, &mode);
+    else if (active_fs->stat)
+        rc = active_fs->stat(name, &size);
+    WR32(fs_data, FS_FILESIZE, size);
+    WR32(fs_data, FS_UID, (uint32_t)uid);
+    WR32(fs_data, FS_GID, (uint32_t)gid);
+    WR32(fs_data, FS_MODE, (uint32_t)mode);
+    reply_status(rc);
+}
+
+static void handle_chmod(void) {
+    char name[64];
+    get_filename(name, sizeof(name));
+    uint16_t mode = (uint16_t)RD32(fs_data, FS_MODE);
+    int rc = (active_fs->chmod) ? active_fs->chmod(name, mode) : -1;
+    reply_status(rc);
+}
+
+static void handle_chown(void) {
+    char name[64];
+    get_filename(name, sizeof(name));
+    uint16_t uid = (uint16_t)RD32(fs_data, FS_UID);
+    uint16_t gid = (uint16_t)RD32(fs_data, FS_GID);
+    int rc = (active_fs->chown) ? active_fs->chown(name, uid, gid) : -1;
+    reply_status(rc);
+}
+
 
 static void handle_rename(void) {
     /* Filenames packed: old\0new\0 at FS_FILENAME */
@@ -311,6 +359,9 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
     case FS_CMD_MKDIR:  handle_mkdir();  break;
     case FS_CMD_RMDIR:  handle_rmdir();  break;
     case FS_CMD_RENAME: handle_rename(); break;
+    case FS_CMD_CHMOD:    handle_chmod();   break;
+    case FS_CMD_CHOWN:    handle_chown();   break;
+    case FS_CMD_STAT_EX:  handle_stat_ex(); break;
     default: reply_status(-1); break;
     }
 

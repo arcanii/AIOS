@@ -35,6 +35,8 @@ uintptr_t auth_store;  /* 64 KiB private credential store — no other PD can ac
 #define AUTH_PASSWORD   0x080
 #define AUTH_PATH       0x0C0
 #define AUTH_MODE       0x100
+/* File permission fields (reuse AUTH_UID/AUTH_GID for file owner) */
+#define AUTH_FILE_MODE_SHIFT 16  /* file mode in upper 16 bits of AUTH_MODE */
 
 #define AUTH_DATA       0x200
 #define AUTH_DATA_MAX   3584
@@ -288,7 +290,11 @@ void handle_logout(void) {
 /* AUTH_CMD_CHECK_FILE: verify file access permission */
 void handle_check_file(void) {
     uint32_t token = RD32(auth_io, AUTH_SESSION);
-    uint32_t mode  = RD32(auth_io, AUTH_MODE);
+    uint32_t raw_mode = RD32(auth_io, AUTH_MODE);
+    uint32_t req_access = raw_mode & 0xFFFF;        /* requested: ACCESS_READ/WRITE/EXEC */
+    uint16_t file_mode  = (uint16_t)(raw_mode >> 16); /* ext2 inode mode */
+    uint32_t file_uid   = RD32(auth_io, AUTH_UID);
+    uint32_t file_gid   = RD32(auth_io, AUTH_GID);
     volatile char *path = (volatile char *)(auth_io + AUTH_PATH);
 
     /* Find session */
@@ -308,16 +314,37 @@ void handle_check_file(void) {
     char p[64]; int pi = 0;
     while (path[pi] && pi < 63) { p[pi] = path[pi]; pi++; }
     p[pi] = '\0';
-
-    /* Check /etc/ prefix — non-root cannot write */
     if (p[0]=='/' && p[1]=='e' && p[2]=='t' && p[3]=='c' && p[4]=='/') {
-        if (mode & ACCESS_WRITE) {
+        if (req_access & ACCESS_WRITE) {
             WR32(auth_io, AUTH_STATUS, (uint32_t)-1);
             return;
         }
     }
 
-    /* Default: allow (ext2 permission enforcement is Phase 3) */
+    /* If no file_mode info (file doesn't exist yet or FAT), allow */
+    if (file_mode == 0) { WR32(auth_io, AUTH_STATUS, 0); return; }
+
+    /* Unix permission check: owner -> group -> other */
+    uint16_t perm_bits;
+    if (sess->uid == file_uid) {
+        perm_bits = (file_mode >> 6) & 0x7;  /* owner bits */
+    } else if (sess->gid == file_gid) {
+        perm_bits = (file_mode >> 3) & 0x7;  /* group bits */
+    } else {
+        perm_bits = file_mode & 0x7;          /* other bits */
+    }
+
+    /* Check requested access against permission bits */
+    if ((req_access & ACCESS_READ)  && !(perm_bits & 0x4)) {
+        WR32(auth_io, AUTH_STATUS, (uint32_t)-1); return;
+    }
+    if ((req_access & ACCESS_WRITE) && !(perm_bits & 0x2)) {
+        WR32(auth_io, AUTH_STATUS, (uint32_t)-1); return;
+    }
+    if ((req_access & ACCESS_EXEC)  && !(perm_bits & 0x1)) {
+        WR32(auth_io, AUTH_STATUS, (uint32_t)-1); return;
+    }
+
     WR32(auth_io, AUTH_STATUS, 0);
 }
 

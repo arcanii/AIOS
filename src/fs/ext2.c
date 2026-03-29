@@ -71,6 +71,8 @@ static __attribute__((unused)) void wr32(uint8_t *p, uint32_t v) {
 
 /* ── Filesystem geometry ──────────────────────────────── */
 static uint32_t block_size;
+static uint16_t ext2_creator_uid = 0;
+static uint16_t ext2_creator_gid = 0;
 static uint32_t log_block_size;
 static uint32_t inodes_per_group;
 static uint32_t blocks_per_group;
@@ -146,6 +148,8 @@ static void write_inode(uint32_t ino, const uint8_t *buf) {
 
 /* Parse inode fields */
 static __attribute__((unused)) uint16_t inode_mode(const uint8_t *ino)  { return rd16(ino + 0); }
+static uint16_t inode_uid(const uint8_t *ino)   { return rd16(ino + 2); }
+static uint16_t inode_gid(const uint8_t *ino)   { return rd16(ino + 24); }
 static uint32_t inode_size_field(const uint8_t *ino) { return rd32(ino + 4); }
 static __attribute__((unused)) uint16_t inode_links(const uint8_t *ino)  { return rd16(ino + 26); }
 static uint32_t inode_blocks(const uint8_t *ino) { return rd32(ino + 28); }
@@ -634,6 +638,8 @@ static int ext2_create(const char *filename, open_file_t *fd) {
     uint8_t inode_buf[128];
     my_memset(inode_buf, 0, 128);
     wr16(inode_buf + 0, 0x81A4);      /* mode: regular file, 0644 */
+    wr16(inode_buf + 2, ext2_creator_uid);  /* i_uid */
+    wr16(inode_buf + 24, ext2_creator_gid); /* i_gid */
     wr32(inode_buf + 4, 0);            /* size = 0 */
     wr16(inode_buf + 26, 1);           /* links_count */
     wr32(inode_buf + 28, block_size / 512); /* blocks in 512-byte units */
@@ -872,6 +878,8 @@ static int ext2_mkdir(const char *dirname) {
     uint8_t inode_buf[128];
     my_memset(inode_buf, 0, 128);
     wr16(inode_buf + 0, 0x41ED);        /* mode: directory, 0755 */
+    wr16(inode_buf + 2, ext2_creator_uid);  /* i_uid */
+    wr16(inode_buf + 24, ext2_creator_gid); /* i_gid */
     wr32(inode_buf + 4, block_size);    /* size = one block */
     wr16(inode_buf + 26, 2);            /* links_count (. and parent) */
     wr32(inode_buf + 28, block_size / 512); /* blocks in 512-byte units */
@@ -973,6 +981,58 @@ static int ext2_rename(const char *oldname, const char *newname) {
     return 0;
 }
 
+
+/* Extended stat: returns size, uid, gid, mode */
+static int ext2_stat_ex(const char *filename, uint32_t *size_out,
+                        uint16_t *uid_out, uint16_t *gid_out, uint16_t *mode_out) {
+    uint32_t parent_ino, ino;
+    char base[64];
+    if (resolve_path(filename, &parent_ino, base, sizeof(base)) != 0) return -1;
+    if (dir_lookup(parent_ino, base, &ino) != 0) return -1;
+    uint8_t inode_buf[128];
+    if (read_inode(ino, inode_buf) != 0) return -1;
+    *size_out = inode_size_field(inode_buf);
+    *uid_out  = inode_uid(inode_buf);
+    *gid_out  = inode_gid(inode_buf);
+    *mode_out = inode_mode(inode_buf);
+    return 0;
+}
+
+/* chmod: change file mode */
+static int ext2_chmod(const char *filename, uint16_t new_mode) {
+    uint32_t parent_ino, ino;
+    char base[64];
+    if (resolve_path(filename, &parent_ino, base, sizeof(base)) != 0) return -1;
+    if (dir_lookup(parent_ino, base, &ino) != 0) return -1;
+    uint8_t inode_buf[128];
+    if (read_inode(ino, inode_buf) != 0) return -1;
+    uint16_t old_mode = rd16(inode_buf + 0);
+    uint16_t updated = (old_mode & 0xF000) | (new_mode & 0x0FFF);
+    wr16(inode_buf + 0, updated);
+    write_inode(ino, inode_buf);
+    return 0;
+}
+
+/* chown: change file owner */
+static int ext2_chown(const char *filename, uint16_t new_uid, uint16_t new_gid) {
+    uint32_t parent_ino, ino;
+    char base[64];
+    if (resolve_path(filename, &parent_ino, base, sizeof(base)) != 0) return -1;
+    if (dir_lookup(parent_ino, base, &ino) != 0) return -1;
+    uint8_t inode_buf[128];
+    if (read_inode(ino, inode_buf) != 0) return -1;
+    wr16(inode_buf + 2, new_uid);
+    wr16(inode_buf + 24, new_gid);
+    write_inode(ino, inode_buf);
+    return 0;
+}
+
+/* Set creator uid/gid for next create/mkdir */
+static void ext2_set_creator(uint16_t uid, uint16_t gid) {
+    ext2_creator_uid = uid;
+    ext2_creator_gid = gid;
+}
+
 const aios_fs_ops_t ext2_ops = {
     .name   = "ext2",
     .mount  = ext2_mount,
@@ -988,6 +1048,10 @@ const aios_fs_ops_t ext2_ops = {
     .mkdir  = ext2_mkdir,
     .rmdir  = ext2_rmdir,
     .rename = ext2_rename,
+    .stat_ex = ext2_stat_ex,
+    .chmod = ext2_chmod,
+    .chown = ext2_chown,
+    .set_creator = ext2_set_creator,
 };
 
 /* ── Probe: check for ext2 magic ──────────────────────── */

@@ -163,6 +163,51 @@ static int fs_delete_sync(const char *filename) {
     return (int)RD32(fs_data, FS_STATUS);
 }
 
+
+/* ── Extended FS helpers ───────────────────────────── */
+static int fs_stat_ex_sync(const char *filename, uint32_t *size,
+                           uint32_t *uid, uint32_t *gid, uint32_t *mode) {
+    volatile char *dst = (volatile char *)(fs_data + FS_FILENAME);
+    int i = 0;
+    while (filename[i] && i < 63) { dst[i] = filename[i]; i++; }
+    dst[i] = '\0';
+    WR32(fs_data, FS_CMD, FS_CMD_STAT_EX);
+    microkit_ppcall(CH_FS, microkit_msginfo_new(0, 0));
+    if (size) *size = RD32(fs_data, FS_FILESIZE);
+    if (uid)  *uid  = RD32(fs_data, FS_UID);
+    if (gid)  *gid  = RD32(fs_data, FS_GID);
+    if (mode) *mode = RD32(fs_data, FS_MODE);
+    return (int)(int32_t)RD32(fs_data, FS_STATUS);
+}
+
+static int fs_chmod_sync(const char *filename, uint32_t mode) {
+    volatile char *dst = (volatile char *)(fs_data + FS_FILENAME);
+    int i = 0;
+    while (filename[i] && i < 63) { dst[i] = filename[i]; i++; }
+    dst[i] = '\0';
+    WR32(fs_data, FS_MODE, mode);
+    WR32(fs_data, FS_CMD, FS_CMD_CHMOD);
+    microkit_ppcall(CH_FS, microkit_msginfo_new(0, 0));
+    return (int)(int32_t)RD32(fs_data, FS_STATUS);
+}
+
+static int fs_chown_sync(const char *filename, uint32_t uid, uint32_t gid) {
+    volatile char *dst = (volatile char *)(fs_data + FS_FILENAME);
+    int i = 0;
+    while (filename[i] && i < 63) { dst[i] = filename[i]; i++; }
+    dst[i] = '\0';
+    WR32(fs_data, FS_UID, uid);
+    WR32(fs_data, FS_GID, gid);
+    WR32(fs_data, FS_CMD, FS_CMD_CHOWN);
+    microkit_ppcall(CH_FS, microkit_msginfo_new(0, 0));
+    return (int)(int32_t)RD32(fs_data, FS_STATUS);
+}
+
+static void fs_set_creator_sync(uint32_t uid, uint32_t gid) {
+    WR32(fs_data, FS_CREAT_UID, uid);
+    WR32(fs_data, FS_CREAT_GID, gid);
+}
+
 static int fs_stat_sync(const char *filename) {
     volatile char *dst = (volatile char *)(fs_data + FS_FILENAME);
     int i = 0;
@@ -356,12 +401,21 @@ static int auth_login_sync(const char *username, const char *password) {
 static void print_prompt(void);
 
 static int auth_check_file_sync(const char *path, uint32_t mode) {
+    /* First get file permissions from filesystem */
+    uint32_t fuid = 0, fgid = 0, fmode = 0;
+    fs_stat_ex_sync(path, 0, &fuid, &fgid, &fmode);
+
     volatile char *dst = (volatile char *)(auth_io + AUTH_PATH);
     int i = 0;
     while (path[i] && i < 63) { dst[i] = path[i]; i++; }
     dst[i] = '\0';
     WR32(auth_io, AUTH_SESSION, current_session);
     WR32(auth_io, AUTH_MODE, mode);
+    /* Pass file's uid/gid/mode to auth for permission check */
+    WR32(auth_io, AUTH_UID, fuid);
+    WR32(auth_io, AUTH_GID, fgid);
+    /* Encode file perms in upper 16 bits of MODE */
+    WR32(auth_io, AUTH_MODE, mode | (fmode << 16));
     WR32(auth_io, AUTH_CMD, AUTH_CMD_CHECK_FILE);
     microkit_ppcall(CH_AUTH, microkit_msginfo_new(0, 0));
     return (int)(int32_t)RD32(auth_io, AUTH_STATUS);
@@ -592,6 +646,125 @@ static void cmd_passwd(const char *args) {
     ser_flush();
 }
 
+
+/* ── Command: chmod <mode> <file> ──────────────────── */
+static void cmd_chmod(const char *args) {
+    /* Parse octal mode and filename */
+    int i = 0;
+    uint32_t mode = 0;
+    while (args[i] == ' ') i++;
+    while (args[i] >= '0' && args[i] <= '7') {
+        mode = (mode << 3) | (args[i] - '0');
+        i++;
+    }
+    while (args[i] == ' ') i++;
+    char fname[64];
+    int j = 0;
+    while (args[i] && j < 63) fname[j++] = args[i++];
+    fname[j] = '\0';
+
+    if (fname[0] == '\0' || mode == 0) {
+        ser_puts("Usage: chmod <octal_mode> <file>\n");
+        ser_flush();
+        return;
+    }
+
+    /* Only owner or root can chmod */
+    if (!current_is_root) {
+        uint32_t fuid = 0;
+        fs_stat_ex_sync(fname, 0, &fuid, 0, 0);
+        if (fuid != current_uid) {
+            ser_puts("Permission denied\n");
+            ser_flush();
+            return;
+        }
+    }
+    int rc = fs_chmod_sync(fname, mode);
+    if (rc == 0) {
+        ser_puts("Mode changed\n");
+    } else {
+        ser_puts("chmod failed\n");
+    }
+    ser_flush();
+}
+
+/* ── Command: chown <uid>:<gid> <file> ─────────────── */
+static void cmd_chown(const char *args) {
+    if (!current_is_root) {
+        ser_puts("Permission denied: root required\n");
+        ser_flush();
+        return;
+    }
+    int i = 0;
+    uint32_t uid = 0, gid = 0;
+    while (args[i] == ' ') i++;
+    while (args[i] >= '0' && args[i] <= '9') {
+        uid = uid * 10 + (args[i] - '0');
+        i++;
+    }
+    if (args[i] == ':') {
+        i++;
+        while (args[i] >= '0' && args[i] <= '9') {
+            gid = gid * 10 + (args[i] - '0');
+            i++;
+        }
+    } else {
+        gid = uid;
+    }
+    while (args[i] == ' ') i++;
+    char fname[64];
+    int j = 0;
+    while (args[i] && j < 63) fname[j++] = args[i++];
+    fname[j] = '\0';
+
+    if (fname[0] == '\0') {
+        ser_puts("Usage: chown <uid>[:<gid>] <file>\n");
+        ser_flush();
+        return;
+    }
+    int rc = fs_chown_sync(fname, uid, gid);
+    if (rc == 0) {
+        ser_puts("Owner changed\n");
+    } else {
+        ser_puts("chown failed\n");
+    }
+    ser_flush();
+}
+
+/* ── Command: stat <file> — show extended info ─────── */
+static void cmd_stat_ex(const char *fname) {
+    uint32_t size = 0, uid = 0, gid = 0, mode = 0;
+    int rc = fs_stat_ex_sync(fname, &size, &uid, &gid, &mode);
+    if (rc != 0) {
+        ser_puts("  File not found\n");
+        ser_flush();
+        return;
+    }
+    /* Print permissions like -rwxrwxrwx */
+    char perms[11];
+    perms[0] = (mode & 0x4000) ? 'd' : '-';
+    perms[1] = (mode & 0x0100) ? 'r' : '-';
+    perms[2] = (mode & 0x0080) ? 'w' : '-';
+    perms[3] = (mode & 0x0040) ? 'x' : '-';
+    perms[4] = (mode & 0x0020) ? 'r' : '-';
+    perms[5] = (mode & 0x0010) ? 'w' : '-';
+    perms[6] = (mode & 0x0008) ? 'x' : '-';
+    perms[7] = (mode & 0x0004) ? 'r' : '-';
+    perms[8] = (mode & 0x0002) ? 'w' : '-';
+    perms[9] = (mode & 0x0001) ? 'x' : '-';
+    perms[10] = '\0';
+    ser_puts("  ");
+    ser_puts(perms);
+    ser_puts("  uid=");
+    ser_put_dec(uid);
+    ser_puts("  gid=");
+    ser_put_dec(gid);
+    ser_puts("  size=");
+    ser_put_dec(size);
+    ser_puts("\n");
+    ser_flush();
+}
+
 static void cmd_help(void) {
     ser_puts("Commands:\n");
     ser_puts("  help            - this message\n");
@@ -607,6 +780,9 @@ static void cmd_help(void) {
     ser_puts("  su [user]           - switch user\n");
     ser_puts("  passwd [user]       - change password\n");
     ser_puts("  useradd <u> <p> <uid> - add user (root)\n");
+    ser_puts("  chmod <mode> <file>   - change permissions\n");
+    ser_puts("  chown <uid:gid> <file> - change owner (root)\n");
+    ser_puts("  stat <file>           - show file details\n");
     ser_puts("  logout              - log out\n");
     ser_puts("  ps              Show running processes\n");
     ser_puts("  kill <pid>      Terminate a process\n");
@@ -654,6 +830,11 @@ static void cmd_ls(void) {
 
 /* ── Command: cat <file> ─────────────────────────────── */
 static void cmd_cat(const char *filename) {
+    /* Permission check */
+    if (auth_check_file_sync(filename, ACCESS_READ) != 0) {
+        ser_puts("Permission denied\n"); ser_flush();
+        return;
+    }
     ser_puts("Opening ");
     ser_puts(filename);
     ser_puts("...\n");
@@ -707,8 +888,17 @@ static void cmd_write(const char *args) {
         return;
     }
 
+    /* Permission check */
+    if (auth_check_file_sync(fname, ACCESS_WRITE) != 0) {
+        ser_puts("Permission denied\n"); ser_flush();
+        return;
+    }
+
     /* Delete existing file if present */
     fs_delete_sync(fname);
+
+    /* Set creator uid/gid AFTER delete (delete clobbers shared memory) */
+    fs_set_creator_sync(current_uid, current_gid);
 
     /* Create new file */
     int st = fs_create_sync(fname);
@@ -738,6 +928,11 @@ static void cmd_write(const char *args) {
 
 /* ── Command: rm <file> ──────────────────────────────── */
 static void cmd_rm(const char *filename) {
+    /* Permission check */
+    if (auth_check_file_sync(filename, ACCESS_WRITE) != 0) {
+        ser_puts("Permission denied\n"); ser_flush();
+        return;
+    }
     int st = fs_delete_sync(filename);
     if (st != 0) {
         ser_puts("  File not found.\n"); ser_flush();
@@ -1087,6 +1282,12 @@ static void process_command(void) {
         ser_put_dec(current_uid);
         ser_puts(")\n");
         ser_flush();
+    } else if (str_starts_with(input_line, "chmod ")) {
+        cmd_chmod(input_line + 6);
+    } else if (str_starts_with(input_line, "chown ")) {
+        cmd_chown(input_line + 6);
+    } else if (str_starts_with(input_line, "stat ")) {
+        cmd_stat_ex(input_line + 5);
     } else if (str_starts_with(input_line, "useradd ")) {
         cmd_useradd(input_line + 8);
     } else if (str_starts_with(input_line, "passwd")) {
@@ -1146,9 +1347,12 @@ static void handle_login_input(void) {
                 login_buf[login_pos] = '\0';
                 ser_puts("\n");
                 if (login_pos > 0) {
+                    /* Trim leading spaces */
+                    int si = 0;
+                    while (login_buf[si] == ' ' && si < login_pos) si++;
                     int i = 0;
-                    while (login_buf[i] && i < 31) {
-                        login_username[i] = login_buf[i]; i++;
+                    while (login_buf[si] && i < 31) {
+                        login_username[i] = login_buf[si]; i++; si++;
                     }
                     login_username[i] = '\0';
                     auth_state = AUTH_LOGIN_PASS;
@@ -1350,6 +1554,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
             result = -13; /* EACCES */
             break;
         }
+        fs_set_creator_sync(current_uid, current_gid);
         int st = fs_open_sync(fname);
         if (st != 0 && (flags & 0x0040)) {
             /* O_CREAT: file not found, create it */
@@ -1483,6 +1688,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
             result = -13; /* EACCES */
             break;
         }
+        fs_set_creator_sync(current_uid, current_gid);
         result = fs_mkdir_sync(dname);
         break;
     }
