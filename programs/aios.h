@@ -62,6 +62,10 @@ typedef struct {
     int   (*dup2)(int oldfd, int newfd);
     int   (*pipe)(int pipefd[2]);
     long  (*time)(void);
+    /* Process management */
+    int   (*spawn)(const char *path, const char *args);
+    int   (*waitpid)(int pid, int *status);
+    int   (*kill_proc)(int pid);
 } aios_syscalls_t;
 
 /* Global syscall pointer — set by _start */
@@ -80,6 +84,9 @@ static aios_syscalls_t *sys;
 #define dup2(a,b)      sys->dup2(a,b)
 #define pipe(fds)      sys->pipe(fds)
 #define time()         sys->time()
+#define spawn(p,a)     sys->spawn(p,a)
+#define waitpid(p,s)   sys->waitpid(p,s)
+#define kill_proc(p)   sys->kill_proc(p)
 
 /* Access mode constants */
 #define F_OK 0

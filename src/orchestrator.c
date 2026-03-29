@@ -1076,6 +1076,94 @@ int auth_usermod_sync(uint32_t target_uid, uint32_t gid) {
 }
 
 /* ── Command: exec <file.bin> ────────────────────────── */
+
+/* ── Wait/spawn infrastructure ────────────────────────── */
+#define MAX_WAIT_QUEUE 8
+typedef struct {
+    int active;
+    int waiting_slot;      /* slot of the parent that is blocked */
+    uint32_t wait_pid;     /* PID the parent is waiting for (0 = any child) */
+} wait_entry_t;
+__attribute__((unused)) static wait_entry_t wait_queue[MAX_WAIT_QUEUE];
+
+/* Completed child exit codes (ring buffer for waitpid) */
+#define MAX_EXIT_QUEUE 16
+typedef struct {
+    int active;
+    uint32_t pid;
+    uint32_t parent_pid;
+    int32_t exit_code;
+} exit_record_t;
+static exit_record_t exit_queue[MAX_EXIT_QUEUE];
+
+/* Internal: spawn a program into a new slot, return slot or -1 */
+static int internal_spawn(const char *filename, const char *args,
+                          uint32_t parent_pid, int is_foreground) {
+    int st = fs_open_sync(filename);
+    if (st != 0) return -1;
+    uint32_t fd = RD32(fs_data, FS_FD);
+    uint32_t size = RD32(fs_data, FS_FILESIZE);
+    if (size == 0 || size > 0x100000) {
+        fs_close_sync(fd);
+        return -1;
+    }
+
+    int slot = find_free_slot();
+    if (slot < 0) {
+        fs_close_sync(fd);
+        return -1;
+    }
+
+    uintptr_t cur_sio = sbx_io[slot];
+    uintptr_t cur_scode = sbx_code[slot];
+    volatile uint8_t *code_dst = (volatile uint8_t *)cur_scode;
+    uint32_t offset = 0;
+    while (offset < size) {
+        uint32_t chunk = size - offset;
+        if (chunk > FS_DATA_MAX) chunk = FS_DATA_MAX;
+        st = fs_read_sync(fd, offset, chunk);
+        if (st != 0 && st != 3) break;
+        uint32_t got = RD32(fs_data, FS_LENGTH);
+        if (got == 0) break;
+        volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
+        for (uint32_t j = 0; j < got; j++) code_dst[offset + j] = src[j];
+        offset += got;
+    }
+    fs_close_sync(fd);
+
+    /* Copy args */
+    {
+        volatile char *adst = (volatile char *)(cur_sio + SBX_ARGS);
+        int ai = 0;
+        if (args) {
+            while (args[ai] && ai < SBX_ARGS_MAX - 1) {
+                adst[ai] = args[ai]; ai++;
+            }
+        }
+        adst[ai] = '\0';
+    }
+
+    /* Start the sandbox */
+    WR32(cur_sio, SBX_CODE_SIZE, offset);
+    WR32(cur_sio, SBX_CMD, SBX_CMD_RUN);
+    proctab[slot].in_use = 1;
+    proctab[slot].owner_uid = current_uid;
+    proctab[slot].pid = next_pid++;
+    proctab[slot].parent_pid = parent_pid;
+    proctab[slot].loaded_bytes = offset;
+    proctab[slot].foreground = is_foreground;
+    /* Copy name */
+    {
+        int ni = 0;
+        while (filename[ni] && ni < 63) {
+            proctab[slot].name[ni] = filename[ni]; ni++;
+        }
+        proctab[slot].name[ni] = '\0';
+    }
+    microkit_notify(sbx_channel[slot]);
+    return slot;
+}
+
 static void cmd_exec(const char *filename) {
     /* Check for background execution */
     int background = 0;
@@ -1638,6 +1726,16 @@ static void handle_exec_done(int slot) {
         ser_put_dec(exit_code);
         ser_puts(")\n");
     }
+        /* Record exit for waitpid */
+    for (int ei = 0; ei < MAX_EXIT_QUEUE; ei++) {
+        if (!exit_queue[ei].active) {
+            exit_queue[ei].active = 1;
+            exit_queue[ei].pid = proctab[slot].pid;
+            exit_queue[ei].parent_pid = proctab[slot].parent_pid;
+            exit_queue[ei].exit_code = (int32_t)exit_code;
+            break;
+        }
+    }
     proctab[slot].in_use = 0;
 }
 
@@ -2141,6 +2239,89 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         seL4_SetMR(1, (seL4_Word)(rfd + PIPE_FD_BASE));
         seL4_SetMR(2, (seL4_Word)(wfd + PIPE_FD_BASE));
         result = 0;
+        break;
+    }
+
+    case SYS_SPAWN: {
+        /* MR1 = flags (bit 0: background) */
+        /* Path at sio+0x200, args at sio+0x600 */
+        volatile char *path = (volatile char *)(sio + 0x200);
+        volatile char *spawn_args = (volatile char *)(sio + 0x600);
+        uint32_t flags = (uint32_t)seL4_GetMR(1);
+        (void)flags;  /* TODO: use for background spawn */
+        char fname[256], sargs[256];
+        int i = 0;
+        while (path[i] && i < 255) { fname[i] = path[i]; i++; }
+        fname[i] = '\0';
+        i = 0;
+        while (spawn_args[i] && i < 255) { sargs[i] = spawn_args[i]; i++; }
+        sargs[i] = '\0';
+
+        uint32_t ppid = proctab[slot].pid;
+        int child_slot = internal_spawn(fname, sargs, ppid, 0 /* always bg for spawned */);
+        if (child_slot < 0) {
+            result = -1;
+        } else {
+            result = (int64_t)proctab[child_slot].pid;
+        }
+        break;
+    }
+    case SYS_WAITPID: {
+        /* MR1 = pid to wait for (0 = any child) */
+        uint32_t wait_pid = (uint32_t)seL4_GetMR(1);
+        uint32_t my_pid = proctab[slot].pid;
+
+        /* Check exit_queue for already-exited child */
+        int found = 0;
+        for (int i = 0; i < MAX_EXIT_QUEUE; i++) {
+            if (exit_queue[i].active && exit_queue[i].parent_pid == my_pid) {
+                if (wait_pid == 0 || exit_queue[i].pid == wait_pid) {
+                    result = (int64_t)exit_queue[i].pid;
+                    seL4_SetMR(1, (seL4_Word)exit_queue[i].exit_code);
+                    exit_queue[i].active = 0;
+                    found = 1;
+                    break;
+                }
+            }
+        }
+        if (!found) {
+            /* Child hasn't exited yet — return EAGAIN so sandbox can poll */
+            result = -2;  /* -2 = EAGAIN, try again later */
+            seL4_SetMR(1, 0);
+        }
+        break;
+    }
+    case SYS_KILL_PROC: {
+        /* MR1 = target PID */
+        uint32_t target_pid = (uint32_t)seL4_GetMR(1);
+        int found = 0;
+        for (int s = 0; s < NUM_SANDBOXES; s++) {
+            if (proctab[s].in_use && proctab[s].pid == target_pid) {
+                /* Permission check */
+                if (proctab[s].owner_uid != current_uid && current_uid != 0) {
+                    result = -1;  /* EPERM */
+                    found = 1;
+                    break;
+                }
+                microkit_pd_stop(s);
+                microkit_pd_restart(s, SBX_ENTRY_POINT);
+                /* Record exit for waitpid */
+                for (int ei = 0; ei < MAX_EXIT_QUEUE; ei++) {
+                    if (!exit_queue[ei].active) {
+                        exit_queue[ei].active = 1;
+                        exit_queue[ei].pid = proctab[s].pid;
+                        exit_queue[ei].parent_pid = proctab[s].parent_pid;
+                        exit_queue[ei].exit_code = -9;  /* killed */
+                        break;
+                    }
+                }
+                proctab[s].in_use = 0;
+                result = 0;
+                found = 1;
+                break;
+            }
+        }
+        if (!found) result = -1;  /* ESRCH */
         break;
     }
     case SYS_TIME: {

@@ -59,5 +59,8 @@
 #define SYS_TRUNCATE   61
 #define SYS_PIPE       62
 #define SYS_TIME       63
+#define SYS_SPAWN      64
+#define SYS_WAITPID    65
+#define SYS_KILL_PROC  66
 
 #endif

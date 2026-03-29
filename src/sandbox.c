@@ -306,6 +306,54 @@ static void sbx_putc_direct(char c) {
  * This gives them access to libc-like functions without linking.
  */
 
+
+/* ── Process spawn/wait syscalls ─────────────────────── */
+static int sbx_spawn(const char *path, const char *args) {
+    /* Copy path to sio+0x200 */
+    volatile char *dst = (volatile char *)(sandbox_io + 0x200);
+    int i = 0;
+    while (path[i] && i < 255) { dst[i] = path[i]; i++; }
+    dst[i] = '\0';
+    /* Copy args to sio+0x600 */
+    volatile char *adst = (volatile char *)(sandbox_io + 0x600);
+    i = 0;
+    if (args) {
+        while (args[i] && i < 255) { adst[i] = args[i]; i++; }
+    }
+    adst[i] = '\0';
+    seL4_SetMR(0, SYS_SPAWN);
+    seL4_SetMR(1, 0);  /* flags: 0 = default */
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 2));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_waitpid(int pid, int *status) {
+    /* Poll with sleep — orchestrator returns -2 (EAGAIN) if child not done */
+    for (int attempt = 0; attempt < 600; attempt++) {  /* ~60s timeout */
+        seL4_SetMR(0, SYS_WAITPID);
+        seL4_SetMR(1, (seL4_Word)pid);
+        microkit_ppcall(my_channel, microkit_msginfo_new(0, 2));
+        int rpid = (int)seL4_GetMR(0);
+        if (rpid != -2) {
+            if (status) *status = (int)seL4_GetMR(1);
+            return rpid;
+        }
+        /* Child not done yet — sleep 100ms then retry */
+        seL4_SetMR(0, SYS_SLEEP);
+        seL4_SetMR(1, 100);
+        microkit_ppcall(my_channel, microkit_msginfo_new(0, 2));
+    }
+    if (status) *status = -1;
+    return -1;  /* timeout */
+}
+
+static int sbx_kill_proc(int pid) {
+    seL4_SetMR(0, SYS_KILL_PROC);
+    seL4_SetMR(1, (seL4_Word)pid);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 2));
+    return (int)seL4_GetMR(0);
+}
+
 /* ── POSIX identity syscalls ─────────────────────────── */
 static int sbx_getuid(void) {
     seL4_SetMR(0, SYS_GETUID);
@@ -443,6 +491,10 @@ typedef struct {
     int   (*dup2)(int oldfd, int newfd);
     int   (*pipe)(int pipefd[2]);
     long  (*time)(void);
+    /* Process management */
+    int   (*spawn)(const char *path, const char *args);
+    int   (*waitpid)(int pid, int *status);
+    int   (*kill_proc)(int pid);
 } aios_syscalls_t;
 typedef int (*program_entry_t)(aios_syscalls_t *sys);
 
@@ -596,6 +648,10 @@ static void init_syscalls(void) {
     syscalls.dup2       = sbx_dup2;
     syscalls.pipe       = sbx_pipe;
     syscalls.time       = sbx_time;
+    /* Process management */
+    syscalls.spawn      = sbx_spawn;
+    syscalls.waitpid    = sbx_waitpid;
+    syscalls.kill_proc  = sbx_kill_proc;
 }
 
 /* ── Execute code ──────────────────────────────────── */
