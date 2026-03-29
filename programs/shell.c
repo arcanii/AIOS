@@ -126,9 +126,12 @@ static void cmd_ls(void) {
     struct dirent *ent;
     while ((ent = readdir(d)) != NULL) {
         print(ent->d_name);
-        printc('\t');
+        int len = 0;
+        const char *p = ent->d_name;
+        while (*p++) len++;
+        for (int pad = len; pad < 18; pad++) printc(' ');
         print_dec(ent->d_size);
-        printc('\n');
+        print(" bytes\n");
     }
     closedir(d);
 }
