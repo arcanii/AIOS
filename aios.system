@@ -35,6 +35,7 @@
 
     <!-- ── Serial driver (priority 254) ── -->
     <memory_region name="auth_io" size="0x1000" />
+    <memory_region name="auth_store" size="0x10000" />
 
     <protection_domain name="serial_driver" priority="254">
         <program_image path="serial_driver.elf" />
@@ -224,6 +225,8 @@
         <program_image path="auth_server.elf" />
         <map mr="auth_io" vaddr="0x30000000" perms="rw" cached="false"
              setvar_vaddr="auth_io" />
+        <map mr="auth_store" vaddr="0x30100000" perms="rw" cached="true"
+             setvar_vaddr="auth_store" />
     </protection_domain>
 
     <protection_domain name="net_driver" priority="230">

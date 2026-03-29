@@ -23,6 +23,7 @@
 
 /* ── Memory region ─────────────────────────────────── */
 uintptr_t auth_io;
+uintptr_t auth_store;  /* 64 KiB private credential store — no other PD can access */
 
 /* ── IPC layout ────────────────────────────────────── */
 #define AUTH_CMD        0x000

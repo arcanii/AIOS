@@ -257,6 +257,8 @@ static char cwd[256] = "/";
 static char exec_args[256];
 
 /* ── Command: kill ────────────────────────────────────── */
+static int auth_check_kill_sync(uint32_t target_uid);
+static int auth_check_file_sync(const char *path, uint32_t mode);
 static void cmd_kill(const char *arg) {
     /* Parse PID */
     unsigned int pid = 0;
@@ -272,6 +274,12 @@ static void cmd_kill(const char *arg) {
     /* Find slot with matching PID */
     for (int s = 0; s < NUM_SANDBOXES; s++) {
         if (proctab[s].in_use && proctab[s].pid == pid) {
+            /* Permission check: owner or root */
+            if (auth_check_kill_sync(proctab[s].owner_uid) != 0) {
+                ser_puts("  Permission denied: not owner\n");
+                ser_flush();
+                return;
+            }
             microkit_pd_stop(s);
             ser_puts("  Killed PID ");
             ser_put_dec(pid);
@@ -340,6 +348,19 @@ static int auth_login_sync(const char *username, const char *password) {
 }
 
 static void print_prompt(void);
+
+static int auth_check_file_sync(const char *path, uint32_t mode) {
+    volatile char *dst = (volatile char *)(auth_io + AUTH_PATH);
+    int i = 0;
+    while (path[i] && i < 63) { dst[i] = path[i]; i++; }
+    dst[i] = '\0';
+    WR32(auth_io, AUTH_SESSION, current_session);
+    WR32(auth_io, AUTH_MODE, mode);
+    WR32(auth_io, AUTH_CMD, AUTH_CMD_CHECK_FILE);
+    microkit_ppcall(CH_AUTH, microkit_msginfo_new(0, 0));
+    return (int)(int32_t)RD32(auth_io, AUTH_STATUS);
+}
+
 static int __attribute__((unused)) auth_check_priv_sync(void) {
     WR32(auth_io, AUTH_SESSION, current_session);
     WR32(auth_io, AUTH_CMD, AUTH_CMD_CHECK_PRIV);
@@ -925,6 +946,9 @@ static void handle_login_input(void) {
                     auth_state = AUTH_LOGIN_PASS;
                     ser_puts("Password: ");
                     ser_flush();
+                } else {
+                    ser_puts("Login: ");
+                    ser_flush();
                 }
                 login_pos = 0;
             } else if (c == 127 || c == '\b') {
@@ -1082,6 +1106,13 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         int i = 0;
         while (path[i] && i < 255) { fname[i] = path[i]; i++; }
         fname[i] = '\0';
+        /* Permission check */
+        uint32_t open_mode = ACCESS_READ;
+        if (flags & (0x0001 | 0x0002)) open_mode |= ACCESS_WRITE;
+        if (auth_check_file_sync(fname, open_mode) != 0) {
+            result = -13; /* EACCES */
+            break;
+        }
         int st = fs_open_sync(fname);
         if (st != 0 && (flags & 0x0040)) {
             /* O_CREAT: file not found, create it */
@@ -1134,6 +1165,11 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         int i = 0;
         while (path[i] && i < 255) { fname[i] = path[i]; i++; }
         fname[i] = '\0';
+        /* Permission check */
+        if (auth_check_file_sync(fname, ACCESS_WRITE) != 0) {
+            result = -13; /* EACCES */
+            break;
+        }
         int st = fs_delete_sync(fname);
         result = (st == 0) ? 0 : -1;
         break;
@@ -1205,6 +1241,11 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         int i = 0;
         while (path[i] && i < 255) { dname[i] = path[i]; i++; }
         dname[i] = '\0';
+        /* Permission check */
+        if (auth_check_file_sync(dname, ACCESS_WRITE) != 0) {
+            result = -13; /* EACCES */
+            break;
+        }
         result = fs_mkdir_sync(dname);
         break;
     }
@@ -1214,6 +1255,11 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         int i = 0;
         while (path[i] && i < 255) { dname[i] = path[i]; i++; }
         dname[i] = '\0';
+        /* Permission check */
+        if (auth_check_file_sync(dname, ACCESS_WRITE) != 0) {
+            result = -13; /* EACCES */
+            break;
+        }
         result = fs_rmdir_sync(dname);
         break;
     }
