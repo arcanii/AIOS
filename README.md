@@ -4,6 +4,8 @@ security, and AI-native development. External AI (Claude, etc.) generates and
 reviews code, which is compiled and deployed to AIOS. The long-term goal is
 self-hosted development within AIOS itself. This is also a study on AI coding using Claude (Currently : Opus 4.6).
 
+Security is also a topic theme : Un-hackable, Un-malwareable, Un-virusable. What can we do to make it better?
+
 It currently is only tested in QEMU on aarch64 a53 
 
 ## Hardware Targets
@@ -22,9 +24,6 @@ Prerequisites:
   - QEMU (qemu-system-aarch64)
   - mtools (mformat, mcopy) - brew install mtools or apt install mtools
 
-## Architecture
-(see docs/ARCHITECTURE.md)
-
 ## AIOS Development Roadmap 
 (see docs/ROADMAP.md)
 
@@ -35,6 +34,9 @@ Prerequisites:
 
 ## Architecture
 (see docs/ARCHITECTURE.md)
+
+TODO : Strong PD Auth_model (unhackable :smirk:) - the Authentican system is a PD, and can be multiple - to allow for layered authentican (too much? Sounded cool :unamused:)
+
 
 ```
 ┌─────────────────────────────────────────────────────┐ │ User Space │
