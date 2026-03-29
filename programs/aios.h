@@ -49,6 +49,7 @@ typedef struct {
     int   (*getc)(void);
     void  (*puts_direct)(const char *s);
     void  (*putc_direct)(char c);
+    int   (*sleep)(unsigned int seconds);
 } aios_syscalls_t;
 
 /* Global syscall pointer — set by _start */
@@ -58,6 +59,7 @@ static aios_syscalls_t *sys;
 #define puts(s)         sys->puts(s)
 #define putc(c)         sys->putc(c)
 #define put_dec(n)      sys->put_dec(n)
+#define sleep(s)        sys->sleep(s)
 #define put_hex(n)      sys->put_hex(n)
 
 /* Memory macros */

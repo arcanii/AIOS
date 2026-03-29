@@ -348,6 +348,7 @@ typedef struct {
     int   (*getc)(void);
     void  (*puts_direct)(const char *s);
     void  (*putc_direct)(char c);
+    int   (*sleep)(unsigned int seconds);
 } aios_syscalls_t;
 typedef int (*program_entry_t)(aios_syscalls_t *sys);
 
@@ -446,6 +447,13 @@ static int sbx_exec(const char *path, const char *args) {
 }
 
 
+static int sbx_sleep(unsigned int seconds) {
+    /* Busy-wait locally — don't block orchestrator */
+    for (volatile unsigned int s = 0; s < seconds; s++)
+        for (volatile unsigned int i = 0; i < 50000000; i++);
+    return 0;
+}
+
 static void init_syscalls(void) {
     syscalls.puts    = sbx_puts;
     syscalls.putc    = sbx_putc;
@@ -481,6 +489,7 @@ static void init_syscalls(void) {
     syscalls.getc        = sbx_getc;
     syscalls.puts_direct = sbx_puts_direct;
     syscalls.putc_direct = sbx_putc_direct;
+    syscalls.sleep       = sbx_sleep;
 }
 
 /* ── Execute code ──────────────────────────────────── */

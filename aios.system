@@ -99,7 +99,7 @@
 
         <!-- ── Child sandbox PD 0 ── -->
         <protection_domain name="sbx0" priority="150" id="0"
-                           budget="5000" period="10000">
+                           budget="5000" period="10000" cpu="1">
             <program_image path="sandbox.elf" />
             <map mr="sbx0_io"   vaddr="0x20000000" perms="rw" cached="false"
                  setvar_vaddr="sandbox_io" />
@@ -111,7 +111,7 @@
 
         <!-- ── Child sandbox PD 1 ── -->
         <protection_domain name="sbx1" priority="150" id="1"
-                           budget="5000" period="10000">
+                           budget="5000" period="10000" cpu="1">
             <program_image path="sandbox.elf" />
             <map mr="sbx1_io"   vaddr="0x20000000" perms="rw" cached="false"
                  setvar_vaddr="sandbox_io" />
@@ -123,7 +123,7 @@
 
         <!-- ── Child sandbox PD 2 ── -->
         <protection_domain name="sbx2" priority="150" id="2"
-                           budget="5000" period="10000">
+                           budget="5000" period="10000" cpu="2">
             <program_image path="sandbox.elf" />
             <map mr="sbx2_io"   vaddr="0x20000000" perms="rw" cached="false"
                  setvar_vaddr="sandbox_io" />
@@ -135,7 +135,7 @@
 
         <!-- ── Child sandbox PD 3 ── -->
         <protection_domain name="sbx3" priority="150" id="3"
-                           budget="5000" period="10000">
+                           budget="5000" period="10000" cpu="3">
             <program_image path="sandbox.elf" />
             <map mr="sbx3_io"   vaddr="0x20000000" perms="rw" cached="false"
                  setvar_vaddr="sandbox_io" />

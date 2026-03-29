@@ -238,6 +238,40 @@ static uint32_t exec_loaded_bytes = 0;
 static char cwd[256] = "/";
 static char exec_args[256];
 
+/* ── Command: kill ────────────────────────────────────── */
+static void cmd_kill(const char *arg) {
+    /* Parse PID */
+    unsigned int pid = 0;
+    int i = 0;
+    while (arg[i] >= '0' && arg[i] <= '9') {
+        pid = pid * 10 + (arg[i] - '0');
+        i++;
+    }
+    if (pid == 0) {
+        ser_puts("  Usage: kill <pid>\n");
+        return;
+    }
+    /* Find slot with matching PID */
+    for (int s = 0; s < NUM_SANDBOXES; s++) {
+        if (proctab[s].in_use && proctab[s].pid == pid) {
+            microkit_pd_stop(s);
+            ser_puts("  Killed PID ");
+            ser_put_dec(pid);
+            ser_puts(" (");
+            ser_puts(proctab[s].name);
+            ser_puts(")\n");
+            if (proctab[s].foreground) {
+                orch_state = RUNNING;
+            }
+            proctab[s].in_use = 0;
+            return;
+        }
+    }
+    ser_puts("  No process with PID ");
+    ser_put_dec(pid);
+    ser_puts("\n");
+}
+
 /* ── Command: ps ─────────────────────────────────────── */
 static void cmd_ps(void) {
     ser_puts("  SLOT  PID  NAME\n");
@@ -272,6 +306,7 @@ static void cmd_help(void) {
     ser_puts("  exec <file.bin> - run a sandbox program\n");
     ser_puts("  info            - system info\n");
     ser_puts("  ps              Show running processes\n");
+    ser_puts("  kill <pid>      Terminate a process\n");
     ser_puts("  shutdown        - halt system\n");
     ser_flush();
 }
@@ -691,6 +726,18 @@ static void process_command(void) {
     } else if (str_starts_with(input_line, "exec ")) {
         char *p = &input_line[5];
         while (*p == ' ') p++;
+        /* Check for trailing & (background) */
+        int bgflag = 0;
+        {
+            int len = my_strlen(p);
+            while (len > 0 && p[len-1] == ' ') len--;
+            if (len > 0 && p[len-1] == '&') {
+                p[len-1] = '\0';
+                bgflag = 1;
+                len--;
+                while (len > 0 && p[len-1] == ' ') { p[len-1] = '\0'; len--; }
+            }
+        }
         /* Split "PROG.BIN arg1 arg2..." */
         char exec_file[64];
         int ei = 0;
@@ -702,6 +749,11 @@ static void process_command(void) {
         int ai = 0;
         while (astart[ai] && ai < (int)(SBX_ARGS_MAX - 1)) { exec_args[ai] = astart[ai]; ai++; }
         exec_args[ai] = '\0';
+        /* Append & back to filename if background */
+        if (bgflag) {
+            int fl = my_strlen(exec_file);
+            if (fl < 62) { exec_file[fl] = ' '; exec_file[fl+1] = '&'; exec_file[fl+2] = '\0'; }
+        }
         if (exec_file[0]) {
             cmd_exec(exec_file);
             input_pos = 0;
@@ -726,6 +778,8 @@ static void process_command(void) {
         cmd_info();
     } else if (my_strcmp(input_line, "ps") == 0) {
         cmd_ps();
+    } else if (str_starts_with(input_line, "kill ")) {
+        cmd_kill(input_line + 5);
     } else if (my_strcmp(input_line, "shutdown") == 0) {
         cmd_shutdown();
     } else {
