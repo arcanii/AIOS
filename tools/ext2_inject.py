@@ -128,9 +128,22 @@ def inject(img_path, files):
         # i_blocks = number of 512-byte sectors
         total_sectors = len(blocks_list) * (block_size // 512)
         wr32(inode, 32, total_sectors)  # i_blocks (in 512-byte units)
-        # Direct block pointers at offset 40
+        # Direct block pointers at offset 40 (first 12)
         for i, blk in enumerate(blocks_list[:12]):
             wr32(inode, 40 + i * 4, blk)
+        # Indirect block pointer if >12 blocks
+        if len(blocks_list) > 12:
+            ind_blk = alloc_block()
+            wr32(inode, 40 + 12 * 4, ind_blk)  # i_block[12] = indirect
+            # Write indirect block: array of uint32 block pointers
+            ind_data = bytearray(block_size)
+            for j, blk in enumerate(blocks_list[12:]):
+                wr32(ind_data, j * 4, blk)
+            blk_off = ind_blk * block_size
+            data[blk_off:blk_off + block_size] = ind_data
+            # Update i_blocks to include the indirect block itself
+            total_sectors = (len(blocks_list) + 1) * (block_size // 512)
+            wr32(inode, 32, total_sectors)
         data[off:off + inode_size] = inode
 
     def add_dir_entry(dir_ino, name, file_ino, file_type):

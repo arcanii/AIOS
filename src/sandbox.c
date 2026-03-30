@@ -247,7 +247,7 @@ static int sbx_filesize(void) {
 
 /* ── Additional POSIX syscalls ─────────────────────── */
 
-static uint32_t last_stat_uid, last_stat_gid, last_stat_mode;
+static uint32_t last_stat_uid, last_stat_gid, last_stat_mode, last_stat_mtime;
 
 static int sbx_stat(const char *path, unsigned long *size_out) {
     volatile char *dst = (volatile char *)(sandbox_io + 0x200);
@@ -262,14 +262,16 @@ static int sbx_stat(const char *path, unsigned long *size_out) {
         last_stat_uid  = (uint32_t)seL4_GetMR(2);
         last_stat_gid  = (uint32_t)seL4_GetMR(3);
         last_stat_mode = (uint32_t)seL4_GetMR(4);
+        last_stat_mtime = (uint32_t)seL4_GetMR(5);
     }
     return r;
 }
 
-static int sbx_stat_ex(unsigned int *uid, unsigned int *gid, unsigned int *mode) {
+static int sbx_stat_ex(unsigned int *uid, unsigned int *gid, unsigned int *mode, unsigned int *mtime) {
     if (uid)  *uid  = last_stat_uid;
     if (gid)  *gid  = last_stat_gid;
     if (mode) *mode = last_stat_mode;
+    if (mtime) *mtime = last_stat_mtime;
     return 0;
 }
 
@@ -543,7 +545,7 @@ typedef struct {
     int   (*filesize)(void);
     /* Extended POSIX */
     int   (*stat_file)(const char *path, unsigned long *size_out);
-    int   (*stat_ex)(unsigned int *uid, unsigned int *gid, unsigned int *mode);
+    int   (*stat_ex)(unsigned int *uid, unsigned int *gid, unsigned int *mode, unsigned int *mtime);
     int   (*lseek)(int fd, long offset, int whence);
     int   (*getcwd)(char *buf, unsigned long size);
     int   (*chdir)(const char *path);

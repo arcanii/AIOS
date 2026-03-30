@@ -273,17 +273,18 @@ static void handle_rmdir(void) {
 static void handle_stat_ex(void) {
     char name[64];
     get_filename(name, sizeof(name));
-    uint32_t size = 0;
+    uint32_t size = 0, mtime = 0;
     uint16_t uid = 0, gid = 0, mode = 0;
     int rc = -1;
     if (active_fs->stat_ex)
-        rc = active_fs->stat_ex(name, &size, &uid, &gid, &mode);
+        rc = active_fs->stat_ex(name, &size, &uid, &gid, &mode, &mtime);
     else if (active_fs->stat)
         rc = active_fs->stat(name, &size);
     WR32(fs_data, FS_FILESIZE, size);
     WR32(fs_data, FS_UID, (uint32_t)uid);
     WR32(fs_data, FS_GID, (uint32_t)gid);
     WR32(fs_data, FS_MODE, (uint32_t)mode);
+    WR32(fs_data, FS_MTIME, mtime);
     reply_status(rc);
 }
 

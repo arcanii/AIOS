@@ -307,6 +307,42 @@ static void cmd_stat(const char *filename) {
     print("  Mode: "); print(perms); printc('\n');
     print("  Uid:  "); print_dec(st.st_uid); printc('\n');
     print("  Gid:  "); print_dec(st.st_gid); printc('\n');
+    if (st.st_mtime > 0) {
+        /* Convert epoch to rough date: seconds since 1970 */
+        unsigned long t = st.st_mtime;
+        unsigned long days = t / 86400;
+        unsigned long secs = t % 86400;
+        unsigned long hrs = secs / 3600;
+        unsigned long mins = (secs % 3600) / 60;
+        unsigned long s = secs % 60;
+        /* Approximate year/month/day from days since epoch */
+        unsigned long y = 1970;
+        while (1) {
+            unsigned long ydays = 365;
+            if ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0) ydays = 366;
+            if (days < ydays) break;
+            days -= ydays;
+            y++;
+        }
+        static const unsigned short mdays[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+        unsigned long m = 0;
+        int leap = ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0);
+        while (m < 12) {
+            unsigned long md = mdays[m];
+            if (m == 1 && leap) md = 29;
+            if (days < md) break;
+            days -= md;
+            m++;
+        }
+        print("  Mod:  ");
+        print_dec(y); printc('-');
+        if (m + 1 < 10) printc('0'); print_dec(m + 1); printc('-');
+        if (days + 1 < 10) printc('0'); print_dec(days + 1); printc(' ');
+        if (hrs < 10) printc('0'); print_dec(hrs); printc(':');
+        if (mins < 10) printc('0'); print_dec(mins); printc(':');
+        if (s < 10) printc('0'); print_dec(s);
+        printc('\n');
+    }
 }
 
 static void cmd_wc(const char *filename) {
@@ -517,6 +553,41 @@ static void dispatch(void) {
     else if (starts_with(line, "mv "))  cmd_mv(line + 3);
     else if (starts_with(line, "rm "))  unlink(line + 3);
     else if (starts_with(line, "echo ")) cmd_echo(line + 5);
+    else if (str_eq(line, "date")) {
+        long (*tfn)(void) = sys->time;
+        long t = tfn();
+        unsigned long ut = (unsigned long)t;
+        unsigned long days = ut / 86400;
+        unsigned long secs = ut % 86400;
+        unsigned long hrs = secs / 3600;
+        unsigned long mins = (secs % 3600) / 60;
+        unsigned long s = secs % 60;
+        unsigned long y = 1970;
+        while (1) {
+            unsigned long yd = 365;
+            if ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0) yd = 366;
+            if (days < yd) break;
+            days -= yd;
+            y++;
+        }
+        static const unsigned short md[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+        unsigned long m = 0;
+        int leap = ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0);
+        while (m < 12) {
+            unsigned long dd = md[m];
+            if (m == 1 && leap) dd = 29;
+            if (days < dd) break;
+            days -= dd;
+            m++;
+        }
+        print_dec(y); printc('-');
+        if (m + 1 < 10) printc('0'); print_dec(m + 1); printc('-');
+        if (days + 1 < 10) printc('0'); print_dec(days + 1); printc(' ');
+        if (hrs < 10) printc('0'); print_dec(hrs); printc(':');
+        if (mins < 10) printc('0'); print_dec(mins); printc(':');
+        if (s < 10) printc('0'); print_dec(s);
+        printc('\n');
+    }
     else if (starts_with(line, "stat ")) cmd_stat(line + 5);
     else if (str_eq(line, "wc"))        cmd_wc("");
     else if (starts_with(line, "wc "))  cmd_wc(line + 3);

@@ -66,7 +66,8 @@ struct aios_fs_ops {
 
     /* Extended operations (ext2 only) */
     int (*stat_ex)(const char *filename, uint32_t *size_out,
-                   uint16_t *uid_out, uint16_t *gid_out, uint16_t *mode_out);
+                   uint16_t *uid_out, uint16_t *gid_out, uint16_t *mode_out,
+                   uint32_t *mtime_out);
     int (*chmod)(const char *filename, uint16_t mode);
     int (*chown)(const char *filename, uint16_t uid, uint16_t gid);
     void (*set_creator)(uint16_t uid, uint16_t gid);

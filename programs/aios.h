@@ -9,21 +9,24 @@
 typedef unsigned long size_t;
 
 typedef struct {
-    /* Output (buffered until program exit) */
+    /* Console I/O */
     void (*puts)(const char *s);
     void (*putc)(char c);
     void (*put_dec)(unsigned int n);
     void (*put_hex)(unsigned int n);
+
     /* Memory */
     void *(*malloc)(size_t size);
     void  (*free)(void *ptr);
     void *(*memcpy)(void *dst, const void *src, size_t n);
     void *(*memset)(void *dst, int c, size_t n);
-    /* String */
+
+    /* Strings */
     int   (*strlen)(const char *s);
     int   (*strcmp)(const char *a, const char *b);
     char *(*strcpy)(char *dst, const char *src);
     char *(*strncpy)(char *dst, const char *src, size_t n);
+
     /* File I/O */
     int   (*open)(const char *path);
     int   (*open_flags)(const char *path, int flags);
@@ -37,20 +40,24 @@ typedef struct {
     int   (*exec)(const char *path, const char *args);
     int   (*readdir)(void *buf, unsigned long max_entries);
     int   (*filesize)(void);
+
     /* Extended POSIX */
     int   (*stat_file)(const char *path, unsigned long *size_out);
-    int   (*stat_ex)(unsigned int *uid, unsigned int *gid, unsigned int *mode);
+    int   (*stat_ex)(unsigned int *uid, unsigned int *gid, unsigned int *mode, unsigned int *mtime);
     int   (*lseek)(int fd, long offset, int whence);
     int   (*getcwd)(char *buf, unsigned long size);
     int   (*chdir)(const char *path);
     int   (*getpid)(void);
+
     /* Args */
     const char *args;
-    /* Interactive I/O (immediate, not buffered) */
+
+    /* Interactive I/O */
     int   (*getc)(void);
     void  (*puts_direct)(const char *s);
     void  (*putc_direct)(char c);
     int   (*sleep)(unsigned int seconds);
+
     /* POSIX extensions */
     int   (*getuid)(void);
     int   (*getgid)(void);
@@ -63,6 +70,7 @@ typedef struct {
     int   (*dup2)(int oldfd, int newfd);
     int   (*pipe)(int pipefd[2]);
     long  (*time)(void);
+
     /* Process management */
     int   (*spawn)(const char *path, const char *args);
     int   (*waitpid)(int pid, int *status);

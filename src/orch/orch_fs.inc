@@ -63,7 +63,8 @@ static int fs_delete_sync(const char *filename) {
 
 /* ── Extended FS helpers ───────────────────────────── */
 static int fs_stat_ex_sync(const char *filename, uint32_t *size,
-                           uint32_t *uid, uint32_t *gid, uint32_t *mode) {
+                           uint32_t *uid, uint32_t *gid, uint32_t *mode,
+                           uint32_t *mtime) {
     volatile char *dst = (volatile char *)(fs_data + FS_FILENAME);
     int i = 0;
     while (filename[i] && i < 63) { dst[i] = filename[i]; i++; }
@@ -74,6 +75,7 @@ static int fs_stat_ex_sync(const char *filename, uint32_t *size,
     if (uid)  *uid  = RD32(fs_data, FS_UID);
     if (gid)  *gid  = RD32(fs_data, FS_GID);
     if (mode) *mode = RD32(fs_data, FS_MODE);
+    if (mtime) *mtime = RD32(fs_data, FS_MTIME);
     return (int)(int32_t)RD32(fs_data, FS_STATUS);
 }
 

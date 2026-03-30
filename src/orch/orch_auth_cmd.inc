@@ -34,7 +34,7 @@ static void print_prompt(void);
 static int auth_check_file_sync(const char *path, uint32_t mode) {
     /* First get file permissions from filesystem */
     uint32_t fuid = 0, fgid = 0, fmode = 0;
-    fs_stat_ex_sync(path, 0, &fuid, &fgid, &fmode);
+    fs_stat_ex_sync(path, 0, &fuid, &fgid, &fmode, 0);
 
     volatile char *dst = (volatile char *)(auth_io + AUTH_PATH);
     int i = 0;
@@ -303,7 +303,7 @@ static void cmd_chmod(const char *args) {
     /* Only owner or root can chmod */
     if (!current_is_root) {
         uint32_t fuid = 0;
-        fs_stat_ex_sync(fname, 0, &fuid, 0, 0);
+        fs_stat_ex_sync(fname, 0, &fuid, 0, 0, 0);
         if (fuid != current_uid) {
             ser_puts("Permission denied\n");
             ser_flush();

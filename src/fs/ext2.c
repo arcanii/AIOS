@@ -150,6 +150,7 @@ static void write_inode(uint32_t ino, const uint8_t *buf) {
 static __attribute__((unused)) uint16_t inode_mode(const uint8_t *ino)  { return rd16(ino + 0); }
 static uint16_t inode_uid(const uint8_t *ino)   { return rd16(ino + 2); }
 static uint16_t inode_gid(const uint8_t *ino)   { return rd16(ino + 24); }
+static uint32_t inode_mtime(const uint8_t *ino) { return ino[16] | ((uint32_t)ino[17] << 8) | ((uint32_t)ino[18] << 16) | ((uint32_t)ino[19] << 24); }
 static uint32_t inode_size_field(const uint8_t *ino) { return rd32(ino + 4); }
 static __attribute__((unused)) uint16_t inode_links(const uint8_t *ino)  { return rd16(ino + 26); }
 static uint32_t inode_blocks(const uint8_t *ino) { return rd32(ino + 28); }
@@ -1027,7 +1028,8 @@ static int ext2_rename(const char *oldname, const char *newname) {
 
 /* Extended stat: returns size, uid, gid, mode */
 static int ext2_stat_ex(const char *filename, uint32_t *size_out,
-                        uint16_t *uid_out, uint16_t *gid_out, uint16_t *mode_out) {
+                        uint16_t *uid_out, uint16_t *gid_out, uint16_t *mode_out,
+                        uint32_t *mtime_out) {
     uint32_t parent_ino, ino;
     char base[64];
     if (resolve_path(filename, &parent_ino, base, sizeof(base)) != 0) return -1;
@@ -1038,6 +1040,7 @@ static int ext2_stat_ex(const char *filename, uint32_t *size_out,
     *uid_out  = inode_uid(inode_buf);
     *gid_out  = inode_gid(inode_buf);
     *mode_out = inode_mode(inode_buf);
+    if (mtime_out) *mtime_out = inode_mtime(inode_buf);
     return 0;
 }
 

@@ -212,14 +212,15 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         raw[i] = '\0';
         char fname[256];
         resolve_path(raw, fname, sizeof(fname));
-        uint32_t sz = 0, fuid = 0, fgid = 0, fmode = 0;
-        int st = fs_stat_ex_sync(fname, &sz, &fuid, &fgid, &fmode);
+        uint32_t sz = 0, fuid = 0, fgid = 0, fmode = 0, fmtime = 0;
+        int st = fs_stat_ex_sync(fname, &sz, &fuid, &fgid, &fmode, &fmtime);
         if (st == 0) {
             result = 0;
             seL4_SetMR(1, sz);
             seL4_SetMR(2, fuid);
             seL4_SetMR(3, fgid);
             seL4_SetMR(4, fmode);
+            seL4_SetMR(5, fmtime);
         } else {
             result = -1;
         }
@@ -742,10 +743,14 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
     case SYS_TIME: {
-        /* Return a monotonic tick counter (no RTC on virt) */
-        static uint64_t tick_counter = 1711670400;  /* ~2024-03-29 epoch approx */
-        tick_counter += 1;
-        result = (int64_t)tick_counter;
+        /* Read ARM generic timer */
+        uint64_t cnt, freq;
+        asm volatile("mrs %0, cntpct_el0" : "=r"(cnt));
+        asm volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+        if (freq == 0) freq = 62500000; /* QEMU virt default */
+        uint64_t secs = cnt / freq;
+        /* Epoch base: 2025-01-01 00:00:00 UTC */
+        result = (int64_t)(1735689600ULL + secs);
         break;
     }
 
@@ -755,5 +760,5 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
     }
 
     seL4_SetMR(0, result);
-    return microkit_msginfo_new(0, 5);
+    return microkit_msginfo_new(0, 6);
 }

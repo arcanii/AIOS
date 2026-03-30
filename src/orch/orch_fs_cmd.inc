@@ -6,7 +6,7 @@
 /* ── Command: stat <file> — show extended info ─────── */
 static void cmd_stat_ex(const char *fname) {
     uint32_t size = 0, uid = 0, gid = 0, mode = 0;
-    int rc = fs_stat_ex_sync(fname, &size, &uid, &gid, &mode);
+    int rc = fs_stat_ex_sync(fname, &size, &uid, &gid, &mode, 0);
     if (rc != 0) {
         ser_puts("  File not found\n");
         ser_flush();

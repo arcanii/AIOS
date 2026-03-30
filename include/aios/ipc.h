@@ -24,9 +24,10 @@
 #define FS_UID       0x020   /* file owner uid                  */
 #define FS_GID       0x024   /* file owner gid                  */
 #define FS_MODE      0x028   /* file permission mode            */
-#define FS_CREAT_UID 0x02C   /* uid for file creation           */
-#define FS_CREAT_GID 0x030   /* gid for file creation           */   /* dedicated field: file offset    */
-#define FS_LENGTH    0x01C   /* dedicated field: request length */
+#define FS_MTIME     0x02C   /* file modification time           */
+#define FS_CREAT_UID 0x030   /* uid for file creation            */
+#define FS_CREAT_GID 0x034   /* gid for file creation            */
+#define FS_LENGTH    0x01C   /* dedicated field: request length  */
 #define FS_FILENAME  0x040
 #define FS_DATA      0x200
 #define FS_DATA_MAX  65024

@@ -76,6 +76,7 @@ struct stat {
     off_t    st_size;
     unsigned st_uid;
     unsigned st_gid;
+    unsigned st_mtime;
     unsigned st_nlink;
 };
 
@@ -167,10 +168,12 @@ static inline int stat(const char *path, struct stat *buf) {
         buf->st_ino = 0;
         buf->st_nlink = 1;
         unsigned int u = 0, g = 0, m = 0;
-        sys->stat_ex(&u, &g, &m);
+        unsigned int mt = 0;
+        sys->stat_ex(&u, &g, &m, &mt);
         buf->st_uid = u;
         buf->st_gid = g;
         buf->st_mode = (mode_t)m;
+        buf->st_mtime = mt;
     }
     return r;
 }
