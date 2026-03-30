@@ -175,6 +175,64 @@ static void cmd_cd(const char *path) {
     }
 }
 
+
+/* ── Job control ──────────────────────────────────────── */
+#define MAX_JOBS 8
+typedef struct {
+    int active;
+    int pid;
+    int done;
+    int exit_code;
+    char name[64];
+} job_t;
+static job_t jobs[MAX_JOBS];
+static int next_job_id = 1;
+
+static int add_job(int pid, const char *name) {
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (!jobs[i].active) {
+            jobs[i].active = 1;
+            jobs[i].pid = pid;
+            jobs[i].done = 0;
+            jobs[i].exit_code = 0;
+            int k = 0;
+            while (name[k] && k < 63) { jobs[i].name[k] = name[k]; k++; }
+            jobs[i].name[k] = '\0';
+            return i + 1; /* job IDs start at 1 */
+        }
+    }
+    return -1;
+}
+
+static void check_jobs(void) {
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (jobs[i].active && jobs[i].done) {
+            print("["); print_dec((unsigned long)(i + 1)); print("] Done");
+            print("  (exit "); print_dec((unsigned long)jobs[i].exit_code); print(")");
+            print("  "); print(jobs[i].name); print("\n");
+            jobs[i].active = 0;
+        }
+    }
+}
+
+static void cmd_jobs(void) {
+    int found = 0;
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (jobs[i].active) {
+            print("["); print_dec((unsigned long)(i + 1)); print("] ");
+            if (jobs[i].done) {
+                print("Done     ");
+            } else {
+                print("Running  ");
+            }
+            print("pid="); print_dec((unsigned long)jobs[i].pid);
+            print("  "); print(jobs[i].name); print("\n");
+            found = 1;
+        }
+    }
+    if (!found) print("No active jobs\n");
+}
+
 static void cmd_help(void) {
     print("AIOS Shell Commands:\n");
     print("  ls              - list files\n");
@@ -198,6 +256,8 @@ static void cmd_help(void) {
     print("  cmd < file      - redirect input from file\n");
     print("  cmd1 | cmd2     - pipe output of cmd1 to cmd2\n");
     print("  source <file>   - run shell script\n");
+    print("  jobs            - list background jobs\n");
+    print("  fg [%n]         - bring job to foreground\n");
     print("  sh <file>       - run shell script\n");
     print("  exit            - exit shell\n");
 }
@@ -693,6 +753,61 @@ static void dispatch(void) {
     else if (str_eq(line, "pwd"))       cmd_pwd();
     else if (str_eq(line, "clear"))     cmd_clear();
     else if (str_eq(line, "exit"))      { shell_exit = 1; }
+    else if (str_eq(line, "jobs"))      cmd_jobs();
+    else if (str_eq(line, "env"))       {
+        for (int ei = 0; ei < 32; ei++) {
+            char *e = getenv(""); /* hack — iterate manually */
+            (void)e;
+        }
+        /* Print all env vars */
+        char *ep;
+        int ei = 0;
+        while ((ep = _posix_environ[ei]) != (char *)0) {
+            print(ep); print("\n");
+            ei++;
+        }
+    }
+    else if (starts_with(line, "export ")) {
+        const char *kv = line + 7;
+        /* Find = */
+        char key[64], val[128];
+        int ki = 0;
+        while (kv[ki] && kv[ki] != '=' && ki < 63) { key[ki] = kv[ki]; ki++; }
+        key[ki] = '\0';
+        if (kv[ki] == '=') {
+            int vi = 0;
+            ki++;
+            while (kv[ki] && vi < 127) { val[vi++] = kv[ki++]; }
+            val[vi] = '\0';
+            setenv(key, val, 1);
+        }
+    }
+    else if (str_eq(line, "fg"))        {
+        /* fg with no arg — bring most recent job */
+        for (int i = MAX_JOBS - 1; i >= 0; i--) {
+            if (jobs[i].active && !jobs[i].done) {
+                print("["); print_dec((unsigned long)(i+1)); print("] "); print(jobs[i].name); print("\n");
+                int status = 0;
+                waitpid(jobs[i].pid, &status);
+                jobs[i].done = 1;
+                jobs[i].exit_code = status;
+                break;
+            }
+        }
+    }
+    else if (starts_with(line, "fg "))  {
+        int jn = 0;
+        const char *p = line + 3;
+        if (*p == '%') p++;
+        while (*p >= '0' && *p <= '9') { jn = jn * 10 + (*p - '0'); p++; }
+        if (jn > 0 && jn <= MAX_JOBS && jobs[jn-1].active && !jobs[jn-1].done) {
+            print("["); print_dec((unsigned long)jn); print("] "); print(jobs[jn-1].name); print("\n");
+            int status = 0;
+            waitpid(jobs[jn-1].pid, &status);
+            jobs[jn-1].done = 1;
+            jobs[jn-1].exit_code = status;
+        } else { print("fg: no such job\n"); }
+    }
     else if (str_eq(line, "cd"))         cmd_cd("");
     else if (starts_with(line, "cd "))    cmd_cd(line + 3);
     else if (starts_with(line, "source ")) cmd_source(line + 7);
@@ -776,6 +891,17 @@ static void dispatch(void) {
         if (rc < 0) { print("exec "); print(ep); print(": command not found\n"); }
     }
     else {
+        /* Check for background & */
+        int bg = 0;
+        {
+            int ll = 0; while (line[ll]) ll++;
+            while (ll > 0 && line[ll-1] == ' ') ll--;
+            if (ll > 0 && line[ll-1] == '&') {
+                bg = 1;
+                line[ll-1] = '\0';
+                while (ll > 1 && line[ll-2] == ' ') { line[ll-2] = '\0'; ll--; }
+            }
+        }
         /* Extract command name and args */
         char cmd[64];
         int ci = 0;
@@ -785,8 +911,34 @@ static void dispatch(void) {
         for (int ai = 0; line[ai]; ai++) {
             if (line[ai] == ' ') { args = line + ai + 1; break; }
         }
-        /* Try as-is first */
-        int rc = aios_exec(cmd, args);
+        int rc;
+        if (bg) {
+            /* Background: use spawn instead of exec */
+            char spawn_cmd[272];
+            int si = 0;
+            /* Try /bin/<cmd>.bin first */
+            spawn_cmd[si++] = '/'; spawn_cmd[si++] = 'b'; spawn_cmd[si++] = 'i';
+            spawn_cmd[si++] = 'n'; spawn_cmd[si++] = '/';
+            for (int k = 0; cmd[k] && si < 259; k++) spawn_cmd[si++] = cmd[k];
+            spawn_cmd[si++] = '.'; spawn_cmd[si++] = 'b'; spawn_cmd[si++] = 'i';
+            spawn_cmd[si++] = 'n'; spawn_cmd[si] = '\0';
+            rc = spawn(spawn_cmd, args);
+            if (rc < 0) {
+                /* Try cmd directly */
+                rc = spawn(cmd, args);
+            }
+            if (rc >= 0) {
+                int jid = add_job(rc, cmd);
+                print("["); print_dec((unsigned long)jid); print("] ");
+                print_dec((unsigned long)rc); print("\n");
+                return;
+            }
+            /* Fall through to not-found */
+            rc = -1;
+        } else {
+            /* Foreground: try as-is first */
+            rc = aios_exec(cmd, args);
+        }
         /* -2 means script file (shebang detected) — run as source */
         if (rc == -2) { cmd_source(cmd); return; }
         /* Try with .bin extension */
@@ -839,6 +991,33 @@ static void dispatch(void) {
 
 /* ── Execute with I/O redirection ─────────────────────── */
 static void exec_with_redirects(void) {
+    /* Expand $VARIABLES */
+    {
+        static char expanded[LINE_MAX];
+        int ei = 0, li = 0;
+        while (line[li] && ei < LINE_MAX - 2) {
+            if (line[li] == '$' && line[li+1] && line[li+1] != ' ') {
+                li++;
+                char vname[64];
+                int vi = 0;
+                while (line[li] && line[li] != ' ' && line[li] != '/' &&
+                       line[li] != '$' && line[li] != '\'' && line[li] != '"' &&
+                       vi < 63) {
+                    vname[vi++] = line[li++];
+                }
+                vname[vi] = '\0';
+                char *val = getenv(vname);
+                if (val) {
+                    while (*val && ei < LINE_MAX - 2) expanded[ei++] = *val++;
+                }
+            } else {
+                expanded[ei++] = line[li++];
+            }
+        }
+        expanded[ei] = '\0';
+        for (int k = 0; k <= ei; k++) line[k] = expanded[k];
+        line_len = ei;
+    }
     parse_redirects();
     /* Input redirection from file */
     if (redir_in_file[0]) {
@@ -896,6 +1075,7 @@ AIOS_ENTRY {
     shell_exit = 0;
 
     while (1) {
+        check_jobs();
         print("$ ");
         read_line();
         if (line_len == 0) continue;

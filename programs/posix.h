@@ -693,7 +693,7 @@ static inline void _env_init(void) {
     /* Defaults */
     char *defaults[] = {
         "HOME=/",
-        "PATH=/",
+        "PATH=/bin",
         "SHELL=/shell.bin",
         "USER=root",
         "TERM=vt100",
