@@ -888,6 +888,12 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         }
         break;
     }
+    case SYS_MMAP: {
+        /* Stub: sandbox has fixed memory layout */
+        result = -1; /* ENOMEM */
+        break;
+    }
+
     case SYS_BRK: {
         /* Stub: sandbox has fixed heap, return success */
         result = 0;
