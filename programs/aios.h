@@ -79,6 +79,14 @@ typedef struct {
     int   (*ftruncate)(int fd, unsigned long length);
     int   (*fcntl)(int fd, int cmd, int arg);
     int   (*kill_proc)(int pid, int sig);
+    /* Sockets */
+    int   (*socket)(int domain, int type, int protocol);
+    int   (*connect)(int sockfd, const void *addr, int addrlen);
+    int   (*bind)(int sockfd, const void *addr, int addrlen);
+    int   (*listen)(int sockfd, int backlog);
+    int   (*accept)(int sockfd, void *addr, int *addrlen);
+    int   (*send)(int sockfd, const void *buf, unsigned long len, int flags);
+    int   (*recv)(int sockfd, void *buf, unsigned long len, int flags);
 } aios_syscalls_t;
 
 /* Global syscall pointer — set by _start */

@@ -577,6 +577,14 @@ typedef struct {
     int   (*ftruncate)(int fd, unsigned long length);
     int   (*fcntl)(int fd, int cmd, int arg);
     int   (*kill_proc)(int pid, int sig);
+    /* Sockets */
+    int   (*socket)(int domain, int type, int protocol);
+    int   (*connect)(int sockfd, const void *addr, int addrlen);
+    int   (*bind)(int sockfd, const void *addr, int addrlen);
+    int   (*listen)(int sockfd, int backlog);
+    int   (*accept)(int sockfd, void *addr, int *addrlen);
+    int   (*send)(int sockfd, const void *buf, unsigned long len, int flags);
+    int   (*recv)(int sockfd, void *buf, unsigned long len, int flags);
 } aios_syscalls_t;
 typedef int (*program_entry_t)(aios_syscalls_t *sys);
 
@@ -682,6 +690,81 @@ static int sbx_sleep(unsigned int seconds) {
     return 0;
 }
 
+
+/* ── Socket syscall wrappers ─────────────────────────── */
+static int sbx_socket(int domain, int type, int protocol) {
+    (void)domain; (void)protocol;
+    seL4_SetMR(0, SYS_SOCKET);
+    seL4_SetMR(1, 2); /* AF_INET */
+    seL4_SetMR(2, (seL4_Word)type);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 3));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_connect(int sockfd, const void *addr, int addrlen) {
+    (void)addrlen;
+    const uint8_t *sa = (const uint8_t *)addr;
+    volatile uint8_t *dst = (volatile uint8_t *)(sandbox_io + 0x200);
+    dst[0] = sa[4]; dst[1] = sa[5]; dst[2] = sa[6]; dst[3] = sa[7];
+    dst[4] = sa[3]; dst[5] = sa[2];
+    seL4_SetMR(0, SYS_CONNECT);
+    seL4_SetMR(1, (seL4_Word)sockfd);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 2));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_bind(int sockfd, const void *addr, int addrlen) {
+    (void)addrlen;
+    const uint8_t *sa = (const uint8_t *)addr;
+    uint16_t port = ((uint16_t)sa[2] << 8) | sa[3];
+    seL4_SetMR(0, SYS_BIND);
+    seL4_SetMR(1, (seL4_Word)sockfd);
+    seL4_SetMR(2, (seL4_Word)port);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 3));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_listen(int sockfd, int backlog) {
+    (void)backlog;
+    seL4_SetMR(0, SYS_LISTEN);
+    seL4_SetMR(1, (seL4_Word)sockfd);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 2));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_accept(int sockfd, void *addr, int *addrlen) {
+    (void)addr; (void)addrlen;
+    seL4_SetMR(0, SYS_ACCEPT);
+    seL4_SetMR(1, (seL4_Word)sockfd);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 2));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_send(int sockfd, const void *buf, unsigned long len, int flags) {
+    (void)flags;
+    volatile uint8_t *dst = (volatile uint8_t *)(sandbox_io + 0x200);
+    for (unsigned long i = 0; i < len && i < 4096; i++) dst[i] = ((const uint8_t *)buf)[i];
+    seL4_SetMR(0, SYS_SEND);
+    seL4_SetMR(1, (seL4_Word)sockfd);
+    seL4_SetMR(2, (seL4_Word)len);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 3));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_recv(int sockfd, void *buf, unsigned long len, int flags) {
+    (void)flags;
+    seL4_SetMR(0, SYS_RECV);
+    seL4_SetMR(1, (seL4_Word)sockfd);
+    seL4_SetMR(2, (seL4_Word)len);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 3));
+    int got = (int)seL4_GetMR(0);
+    if (got > 0) {
+        volatile uint8_t *src = (volatile uint8_t *)(sandbox_io + 0x200);
+        for (int i = 0; i < got; i++) ((uint8_t *)buf)[i] = src[i];
+    }
+    return got;
+}
+
 static void init_syscalls(void) {
     syscalls.puts    = sbx_puts;
     syscalls.putc    = sbx_putc;
@@ -735,11 +818,19 @@ static void init_syscalls(void) {
     /* Process management */
     syscalls.spawn      = sbx_spawn;
     syscalls.waitpid    = sbx_waitpid;
+
     syscalls.chmod      = sbx_chmod;
     syscalls.chown      = sbx_chown;
     syscalls.ftruncate  = sbx_ftruncate;
     syscalls.fcntl      = sbx_fcntl;
     syscalls.kill_proc  = sbx_kill_proc;
+    syscalls.socket     = sbx_socket;
+    syscalls.connect    = sbx_connect;
+    syscalls.bind       = sbx_bind;
+    syscalls.listen     = sbx_listen;
+    syscalls.accept     = sbx_accept;
+    syscalls.send       = sbx_send;
+    syscalls.recv       = sbx_recv;
 }
 
 /* ── Execute code ──────────────────────────────────── */

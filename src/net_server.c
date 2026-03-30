@@ -19,6 +19,7 @@
 #endif
 
 uintptr_t net_data;
+uintptr_t sock_data;
 
 /* ── Network configuration ───────────────────────────── */
 static uint8_t my_mac[6];
@@ -421,6 +422,127 @@ static void handle_packet(const uint8_t *pkt, uint32_t len) {
 
 static int net_up = 0;
 
+
+
+/* ── Socket connection pool ──────────────────────────── */
+#define MAX_SOCKETS 8
+struct socket_entry {
+    int in_use;
+    int type;        /* SOCK_STREAM or SOCK_DGRAM */
+    int state;       /* TCP state */
+    uint16_t local_port;
+    uint16_t remote_port;
+    uint8_t  remote_ip[4];
+    /* Receive buffer */
+    uint8_t  rxbuf[2048];
+    uint32_t rxlen;
+    /* TCP state */
+    uint32_t seq_local;
+    uint32_t seq_remote;
+};
+static struct socket_entry sockets[MAX_SOCKETS];
+
+
+static int alloc_socket(void) {
+    for (int i = 0; i < MAX_SOCKETS; i++) {
+        if (!sockets[i].in_use) {
+            my_memset(&sockets[i], 0, sizeof(sockets[i]));
+            sockets[i].in_use = 1;
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void handle_sock_cmd(void) {
+    volatile uint32_t *base = (volatile uint32_t *)sock_data;
+    uint32_t cmd = base[0];
+
+    switch (cmd) {
+    case SOCK_CMD_SOCKET: {
+        int fd = alloc_socket();
+        if (fd < 0) { base[1] = (uint32_t)SOCK_ST_ERR; return; }
+        uint32_t proto = *(volatile uint32_t *)(sock_data + SOCK_PROTO);
+        sockets[fd].type = (int)proto;
+        sockets[fd].state = TCP_STATE_CLOSED;
+        *(volatile uint32_t *)(sock_data + SOCK_FD) = (uint32_t)fd;
+        base[1] = SOCK_ST_OK;
+        break;
+    }
+    case SOCK_CMD_BIND: {
+        uint32_t fd = *(volatile uint32_t *)(sock_data + SOCK_FD);
+        uint32_t port = *(volatile uint32_t *)(sock_data + SOCK_PORT);
+        if (fd >= MAX_SOCKETS || !sockets[fd].in_use) { base[1] = (uint32_t)SOCK_ST_ERR; return; }
+        sockets[fd].local_port = (uint16_t)port;
+        base[1] = SOCK_ST_OK;
+        break;
+    }
+    case SOCK_CMD_LISTEN: {
+        uint32_t fd = *(volatile uint32_t *)(sock_data + SOCK_FD);
+        if (fd >= MAX_SOCKETS || !sockets[fd].in_use) { base[1] = (uint32_t)SOCK_ST_ERR; return; }
+        sockets[fd].state = TCP_STATE_LISTEN;
+        base[1] = SOCK_ST_OK;
+        break;
+    }
+    case SOCK_CMD_ACCEPT: {
+        /* Stub: return AGAIN (no connection yet) */
+        base[1] = (uint32_t)SOCK_ST_AGAIN;
+        break;
+    }
+    case SOCK_CMD_CONNECT: {
+        uint32_t fd = *(volatile uint32_t *)(sock_data + SOCK_FD);
+        if (fd >= MAX_SOCKETS || !sockets[fd].in_use) { base[1] = (uint32_t)SOCK_ST_ERR; return; }
+        uint32_t rip = *(volatile uint32_t *)(sock_data + SOCK_REMOTE_IP);
+        uint16_t rport = (uint16_t)*(volatile uint32_t *)(sock_data + SOCK_REMOTE_PORT);
+        sockets[fd].remote_ip[0] = rip & 0xFF;
+        sockets[fd].remote_ip[1] = (rip >> 8) & 0xFF;
+        sockets[fd].remote_ip[2] = (rip >> 16) & 0xFF;
+        sockets[fd].remote_ip[3] = (rip >> 24) & 0xFF;
+        sockets[fd].remote_port = rport;
+        sockets[fd].state = TCP_STATE_ESTAB; /* simplified */
+        base[1] = SOCK_ST_OK;
+        break;
+    }
+    case SOCK_CMD_SEND: {
+        uint32_t fd = *(volatile uint32_t *)(sock_data + SOCK_FD);
+        uint32_t len = *(volatile uint32_t *)(sock_data + SOCK_DATA_LEN);
+        if (fd >= MAX_SOCKETS || !sockets[fd].in_use) { base[1] = (uint32_t)SOCK_ST_ERR; return; }
+        /* TODO: actually send via TCP/UDP */
+        *(volatile uint32_t *)(sock_data + SOCK_DATA_LEN) = len;
+        base[1] = SOCK_ST_OK;
+        break;
+    }
+    case SOCK_CMD_RECV: {
+        uint32_t fd = *(volatile uint32_t *)(sock_data + SOCK_FD);
+        if (fd >= MAX_SOCKETS || !sockets[fd].in_use) { base[1] = (uint32_t)SOCK_ST_ERR; return; }
+        if (sockets[fd].rxlen > 0) {
+            uint32_t len = sockets[fd].rxlen;
+            volatile uint8_t *dst = (volatile uint8_t *)(sock_data + SOCK_DATA);
+            for (uint32_t i = 0; i < len; i++) dst[i] = sockets[fd].rxbuf[i];
+            *(volatile uint32_t *)(sock_data + SOCK_DATA_LEN) = len;
+            sockets[fd].rxlen = 0;
+            base[1] = SOCK_ST_OK;
+        } else {
+            *(volatile uint32_t *)(sock_data + SOCK_DATA_LEN) = 0;
+            base[1] = SOCK_ST_AGAIN;
+        }
+        break;
+    }
+    case SOCK_CMD_CLOSE: {
+        uint32_t fd = *(volatile uint32_t *)(sock_data + SOCK_FD);
+        if (fd < MAX_SOCKETS) {
+            sockets[fd].in_use = 0;
+            sockets[fd].state = TCP_STATE_CLOSED;
+        }
+        base[1] = SOCK_ST_OK;
+        break;
+    }
+    default:
+        base[1] = (uint32_t)SOCK_ST_ERR;
+        break;
+    }
+}
+
 void init(void) {
     /* Check if net_driver initialized successfully */
     int32_t drv_status = *(volatile int32_t *)(net_data + NET_STATUS);
@@ -454,4 +576,13 @@ void notified(microkit_channel ch) {
             }
         }
     }
+}
+
+/* ── Protected procedure call handler (from orchestrator) ── */
+microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
+    (void)msginfo;
+    if (ch == CH_NET_SRV) {
+        handle_sock_cmd();
+    }
+    return microkit_msginfo_new(0, 0);
 }

@@ -16,6 +16,37 @@
 #ifndef AIOS_POSIX_H
 #define AIOS_POSIX_H
 
+/* ── errno ───────────────────────────────────────────── */
+static int _posix_errno = 0;
+#define errno _posix_errno
+
+#define EPERM        1
+#define ENOENT       2
+#define ESRCH        3
+#define EINTR        4
+#define EIO          5
+#define ENXIO        6
+#define EBADF        9
+#define ECHILD      10
+#define EAGAIN      11
+#define ENOMEM      12
+#define EACCES      13
+#define EFAULT      14
+#define EEXIST      17
+#define ENOTDIR     20
+#define EISDIR      21
+#define EINVAL      22
+#define ENFILE      23
+#define EMFILE      24
+#define ENOSPC      28
+#define EPIPE       32
+#define ERANGE      34
+#define ENOSYS      38
+#define ENOTEMPTY   39
+#define ENOTSOCK    88
+#define ECONNREFUSED 111
+
+
 #include "aios.h"
 
 /* ── Types ───────────────────────────────────────────── */
@@ -23,6 +54,8 @@ typedef long          ssize_t;
 typedef long          off_t;
 typedef unsigned long ino_t;
 typedef int           pid_t;
+typedef unsigned int  uid_t;
+typedef unsigned int  gid_t;
 
 /* ── Signal constants ────────────────────────────────── */
 #define SIGHUP     1
@@ -110,7 +143,7 @@ static inline ssize_t read(int fd, void *buf, size_t count) {
     if (fd == STDIN_FILENO) {
         /* Console input: read one character at a time */
         int c = sys->getc();
-        if (c < 0) return 0;
+        if (c < 0) { errno = EIO; return 0; }
         ((char *)buf)[0] = (char)c;
         return 1;
     }
@@ -139,10 +172,12 @@ static inline int close(int fd) {
 
 /* ── POSIX unlink() / remove() ───────────────────────── */
 static inline int unlink(const char *path) {
+    errno = 0;
     return sys->unlink(path);
 }
 
 static inline int mkdir(const char *path, mode_t mode) {
+    errno = 0;
     (void)mode;
     return sys->mkdir(path);
 }
@@ -163,6 +198,7 @@ static inline int remove(const char *path) {
 static inline int stat(const char *path, struct stat *buf) {
     unsigned long sz = 0;
     int r = sys->stat_file(path, &sz);
+    if (r < 0) { errno = ENOENT; return -1; }
     if (r == 0 && buf) {
         buf->st_size = (off_t)sz;
         buf->st_ino = 0;
@@ -245,6 +281,7 @@ static inline int aios_exec(const char *path, const char *args) {
 }
 
 static inline int chdir(const char *path) {
+    errno = 0;
     return sys->chdir(path);
 }
 
@@ -335,7 +372,7 @@ static inline FILE *fopen(const char *path, const char *mode) {
         return (FILE *)0;
     }
     int fd = open(path, flags);
-    if (fd < 0) return (FILE *)0;
+    if (fd < 0) { /* errno set by open */ return (FILE *)0; }
     for (int i = 0; i < _POSIX_FOPEN_MAX; i++) {
         if (!_posix_files_used[i]) {
             _posix_files_used[i] = 1;
@@ -620,6 +657,199 @@ typedef void (*sighandler_t)(int);
 static inline sighandler_t signal(int signum, sighandler_t handler) {
     (void)signum; (void)handler;
     return SIG_DFL; /* stub — signals delivered via Ctrl-C only */
+}
+
+
+/* ── Environment variables ───────────────────────────── */
+#define _ENV_MAX 32
+#define _ENV_BUF_SIZE 2048
+static char _env_buf[_ENV_BUF_SIZE];
+static int  _env_buf_pos = 0;
+static char *_posix_environ[_ENV_MAX + 1];
+static int  _env_count = 0;
+#define environ _posix_environ
+
+static inline void _env_init(void) {
+    /* Set default environment variables */
+    static int inited = 0;
+    if (inited) return;
+    inited = 1;
+    _env_count = 0;
+    /* Defaults */
+    char *defaults[] = {
+        "HOME=/",
+        "PATH=/",
+        "SHELL=/shell.bin",
+        "USER=root",
+        "TERM=vt100",
+        (char *)0
+    };
+    for (int i = 0; defaults[i]; i++) {
+        int len = 0;
+        while (defaults[i][len]) len++;
+        if (_env_buf_pos + len + 1 < _ENV_BUF_SIZE && _env_count < _ENV_MAX) {
+            char *dst = _env_buf + _env_buf_pos;
+            for (int j = 0; j <= len; j++) dst[j] = defaults[i][j];
+            _posix_environ[_env_count++] = dst;
+            _env_buf_pos += len + 1;
+        }
+    }
+    _posix_environ[_env_count] = (char *)0;
+}
+
+static inline char *getenv(const char *name) {
+    _env_init();
+    int nlen = 0;
+    while (name[nlen]) nlen++;
+    for (int i = 0; i < _env_count; i++) {
+        char *e = _posix_environ[i];
+        int match = 1;
+        for (int j = 0; j < nlen; j++) {
+            if (e[j] != name[j]) { match = 0; break; }
+        }
+        if (match && e[nlen] == '=') return e + nlen + 1;
+    }
+    return (char *)0;
+}
+
+static inline int setenv(const char *name, const char *value, int overwrite) {
+    _env_init();
+    int nlen = 0; while (name[nlen]) nlen++;
+    int vlen = 0; while (value[vlen]) vlen++;
+
+    /* Check if already exists */
+    for (int i = 0; i < _env_count; i++) {
+        char *e = _posix_environ[i];
+        int match = 1;
+        for (int j = 0; j < nlen; j++) {
+            if (e[j] != name[j]) { match = 0; break; }
+        }
+        if (match && e[nlen] == '=') {
+            if (!overwrite) return 0;
+            /* Replace in-place if it fits, else append */
+            int total = nlen + 1 + vlen + 1;
+            if (_env_buf_pos + total < _ENV_BUF_SIZE) {
+                char *dst = _env_buf + _env_buf_pos;
+                for (int j = 0; j < nlen; j++) dst[j] = name[j];
+                dst[nlen] = '=';
+                for (int j = 0; j <= vlen; j++) dst[nlen + 1 + j] = value[j];
+                _posix_environ[i] = dst;
+                _env_buf_pos += total;
+                return 0;
+            }
+            errno = ENOMEM;
+            return -1;
+        }
+    }
+
+    /* New entry */
+    if (_env_count >= _ENV_MAX) { errno = ENOMEM; return -1; }
+    int total = nlen + 1 + vlen + 1;
+    if (_env_buf_pos + total >= _ENV_BUF_SIZE) { errno = ENOMEM; return -1; }
+    char *dst = _env_buf + _env_buf_pos;
+    for (int j = 0; j < nlen; j++) dst[j] = name[j];
+    dst[nlen] = '=';
+    for (int j = 0; j <= vlen; j++) dst[nlen + 1 + j] = value[j];
+    _posix_environ[_env_count++] = dst;
+    _posix_environ[_env_count] = (char *)0;
+    _env_buf_pos += total;
+    return 0;
+}
+
+static inline int unsetenv(const char *name) {
+    _env_init();
+    int nlen = 0; while (name[nlen]) nlen++;
+    for (int i = 0; i < _env_count; i++) {
+        char *e = _posix_environ[i];
+        int match = 1;
+        for (int j = 0; j < nlen; j++) {
+            if (e[j] != name[j]) { match = 0; break; }
+        }
+        if (match && e[nlen] == '=') {
+            for (int j = i; j < _env_count - 1; j++)
+                _posix_environ[j] = _posix_environ[j + 1];
+            _env_count--;
+            _posix_environ[_env_count] = (char *)0;
+            return 0;
+        }
+    }
+    return 0; /* not found is OK */
+}
+
+
+/* ── BSD Socket API ──────────────────────────────────── */
+#define AF_INET      2
+#define AF_INET6    10
+#define SOCK_STREAM  1
+#define SOCK_DGRAM   2
+#define IPPROTO_TCP  6
+#define IPPROTO_UDP 17
+#define INADDR_ANY  0
+
+typedef unsigned int socklen_t;
+typedef unsigned int in_addr_t;
+typedef unsigned short in_port_t;
+typedef unsigned short sa_family_t;
+
+struct in_addr {
+    in_addr_t s_addr;
+};
+
+struct sockaddr {
+    sa_family_t sa_family;
+    char sa_data[14];
+};
+
+struct sockaddr_in {
+    sa_family_t sin_family;
+    in_port_t   sin_port;
+    struct in_addr sin_addr;
+    char sin_zero[8];
+};
+
+static inline unsigned short htons(unsigned short x) {
+    return (unsigned short)((x >> 8) | (x << 8));
+}
+static inline unsigned short ntohs(unsigned short x) { return htons(x); }
+static inline unsigned int htonl(unsigned int x) {
+    return ((x & 0xFF) << 24) | ((x & 0xFF00) << 8) |
+           ((x >> 8) & 0xFF00) | ((x >> 24) & 0xFF);
+}
+static inline unsigned int ntohl(unsigned int x) { return htonl(x); }
+
+static inline int socket(int domain, int type, int protocol) {
+    int (*fn)(int, int, int) = sys->socket;
+    return fn(domain, type, protocol);
+}
+
+static inline int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
+    int (*fn)(int, const void *, int) = sys->connect;
+    return fn(sockfd, (const void *)addr, (int)addrlen);
+}
+
+static inline int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
+    int (*fn)(int, const void *, int) = sys->bind;
+    return fn(sockfd, (const void *)addr, (int)addrlen);
+}
+
+static inline int listen(int sockfd, int backlog) {
+    int (*fn)(int, int) = sys->listen;
+    return fn(sockfd, backlog);
+}
+
+static inline int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
+    int (*fn)(int, void *, int *) = sys->accept;
+    return fn(sockfd, (void *)addr, (int *)addrlen);
+}
+
+static inline ssize_t send(int sockfd, const void *buf, size_t len, int flags) {
+    int (*fn)(int, const void *, unsigned long, int) = sys->send;
+    return (ssize_t)fn(sockfd, buf, (unsigned long)len, flags);
+}
+
+static inline ssize_t recv(int sockfd, void *buf, size_t len, int flags) {
+    int (*fn)(int, void *, unsigned long, int) = sys->recv;
+    return (ssize_t)fn(sockfd, buf, (unsigned long)len, flags);
 }
 
 #endif /* AIOS_POSIX_H */

@@ -796,6 +796,98 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
 
+
+    case SYS_SOCKET: {
+        /* MR1 = domain (AF_INET=2), MR2 = type (SOCK_STREAM=1, SOCK_DGRAM=2) */
+        uint32_t type = (uint32_t)seL4_GetMR(2);
+        WR32(sock_data, SOCK_PROTO, type);
+        int st = sock_cmd_sync(SOCK_CMD_SOCKET);
+        if (st == SOCK_ST_OK)
+            result = (int64_t)RD32(sock_data, SOCK_FD);
+        else
+            result = -1;
+        break;
+    }
+
+    case SYS_BIND: {
+        /* MR1 = sockfd, MR2 = port */
+        uint32_t sockfd = (uint32_t)seL4_GetMR(1);
+        uint32_t port = (uint32_t)seL4_GetMR(2);
+        WR32(sock_data, SOCK_FD, sockfd);
+        WR32(sock_data, SOCK_PORT, port);
+        result = (int64_t)sock_cmd_sync(SOCK_CMD_BIND);
+        break;
+    }
+
+    case SYS_LISTEN: {
+        uint32_t sockfd = (uint32_t)seL4_GetMR(1);
+        WR32(sock_data, SOCK_FD, sockfd);
+        result = (int64_t)sock_cmd_sync(SOCK_CMD_LISTEN);
+        break;
+    }
+
+    case SYS_ACCEPT: {
+        uint32_t sockfd = (uint32_t)seL4_GetMR(1);
+        WR32(sock_data, SOCK_FD, sockfd);
+        int st = sock_cmd_sync(SOCK_CMD_ACCEPT);
+        if (st == SOCK_ST_OK) {
+            result = (int64_t)RD32(sock_data, SOCK_FD);
+            seL4_SetMR(1, RD32(sock_data, SOCK_REMOTE_IP));
+            seL4_SetMR(2, RD32(sock_data, SOCK_REMOTE_PORT));
+        } else {
+            result = -1;
+        }
+        break;
+    }
+
+    case SYS_CONNECT: {
+        uint32_t sockfd = (uint32_t)seL4_GetMR(1);
+        WR32(sock_data, SOCK_FD, sockfd);
+        /* Remote IP + port from sio buffer */
+        volatile uint8_t *args = (volatile uint8_t *)(sio + 0x200);
+        WR32(sock_data, SOCK_REMOTE_IP,
+             args[0] | ((uint32_t)args[1] << 8) | ((uint32_t)args[2] << 16) | ((uint32_t)args[3] << 24));
+        WR32(sock_data, SOCK_REMOTE_PORT,
+             args[4] | ((uint32_t)args[5] << 8));
+        result = (int64_t)sock_cmd_sync(SOCK_CMD_CONNECT);
+        break;
+    }
+
+    case SYS_SEND: {
+        uint32_t sockfd = (uint32_t)seL4_GetMR(1);
+        uint32_t len = (uint32_t)seL4_GetMR(2);
+        WR32(sock_data, SOCK_FD, sockfd);
+        WR32(sock_data, SOCK_DATA_LEN, len);
+        /* Copy data from sio to sock_data */
+        volatile uint8_t *src = (volatile uint8_t *)(sio + 0x200);
+        volatile uint8_t *dst = (volatile uint8_t *)(sock_data + SOCK_DATA);
+        for (uint32_t i = 0; i < len && i < SOCK_DATA_MAX; i++) dst[i] = src[i];
+        int st = sock_cmd_sync(SOCK_CMD_SEND);
+        if (st == SOCK_ST_OK)
+            result = (int64_t)RD32(sock_data, SOCK_DATA_LEN);
+        else
+            result = -1;
+        break;
+    }
+
+    case SYS_RECV: {
+        uint32_t sockfd = (uint32_t)seL4_GetMR(1);
+        uint32_t max_len = (uint32_t)seL4_GetMR(2);
+        WR32(sock_data, SOCK_FD, sockfd);
+        WR32(sock_data, SOCK_DATA_LEN, max_len);
+        int st = sock_cmd_sync(SOCK_CMD_RECV);
+        if (st == SOCK_ST_OK) {
+            uint32_t got = RD32(sock_data, SOCK_DATA_LEN);
+            /* Copy data from sock_data to sio */
+            volatile uint8_t *src = (volatile uint8_t *)(sock_data + SOCK_DATA);
+            volatile uint8_t *dst = (volatile uint8_t *)(sio + 0x200);
+            for (uint32_t i = 0; i < got && i < 4096; i++) dst[i] = src[i];
+            result = (int64_t)got;
+        } else {
+            result = -1;
+        }
+        break;
+    }
     case SYS_BRK: {
         /* Stub: sandbox has fixed heap, return success */
         result = 0;

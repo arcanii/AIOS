@@ -98,6 +98,8 @@
              setvar_vaddr="model_data" />
         <map mr="llm_io"      vaddr="0x18100000" perms="rw" cached="false"
              setvar_vaddr="llm_io" />
+        <map mr="sock_data"  vaddr="0x5700000" perms="rw" cached="false"
+             setvar_vaddr="sock_data" />
 
         <!-- Orchestrator maps all sandbox memory for code loading -->
         <map mr="sbx0_io"   vaddr="0x20000000" perms="rw" cached="false"
@@ -310,6 +312,7 @@
     <!-- ── Memory regions for network ── -->
     <memory_region name="net_dma"   size="0x20000" phys_addr="0xB0100000" />
     <memory_region name="net_data"  size="0x10000" />
+    <memory_region name="sock_data" size="0x10000" />
 
     <!-- ── Network driver (priority 230) ── -->
 
@@ -340,6 +343,12 @@
         <end pd="auth_server"   id="1" />
     </channel>
 
+    <!-- orchestrator <-> net_server (sockets) -->
+    <channel>
+        <end pd="orchestrator" id="12" pp="true" />
+        <end pd="net_server"   id="12" />
+    </channel>
+
     <!-- net_driver <-> net_server -->
     <channel>
         <end pd="net_driver"    id="8" />
@@ -351,6 +360,8 @@
         <program_image path="net_server.elf" />
         <map mr="net_data" vaddr="0x5500000" perms="rw" cached="false"
              setvar_vaddr="net_data" />
+        <map mr="sock_data" vaddr="0x5600000" perms="rw" cached="false"
+             setvar_vaddr="sock_data" />
     </protection_domain>
 
     <!-- fs_server <-> blk_driver -->

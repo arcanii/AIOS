@@ -34,6 +34,7 @@
 #define CH_AUTH        11   /* orchestrator <-> auth_server    */
 
 #define CH_NET          8   /* net_driver <-> net_server        */
+#define CH_NET_SRV     12   /* orchestrator <-> net_server      */   /* net_driver <-> net_server        */
 #define CH_NET_IRQ      9   /* net_driver <- hardware IRQ       */
 
 #endif /* AIOS_CHANNELS_H */

@@ -18,6 +18,7 @@
 /* ── Shared memory regions (set by Microkit loader) ─── */
 uintptr_t tx_buf;
 uintptr_t rx_buf;
+uintptr_t sock_data;
 uintptr_t fs_data;
 uintptr_t model_data;
 uintptr_t llm_io;
@@ -150,6 +151,7 @@ static uint32_t current_gid = 0;
 
 
 #include "orch/orch_pipe.inc"
+#include "orch/orch_net.inc"
 
 /* ── Execution and model state ── */
 /* ── Model loading state ─────────────────────────────── */

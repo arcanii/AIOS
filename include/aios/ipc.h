@@ -141,3 +141,33 @@
 #define NET_ST_OK      0
 #define NET_ST_ERR    (-1)
 #define NET_ST_NODATA  1
+
+/* ── Socket IPC protocol (orchestrator <-> net_server) ── */
+#define SOCK_SHARED_BASE  0x000
+#define SOCK_CMD          0x000
+#define SOCK_STATUS       0x004
+#define SOCK_FD           0x008
+#define SOCK_PORT         0x00C
+#define SOCK_REMOTE_IP    0x010   /* 4 bytes */
+#define SOCK_REMOTE_PORT  0x014
+#define SOCK_DATA_LEN     0x018
+#define SOCK_PROTO        0x01C   /* SOCK_STREAM=1, SOCK_DGRAM=2 */
+#define SOCK_DATA         0x100
+#define SOCK_DATA_MAX     (0x10000 - 0x100)
+
+#define SOCK_CMD_NONE       0
+#define SOCK_CMD_SOCKET     1    /* create socket */
+#define SOCK_CMD_BIND       2    /* bind to port */
+#define SOCK_CMD_LISTEN     3    /* listen */
+#define SOCK_CMD_ACCEPT     4    /* accept connection */
+#define SOCK_CMD_CONNECT    5    /* connect to remote */
+#define SOCK_CMD_SEND       6    /* send data */
+#define SOCK_CMD_RECV       7    /* receive data */
+#define SOCK_CMD_CLOSE      8    /* close socket */
+
+#define SOCK_ST_OK          0
+#define SOCK_ST_ERR        (-1)
+#define SOCK_ST_AGAIN       1    /* try again (non-blocking) */
+
+#define SOCK_STREAM   1   /* TCP */
+#define SOCK_DGRAM    2   /* UDP */
