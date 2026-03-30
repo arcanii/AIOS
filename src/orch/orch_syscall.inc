@@ -1,3 +1,4 @@
+#include "aios/elf_loader.h"
 /* Sandbox syscall handler
  * Auto-extracted from orchestrator.c
  * Lines 1799-2425
@@ -402,6 +403,38 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         }
         fs_close_sync(fd);
 
+        /* Detect and handle ELF files */
+        if (offset >= 64 && elf_is_valid((const uint8_t *)code, offset)) {
+            LOG_DEBUG_V("ELF detected, file size: ", offset);
+            /* Parse ELF in-place: use upper half of code region as temp */
+            uint32_t code_max = 0x400000;
+            uint32_t temp_off = code_max / 2;
+            if (offset <= temp_off) {
+                /* Copy raw file to temp area */
+                for (uint32_t j = 0; j < offset; j++)
+                    code[temp_off + j] = code[j];
+
+                /* Only zero the area that will be used by segments */
+                elf_load_result_t elf_result;
+                int elf_rc = elf_load((const uint8_t *)(code + temp_off), offset,
+                                      code, 0x21100000, temp_off, &elf_result);
+                if (elf_rc == 0) {
+                    LOG_DEBUG_V("ELF loaded, segments: ", elf_result.num_segments);
+                    LOG_DEBUG_V("ELF total_memsz: ", elf_result.total_memsz);
+                    offset = elf_result.total_memsz;
+                    /* Clean up temp area */
+                    for (uint32_t j = 0; j < offset; j++)
+                        code[temp_off + j] = 0;
+                } else {
+                    LOG_WARN_V("ELF load failed, rc: ", (unsigned long)(uint32_t)(-elf_rc));
+                    /* Restore raw data */
+                    for (uint32_t j = 0; j < offset; j++)
+                        code[j] = code[temp_off + j];
+                }
+            }
+        }
+
+        LOG_DEBUG_V("child code size: ", offset);
         WR32(sio, SBX_EXEC_CHILD_SIZE, offset);
         exec_loaded_bytes = offset;
 

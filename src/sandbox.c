@@ -600,8 +600,11 @@ typedef int (*program_entry_t)(aios_syscalls_t *sys);
 static aios_syscalls_t syscalls;
 
 static int sbx_exec(const char *path, const char *args) {
-    /* Save parent code to top of heap before orchestrator overwrites it */
-    uint32_t parent_size = RD32(sandbox_io, SBX_CODE_SIZE);
+    /* Save parent code + BSS to top of heap before orchestrator overwrites it */
+    uint32_t parent_code = RD32(sandbox_io, SBX_CODE_SIZE);
+    uint32_t bss_extra = 64 * 1024;  /* must match run_program BSS clear */
+    uint32_t parent_size = parent_code + bss_extra;
+    if (parent_size > 4 * 1024 * 1024) parent_size = 4 * 1024 * 1024;
     uint8_t *backup = (uint8_t *)(sandbox_heap + HEAP_SIZE - parent_size);
     volatile uint8_t *code = (volatile uint8_t *)sandbox_code;
     for (uint32_t i = 0; i < parent_size; i++) backup[i] = code[i];

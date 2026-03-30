@@ -1,3 +1,5 @@
+#include "aios/elf_loader.h"
+
 /* Exec and spawn infrastructure
  * Auto-extracted from orchestrator.c
  * Lines 1097-1293
@@ -45,11 +47,11 @@ static int internal_spawn(const char *filename, const char *args,
         return -1;
     }
 
-    /* Check for shebang — reject scripts */
+    /* Read first bytes to detect file type */
     fs_read_sync(fd, 0, 4);
     {
         volatile uint8_t *hdr = (volatile uint8_t *)(fs_data + FS_DATA);
-        if (hdr[0] == 0x23 && hdr[1] == 0x21) { /* #! */
+        if (hdr[0] == 0x23 && hdr[1] == 0x21) { /* #! shebang */
             fs_close_sync(fd);
             return -2; /* script file, not binary */
         }
@@ -64,6 +66,8 @@ static int internal_spawn(const char *filename, const char *args,
     uintptr_t cur_sio = sbx_io[slot];
     uintptr_t cur_scode = sbx_code[slot];
     volatile uint8_t *code_dst = (volatile uint8_t *)cur_scode;
+
+    /* Read entire file into code region (temporary staging area) */
     uint32_t offset = 0;
     while (offset < size) {
         uint32_t chunk = size - offset;
@@ -77,6 +81,54 @@ static int internal_spawn(const char *filename, const char *args,
         offset += got;
     }
     fs_close_sync(fd);
+
+    /* Detect and handle ELF files */
+    if (offset >= 64 && elf_is_valid((const uint8_t *)code_dst, offset)) {
+        /* ELF binary — parse and load segments */
+        /* Make a copy of file data since we load in-place */
+        /* For small files (< 2MB), use upper half of code region as temp */
+        uint32_t code_max = 0x400000;  /* 4 MiB */
+        uint32_t temp_off = code_max / 2;  /* Use upper 2MB as temp */
+        if (offset > temp_off) {
+            /* File too large for in-place reload — load directly */
+            /* Already in code_dst, treat as raw */
+            goto raw_loaded;
+        }
+        /* Copy raw file to temp area */
+        for (uint32_t j = 0; j < offset; j++)
+            code_dst[temp_off + j] = code_dst[j];
+        /* Clear the load area */
+        for (uint32_t j = 0; j < temp_off; j++)
+            code_dst[j] = 0;
+
+        elf_load_result_t elf_result;
+        int elf_rc = elf_load((const uint8_t *)(code_dst + temp_off), offset,
+                              code_dst, 0x21100000, code_max / 2, &elf_result);
+        if (elf_rc == 0) {
+            offset = elf_result.total_memsz;
+            if (elf_result.is_linux) {
+                ser_puts("  ELF: Linux binary rebased to 0x21100000");
+            } else {
+                ser_puts("  ELF: native AIOS binary");
+            }
+            ser_puts(" (");
+            ser_put_dec(elf_result.num_segments);
+            ser_puts(" segments, ");
+            ser_put_dec(elf_result.total_memsz);
+            ser_puts(" bytes)\n");
+            ser_flush();
+        } else {
+            ser_puts("  ELF: load failed (rc=");
+            ser_put_dec((unsigned int)(-elf_rc));
+            ser_puts("), falling back to raw\n");
+            ser_flush();
+            /* Restore raw data from temp */
+            for (uint32_t j = 0; j < offset; j++)
+                code_dst[j] = code_dst[temp_off + j];
+        }
+    }
+raw_loaded:
+    (void)0;
 
     /* Copy args */
     {
@@ -197,6 +249,42 @@ static void cmd_exec(const char *filename) {
         offset += got;
     }
     fs_close_sync(fd);
+
+    /* Detect and handle ELF files */
+    if (offset >= 64 && elf_is_valid((const uint8_t *)code_dst, offset)) {
+        uint32_t code_max = 0x400000;
+        uint32_t temp_off = code_max / 2;
+        if (offset <= temp_off) {
+            for (uint32_t j = 0; j < offset; j++)
+                code_dst[temp_off + j] = code_dst[j];
+            for (uint32_t j = 0; j < temp_off; j++)
+                code_dst[j] = 0;
+
+            elf_load_result_t elf_result;
+            int elf_rc = elf_load((const uint8_t *)(code_dst + temp_off), offset,
+                                  code_dst, 0x21100000, code_max / 2, &elf_result);
+            if (elf_rc == 0) {
+                offset = elf_result.total_memsz;
+                if (elf_result.is_linux) {
+                    ser_puts("  ELF: Linux binary rebased to 0x21100000");
+                } else {
+                    ser_puts("  ELF: native AIOS binary");
+                }
+                ser_puts(" (");
+                ser_put_dec(elf_result.num_segments);
+                ser_puts(" segments, ");
+                ser_put_dec(elf_result.total_memsz);
+                ser_puts(" bytes)\n");
+                ser_flush();
+            } else {
+                ser_puts("  ELF: load failed, falling back to raw\n");
+                ser_flush();
+                for (uint32_t j = 0; j < offset; j++)
+                    code_dst[j] = code_dst[temp_off + j];
+            }
+        }
+    }
+
     exec_loaded_bytes = offset;
 
     LOG_INFO("program loaded into sandbox");
