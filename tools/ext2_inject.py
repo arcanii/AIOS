@@ -313,8 +313,13 @@ def inject(img_path, files):
             chunk = file_data[start:end]
             data[block_off(blk):block_off(blk) + len(chunk)] = chunk
 
-        # Write inode (mode 0100644 = regular file)
-        write_inode(ino, 0o100644, size, blocks)
+        # Write inode — executables get 0755, others 0644
+        lower = disk_name.lower()
+        if lower.endswith('.bin') or lower.endswith('.sh'):
+            file_mode = 0o100755  # executable
+        else:
+            file_mode = 0o100644  # regular file
+        write_inode(ino, file_mode, size, blocks)
 
         # Add directory entry (file_type=1 for regular file)
         target_ino, target_path = get_target_dir(disk_name)

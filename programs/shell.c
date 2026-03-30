@@ -203,10 +203,27 @@ static void cmd_help(void) {
 }
 
 static void cmd_ls(const char *path) {
+    /* Parse flags */
+    int flag_l = 0, flag_a = 0;
+    const char *dir_arg = path;
+    /* Skip flags */
+    while (dir_arg && dir_arg[0] == '-') {
+        const char *f = dir_arg + 1;
+        while (*f) {
+            if (*f == 'l') flag_l = 1;
+            else if (*f == 'a') flag_a = 1;
+            f++;
+        }
+        /* Advance to next arg */
+        while (*dir_arg && *dir_arg != ' ') dir_arg++;
+        while (*dir_arg == ' ') dir_arg++;
+    }
+    if (!dir_arg || !dir_arg[0]) dir_arg = (void *)0;
+
     char cwdbuf[256];
     const char *dir;
-    if (path && path[0]) {
-        dir = path;
+    if (dir_arg && dir_arg[0]) {
+        dir = dir_arg;
     } else {
         getcwd(cwdbuf, sizeof(cwdbuf));
         dir = cwdbuf;
@@ -215,18 +232,125 @@ static void cmd_ls(const char *path) {
     if (!d) { print("ls: cannot open "); print(dir); print("\n"); return; }
     struct dirent *ent;
     while ((ent = readdir(d)) != NULL) {
-        print(ent->d_name);
-        int len = 0;
-        const char *p = ent->d_name;
-        while (*p++) len++;
-        if (ent->d_type == 2) { print("/"); len++; }
-        for (int pad = len; pad < 18; pad++) printc(' ');
-        if (ent->d_type == 2)
-            print("<DIR>\n");
-        else {
-            print_dec(ent->d_size);
-            print(" bytes\n");
+        /* Skip hidden files unless -a */
+        if (!flag_a && ent->d_name[0] == '.') continue;
+
+        if (flag_l) {
+            /* Long format: permissions size name */
+            /* Get stat info */
+            char fullpath[272];
+            int fi = 0;
+            /* Build full path for stat */
+            if (dir_arg && dir_arg[0]) {
+                for (int k = 0; dir_arg[k] && fi < 260; k++) fullpath[fi++] = dir_arg[k];
+                if (fi > 0 && fullpath[fi-1] != '/') fullpath[fi++] = '/';
+            } else {
+                getcwd(fullpath, 260);
+                fi = 0; while (fullpath[fi]) fi++;
+                if (fi > 1) fullpath[fi++] = '/';
+            }
+            for (int k = 0; ent->d_name[k] && fi < 270; k++) fullpath[fi++] = ent->d_name[k];
+            fullpath[fi] = '\0';
+
+            struct stat st;
+            if (stat(fullpath, &st) == 0) {
+                /* Type */
+                printc(S_ISDIR(st.st_mode) ? 'd' : '-');
+                /* Owner */
+                printc((st.st_mode & 0400) ? 'r' : '-');
+                printc((st.st_mode & 0200) ? 'w' : '-');
+                printc((st.st_mode & 0100) ? 'x' : '-');
+                /* Group */
+                printc((st.st_mode & 040) ? 'r' : '-');
+                printc((st.st_mode & 020) ? 'w' : '-');
+                printc((st.st_mode & 010) ? 'x' : '-');
+                /* Other */
+                printc((st.st_mode & 04) ? 'r' : '-');
+                printc((st.st_mode & 02) ? 'w' : '-');
+                printc((st.st_mode & 01) ? 'x' : '-');
+
+                /* Owner/group */
+                print(" ");
+                print_dec((unsigned long)st.st_uid);
+                print(" ");
+                print_dec((unsigned long)st.st_gid);
+
+                /* Size */
+                print(" ");
+                char szbuf[12];
+                int si = 0;
+                unsigned long sz = (unsigned long)st.st_size;
+                if (sz == 0) { szbuf[si++] = '0'; }
+                else {
+                    char tmp[12]; int ti = 0;
+                    while (sz > 0) { tmp[ti++] = '0' + (sz % 10); sz /= 10; }
+                    while (ti > 0) szbuf[si++] = tmp[--ti];
+                }
+                szbuf[si] = '\0';
+                /* Right-align size to 8 chars */
+                for (int pad = si; pad < 8; pad++) printc(' ');
+                print(szbuf);
+
+                /* Mod time */
+                if (st.st_mtime > 0) {
+                    unsigned long ut = (unsigned long)st.st_mtime;
+                    unsigned long days = ut / 86400;
+                    unsigned long secs = ut % 86400;
+                    unsigned long hrs = secs / 3600;
+                    unsigned long mins = (secs % 3600) / 60;
+                    unsigned long y = 1970;
+                    while (1) {
+                        unsigned long yd = 365;
+                        if ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0) yd = 366;
+                        if (days < yd) break;
+                        days -= yd; y++;
+                    }
+                    static const unsigned short md[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+                    unsigned long m = 0;
+                    int leap = ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0);
+                    while (m < 12) {
+                        unsigned long dd = md[m];
+                        if (m == 1 && leap) dd = 29;
+                        if (days < dd) break;
+                        days -= dd; m++;
+                    }
+                    static const char *months[] = {"Jan","Feb","Mar","Apr","May","Jun",
+                                                    "Jul","Aug","Sep","Oct","Nov","Dec"};
+                    print(" ");
+                    if (m < 12) print(months[m]); else print("???");
+                    printc(' ');
+                    if (days + 1 < 10) printc(' ');
+                    print_dec(days + 1);
+                    printc(' ');
+                    if (hrs < 10) printc('0'); print_dec(hrs);
+                    printc(':');
+                    if (mins < 10) printc('0'); print_dec(mins);
+                }
+
+                print(" ");
+            } else {
+                print("??????????    ");
+            }
         }
+
+        print(ent->d_name);
+        if (ent->d_type == 2) printc('/');
+
+        if (!flag_l) {
+            /* Short format: pad and show size or <DIR> */
+            int len = 0;
+            const char *p = ent->d_name;
+            while (*p++) len++;
+            if (ent->d_type == 2) len++;
+            for (int pad = len; pad < 18; pad++) printc(' ');
+            if (ent->d_type == 2)
+                print("<DIR>");
+            else {
+                print_dec(ent->d_size);
+                print(" bytes");
+            }
+        }
+        printc('\n');
     }
     closedir(d);
 }
