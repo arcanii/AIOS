@@ -754,6 +754,54 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
 
+    case SYS_SIGNAL: {
+        /* Stub: accept signal registration, do nothing */
+        /* MR1 = signum, MR2 = handler address */
+        result = 0; /* return previous handler (SIG_DFL = 0) */
+        break;
+    }
+
+    case SYS_TRUNCATE: {
+        volatile char *path = (volatile char *)(sio + 0x200);
+        char raw[256];
+        int i = 0;
+        while (path[i] && i < 255) { raw[i] = path[i]; i++; }
+        raw[i] = '\0';
+        char fname[256];
+        resolve_path(raw, fname, sizeof(fname));
+        /* truncate = open + ftruncate + close */
+        int st = fs_open_sync(fname);
+        if (st == 0) {
+            uint32_t fd = RD32(fs_data, FS_FD);
+            /* length in MR1 */
+            uint32_t len = (uint32_t)seL4_GetMR(1);
+            (void)len; /* TODO: implement actual truncation in ext2 */
+            fs_close_sync(fd);
+            result = 0;
+        } else {
+            result = -1;
+        }
+        break;
+    }
+
+    case SYS_OPENDIR: {
+        /* Same as READDIR — directory listing doesn't need a separate open */
+        result = 0;
+        break;
+    }
+
+    case SYS_CLOSEDIR: {
+        /* No-op — directory state is client-side */
+        result = 0;
+        break;
+    }
+
+    case SYS_BRK: {
+        /* Stub: sandbox has fixed heap, return success */
+        result = 0;
+        break;
+    }
+
     default:
         result = -1;
         break;

@@ -543,4 +543,83 @@ static inline char *strerror(int errnum) {
     }
 }
 
+
+/* ── POSIX wrappers (avoiding aios.h macro collision) ── */
+static inline unsigned int posix_sleep(unsigned int seconds) {
+    int (*fn)(unsigned int) = sys->sleep;
+    return (unsigned int)fn(seconds);
+}
+
+static inline int posix_dup(int oldfd) {
+    int (*fn)(int) = sys->dup;
+    return fn(oldfd);
+}
+
+static inline int posix_dup2(int oldfd, int newfd) {
+    int (*fn)(int, int) = sys->dup2;
+    return fn(oldfd, newfd);
+}
+
+static inline int posix_pipe(int pipefd[2]) {
+    int (*fn)(int *) = sys->pipe;
+    return fn(pipefd);
+}
+
+static inline int posix_access(const char *path, int amode) {
+    int (*fn)(const char *, int) = sys->access;
+    return fn(path, amode);
+}
+
+static inline mode_t posix_umask(mode_t mask) {
+    int (*fn)(int) = sys->umask;
+    return (mode_t)fn((int)mask);
+}
+
+static inline uid_t posix_getuid(void) {
+    int (*fn)(void) = sys->getuid;
+    return (uid_t)fn();
+}
+
+static inline gid_t posix_getgid(void) {
+    int (*fn)(void) = sys->getgid;
+    return (gid_t)fn();
+}
+
+static inline uid_t posix_geteuid(void) {
+    int (*fn)(void) = sys->geteuid;
+    return (uid_t)fn();
+}
+
+static inline gid_t posix_getegid(void) {
+    int (*fn)(void) = sys->getegid;
+    return (gid_t)fn();
+}
+
+static inline pid_t posix_getppid(void) {
+    int (*fn)(void) = sys->getppid;
+    return (pid_t)fn();
+}
+
+static inline pid_t posix_spawn(const char *path, const char *args) {
+    int (*fn)(const char *, const char *) = sys->spawn;
+    return (pid_t)fn(path, args);
+}
+
+static inline pid_t posix_waitpid(pid_t pid, int *status) {
+    int (*fn)(int, int *) = sys->waitpid;
+    return (pid_t)fn((int)pid, status);
+}
+
+static inline long posix_time(void) {
+    long (*fn)(void) = sys->time;
+    return fn();
+}
+
+/* ── Signal handling (stub) ──────────────────────────── */
+typedef void (*sighandler_t)(int);
+static inline sighandler_t signal(int signum, sighandler_t handler) {
+    (void)signum; (void)handler;
+    return SIG_DFL; /* stub — signals delivered via Ctrl-C only */
+}
+
 #endif /* AIOS_POSIX_H */
