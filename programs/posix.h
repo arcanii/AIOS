@@ -867,4 +867,266 @@ static inline ssize_t recv(int sockfd, void *buf, size_t len, int flags) {
     return (ssize_t)fn(sockfd, buf, (unsigned long)len, flags);
 }
 
+
+/* ═══════════════════════════════════════════════════════════
+ *  Tier 1 POSIX extensions — stubs and wrappers
+ * ═══════════════════════════════════════════════════════════ */
+
+/* ── uname ────────────────────────────────────────────── */
+struct utsname {
+    char sysname[65];
+    char nodename[65];
+    char release[65];
+    char version[65];
+    char machine[65];
+};
+
+static inline int uname(struct utsname *buf) {
+    if (!buf) { errno = EFAULT; return -1; }
+    /* sysname */
+    const char *s = "AIOS";
+    int i = 0; while (s[i] && i < 64) { buf->sysname[i] = s[i]; i++; } buf->sysname[i] = 0;
+    /* nodename */
+    s = "aios"; i = 0; while (s[i] && i < 64) { buf->nodename[i] = s[i]; i++; } buf->nodename[i] = 0;
+    /* release */
+    s = "0.2.23"; i = 0; while (s[i] && i < 64) { buf->release[i] = s[i]; i++; } buf->release[i] = 0;
+    /* version */
+    s = "seL4 14.0.0 Microkit 2.1.0"; i = 0; while (s[i] && i < 64) { buf->version[i] = s[i]; i++; } buf->version[i] = 0;
+    /* machine */
+    s = "aarch64"; i = 0; while (s[i] && i < 64) { buf->machine[i] = s[i]; i++; } buf->machine[i] = 0;
+    return 0;
+}
+
+static inline int gethostname(char *name, size_t len) {
+    const char *h = "aios";
+    size_t i = 0;
+    while (h[i] && i < len - 1) { name[i] = h[i]; i++; }
+    name[i] = 0;
+    return 0;
+}
+
+static inline int sethostname(const char *name, size_t len) {
+    (void)name; (void)len;
+    errno = EPERM;
+    return -1;
+}
+
+/* ── Time extensions ──────────────────────────────────── */
+struct timeval {
+    long tv_sec;
+    long tv_usec;
+};
+
+struct timespec {
+    long tv_sec;
+    long tv_nsec;
+};
+
+struct timezone {
+    int tz_minuteswest;
+    int tz_dsttime;
+};
+
+#ifndef CLOCK_REALTIME
+#define CLOCK_REALTIME  0
+#define CLOCK_MONOTONIC 1
+#endif
+
+static inline int gettimeofday(struct timeval *tv, struct timezone *tz) {
+    if (tv) {
+        long (*tfn)(void) = sys->time;
+        long t = tfn();
+        tv->tv_sec = t;
+        tv->tv_usec = 0;
+    }
+    if (tz) {
+        tz->tz_minuteswest = 0;
+        tz->tz_dsttime = 0;
+    }
+    return 0;
+}
+
+static inline int clock_gettime(int clk_id, struct timespec *tp) {
+    (void)clk_id;
+    if (!tp) { errno = EFAULT; return -1; }
+    long (*tfn)(void) = sys->time;
+    long t = tfn();
+    tp->tv_sec = t;
+    tp->tv_nsec = 0;
+    return 0;
+}
+
+static inline int nanosleep(const struct timespec *req, struct timespec *rem) {
+    if (!req) { errno = EFAULT; return -1; }
+    unsigned int secs = (unsigned int)req->tv_sec;
+    if (req->tv_nsec > 0 && secs == 0) secs = 1; /* at least 1s for sub-second */
+    if (secs > 0) {
+        int (*sfn)(unsigned int) = sys->sleep;
+        sfn(secs);
+    }
+    if (rem) { rem->tv_sec = 0; rem->tv_nsec = 0; }
+    return 0;
+}
+
+/* ── Password/group database ─────────────────────────── */
+struct passwd {
+    char *pw_name;
+    char *pw_passwd;
+    uid_t pw_uid;
+    gid_t pw_gid;
+    char *pw_gecos;
+    char *pw_dir;
+    char *pw_shell;
+};
+
+struct group {
+    char *gr_name;
+    char *gr_passwd;
+    gid_t gr_gid;
+    char **gr_mem;
+};
+
+static struct passwd _pw_entry;
+static char _pw_name[32], _pw_dir[64], _pw_shell[64];
+
+static inline struct passwd *getpwuid(uid_t uid) {
+    _pw_entry.pw_uid = uid;
+    if (uid == 0) {
+        const char *s;
+        s = "root"; int i = 0; while (s[i]) { _pw_name[i] = s[i]; i++; } _pw_name[i] = 0;
+        s = "/"; i = 0; while (s[i]) { _pw_dir[i] = s[i]; i++; } _pw_dir[i] = 0;
+        s = "/bin/shell.bin"; i = 0; while (s[i]) { _pw_shell[i] = s[i]; i++; } _pw_shell[i] = 0;
+    } else {
+        const char *s;
+        s = "user"; int i = 0; while (s[i]) { _pw_name[i] = s[i]; i++; } _pw_name[i] = 0;
+        s = "/home"; i = 0; while (s[i]) { _pw_dir[i] = s[i]; i++; } _pw_dir[i] = 0;
+        s = "/bin/shell.bin"; i = 0; while (s[i]) { _pw_shell[i] = s[i]; i++; } _pw_shell[i] = 0;
+    }
+    _pw_entry.pw_name = _pw_name;
+    _pw_entry.pw_passwd = "x";
+    _pw_entry.pw_gid = (gid_t)uid;
+    _pw_entry.pw_gecos = _pw_name;
+    _pw_entry.pw_dir = _pw_dir;
+    _pw_entry.pw_shell = _pw_shell;
+    return &_pw_entry;
+}
+
+static inline struct passwd *getpwnam(const char *name) {
+    /* Simple lookup: root=0, user=1000, guest=1001 */
+    if (name[0] == 'r' && name[1] == 'o' && name[2] == 'o' && name[3] == 't' && name[4] == 0)
+        return getpwuid(0);
+    if (name[0] == 'u' && name[1] == 's' && name[2] == 'e' && name[3] == 'r' && name[4] == 0)
+        return getpwuid(1000);
+    if (name[0] == 'g' && name[1] == 'u' && name[2] == 'e' && name[3] == 's' && name[4] == 't' && name[5] == 0)
+        return getpwuid(1001);
+    return (struct passwd *)0;
+}
+
+static struct group _gr_entry;
+static char _gr_name[32];
+
+static inline struct group *getgrgid(gid_t gid) {
+    _gr_entry.gr_gid = gid;
+    if (gid == 0) {
+        const char *s = "root"; int i = 0; while (s[i]) { _gr_name[i] = s[i]; i++; } _gr_name[i] = 0;
+    } else {
+        const char *s = "users"; int i = 0; while (s[i]) { _gr_name[i] = s[i]; i++; } _gr_name[i] = 0;
+    }
+    _gr_entry.gr_name = _gr_name;
+    _gr_entry.gr_passwd = "x";
+    _gr_entry.gr_mem = (char **)0;
+    return &_gr_entry;
+}
+
+static inline struct group *getgrnam(const char *name) {
+    if (name[0] == 'r' && name[1] == 'o' && name[2] == 'o' && name[3] == 't' && name[4] == 0)
+        return getgrgid(0);
+    return getgrgid(1000);
+}
+
+/* ── Signal extensions ────────────────────────────────── */
+typedef void (*sighandler_t)(int);
+
+struct sigaction {
+    sighandler_t sa_handler;
+    unsigned long sa_mask;
+    int sa_flags;
+    void (*sa_restorer)(void);
+};
+
+#ifndef SA_RESTART
+#define SA_RESTART  0x10000000
+#define SA_NOCLDSTOP 1
+#define SA_NOCLDWAIT 2
+#define SA_SIGINFO   4
+#define SIG_BLOCK   0
+#define SIG_UNBLOCK 1
+#define SIG_SETMASK 2
+#endif
+
+typedef unsigned long sigset_t;
+
+static inline int sigemptyset(sigset_t *set) { if (set) *set = 0; return 0; }
+static inline int sigfillset(sigset_t *set) { if (set) *set = ~0UL; return 0; }
+static inline int sigaddset(sigset_t *set, int signo) { if (set) *set |= (1UL << signo); return 0; }
+static inline int sigdelset(sigset_t *set, int signo) { if (set) *set &= ~(1UL << signo); return 0; }
+static inline int sigismember(const sigset_t *set, int signo) { return set ? (*set >> signo) & 1 : 0; }
+
+static inline int sigaction(int signum, const struct sigaction *act, struct sigaction *oldact) {
+    (void)signum; (void)oldact;
+    if (act && act->sa_handler) {
+        /* Register via posix_signal wrapper */
+        signal(signum, act->sa_handler);
+    }
+    return 0;
+}
+
+static inline int sigprocmask(int how, const sigset_t *set, sigset_t *oldset) {
+    (void)how; (void)set;
+    if (oldset) *oldset = 0;
+    return 0;
+}
+
+static inline int sigsuspend(const sigset_t *mask) {
+    (void)mask;
+    errno = EINTR;
+    return -1;
+}
+
+static inline unsigned int alarm(unsigned int seconds) {
+    (void)seconds;
+    return 0; /* no previous alarm */
+}
+
+/* ── Socket extensions ────────────────────────────────── */
+static inline int shutdown(int sockfd, int how) {
+    (void)how;
+    close(sockfd);
+    return 0;
+}
+
+static inline int setsockopt(int sockfd, int level, int optname, const void *optval, unsigned int optlen) {
+    (void)sockfd; (void)level; (void)optname; (void)optval; (void)optlen;
+    return 0; /* silently succeed */
+}
+
+static inline int getsockopt(int sockfd, int level, int optname, void *optval, unsigned int *optlen) {
+    (void)sockfd; (void)level; (void)optname; (void)optval; (void)optlen;
+    return 0;
+}
+
+/* ── Symlink stubs ────────────────────────────────────── */
+static inline ssize_t readlink(const char *path, char *buf, size_t bufsiz) {
+    (void)path; (void)buf; (void)bufsiz;
+    errno = ENOSYS;
+    return -1;
+}
+
+static inline int symlink(const char *target, const char *linkpath) {
+    (void)target; (void)linkpath;
+    errno = ENOSYS;
+    return -1;
+}
+
+
 #endif /* AIOS_POSIX_H */
