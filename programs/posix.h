@@ -299,4 +299,248 @@ static inline int posix_puts(const char *s) {
     return len + 1;
 }
 
+
+
+/* ── FILE stream I/O ─────────────────────────────────── */
+typedef struct _posix_file {
+    int fd;
+    int eof;
+    int err;
+    int append;
+} FILE;
+
+#define _POSIX_FOPEN_MAX 8
+static FILE _posix_files[_POSIX_FOPEN_MAX];
+static int  _posix_files_used[_POSIX_FOPEN_MAX];
+static FILE _posix_stdin  = { .fd = 0, .eof = 0, .err = 0, .append = 0 };
+static FILE _posix_stdout = { .fd = 1, .eof = 0, .err = 0, .append = 0 };
+static FILE _posix_stderr = { .fd = 2, .eof = 0, .err = 0, .append = 0 };
+#define stdin  (&_posix_stdin)
+#define stdout (&_posix_stdout)
+#define stderr (&_posix_stderr)
+#define EOF (-1)
+
+static inline FILE *fopen(const char *path, const char *mode) {
+    int flags = 0;
+    if (mode[0] == 'r') {
+        flags = O_RDONLY;
+        if (mode[1] == '+') flags = O_RDWR;
+    } else if (mode[0] == 'w') {
+        flags = O_WRONLY | O_CREAT | O_TRUNC;
+        if (mode[1] == '+') flags = O_RDWR | O_CREAT | O_TRUNC;
+    } else if (mode[0] == 'a') {
+        flags = O_WRONLY | O_CREAT | O_APPEND;
+        if (mode[1] == '+') flags = O_RDWR | O_CREAT | O_APPEND;
+    } else {
+        return (FILE *)0;
+    }
+    int fd = open(path, flags);
+    if (fd < 0) return (FILE *)0;
+    for (int i = 0; i < _POSIX_FOPEN_MAX; i++) {
+        if (!_posix_files_used[i]) {
+            _posix_files_used[i] = 1;
+            _posix_files[i].fd = fd;
+            _posix_files[i].eof = 0;
+            _posix_files[i].err = 0;
+            _posix_files[i].append = (mode[0] == 'a') ? 1 : 0;
+            return &_posix_files[i];
+        }
+    }
+    close(fd);
+    return (FILE *)0;
+}
+
+static inline int fclose(FILE *fp) {
+    if (!fp) return -1;
+    int rc = close(fp->fd);
+    fp->fd = -1;
+    fp->eof = 1;
+    for (int i = 0; i < _POSIX_FOPEN_MAX; i++) {
+        if (&_posix_files[i] == fp) { _posix_files_used[i] = 0; break; }
+    }
+    return rc;
+}
+
+static inline size_t fread(void *ptr, size_t size, size_t nmemb, FILE *fp) {
+    if (!fp || size == 0 || nmemb == 0) return 0;
+    size_t total = size * nmemb;
+    ssize_t n = read(fp->fd, ptr, total);
+    if (n <= 0) { fp->eof = 1; return 0; }
+    return (size_t)n / size;
+}
+
+static inline size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *fp) {
+    if (!fp || size == 0 || nmemb == 0) return 0;
+    size_t total = size * nmemb;
+    ssize_t n = write(fp->fd, ptr, total);
+    if (n < 0) { fp->err = 1; return 0; }
+    return (size_t)n / size;
+}
+
+static inline int fseek(FILE *fp, long offset, int whence) {
+    if (!fp) return -1;
+    off_t r = lseek(fp->fd, (off_t)offset, whence);
+    if (r < 0) return -1;
+    fp->eof = 0;
+    return 0;
+}
+
+static inline long ftell(FILE *fp) {
+    if (!fp) return -1;
+    return (long)lseek(fp->fd, 0, SEEK_CUR);
+}
+
+static inline int feof(FILE *fp) { return fp ? fp->eof : 1; }
+static inline int ferror(FILE *fp) { return fp ? fp->err : 1; }
+static inline int fflush(FILE *fp) { (void)fp; return 0; }
+static inline int fileno(FILE *fp) { return fp ? fp->fd : -1; }
+
+static inline int fputc(int c, FILE *fp) {
+    char ch = (char)c;
+    if (fwrite(&ch, 1, 1, fp) == 1) return (unsigned char)c;
+    return EOF;
+}
+
+static inline int fputs(const char *s, FILE *fp) {
+    while (*s) { if (fputc(*s++, fp) == EOF) return EOF; }
+    return 0;
+}
+
+static inline int fgetc(FILE *fp) {
+    unsigned char c;
+    if (fread(&c, 1, 1, fp) == 1) return (int)c;
+    return EOF;
+}
+
+static inline char *fgets(char *s, int size, FILE *fp) {
+    if (!s || size <= 0 || !fp) return (char *)0;
+    int i = 0;
+    while (i < size - 1) {
+        int c = fgetc(fp);
+        if (c == EOF) { if (i == 0) return (char *)0; break; }
+        s[i++] = (char)c;
+        if (c == '\n') break;
+    }
+    s[i] = '\0';
+    return s;
+}
+
+static inline int fprintf(FILE *fp, const char *fmt, ...) {
+    /* Minimal fprintf: supports %s, %d, %c, %x, %% */
+    char buf[512];
+    int pos = 0;
+    const char *p = fmt;
+    __builtin_va_list ap;
+    __builtin_va_start(ap, fmt);
+    while (*p && pos < 510) {
+        if (*p == '%') {
+            p++;
+            if (*p == 's') {
+                const char *s = __builtin_va_arg(ap, const char *);
+                if (!s) s = "(null)";
+                while (*s && pos < 510) buf[pos++] = *s++;
+            } else if (*p == 'd') {
+                int v = __builtin_va_arg(ap, int);
+                char tmp[12]; int ti = 0;
+                if (v < 0) { buf[pos++] = '-'; v = -v; }
+                if (v == 0) tmp[ti++] = '0';
+                while (v > 0) { tmp[ti++] = '0' + (v % 10); v /= 10; }
+                while (ti > 0 && pos < 510) buf[pos++] = tmp[--ti];
+            } else if (*p == 'c') {
+                int v = __builtin_va_arg(ap, int);
+                buf[pos++] = (char)v;
+            } else if (*p == 'x') {
+                unsigned int v = __builtin_va_arg(ap, unsigned int);
+                char tmp[9]; int ti = 0;
+                if (v == 0) tmp[ti++] = '0';
+                while (v > 0) { tmp[ti++] = "0123456789abcdef"[v & 0xf]; v >>= 4; }
+                while (ti > 0 && pos < 510) buf[pos++] = tmp[--ti];
+            } else if (*p == '%') {
+                buf[pos++] = '%';
+            }
+            p++;
+        } else {
+            buf[pos++] = *p++;
+        }
+    }
+    __builtin_va_end(ap);
+    buf[pos] = '\0';
+    return (int)fwrite(buf, 1, (size_t)pos, fp);
+}
+
+static inline int printf(const char *fmt, ...) {
+    /* Route through fprintf to stdout */
+    char buf[512];
+    int pos = 0;
+    const char *p = fmt;
+    __builtin_va_list ap;
+    __builtin_va_start(ap, fmt);
+    while (*p && pos < 510) {
+        if (*p == '%') {
+            p++;
+            if (*p == 's') {
+                const char *s = __builtin_va_arg(ap, const char *);
+                if (!s) s = "(null)";
+                while (*s && pos < 510) buf[pos++] = *s++;
+            } else if (*p == 'd') {
+                int v = __builtin_va_arg(ap, int);
+                char tmp[12]; int ti = 0;
+                if (v < 0) { buf[pos++] = '-'; v = -v; }
+                if (v == 0) tmp[ti++] = '0';
+                while (v > 0) { tmp[ti++] = '0' + (v % 10); v /= 10; }
+                while (ti > 0 && pos < 510) buf[pos++] = tmp[--ti];
+            } else if (*p == 'c') {
+                int v = __builtin_va_arg(ap, int);
+                buf[pos++] = (char)v;
+            } else if (*p == 'x') {
+                unsigned int v = __builtin_va_arg(ap, unsigned int);
+                char tmp[9]; int ti = 0;
+                if (v == 0) tmp[ti++] = '0';
+                while (v > 0) { tmp[ti++] = "0123456789abcdef"[v & 0xf]; v >>= 4; }
+                while (ti > 0 && pos < 510) buf[pos++] = tmp[--ti];
+            } else if (*p == '%') {
+                buf[pos++] = '%';
+            }
+            p++;
+        } else {
+            buf[pos++] = *p++;
+        }
+    }
+    __builtin_va_end(ap);
+    buf[pos] = '\0';
+    write(STDOUT_FILENO, buf, (size_t)pos);
+    return pos;
+}
+
+/* ── String utilities ────────────────────────────────── */
+static inline char *strdup(const char *s) {
+    if (!s) return (char *)0;
+    int len = 0;
+    while (s[len]) len++;
+    void *(*mfn)(unsigned long) = sys->malloc;
+    char *d = (char *)mfn((unsigned long)(len + 1));
+    if (d) { for (int i = 0; i <= len; i++) d[i] = s[i]; }
+    return d;
+}
+
+static inline char *strerror(int errnum) {
+    switch (errnum) {
+    case 0:  return "Success";
+    case 1:  return "Operation not permitted";
+    case 2:  return "No such file or directory";
+    case 5:  return "I/O error";
+    case 9:  return "Bad file descriptor";
+    case 12: return "Out of memory";
+    case 13: return "Permission denied";
+    case 17: return "File exists";
+    case 20: return "Not a directory";
+    case 21: return "Is a directory";
+    case 22: return "Invalid argument";
+    case 28: return "No space left on device";
+    case 38: return "Function not implemented";
+    case 39: return "Directory not empty";
+    default: return "Unknown error";
+    }
+}
+
 #endif /* AIOS_POSIX_H */

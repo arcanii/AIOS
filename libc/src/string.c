@@ -134,3 +134,33 @@ char *strtok(char *str, const char *delim) {
     if (*_strtok_save) *_strtok_save++ = '\0';
     return start;
 }
+
+extern void *malloc(size_t size);
+
+char *strdup(const char *s) {
+    if (!s) return (char *)0;
+    size_t len = strlen(s) + 1;
+    char *d = (char *)malloc(len);
+    if (d) memcpy(d, s, len);
+    return d;
+}
+
+char *strerror(int errnum) {
+    switch (errnum) {
+    case 0:  return "Success";
+    case 1:  return "Operation not permitted";
+    case 2:  return "No such file or directory";
+    case 5:  return "I/O error";
+    case 9:  return "Bad file descriptor";
+    case 12: return "Out of memory";
+    case 13: return "Permission denied";
+    case 17: return "File exists";
+    case 20: return "Not a directory";
+    case 21: return "Is a directory";
+    case 22: return "Invalid argument";
+    case 28: return "No space left on device";
+    case 38: return "Function not implemented";
+    case 39: return "Directory not empty";
+    default: return "Unknown error";
+    }
+}

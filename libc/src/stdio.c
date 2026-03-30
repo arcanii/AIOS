@@ -210,3 +210,95 @@ char *fgets(char *s, int size, FILE *fp) {
 
 int feof(FILE *fp) { return fp->eof; }
 int fflush(FILE *fp) { (void)fp; return 0; }
+
+
+/* ── FILE stream I/O ─────────────────────────────────── */
+extern int open(const char *path, int flags, ...);
+extern int close(int fd);
+extern off_t lseek(int fd, off_t offset, int whence);
+
+#define _FOPEN_MAX 16
+static struct _FILE _file_pool[_FOPEN_MAX];
+static int _file_pool_used[_FOPEN_MAX];
+
+FILE *fopen(const char *path, const char *mode) {
+    int flags = 0;
+    if (mode[0] == 'r') {
+        flags = 0x0000; /* O_RDONLY */
+        if (mode[1] == '+') flags = 0x0002; /* O_RDWR */
+    } else if (mode[0] == 'w') {
+        flags = 0x0001 | 0x0040 | 0x0200; /* O_WRONLY | O_CREAT | O_TRUNC */
+        if (mode[1] == '+') flags = 0x0002 | 0x0040 | 0x0200; /* O_RDWR | O_CREAT | O_TRUNC */
+    } else if (mode[0] == 'a') {
+        flags = 0x0001 | 0x0040 | 0x0400; /* O_WRONLY | O_CREAT | O_APPEND */
+        if (mode[1] == '+') flags = 0x0002 | 0x0040 | 0x0400; /* O_RDWR | O_CREAT | O_APPEND */
+    } else {
+        return (FILE *)0;
+    }
+
+    int fd = open(path, flags);
+    if (fd < 0) return (FILE *)0;
+
+    /* Find a free slot */
+    for (int i = 0; i < _FOPEN_MAX; i++) {
+        if (!_file_pool_used[i]) {
+            _file_pool_used[i] = 1;
+            _file_pool[i].fd = fd;
+            _file_pool[i].eof = 0;
+            _file_pool[i].error = 0;
+            return &_file_pool[i];
+        }
+    }
+    close(fd);
+    return (FILE *)0;
+}
+
+int fclose(FILE *fp) {
+    if (!fp) return -1;
+    int rc = close(fp->fd);
+    fp->fd = -1;
+    fp->eof = 1;
+    /* Return to pool */
+    for (int i = 0; i < _FOPEN_MAX; i++) {
+        if (&_file_pool[i] == fp) {
+            _file_pool_used[i] = 0;
+            break;
+        }
+    }
+    return rc;
+}
+
+size_t fread(void *ptr, size_t size, size_t nmemb, FILE *fp) {
+    if (!fp || size == 0 || nmemb == 0) return 0;
+    size_t total = size * nmemb;
+    ssize_t n = read(fp->fd, ptr, total);
+    if (n <= 0) {
+        fp->eof = 1;
+        return 0;
+    }
+    return (size_t)n / size;
+}
+
+size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *fp) {
+    if (!fp || size == 0 || nmemb == 0) return 0;
+    size_t total = size * nmemb;
+    ssize_t n = write(fp->fd, ptr, total);
+    if (n < 0) {
+        fp->error = 1;
+        return 0;
+    }
+    return (size_t)n / size;
+}
+
+int fseek(FILE *fp, long offset, int whence) {
+    if (!fp) return -1;
+    off_t r = lseek(fp->fd, (off_t)offset, whence);
+    if (r < 0) return -1;
+    fp->eof = 0;
+    return 0;
+}
+
+long ftell(FILE *fp) {
+    if (!fp) return -1;
+    return (long)lseek(fp->fd, 0, 1); /* SEEK_CUR */
+}
