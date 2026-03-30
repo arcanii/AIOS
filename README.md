@@ -10,17 +10,45 @@ It currently is only tested in QEMU on aarch64 a53
 
 ## Current Progress update
 
-AIOS v0.2.12 (build ~200) - March 30, 2026
+Created tools/posix_audit.py
+```
+============================================================
+  AIOS POSIX.1 Compliance Audit
+============================================================
 
-- seL4 microkernel, 4-core SMP, 8 sandbox slots
-- ext2 filesystem with full directory tree support
-- 37+ POSIX syscalls, ~50% compliance
-- Shell with pipes, redirects, history, cd/pwd
-- Process management: spawn, waitpid, kill, Ctrl-C
-- Auth: login, users, groups, permissions
-- LLM server (llama2.c)
-- Networking (virtio-net, IP stack)
-- Modular orchestrator (11 modules, 2644 lines)
+  Syscall handlers:  54
+  POSIX wrappers:    129
+  Standard headers:  20
+
+  File I/O               ██████████████░░░░░░  13/18  72%
+  File Status            █████████████████░░░  18/21  85%
+  Directories            ██████████████░░░░░░   7/10  70%
+  Process Control        ████████████░░░░░░░░   9/15  60%
+  Signals                ████████████████░░░░  12/15  80%
+  Pipes & FDs            ██████████████░░░░░░   5/7   71%
+  Sockets                █████████████████░░░  20/23  86%
+  Memory                 █████████████████░░░   8/9   88%
+  Strings                ██████████████████░░  17/18  94%
+  stdio                  ██████████████░░░░░░  19/27  70%
+  stdlib                 ██████████░░░░░░░░░░   9/17  52%
+  User/Group             █████████████████░░░  12/14  85%
+  Environment            ███████████████░░░░░   3/4   75%
+  Time                   ██████████████████░░  11/12  91%
+  System Info            ████████░░░░░░░░░░░░   4/10  40%
+  I/O Multiplexing       ████████░░░░░░░░░░░░   2/5   40%
+  Threads (pthreads)     ░░░░░░░░░░░░░░░░░░░░   0/19  0%
+  Semaphores             ░░░░░░░░░░░░░░░░░░░░   0/7   0%
+  Dynamic Loading        ░░░░░░░░░░░░░░░░░░░░   0/4   0%
+  Nonlocal Jumps         ░░░░░░░░░░░░░░░░░░░░   0/4   0%
+  Regex & Glob           ░░░░░░░░░░░░░░░░░░░░   0/6   0%
+  Logging                ░░░░░░░░░░░░░░░░░░░░   0/3   0%
+  Misc                   ░░░░░░░░░░░░░░░░░░░░   0/4   0%
+
+------------------------------------------------------------
+  TOTAL: 169/272 functions (62%)
+------------------------------------------------------------
+```
+
 
 ## Hardware Targets
 - [x] - Development: QEMU virt (AArch64) — current platform
