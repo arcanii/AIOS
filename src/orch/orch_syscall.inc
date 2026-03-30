@@ -212,10 +212,14 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         raw[i] = '\0';
         char fname[256];
         resolve_path(raw, fname, sizeof(fname));
-        int st = fs_stat_sync(fname);
+        uint32_t sz = 0, fuid = 0, fgid = 0, fmode = 0;
+        int st = fs_stat_ex_sync(fname, &sz, &fuid, &fgid, &fmode);
         if (st == 0) {
             result = 0;
-            seL4_SetMR(1, RD32(fs_data, FS_FILESIZE));
+            seL4_SetMR(1, sz);
+            seL4_SetMR(2, fuid);
+            seL4_SetMR(3, fgid);
+            seL4_SetMR(4, fmode);
         } else {
             result = -1;
         }
@@ -614,6 +618,129 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         if (!found) result = -1;  /* ESRCH */
         break;
     }
+
+    case SYS_CHMOD: {
+        volatile char *path = (volatile char *)(sio + 0x200);
+        char raw[256];
+        int i = 0;
+        while (path[i] && i < 255) { raw[i] = path[i]; i++; }
+        raw[i] = '\0';
+        char fname[256];
+        resolve_path(raw, fname, sizeof(fname));
+        uint32_t mode = (uint32_t)seL4_GetMR(1);
+        /* Permission check: owner or root */
+        if (current_uid != 0) {
+            if (auth_check_file_sync(fname, ACCESS_WRITE) != 0) {
+                result = -13;
+                break;
+            }
+        }
+        volatile char *dst = (volatile char *)(fs_data + FS_FILENAME);
+        i = 0;
+        while (fname[i] && i < 63) { dst[i] = fname[i]; i++; }
+        dst[i] = '\0';
+        WR32(fs_data, FS_LENGTH, mode);
+        WR32(fs_data, FS_CMD, FS_CMD_CHMOD);
+        microkit_ppcall(CH_FS, microkit_msginfo_new(0, 0));
+        result = (int)RD32(fs_data, FS_STATUS);
+        break;
+    }
+    case SYS_CHOWN: {
+        volatile char *path = (volatile char *)(sio + 0x200);
+        char raw[256];
+        int i = 0;
+        while (path[i] && i < 255) { raw[i] = path[i]; i++; }
+        raw[i] = '\0';
+        char fname[256];
+        resolve_path(raw, fname, sizeof(fname));
+        uint32_t uid = (uint32_t)seL4_GetMR(1);
+        uint32_t gid = (uint32_t)seL4_GetMR(2);
+        /* Only root can chown */
+        if (current_uid != 0) {
+            result = -1;
+            break;
+        }
+        volatile char *dst = (volatile char *)(fs_data + FS_FILENAME);
+        i = 0;
+        while (fname[i] && i < 63) { dst[i] = fname[i]; i++; }
+        dst[i] = '\0';
+        WR32(fs_data, FS_UID, uid);
+        WR32(fs_data, FS_GID, gid);
+        WR32(fs_data, FS_CMD, FS_CMD_CHOWN);
+        microkit_ppcall(CH_FS, microkit_msginfo_new(0, 0));
+        result = (int)RD32(fs_data, FS_STATUS);
+        break;
+    }
+    case SYS_FTRUNCATE: {
+        /* MR1 = fd, MR2 = length */
+        uint32_t fd = (uint32_t)seL4_GetMR(1);
+        uint32_t length = (uint32_t)seL4_GetMR(2);
+        /* For now, truncate is a no-op that returns success */
+        (void)fd; (void)length;
+        result = 0;
+        break;
+    }
+    case SYS_LINK: {
+        /* Hard links not supported on this ext2 implementation */
+        result = -1;
+        break;
+    }
+    case SYS_FCNTL: {
+        /* MR1 = fd, MR2 = cmd */
+        uint32_t fd = (uint32_t)seL4_GetMR(1);
+        uint32_t cmd = (uint32_t)seL4_GetMR(2);
+        (void)fd;
+        if (cmd == 1) { /* F_GETFD */
+            result = 0;
+        } else if (cmd == 2) { /* F_SETFD */
+            result = 0;
+        } else if (cmd == 3) { /* F_GETFL */
+            result = 2; /* O_RDWR */
+        } else if (cmd == 4) { /* F_SETFL */
+            result = 0;
+        } else {
+            result = -1;
+        }
+        break;
+    }
+    case SYS_KILL: {
+        /* kill(pid, sig) - same as KILL_PROC but standard POSIX name */
+        uint32_t target_pid = (uint32_t)seL4_GetMR(1);
+        uint32_t sig = (uint32_t)seL4_GetMR(2);
+        int found = 0;
+        for (int s = 0; s < NUM_SANDBOXES; s++) {
+            if (proctab[s].in_use && proctab[s].pid == target_pid) {
+                if (proctab[s].owner_uid != current_uid && current_uid != 0) {
+                    result = -1;
+                    found = 1;
+                    break;
+                }
+                if (sig == 0) {
+                    /* Signal 0: just check if process exists */
+                    result = 0;
+                    found = 1;
+                } else {
+                    microkit_pd_stop(s);
+                    microkit_pd_restart(s, SBX_ENTRY_POINT);
+                    for (int ei = 0; ei < MAX_EXIT_QUEUE; ei++) {
+                        if (!exit_queue[ei].active) {
+                            exit_queue[ei].active = 1;
+                            exit_queue[ei].pid = proctab[s].pid;
+                            exit_queue[ei].parent_pid = proctab[s].parent_pid;
+                            exit_queue[ei].exit_code = -(int)sig;
+                            break;
+                        }
+                    }
+                    proctab[s].in_use = 0;
+                    result = 0;
+                    found = 1;
+                }
+                break;
+            }
+        }
+        if (!found) result = -3; /* ESRCH */
+        break;
+    }
     case SYS_TIME: {
         /* Return a monotonic tick counter (no RTC on virt) */
         static uint64_t tick_counter = 1711670400;  /* ~2024-03-29 epoch approx */
@@ -628,5 +755,5 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
     }
 
     seL4_SetMR(0, result);
-    return microkit_msginfo_new(0, 3);
+    return microkit_msginfo_new(0, 5);
 }

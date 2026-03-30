@@ -39,6 +39,7 @@ typedef struct {
     int   (*filesize)(void);
     /* Extended POSIX */
     int   (*stat_file)(const char *path, unsigned long *size_out);
+    int   (*stat_ex)(unsigned int *uid, unsigned int *gid, unsigned int *mode);
     int   (*lseek)(int fd, long offset, int whence);
     int   (*getcwd)(char *buf, unsigned long size);
     int   (*chdir)(const char *path);
@@ -65,6 +66,10 @@ typedef struct {
     /* Process management */
     int   (*spawn)(const char *path, const char *args);
     int   (*waitpid)(int pid, int *status);
+    int   (*chmod)(const char *path, unsigned int mode);
+    int   (*chown)(const char *path, unsigned int uid, unsigned int gid);
+    int   (*ftruncate)(int fd, unsigned long length);
+    int   (*fcntl)(int fd, int cmd, int arg);
     int   (*kill_proc)(int pid, int sig);
 } aios_syscalls_t;
 

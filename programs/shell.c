@@ -281,7 +281,22 @@ static void cmd_stat(const char *filename) {
     if (stat(filename, &st) < 0) { print(filename); print(": not found\n"); return; }
     print("  File: "); print(filename); printc('\n');
     print("  Size: "); print_dec((unsigned long)st.st_size); print(" bytes\n");
-    print("  Type: regular file\n");
+    /* Permissions */
+    char perms[11];
+    perms[0] = (st.st_mode & 0x4000) ? 'd' : '-';
+    perms[1] = (st.st_mode & 0x0100) ? 'r' : '-';
+    perms[2] = (st.st_mode & 0x0080) ? 'w' : '-';
+    perms[3] = (st.st_mode & 0x0040) ? 'x' : '-';
+    perms[4] = (st.st_mode & 0x0020) ? 'r' : '-';
+    perms[5] = (st.st_mode & 0x0010) ? 'w' : '-';
+    perms[6] = (st.st_mode & 0x0008) ? 'x' : '-';
+    perms[7] = (st.st_mode & 0x0004) ? 'r' : '-';
+    perms[8] = (st.st_mode & 0x0002) ? 'w' : '-';
+    perms[9] = (st.st_mode & 0x0001) ? 'x' : '-';
+    perms[10] = 0;
+    print("  Mode: "); print(perms); printc('\n');
+    print("  Uid:  "); print_dec(st.st_uid); printc('\n');
+    print("  Gid:  "); print_dec(st.st_gid); printc('\n');
 }
 
 static void cmd_wc(const char *filename) {

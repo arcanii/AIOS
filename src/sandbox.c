@@ -247,6 +247,8 @@ static int sbx_filesize(void) {
 
 /* ── Additional POSIX syscalls ─────────────────────── */
 
+static uint32_t last_stat_uid, last_stat_gid, last_stat_mode;
+
 static int sbx_stat(const char *path, unsigned long *size_out) {
     volatile char *dst = (volatile char *)(sandbox_io + 0x200);
     int i = 0;
@@ -256,7 +258,19 @@ static int sbx_stat(const char *path, unsigned long *size_out) {
     microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
     int r = (int)seL4_GetMR(0);
     if (r == 0 && size_out) *size_out = (unsigned long)seL4_GetMR(1);
+    if (r == 0) {
+        last_stat_uid  = (uint32_t)seL4_GetMR(2);
+        last_stat_gid  = (uint32_t)seL4_GetMR(3);
+        last_stat_mode = (uint32_t)seL4_GetMR(4);
+    }
     return r;
+}
+
+static int sbx_stat_ex(unsigned int *uid, unsigned int *gid, unsigned int *mode) {
+    if (uid)  *uid  = last_stat_uid;
+    if (gid)  *gid  = last_stat_gid;
+    if (mode) *mode = last_stat_mode;
+    return 0;
 }
 
 static int sbx_lseek(int fd, long offset, int whence) {
@@ -364,6 +378,47 @@ static int sbx_waitpid(int pid, int *status) {
     }
     if (status) *status = -1;
     return -1;  /* timeout */
+}
+
+
+static int sbx_chmod(const char *path, unsigned int mode) {
+    volatile char *sio = (volatile char *)sandbox_io;
+    int i = 0;
+    while (path[i] && i < 255) { sio[0x200 + i] = path[i]; i++; }
+    sio[0x200 + i] = 0;
+    seL4_SetMR(0, SYS_CHMOD);
+    seL4_SetMR(1, mode);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 2));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_chown(const char *path, unsigned int uid, unsigned int gid) {
+    volatile char *sio = (volatile char *)sandbox_io;
+    int i = 0;
+    while (path[i] && i < 255) { sio[0x200 + i] = path[i]; i++; }
+    sio[0x200 + i] = 0;
+    seL4_SetMR(0, SYS_CHOWN);
+    seL4_SetMR(1, uid);
+    seL4_SetMR(2, gid);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 3));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_ftruncate(int fd, unsigned long length) {
+    seL4_SetMR(0, SYS_FTRUNCATE);
+    seL4_SetMR(1, (seL4_Word)fd);
+    seL4_SetMR(2, (seL4_Word)length);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 3));
+    return (int)seL4_GetMR(0);
+}
+
+static int sbx_fcntl(int fd, int cmd, int arg) {
+    seL4_SetMR(0, SYS_FCNTL);
+    seL4_SetMR(1, (seL4_Word)fd);
+    seL4_SetMR(2, (seL4_Word)cmd);
+    seL4_SetMR(3, (seL4_Word)arg);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 4));
+    return (int)seL4_GetMR(0);
 }
 
 static int sbx_kill_proc(int pid, int sig) {
@@ -488,6 +543,7 @@ typedef struct {
     int   (*filesize)(void);
     /* Extended POSIX */
     int   (*stat_file)(const char *path, unsigned long *size_out);
+    int   (*stat_ex)(unsigned int *uid, unsigned int *gid, unsigned int *mode);
     int   (*lseek)(int fd, long offset, int whence);
     int   (*getcwd)(char *buf, unsigned long size);
     int   (*chdir)(const char *path);
@@ -514,6 +570,10 @@ typedef struct {
     /* Process management */
     int   (*spawn)(const char *path, const char *args);
     int   (*waitpid)(int pid, int *status);
+    int   (*chmod)(const char *path, unsigned int mode);
+    int   (*chown)(const char *path, unsigned int uid, unsigned int gid);
+    int   (*ftruncate)(int fd, unsigned long length);
+    int   (*fcntl)(int fd, int cmd, int arg);
     int   (*kill_proc)(int pid, int sig);
 } aios_syscalls_t;
 typedef int (*program_entry_t)(aios_syscalls_t *sys);
@@ -648,6 +708,7 @@ static void init_syscalls(void) {
     syscalls.filesize   = sbx_filesize;
     /* Extended POSIX */
     syscalls.stat_file  = sbx_stat;
+    syscalls.stat_ex    = sbx_stat_ex;
     syscalls.lseek      = sbx_lseek;
     syscalls.getcwd     = sbx_getcwd;
     syscalls.chdir      = sbx_chdir;
@@ -672,6 +733,10 @@ static void init_syscalls(void) {
     /* Process management */
     syscalls.spawn      = sbx_spawn;
     syscalls.waitpid    = sbx_waitpid;
+    syscalls.chmod      = sbx_chmod;
+    syscalls.chown      = sbx_chown;
+    syscalls.ftruncate  = sbx_ftruncate;
+    syscalls.fcntl      = sbx_fcntl;
     syscalls.kill_proc  = sbx_kill_proc;
 }
 

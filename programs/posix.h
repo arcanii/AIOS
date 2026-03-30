@@ -74,6 +74,8 @@ struct stat {
     ino_t    st_ino;
     mode_t   st_mode;
     off_t    st_size;
+    unsigned st_uid;
+    unsigned st_gid;
     unsigned st_nlink;
 };
 
@@ -158,20 +160,19 @@ static inline int remove(const char *path) {
 
 /* ── POSIX stat() ────────────────────────────────────── */
 static inline int stat(const char *path, struct stat *buf) {
-    unsigned long size = 0;
-    int r = sys->stat_file(path, &size);
-    if (r < 0) return -1;
-    if (buf) {
-        for (int i = 0; i < (int)sizeof(struct stat); i++)
-            ((char *)buf)[i] = 0;
-        buf->st_size = (off_t)size;
-        buf->st_mode = S_IFREG | 0644;
-        buf->st_ino = 1;
+    unsigned long sz = 0;
+    int r = sys->stat_file(path, &sz);
+    if (r == 0 && buf) {
+        buf->st_size = (off_t)sz;
+        buf->st_ino = 0;
         buf->st_nlink = 1;
-
-
+        unsigned int u = 0, g = 0, m = 0;
+        sys->stat_ex(&u, &g, &m);
+        buf->st_uid = u;
+        buf->st_gid = g;
+        buf->st_mode = (mode_t)m;
     }
-    return 0;
+    return r;
 }
 
 /* ── Directory operations ────────────────────────────── */
@@ -258,6 +259,29 @@ static inline pid_t getpid(void) { return (pid_t)sys->getpid(); }
 static inline int kill(pid_t pid, int sig) {
     int (*fn)(int, int) = sys->kill_proc;
     return fn((int)pid, sig);
+}
+
+static inline int chmod(const char *path, mode_t mode) {
+    return sys->chmod(path, (unsigned int)mode);
+}
+
+static inline int chown(const char *path, int owner, int group) {
+    return sys->chown(path, (unsigned int)owner, (unsigned int)group);
+}
+
+static inline int ftruncate(int fd, off_t length) {
+    return sys->ftruncate(fd, (unsigned long)length);
+}
+
+/* fcntl constants */
+#define F_GETFD  1
+#define F_SETFD  2
+#define F_GETFL  3
+#define F_SETFL  4
+#define FD_CLOEXEC 1
+
+static inline int fcntl(int fd, int cmd, ...) {
+    return sys->fcntl(fd, cmd, 0);
 }
 
 /* ── printf family (minimal) ─────────────────────────── */
