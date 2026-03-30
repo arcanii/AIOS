@@ -218,15 +218,82 @@ def inject(img_path, files):
     # Root inode is always 2
     ROOT_INO = 2
 
+    # ── Create a subdirectory under a parent inode ──
+    dir_inode_map = {}  # path -> inode
+
+    def create_dir(parent_ino, dirname):
+        """Create a directory entry and initialize its inode."""
+        ino = alloc_inode()
+        if ino is None:
+            print(f"  ERROR: no free inodes for dir {dirname}")
+            return None
+        blks = alloc_blocks(1)
+        if not blks:
+            print(f"  ERROR: no free blocks for dir {dirname}")
+            return None
+
+        # Write inode (mode 0o40755 = directory)
+        write_inode(ino, 0o40755, block_size, blks)
+
+        # Initialize directory block with . and .. entries
+        dirblk = bytearray(block_size)
+        # . entry
+        off = 0
+        struct.pack_into('<I', dirblk, off, ino)          # inode
+        struct.pack_into('<H', dirblk, off+4, 12)         # rec_len
+        dirblk[off+6] = 1                                  # name_len
+        dirblk[off+7] = 2                                  # file_type = dir
+        dirblk[off+8] = ord('.')
+        off = 12
+        # .. entry (rest of block)
+        struct.pack_into('<I', dirblk, off, parent_ino)
+        struct.pack_into('<H', dirblk, off+4, block_size - 12)
+        dirblk[off+6] = 2
+        dirblk[off+7] = 2
+        dirblk[off+8] = ord('.')
+        dirblk[off+9] = ord('.')
+
+        data[block_off(blks[0]):block_off(blks[0]) + block_size] = dirblk
+
+        # Add entry in parent directory
+        if add_dir_entry(parent_ino, dirname, ino, 2):
+            print(f"  /{dirname}/: inode {ino}")
+        else:
+            print(f"  ERROR: could not add dir entry for /{dirname}/")
+            return None
+
+        dir_inode_map[dirname] = ino
+        return ino
+
+    # Create standard directories
+    bin_ino  = create_dir(ROOT_INO, "bin")
+    etc_ino  = create_dir(ROOT_INO, "etc")
+    home_ino = create_dir(ROOT_INO, "home")
+    tmp_ino  = create_dir(ROOT_INO, "tmp")
+    dev_ino  = create_dir(ROOT_INO, "dev")
+    var_ino  = create_dir(ROOT_INO, "var")
+
+    def get_target_dir(disk_name):
+        """Return (parent_inode, display_path) for a file."""
+        lower = disk_name.lower()
+        if lower.endswith('.bin'):
+            if bin_ino:
+                return (bin_ino, f"/bin/{disk_name}")
+        if lower == 'passwd' or lower == 'group' or lower == 'shadow':
+            if etc_ino:
+                return (etc_ino, f"/etc/{disk_name}")
+        return (ROOT_INO, f"/{disk_name}")
+
+
     for filepath in files:
         file_data = open(filepath, 'rb').read()
         basename = os.path.basename(filepath)
         # Convert .bin -> .BIN with uppercase name
         name_parts = basename.rsplit('.', 1)
         if len(name_parts) == 2:
-            disk_name = name_parts[0].upper() + '.' + name_parts[1].upper()
+            disk_name = name_parts[0].lower() + '.' + name_parts[1].lower()
         else:
-            disk_name = basename.upper()
+            disk_name = basename  # preserve original case
 
         size = len(file_data)
         num_blocks = (size + block_size - 1) // block_size
@@ -250,8 +317,9 @@ def inject(img_path, files):
         write_inode(ino, 0o100644, size, blocks)
 
         # Add directory entry (file_type=1 for regular file)
-        if add_dir_entry(ROOT_INO, disk_name, ino, 1):
-            print(f"  {disk_name}: inode {ino}, {size} bytes, {num_blocks} blocks")
+        target_ino, target_path = get_target_dir(disk_name)
+        if add_dir_entry(target_ino, disk_name, ino, 1):
+            print(f"  {target_path}: inode {ino}, {size} bytes, {num_blocks} blocks")
         else:
             print(f"  ERROR: could not add dir entry for {disk_name}")
 

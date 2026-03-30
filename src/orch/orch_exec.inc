@@ -28,6 +28,15 @@ static exit_record_t exit_queue[MAX_EXIT_QUEUE];
 static int internal_spawn(const char *filename, const char *args,
                           uint32_t parent_pid, int is_foreground) {
     int st = fs_open_sync(filename);
+    /* Fallback: try /bin/<filename> if direct open fails */
+    if (st != 0) {
+        char bin_path[272];
+        int j = 0;
+        bin_path[j++] = '/'; bin_path[j++] = 'b'; bin_path[j++] = 'i'; bin_path[j++] = 'n'; bin_path[j++] = '/';
+        for (int k = 0; filename[k] && j < 271; k++) bin_path[j++] = filename[k];
+        bin_path[j] = '\0';
+        st = fs_open_sync(bin_path);
+    }
     if (st != 0) return -1;
     uint32_t fd = RD32(fs_data, FS_FD);
     uint32_t size = RD32(fs_data, FS_FILESIZE);
@@ -115,6 +124,15 @@ static void cmd_exec(const char *filename) {
     ser_flush();
 
     int st = fs_open_sync(filename);
+    /* Fallback: try /bin/<filename> if direct open fails */
+    if (st != 0) {
+        char bp[272];
+        int j = 0;
+        bp[j++] = '/'; bp[j++] = 'b'; bp[j++] = 'i'; bp[j++] = 'n'; bp[j++] = '/';
+        for (int k = 0; filename[k] && j < 271; k++) bp[j++] = filename[k];
+        bp[j] = '\0';
+        st = fs_open_sync(bp);
+    }
     if (st != 0) {
         ser_puts("  File not found.\n"); ser_flush();
         return;

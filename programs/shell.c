@@ -202,11 +202,17 @@ static void cmd_help(void) {
     print("  exit            - exit shell\n");
 }
 
-static void cmd_ls(void) {
+static void cmd_ls(const char *path) {
     char cwdbuf[256];
-    getcwd(cwdbuf, sizeof(cwdbuf));
-    DIR *d = opendir(cwdbuf);
-    if (!d) { print("ls: cannot open directory\n"); return; }
+    const char *dir;
+    if (path && path[0]) {
+        dir = path;
+    } else {
+        getcwd(cwdbuf, sizeof(cwdbuf));
+        dir = cwdbuf;
+    }
+    DIR *d = opendir(dir);
+    if (!d) { print("ls: cannot open "); print(dir); print("\n"); return; }
     struct dirent *ent;
     while ((ent = readdir(d)) != NULL) {
         print(ent->d_name);
@@ -253,6 +259,19 @@ static void cmd_cp(const char *args) {
     while (args[i] && j < 127) dst[j++] = args[i++];
     dst[j] = '\0';
     if (!dst[0]) { print("usage: cp <src> <dst>\n"); return; }
+    /* If dst is a directory, append src basename */
+    struct stat dst_st;
+    if (stat(dst, &dst_st) == 0 && S_ISDIR(dst_st.st_mode)) {
+        const char *base = src;
+        for (const char *p = src; *p; p++) if (*p == '/') base = p + 1;
+        char full[256];
+        int fi = 0;
+        for (int k = 0; dst[k] && fi < 250; k++) full[fi++] = dst[k];
+        if (fi > 0 && full[fi-1] != '/') full[fi++] = '/';
+        for (int k = 0; base[k] && fi < 255; k++) full[fi++] = base[k];
+        full[fi] = '\0';
+        for (int k = 0; k <= fi; k++) dst[k] = full[k];
+    }
     int sfd = open(src, O_RDONLY);
     if (sfd < 0) { print(src); print(": not found\n"); return; }
     int dfd = open(dst, O_WRONLY | O_CREAT | O_TRUNC);
@@ -274,16 +293,22 @@ static void cmd_mv(const char *args) {
     while (args[i] && j < 127) dst[j++] = args[i++];
     dst[j] = '\0';
     if (!dst[0]) { print("usage: mv <src> <dst>\n"); return; }
-    int sfd = open(src, O_RDONLY);
-    if (sfd < 0) { print(src); print(": not found\n"); return; }
-    int dfd = open(dst, O_WRONLY | O_CREAT | O_TRUNC);
-    if (dfd < 0) { close(sfd); print("mv: cannot create "); print(dst); printc('\n'); return; }
-    char buf[512];
-    ssize_t n;
-    while ((n = read(sfd, buf, sizeof(buf))) > 0) write(dfd, buf, (size_t)n);
-    close(sfd);
-    close(dfd);
-    unlink(src);
+    /* If dst is a directory, append src basename */
+    struct stat dst_st;
+    if (stat(dst, &dst_st) == 0 && S_ISDIR(dst_st.st_mode)) {
+        const char *base = src;
+        for (const char *p = src; *p; p++) if (*p == '/') base = p + 1;
+        char full[256];
+        int fi = 0;
+        for (int k = 0; dst[k] && fi < 250; k++) full[fi++] = dst[k];
+        if (fi > 0 && full[fi-1] != '/') full[fi++] = '/';
+        for (int k = 0; base[k] && fi < 255; k++) full[fi++] = base[k];
+        full[fi] = '\0';
+        for (int k = 0; k <= fi; k++) dst[k] = full[k];
+    }
+    if (rename(src, dst) < 0) {
+        print("mv: failed to move "); print(src); print(" -> "); print(dst); printc('\n');
+    }
 }
 
 static void cmd_stat(const char *filename) {
@@ -539,7 +564,8 @@ static void cmd_source(const char *filename) {
 static void dispatch(void) {
     if (line_len == 0) return;
     if (str_eq(line, "help"))           cmd_help();
-    else if (str_eq(line, "ls"))        cmd_ls();
+    else if (str_eq(line, "ls"))        cmd_ls("");
+    else if (starts_with(line, "ls "))    cmd_ls(line + 3);
     else if (str_eq(line, "pwd"))       cmd_pwd();
     else if (str_eq(line, "clear"))     cmd_clear();
     else if (str_eq(line, "exit"))      { shell_exit = 1; }
@@ -606,20 +632,63 @@ static void dispatch(void) {
             if (rename(old, args + i + 1) < 0) print("rename: failed\n");
         } else print("usage: rename <old> <new>\n");
     }
+    else if (starts_with(line, "exec ")) {
+        char *ep = line + 5;
+        while (*ep == ' ') ep++;
+        const char *eargs = "";
+        for (int ei = 0; ep[ei]; ei++) {
+            if (ep[ei] == ' ') { eargs = ep + ei + 1; ep[ei] = '\0'; break; }
+        }
+        int rc = aios_exec(ep, eargs);
+        if (rc < 0) {
+            /* Try with /bin/ prefix */
+            char ebp[272];
+            int bi = 0;
+            ebp[bi++] = '/'; ebp[bi++] = 'b'; ebp[bi++] = 'i'; ebp[bi++] = 'n'; ebp[bi++] = '/';
+            for (int k = 0; ep[k] && bi < 271; k++) ebp[bi++] = ep[k];
+            ebp[bi] = '\0';
+            rc = aios_exec(ebp, eargs);
+        }
+        if (rc < 0) { print("exec "); print(ep); print(": command not found\n"); }
+    }
     else {
-        char bin[64];
-        int bi = 0;
-        for (int ci = 0; line[ci] && line[ci] != ' ' && bi < 55; ci++) {
-            char c = line[ci];
-            if (c >= 'a' && c <= 'z') c -= 32;
-            bin[bi++] = c;
-        }
-        bin[bi++] = '.'; bin[bi++] = 'B'; bin[bi++] = 'I'; bin[bi++] = 'N'; bin[bi] = '\0';
+        /* Extract command name and args */
+        char cmd[64];
+        int ci = 0;
+        while (line[ci] && line[ci] != ' ' && ci < 63) { cmd[ci] = line[ci]; ci++; }
+        cmd[ci] = '\0';
         const char *args = "";
-        for (int ci = 0; line[ci]; ci++) {
-            if (line[ci] == ' ') { args = line + ci + 1; break; }
+        for (int ai = 0; line[ai]; ai++) {
+            if (line[ai] == ' ') { args = line + ai + 1; break; }
         }
-        int rc = aios_exec(bin, args);
+        /* Try as-is first */
+        int rc = aios_exec(cmd, args);
+        /* Try with .bin extension */
+        if (rc < 0) {
+            char bin[72];
+            int bi = 0;
+            for (int k = 0; cmd[k] && bi < 63; k++) bin[bi++] = cmd[k];
+            bin[bi++] = '.'; bin[bi++] = 'b'; bin[bi++] = 'i'; bin[bi++] = 'n'; bin[bi] = '\0';
+            rc = aios_exec(bin, args);
+        }
+        /* Try /bin/<cmd> */
+        if (rc < 0) {
+            char bp[272];
+            int bi = 0;
+            bp[bi++] = '/'; bp[bi++] = 'b'; bp[bi++] = 'i'; bp[bi++] = 'n'; bp[bi++] = '/';
+            for (int k = 0; cmd[k] && bi < 263; k++) bp[bi++] = cmd[k];
+            bp[bi] = '\0';
+            rc = aios_exec(bp, args);
+        }
+        /* Try /bin/<cmd>.bin */
+        if (rc < 0) {
+            char bp[272];
+            int bi = 0;
+            bp[bi++] = '/'; bp[bi++] = 'b'; bp[bi++] = 'i'; bp[bi++] = 'n'; bp[bi++] = '/';
+            for (int k = 0; cmd[k] && bi < 259; k++) bp[bi++] = cmd[k];
+            bp[bi++] = '.'; bp[bi++] = 'b'; bp[bi++] = 'i'; bp[bi++] = 'n'; bp[bi] = '\0';
+            rc = aios_exec(bp, args);
+        }
         if (rc < 0) { print(line); print(": command not found\n"); }
     }
 }

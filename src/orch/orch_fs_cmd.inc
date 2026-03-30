@@ -65,8 +65,8 @@ static void cmd_help(void) {
 }
 
 /* ── Command: ls ─────────────────────────────────────── */
-static void cmd_ls(void) {
-    int st = fs_list_sync("/");
+static void cmd_ls(const char *path) {
+    int st = fs_list_sync(path);
     if (st != 0) {
         ser_puts("  Error listing directory\n");
         ser_flush();

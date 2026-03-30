@@ -220,10 +220,10 @@ static int dir_lookup(uint32_t dir_ino, const char *name, uint32_t *ino_out) {
             if (rec_len == 0) break;
 
             if (d_ino != 0 && d_name_len == name_len) {
-                /* Case-insensitive comparison for compatibility */
+                /* Case-sensitive comparison */
                 int match = 1;
                 for (uint32_t i = 0; i < name_len; i++) {
-                    if (my_toupper(tmp[off + 8 + i]) != my_toupper((uint8_t)name[i])) {
+                    if (tmp[off + 8 + i] != (uint8_t)name[i]) {
                         match = 0;
                         break;
                     }
@@ -428,7 +428,7 @@ static int dir_remove_entry(uint32_t dir_ino, const char *name) {
             if (d_ino != 0 && d_name_len == name_len) {
                 int match = 1;
                 for (uint32_t i = 0; i < name_len; i++) {
-                    if (my_toupper(tmp[off + 8 + i]) != my_toupper((uint8_t)name[i])) {
+                    if (tmp[off + 8 + i] != (uint8_t)name[i]) {
                         match = 0; break;
                     }
                 }
@@ -1008,8 +1008,12 @@ static int ext2_rmdir(const char *dirname) {
 
 /* ── rename: rename a file (flat, root-dir only) ──── */
 static int ext2_rename(const char *oldname, const char *newname) {
-    uint32_t ino;
-    if (dir_lookup(EXT2_ROOT_INO, oldname, &ino) != 0)
+    /* Resolve old path */
+    uint32_t old_parent, ino;
+    char old_base[64];
+    if (resolve_path(oldname, &old_parent, old_base, sizeof(old_base)) != 0)
+        return -1;
+    if (dir_lookup(old_parent, old_base, &ino) != 0)
         return -1;
 
     /* Read inode to get file type */
@@ -1018,9 +1022,15 @@ static int ext2_rename(const char *oldname, const char *newname) {
     uint16_t mode = rd16(inode_buf + 0);
     uint8_t ftype = ((mode & 0xF000) == 0x4000) ? EXT2_FT_DIR : EXT2_FT_REG_FILE;
 
-    /* Remove old entry, add new one */
-    dir_remove_entry(EXT2_ROOT_INO, oldname);
-    if (dir_add_entry(EXT2_ROOT_INO, newname, ino, ftype) != 0)
+    /* Resolve new path */
+    uint32_t new_parent;
+    char new_base[64];
+    if (resolve_path(newname, &new_parent, new_base, sizeof(new_base)) != 0)
+        return -1;
+
+    /* Remove old entry, add new in (possibly different) directory */
+    dir_remove_entry(old_parent, old_base);
+    if (dir_add_entry(new_parent, new_base, ino, ftype) != 0)
         return -1;
 
     return 0;

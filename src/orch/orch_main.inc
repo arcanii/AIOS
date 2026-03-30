@@ -59,14 +59,14 @@ void init(void) {
     }
     ser_flush();
 
-    /* Check for AUTOEXEC.BIN */
-    st = fs_open_sync("AUTOEXEC.BIN");
+    /* Check for autoexec.bin */
+    st = fs_open_sync("autoexec.bin");
     if (st == 0) {
         uint32_t fd = RD32(fs_data, FS_FD);
         fs_close_sync(fd);
-        ser_puts("Boot: found AUTOEXEC.BIN, executing...\n");
+        ser_puts("Boot: found autoexec.bin, executing...\n");
         ser_flush();
-        cmd_exec("AUTOEXEC.BIN");
+        cmd_exec("autoexec.bin");
         return;
     }
 
@@ -74,7 +74,7 @@ void init(void) {
     /* Load /etc/passwd into auth_server */
     ser_puts("Boot: loading /etc/passwd...\n");
     ser_flush();
-    st = fs_open_sync("PASSWD");
+    st = fs_open_sync("/etc/passwd");
     if (st == 0) {
         uint32_t fd = RD32(fs_data, FS_FD);
         uint32_t sz = RD32(fs_data, FS_FILESIZE);

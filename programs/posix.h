@@ -225,8 +225,22 @@ typedef struct {
 
 static DIR _posix_dir;
 
+/* Forward declarations for opendir */
+static inline int chdir(const char *path);
+static inline char *getcwd(char *buf, size_t size);
+
 static inline DIR *opendir(const char *path) {
-    (void)path;
+    /* If path given and not ".", chdir there, readdir, chdir back */
+    char _od_prev[256];
+    int _od_need_restore = 0;
+    if (path && path[0] && !(path[0] == '.' && path[1] == '\0')) {
+        getcwd(_od_prev, sizeof(_od_prev));
+        if (chdir(path) == 0) {
+            _od_need_restore = 1;
+        } else {
+            return (void *)0;
+        }
+    }
     /* Raw buffer for variable-length entries */
     static unsigned char raw[3072];
     int count = sys->readdir(raw, sizeof(raw));
@@ -256,6 +270,7 @@ static inline DIR *opendir(const char *path) {
         _posix_dir.count++;
         off += elen;
     }
+    if (_od_need_restore) chdir(_od_prev);
     return &_posix_dir;
 }
 

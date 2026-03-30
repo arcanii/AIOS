@@ -62,12 +62,12 @@ static void cmd_load(const char *filename) {
     ser_puts(" KiB)\n");
     ser_flush();
 
-    /* Now load tokenizer (TOK.BIN) right after model in model_data */
+    /* Now load tokenizer (tok.bin) right after model in model_data */
     uint32_t tok_offset = offset;
     uint32_t tok_size = 0;
-    st = fs_open_sync("TOK.BIN");
+    st = fs_open_sync("tok.bin");
     if (st != 0) {
-        ser_puts("  TOK.BIN not found, skipping tokenizer\n");
+        ser_puts("  tok.bin not found, skipping tokenizer\n");
         ser_flush();
     } else {
         uint32_t tok_fd   = RD32(fs_data, FS_FD);
@@ -112,7 +112,7 @@ static void cmd_load(const char *filename) {
 /* ── Command: gen <prompt> ───────────────────────────── */
 static void cmd_gen(const char *prompt) {
     if (!llm_model_loaded) {
-        ser_puts("  No model loaded. Use: load CODE25M.BIN\n");
+        ser_puts("  No model loaded. Use: load code25m.bin\n");
         ser_flush();
         return;
     }

@@ -12,7 +12,19 @@ static void process_command(void) {
         cmd_help();
     } else if (my_strcmp(input_line, "ls") == 0 ||
                my_strcmp(input_line, "dir") == 0) {
-        cmd_ls();
+        cmd_ls("/");
+    } else if (str_starts_with(input_line, "ls ")) {
+        char *lp = &input_line[3];
+        while (*lp == ' ') lp++;
+        if (*lp == '/') cmd_ls(lp);
+        else {
+            char lpath[256];
+            int li = 0;
+            lpath[li++] = '/';
+            while (*lp && li < 254) lpath[li++] = *lp++;
+            lpath[li] = '\0';
+            cmd_ls(lpath);
+        }
     } else if (str_starts_with(input_line, "cat ")) {
         char *fn = &input_line[4];
         while (*fn == ' ') fn++;
