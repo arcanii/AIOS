@@ -1129,4 +1129,282 @@ static inline int symlink(const char *target, const char *linkpath) {
 }
 
 
+
+/* ═══════════════════════════════════════════════════════════
+ *  Tier 2 POSIX extensions — wrappers and stubs
+ * ═══════════════════════════════════════════════════════════ */
+
+/* ── *at variants (use path-based equivalents) ────────── */
+#ifndef AT_FDCWD
+#define AT_FDCWD (-100)
+#define AT_REMOVEDIR 0x200
+#endif
+
+static inline int openat(int dirfd, const char *pathname, int flags, ...) {
+    (void)dirfd; /* ignore dirfd, use path as-is */
+    return open(pathname, flags);
+}
+
+static inline int mkdirat(int dirfd, const char *pathname, mode_t mode) {
+    (void)dirfd;
+    return mkdir(pathname, mode);
+}
+
+static inline int unlinkat(int dirfd, const char *pathname, int flags) {
+    (void)dirfd;
+    if (flags & AT_REMOVEDIR) return rmdir(pathname);
+    return unlink(pathname);
+}
+
+static inline int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath) {
+    (void)olddirfd; (void)newdirfd;
+    return rename(oldpath, newpath);
+}
+
+static inline int fstatat(int dirfd, const char *pathname, struct stat *buf, int flags) {
+    (void)dirfd; (void)flags;
+    return stat(pathname, buf);
+}
+
+/* ── fd-based permission changes ──────────────────────── */
+static inline int fchmod(int fd, mode_t mode) {
+    (void)fd; (void)mode;
+    errno = ENOSYS;
+    return -1; /* would need fd-to-path mapping */
+}
+
+static inline int fchown(int fd, uid_t owner, gid_t group) {
+    (void)fd; (void)owner; (void)group;
+    errno = ENOSYS;
+    return -1;
+}
+
+/* ── Identity switching (stubs — single-user kernel) ──── */
+static inline int setuid(uid_t uid) { (void)uid; return 0; }
+static inline int setgid(gid_t gid) { (void)gid; return 0; }
+static inline int seteuid(uid_t uid) { (void)uid; return 0; }
+static inline int setegid(gid_t gid) { (void)gid; return 0; }
+
+/* ── Positioned I/O ───────────────────────────────────── */
+static inline ssize_t pread(int fd, void *buf, size_t count, off_t offset) {
+    off_t prev = lseek(fd, 0, SEEK_CUR);
+    lseek(fd, offset, SEEK_SET);
+    ssize_t n = read(fd, buf, count);
+    lseek(fd, prev, SEEK_SET);
+    return n;
+}
+
+static inline ssize_t pwrite(int fd, const void *buf, size_t count, off_t offset) {
+    off_t prev = lseek(fd, 0, SEEK_CUR);
+    lseek(fd, offset, SEEK_SET);
+    ssize_t n = write(fd, buf, count);
+    lseek(fd, prev, SEEK_SET);
+    return n;
+}
+
+/* ── Scatter/gather I/O ───────────────────────────────── */
+struct iovec {
+    void *iov_base;
+    size_t iov_len;
+};
+
+static inline ssize_t readv(int fd, const struct iovec *iov, int iovcnt) {
+    ssize_t total = 0;
+    for (int i = 0; i < iovcnt; i++) {
+        ssize_t n = read(fd, iov[i].iov_base, iov[i].iov_len);
+        if (n < 0) return n;
+        total += n;
+        if ((size_t)n < iov[i].iov_len) break;
+    }
+    return total;
+}
+
+static inline ssize_t writev(int fd, const struct iovec *iov, int iovcnt) {
+    ssize_t total = 0;
+    for (int i = 0; i < iovcnt; i++) {
+        ssize_t n = write(fd, iov[i].iov_base, iov[i].iov_len);
+        if (n < 0) return n;
+        total += n;
+        if ((size_t)n < iov[i].iov_len) break;
+    }
+    return total;
+}
+
+/* ── Extended pipe/dup ────────────────────────────────── */
+static inline int pipe2(int pipefd[2], int flags) {
+    (void)flags; /* ignore O_CLOEXEC etc */
+    return pipe(pipefd);
+}
+
+static inline int dup3(int oldfd, int newfd, int flags) {
+    (void)flags;
+    return dup2(oldfd, newfd);
+}
+
+/* ── Socket extensions ────────────────────────────────── */
+static inline ssize_t sendto(int sockfd, const void *buf, size_t len, int flags,
+                             const struct sockaddr *dest_addr, unsigned int addrlen) {
+    (void)flags; (void)dest_addr; (void)addrlen;
+    return send(sockfd, buf, len, 0);
+}
+
+static inline ssize_t recvfrom(int sockfd, void *buf, size_t len, int flags,
+                               struct sockaddr *src_addr, unsigned int *addrlen) {
+    (void)flags; (void)src_addr; (void)addrlen;
+    return recv(sockfd, buf, len, 0);
+}
+
+/* ── Timer stubs ──────────────────────────────────────── */
+struct itimerval {
+    struct timeval it_interval;
+    struct timeval it_value;
+};
+
+#ifndef ITIMER_REAL
+#define ITIMER_REAL    0
+#define ITIMER_VIRTUAL 1
+#define ITIMER_PROF    2
+#endif
+
+static inline int setitimer(int which, const struct itimerval *new_value, struct itimerval *old_value) {
+    (void)which; (void)new_value;
+    if (old_value) {
+        old_value->it_interval.tv_sec = 0; old_value->it_interval.tv_usec = 0;
+        old_value->it_value.tv_sec = 0; old_value->it_value.tv_usec = 0;
+    }
+    return 0;
+}
+
+static inline int getitimer(int which, struct itimerval *curr_value) {
+    (void)which;
+    if (curr_value) {
+        curr_value->it_interval.tv_sec = 0; curr_value->it_interval.tv_usec = 0;
+        curr_value->it_value.tv_sec = 0; curr_value->it_value.tv_usec = 0;
+    }
+    return 0;
+}
+
+/* ── I/O multiplexing stubs ───────────────────────────── */
+typedef struct { unsigned long fds_bits[16]; } fd_set;
+
+#ifndef FD_SETSIZE
+#define FD_SETSIZE 1024
+#define FD_ZERO(s)   do { for (int _i=0;_i<16;_i++) (s)->fds_bits[_i]=0; } while(0)
+#define FD_SET(f,s)  ((s)->fds_bits[(f)/64] |= (1UL << ((f)%64)))
+#define FD_CLR(f,s)  ((s)->fds_bits[(f)/64] &= ~(1UL << ((f)%64)))
+#define FD_ISSET(f,s) (((s)->fds_bits[(f)/64] >> ((f)%64)) & 1)
+#endif
+
+static inline int select(int nfds, fd_set *readfds, fd_set *writefds,
+                         fd_set *exceptfds, struct timeval *timeout) {
+    (void)exceptfds;
+    /* Simple stub: if timeout, sleep; mark all writable fds as ready */
+    if (timeout && timeout->tv_sec > 0) {
+        int (*sfn)(unsigned int) = sys->sleep;
+        sfn((unsigned int)timeout->tv_sec);
+    }
+    int ready = 0;
+    if (writefds) {
+        for (int i = 0; i < nfds; i++) {
+            if (FD_ISSET(i, writefds)) ready++;
+        }
+    }
+    if (readfds) {
+        /* Console (fd 0) is always readable */
+        if (nfds > 0 && FD_ISSET(0, readfds)) ready++;
+    }
+    return ready > 0 ? ready : 0;
+}
+
+/* ── Memory stubs ─────────────────────────────────────── */
+static inline void *sbrk(long increment) {
+    (void)increment;
+    errno = ENOMEM;
+    return (void *)-1;
+}
+
+/* ── Process stubs (spawn model, no fork) ─────────────── */
+static inline pid_t fork(void) {
+    errno = ENOSYS;
+    return -1;
+}
+
+static inline int execve(const char *pathname, char *const argv[], char *const envp[]) {
+    (void)argv; (void)envp;
+    return aios_exec(pathname, "");
+}
+
+static inline int execvp(const char *file, char *const argv[]) {
+    (void)argv;
+    return aios_exec(file, "");
+}
+
+
+
+/* ── Memory mapping stubs (no MMU access from userland) ── */
+#ifndef MAP_FAILED
+#define PROT_NONE   0x0
+#define PROT_READ   0x1
+#define PROT_WRITE  0x2
+#define PROT_EXEC   0x4
+#define MAP_SHARED  0x01
+#define MAP_PRIVATE 0x02
+#define MAP_ANONYMOUS 0x20
+#define MAP_ANON    MAP_ANONYMOUS
+#define MAP_FAILED  ((void *)-1)
+#endif
+
+static inline void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset) {
+    (void)addr; (void)prot; (void)flags; (void)fd; (void)offset;
+    /* For MAP_ANONYMOUS, use malloc */
+    if (flags & MAP_ANONYMOUS) {
+        void *(*mfn)(unsigned long) = sys->malloc;
+        return mfn((unsigned long)length);
+    }
+    errno = ENOSYS;
+    return MAP_FAILED;
+}
+
+static inline int munmap(void *addr, size_t length) {
+    (void)length;
+    void (*ffn)(void *) = sys->free;
+    ffn(addr);
+    return 0;
+}
+
+static inline int mprotect(void *addr, size_t len, int prot) {
+    (void)addr; (void)len; (void)prot;
+    return 0; /* silently succeed */
+}
+
+/* ── poll stub ────────────────────────────────────────── */
+struct pollfd {
+    int fd;
+    short events;
+    short revents;
+};
+
+#ifndef POLLIN
+#define POLLIN   0x001
+#define POLLOUT  0x004
+#define POLLERR  0x008
+#define POLLHUP  0x010
+#define POLLNVAL 0x020
+#endif
+
+static inline int poll(struct pollfd *fds, unsigned long nfds, int timeout) {
+    if (timeout > 0) {
+        int (*sfn)(unsigned int) = sys->sleep;
+        sfn((unsigned int)((timeout + 999) / 1000));
+    }
+    int ready = 0;
+    for (unsigned long i = 0; i < nfds; i++) {
+        fds[i].revents = 0;
+        if (fds[i].events & POLLOUT) { fds[i].revents |= POLLOUT; ready++; }
+        if (fds[i].events & POLLIN && fds[i].fd == 0) { fds[i].revents |= POLLIN; ready++; }
+    }
+    return ready;
+}
+
+
 #endif /* AIOS_POSIX_H */
