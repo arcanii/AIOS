@@ -584,7 +584,8 @@ static int fat16_delete(const char *filename) {
     return -1;
 }
 
-static int fat16_list(uint8_t *buf, uint32_t buf_size, uint32_t *count, uint32_t *total_bytes_out) {
+static int fat16_list(const char *path, uint8_t *buf, uint32_t buf_size, uint32_t *count, uint32_t *total_bytes_out) {
+    (void)path; /* FAT16: root dir only for now */
     uint32_t pos = 0;
     uint32_t file_count = 0;
 

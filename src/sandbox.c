@@ -227,6 +227,7 @@ static int sbx_rename(const char *oldpath, const char *newpath) {
 
 
 static int sbx_readdir(void *buf, unsigned long max_entries) {
+    /* No path needed - orchestrator uses current cwd */
     seL4_SetMR(0, SYS_READDIR);
     microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
     int count = (int)seL4_GetMR(0);
@@ -741,7 +742,7 @@ void init(void) {
     else
         my_channel = CH_SBX4 + (sbx_id - 4);     /* 14, 15, 16, 17 */
     init_syscalls();
-    microkit_dbg_puts("SBX: sandbox PD ready\n");
+    /* boot message silenced to avoid UART interleave */
     WR32(sandbox_io, SBX_STATUS, SBX_ST_IDLE);
 }
 

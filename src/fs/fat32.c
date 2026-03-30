@@ -513,7 +513,8 @@ static int fat32_delete(const char *filename) {
     return 0;
 }
 
-static int fat32_list(uint8_t *buf, uint32_t buf_size, uint32_t *count, uint32_t *total_bytes_out) {
+static int fat32_list(const char *path, uint8_t *buf, uint32_t buf_size, uint32_t *count, uint32_t *total_bytes_out) {
+    (void)path; /* FAT32: root dir only for now */
     list_ctx_t lc = { buf, buf_size, 0, 0 };
     walk_dir(root_cluster, list_cb, &lc);
     *count = lc.count;

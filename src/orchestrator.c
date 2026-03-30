@@ -279,7 +279,11 @@ static const char *fs_fsinfo_sync(void) {
     return (const char *)(sh + FS_FILENAME);
 }
 
-static int fs_list_sync(void) {
+static int fs_list_sync(const char *path) {
+    volatile char *dst = (volatile char *)(fs_data + FS_FILENAME);
+    int i = 0;
+    while (path[i] && i < 63) { dst[i] = path[i]; i++; }
+    dst[i] = '\0';
     WR32(fs_data, FS_CMD, FS_CMD_LIST);
     microkit_ppcall(CH_FS, microkit_msginfo_new(0, 0));
     return (int)RD32(fs_data, FS_STATUS);
@@ -355,6 +359,24 @@ static uint32_t saved_tok_size = 0;
 static uint32_t exec_loaded_bytes = 0;
 static char cwd[256] = "/";
 static char exec_args[256];
+
+/* Resolve a relative path against cwd into an absolute path */
+static void resolve_path(const char *name, char *out, int out_size) {
+    if (name[0] == '/') {
+        /* Already absolute */
+        int i = 0;
+        while (name[i] && i < out_size - 1) { out[i] = name[i]; i++; }
+        out[i] = '\0';
+    } else {
+        /* Prepend cwd */
+        int j = 0, k = 0;
+        while (cwd[k] && j < out_size - 2) out[j++] = cwd[k++];
+        if (j > 1) out[j++] = '/';
+        k = 0;
+        while (name[k] && j < out_size - 1) out[j++] = name[k++];
+        out[j] = '\0';
+    }
+}
 
 /* ── Command: kill ────────────────────────────────────── */
 static int auth_check_kill_sync(uint32_t target_uid);
@@ -844,7 +866,7 @@ static void cmd_help(void) {
 
 /* ── Command: ls ─────────────────────────────────────── */
 static void cmd_ls(void) {
-    int st = fs_list_sync();
+    int st = fs_list_sync("/");
     if (st != 0) {
         ser_puts("  Error listing directory\n");
         ser_flush();
@@ -1776,10 +1798,12 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
     case SYS_OPEN: {
         volatile char *path = (volatile char *)(sio + 0x200);
         uint32_t flags = (uint32_t)seL4_GetMR(1);
-        char fname[256];
+        char raw_name[256];
         int i = 0;
-        while (path[i] && i < 255) { fname[i] = path[i]; i++; }
-        fname[i] = '\0';
+        while (path[i] && i < 255) { raw_name[i] = path[i]; i++; }
+        raw_name[i] = '\0';
+        char fname[256];
+        resolve_path(raw_name, fname, sizeof(fname));
         /* Permission check */
         uint32_t open_mode = ACCESS_READ;
         if (flags & (0x0001 | 0x0002)) open_mode |= ACCESS_WRITE;
@@ -1906,10 +1930,12 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
     }
     case SYS_UNLINK: {
         volatile char *path = (volatile char *)(sio + 0x200);
-        char fname[256];
+        char raw[256];
         int i = 0;
-        while (path[i] && i < 255) { fname[i] = path[i]; i++; }
-        fname[i] = '\0';
+        while (path[i] && i < 255) { raw[i] = path[i]; i++; }
+        raw[i] = '\0';
+        char fname[256];
+        resolve_path(raw, fname, sizeof(fname));
         /* Permission check */
         if (auth_check_file_sync(fname, ACCESS_WRITE) != 0) {
             result = -13; /* EACCES */
@@ -1920,7 +1946,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
     case SYS_READDIR: {
-        int st = fs_list_sync();
+        int st = fs_list_sync(cwd);
         if (st == 0) {
             uint32_t count = RD32(fs_data, FS_LENGTH);
             uint32_t total_bytes = RD32(fs_data, FS_FILESIZE);
@@ -1958,10 +1984,12 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
     }
     case SYS_STAT: {
         volatile char *path = (volatile char *)(sio + 0x200);
-        char fname[256];
+        char raw[256];
         int i = 0;
-        while (path[i] && i < 255) { fname[i] = path[i]; i++; }
-        fname[i] = '\0';
+        while (path[i] && i < 255) { raw[i] = path[i]; i++; }
+        raw[i] = '\0';
+        char fname[256];
+        resolve_path(raw, fname, sizeof(fname));
         int st = fs_stat_sync(fname);
         if (st == 0) {
             result = 0;
@@ -1984,10 +2012,12 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
     }
     case SYS_MKDIR: {
         volatile char *path = (volatile char *)(sio + 0x200);
-        char dname[256];
+        char raw[256];
         int i = 0;
-        while (path[i] && i < 255) { dname[i] = path[i]; i++; }
-        dname[i] = '\0';
+        while (path[i] && i < 255) { raw[i] = path[i]; i++; }
+        raw[i] = '\0';
+        char dname[256];
+        resolve_path(raw, dname, sizeof(dname));
         /* Permission check */
         if (auth_check_file_sync(dname, ACCESS_WRITE) != 0) {
             result = -13; /* EACCES */
@@ -1999,10 +2029,12 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
     }
     case SYS_RMDIR: {
         volatile char *path = (volatile char *)(sio + 0x200);
-        char dname[256];
+        char raw[256];
         int i = 0;
-        while (path[i] && i < 255) { dname[i] = path[i]; i++; }
-        dname[i] = '\0';
+        while (path[i] && i < 255) { raw[i] = path[i]; i++; }
+        raw[i] = '\0';
+        char dname[256];
+        resolve_path(raw, dname, sizeof(dname));
         /* Permission check */
         if (auth_check_file_sync(dname, ACCESS_WRITE) != 0) {
             result = -13; /* EACCES */
@@ -2013,14 +2045,17 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
     }
     case SYS_RENAME: {
         volatile char *p = (volatile char *)(sio + 0x200);
-        char oldname[128], newname[128];
+        char raw_old[128], raw_new[128];
         int i = 0;
-        while (p[i] && i < 127) { oldname[i] = p[i]; i++; }
-        oldname[i] = '\0';
+        while (p[i] && i < 127) { raw_old[i] = p[i]; i++; }
+        raw_old[i] = '\0';
         i++;
         int j = 0;
-        while (p[i] && j < 127) { newname[j] = p[i]; i++; j++; }
-        newname[j] = '\0';
+        while (p[i] && j < 127) { raw_new[j] = p[i]; i++; j++; }
+        raw_new[j] = '\0';
+        char oldname[256], newname[256];
+        resolve_path(raw_old, oldname, sizeof(oldname));
+        resolve_path(raw_new, newname, sizeof(newname));
         result = fs_rename_sync(oldname, newname);
         break;
     }

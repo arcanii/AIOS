@@ -222,10 +222,15 @@ static void handle_delete(void) {
 }
 
 static void handle_list(void) {
+    char path[64];
+    volatile char *fn = (volatile char *)(fs_data + FS_FILENAME);
+    int i = 0;
+    while (fn[i] && i < 63) { path[i] = fn[i]; i++; }
+    path[i] = '\0';
     volatile uint8_t *dst = (volatile uint8_t *)(fs_data + FS_DATA);
     uint32_t count = 0;
     uint32_t total_bytes = 0;
-        int rc = active_fs->list((uint8_t *)dst, FS_DATA_MAX, &count, &total_bytes);
+        int rc = active_fs->list(path, (uint8_t *)dst, FS_DATA_MAX, &count, &total_bytes);
     WR32(fs_data, FS_LENGTH, count);
     WR32(fs_data, FS_FILESIZE, total_bytes);
     reply_status(rc);

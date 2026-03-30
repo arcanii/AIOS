@@ -737,9 +737,65 @@ static int ext2_delete(const char *filename) {
     return 0;
 }
 
-static int ext2_list(uint8_t *buf, uint32_t buf_size, uint32_t *count, uint32_t *total_bytes_out) {
+/* Look up inode number for a directory path */
+static uint32_t lookup_path_inode(const char *path) {
+    if (path[0] != '/') return 0;
+    uint32_t cur_ino = EXT2_ROOT_INO;
+    int pos = 1; /* skip leading / */
+    while (path[pos]) {
+        /* Extract next component */
+        char comp[256];
+        int ci = 0;
+        while (path[pos] && path[pos] != '/' && ci < 255) comp[ci++] = path[pos++];
+        comp[ci] = '\0';
+        if (ci == 0) { if (path[pos] == '/') pos++; continue; }
+        while (path[pos] == '/') pos++;
+        /* Search directory for component */
+        uint8_t ino_buf[128];
+        if (read_inode(cur_ino, ino_buf) != 0) return 0;
+        uint32_t dsize = inode_size_field(ino_buf);
+        uint32_t dpos = 0;
+        uint32_t found_ino = 0;
+        while (dpos < dsize) {
+            uint32_t lb = dpos / block_size;
+            uint32_t phys = get_block_num(ino_buf, lb);
+            if (phys == 0) break;
+            uint8_t tmp[1024];
+            read_block(phys, tmp);
+            uint32_t off = 0;
+            while (off < block_size && dpos + off < dsize) {
+                uint32_t d_ino = tmp[off] | (tmp[off+1]<<8) | (tmp[off+2]<<16) | (tmp[off+3]<<24);
+                uint16_t rec_len = tmp[off+4] | (tmp[off+5]<<8);
+                uint8_t d_name_len = tmp[off+6];
+                if (rec_len == 0) break;
+                if (d_ino != 0 && d_name_len == ci) {
+                    int match = 1;
+                    for (int j = 0; j < ci; j++) {
+                        if (tmp[off+8+j] != (uint8_t)comp[j]) { match = 0; break; }
+                    }
+                    if (match) { found_ino = d_ino; goto found_comp; }
+                }
+                off += rec_len;
+            }
+            dpos += block_size;
+        }
+        return 0; /* component not found */
+found_comp:
+        cur_ino = found_ino;
+    }
+    return cur_ino;
+}
+
+static int ext2_list(const char *path, uint8_t *buf, uint32_t buf_size, uint32_t *count, uint32_t *total_bytes_out) {
+    /* Resolve path to inode */
+    uint32_t dir_ino = EXT2_ROOT_INO;
+    if (path[0] == '/' && path[1] != '\0') {
+        /* Non-root path: look up directory inode */
+        dir_ino = lookup_path_inode(path);
+        if (dir_ino == 0) { *count = 0; return -1; }
+    }
     uint8_t inode_buf[128];
-    if (read_inode(EXT2_ROOT_INO, inode_buf) != 0) { *count = 0; return -1; }
+    if (read_inode(dir_ino, inode_buf) != 0) { *count = 0; return -1; }
 
     uint32_t dir_size = inode_size_field(inode_buf);
     uint32_t pos = 0;

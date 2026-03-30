@@ -170,7 +170,12 @@ static inline DIR *opendir(const char *path) {
     /* Raw buffer for variable-length entries */
     static unsigned char raw[3072];
     int count = sys->readdir(raw, sizeof(raw));
-    if (count <= 0) return (void *)0;
+    if (count < 0) return (void *)0;
+    if (count == 0) {
+        _posix_dir.count = 0;
+        _posix_dir.pos = 0;
+        return &_posix_dir;
+    }
     _posix_dir.count = 0;
     _posix_dir.pos = 0;
     /* Parse variable-length entries: [2B entry_len][1B name_len][1B type][4B size][name][NUL] */

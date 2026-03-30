@@ -193,7 +193,9 @@ static void cmd_help(void) {
 }
 
 static void cmd_ls(void) {
-    DIR *d = opendir("/");
+    char cwdbuf[256];
+    getcwd(cwdbuf, sizeof(cwdbuf));
+    DIR *d = opendir(cwdbuf);
     if (!d) { print("ls: cannot open directory\n"); return; }
     struct dirent *ent;
     while ((ent = readdir(d)) != NULL) {
