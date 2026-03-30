@@ -14,39 +14,60 @@ Created by tools/posix_audit.py
 ```
 ============================================================
   AIOS POSIX.1 Compliance Audit
+  Generated: 2026-03-30 18:47
 ============================================================
 
   Syscall handlers:  54
-  POSIX wrappers:    129
+  POSIX wrappers:    208
   Standard headers:  20
+  posix.h lines:     1665
+  libc lines:        874
 
-  File I/O               ██████████████░░░░░░  13/18  72%
-  File Status            █████████████████░░░  18/21  85%
-  Directories            ██████████████░░░░░░   7/10  70%
-  Process Control        ████████████░░░░░░░░   9/15  60%
-  Signals                ████████████████░░░░  12/15  80%
-  Pipes & FDs            ██████████████░░░░░░   5/7   71%
-  Sockets                █████████████████░░░  20/23  86%
-  Memory                 █████████████████░░░   8/9   88%
-  Strings                ██████████████████░░  17/18  94%
-  stdio                  ██████████████░░░░░░  19/27  70%
-  stdlib                 ██████████░░░░░░░░░░   9/17  52%
-  User/Group             █████████████████░░░  12/14  85%
-  Environment            ███████████████░░░░░   3/4   75%
-  Time                   ██████████████████░░  11/12  91%
-  System Info            ████████░░░░░░░░░░░░   4/10  40%
-  I/O Multiplexing       ████████░░░░░░░░░░░░   2/5   40%
+  File I/O               █████████████░░░░░░░  12/18  66% (+6 stubs)
+  File Status            █████████████░░░░░░░  14/21  66% (+7 stubs)
+  Directories            ██████████████████░░   9/10  90% (+1 stubs)
+  Process Control        ██████████████████░░  14/15  93% (+1 stubs)
+  Signals                █████████████░░░░░░░  10/15  66% (+5 stubs)
+  Pipes & FDs            ██████████████░░░░░░   5/7   71% (+2 stubs)
+  Sockets                ██████████████████░░  21/23  91% (+2 stubs)
+  Memory                 █████████████░░░░░░░   6/9   66% (+3 stubs)
+  Strings                ████████████████████  18/18  COMPLETE
+  stdio                  █████████████████░░░  24/27  88% (+3 stubs)
+  stdlib                 ████████████████░░░░  14/17  82% (+3 stubs)
+  User/Group             ██████████████░░░░░░  10/14  71% (+4 stubs)
+  Environment            ████████████████████   4/4   COMPLETE
+  Time                   ████████████████░░░░  10/12  83% (+2 stubs)
+  System Info            ████████████░░░░░░░░   6/10  60% (+4 stubs)
+  I/O Multiplexing       ████████░░░░░░░░░░░░   2/5   40% (+3 stubs)
   Threads (pthreads)     ░░░░░░░░░░░░░░░░░░░░   0/19  0%
   Semaphores             ░░░░░░░░░░░░░░░░░░░░   0/7   0%
   Dynamic Loading        ░░░░░░░░░░░░░░░░░░░░   0/4   0%
-  Nonlocal Jumps         ░░░░░░░░░░░░░░░░░░░░   0/4   0%
-  Regex & Glob           ░░░░░░░░░░░░░░░░░░░░   0/6   0%
-  Logging                ░░░░░░░░░░░░░░░░░░░░   0/3   0%
-  Misc                   ░░░░░░░░░░░░░░░░░░░░   0/4   0%
+  Nonlocal Jumps         ░░░░░░░░░░░░░░░░░░░░   0/4   0% (+4 stubs)
+  Regex & Glob           ██████░░░░░░░░░░░░░░   2/6   33% (+4 stubs)
+  Logging                ░░░░░░░░░░░░░░░░░░░░   0/3   0% (+3 stubs)
+  Misc                   ███████████████░░░░░   3/4   75% (+1 stubs)
 
 ------------------------------------------------------------
-  TOTAL: 169/272 functions (62%)
+  TOTAL:          242/272 functions present (88%)
+  Full impl:      169/272 (62%)
+  Partial/wrap:   15
+  Stubs only:     58
+  Missing:        30
+  Real coverage:  184/272 (67%)
 ------------------------------------------------------------
+
+  Missing functions:
+
+    Threads (pthreads):
+      pthread_create, pthread_join, pthread_detach, pthread_exit, pthread_mutex_init, pthread_mutex_lock
+      pthread_mutex_unlock, pthread_mutex_destroy, pthread_cond_init, pthread_cond_wait, pthread_cond_signal, pthread_cond_broadcast
+      pthread_rwlock_init, pthread_rwlock_rdlock, pthread_rwlock_wrlock, pthread_rwlock_unlock, pthread_key_create, pthread_setspecific
+      pthread_getspecific
+    Semaphores:
+      sem_init, sem_wait, sem_post, sem_destroy, sem_open, sem_close
+      sem_unlink
+    Dynamic Loading:
+      dlopen, dlsym, dlclose, dlerror
 ```
 
 
