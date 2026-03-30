@@ -13,6 +13,8 @@
 #include <kernel/gen_config.h>
 #include "aios/ring.h"
 
+
+
 /* ── Shared memory regions (set by Microkit loader) ─── */
 uintptr_t tx_buf;
 uintptr_t rx_buf;
@@ -106,6 +108,24 @@ static int str_starts_with(const char *s, const char *prefix) {
 
 
 #include "orch/orch_serial.inc"
+
+/* ── Logging backend ─────────────────────────────────── */
+#define LOG_MODULE "ORCH"
+#define LOG_LEVEL  LOG_LEVEL_INFO
+#include "aios/log.h"
+
+void _log_puts(const char *s) { ser_puts(s); }
+void _log_put_dec(unsigned long n) { ser_put_dec(n); }
+void _log_flush(void) { ser_flush(); }
+unsigned long _log_get_time(void) {
+    uint64_t cnt, freq;
+    asm volatile("mrs %0, cntpct_el0" : "=r"(cnt));
+    asm volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+    if (freq == 0) freq = 62500000;
+    return (unsigned long)(cnt / freq);
+}
+
+
 
 #include "orch/orch_fs.inc"
 
@@ -236,4 +256,5 @@ static void cmd_ps(void) {
 #include "orch/orch_dispatch.inc"
 #include "orch/orch_input.inc"
 #include "orch/orch_syscall.inc"
+
 #include "orch/orch_main.inc"

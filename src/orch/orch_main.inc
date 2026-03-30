@@ -95,6 +95,7 @@ void init(void) {
     }
     ser_flush();
 
+    LOG_INFO("system ready, awaiting login");
     ser_puts("\nLogin: ");
 }
 
@@ -127,6 +128,7 @@ void notified(microkit_channel ch) {
                             ser_flush();
                             proctab[s].in_use = 0;
                             orch_state = RUNNING;
+            LOG_INFO("user authenticated");
                             print_prompt();
                             break;
                         }

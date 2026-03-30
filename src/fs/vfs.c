@@ -17,6 +17,18 @@
 uintptr_t blk_data;
 uintptr_t fs_data;
 
+/* ── Logging backend ─────────────────────────────────── */
+#define LOG_MODULE "FS"
+#define LOG_LEVEL  LOG_LEVEL_INFO
+#include "aios/log.h"
+
+void _log_puts(const char *s) { (void)s; /* FS logs via orchestrator */ }
+void _log_put_dec(unsigned long n) { (void)n; }
+void _log_flush(void) { }
+unsigned long _log_get_time(void) { return 0; }
+
+
+
 /* ── Open file table ───────────────────────────────────── */
 static open_file_t open_files[MAX_OPEN_FILES];
 

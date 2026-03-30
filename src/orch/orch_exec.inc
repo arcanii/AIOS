@@ -159,6 +159,7 @@ static void cmd_exec(const char *filename) {
     fs_close_sync(fd);
     exec_loaded_bytes = offset;
 
+    LOG_INFO("program loaded into sandbox");
     ser_puts("  Loaded ");
     ser_put_dec(exec_loaded_bytes);
     ser_puts(" bytes into sandbox. Executing...\n");
