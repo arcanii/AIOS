@@ -93,19 +93,19 @@ static int internal_spawn(const char *filename, const char *args,
     /* Start the sandbox */
     WR32(cur_sio, SBX_CODE_SIZE, offset);
     WR32(cur_sio, SBX_CMD, SBX_CMD_RUN);
-    proctab[slot].in_use = 1;
-    proctab[slot].owner_uid = current_uid;
-    proctab[slot].pid = next_pid++;
-    proctab[slot].parent_pid = parent_pid;
-    proctab[slot].loaded_bytes = offset;
-    proctab[slot].foreground = is_foreground;
-    /* Copy name */
+    /* Create process entry and assign to slot */
     {
-        int ni = 0;
-        while (filename[ni] && ni < 63) {
-            proctab[slot].name[ni] = filename[ni]; ni++;
+        int pid = sched_create(&sched, filename, "", parent_pid,
+                               current_uid, is_foreground, 128);
+        if (pid < 0) { return -1; }
+        /* Find the proc index we just created */
+        for (int pi = 0; pi < SCHED_MAX_PROCS; pi++) {
+            if (sched.procs[pi].pid == pid) {
+                sched.procs[pi].loaded_bytes = offset;
+                sched_assign_slot(&sched, pi, slot);
+                break;
+            }
         }
-        proctab[slot].name[ni] = '\0';
     }
     microkit_notify(sbx_channel[slot]);
     return slot;
@@ -218,24 +218,28 @@ static void cmd_exec(const char *filename) {
     /* Tell sandbox to run */
     WR32(cur_sio, SBX_CODE_SIZE, exec_loaded_bytes);
     WR32(cur_sio, SBX_CMD, SBX_CMD_RUN);
-    proctab[slot].in_use = 1;
-    proctab[slot].owner_uid = current_uid;
-    proctab[slot].pid = next_pid++;
-    proctab[slot].loaded_bytes = exec_loaded_bytes;
-    proctab[slot].foreground = background ? 0 : 1;
+    /* Create process entry and assign to slot */
     {
-        int ni = 0;
-        const char *fn = filename;
-        while (*fn && ni < 63) proctab[slot].name[ni++] = *fn++;
-        proctab[slot].name[ni] = 0;
+        int pid = sched_create(&sched, filename, "", 0,
+                               current_uid, background ? 0 : 1, 128);
+        if (pid >= 0) {
+            for (int pi = 0; pi < SCHED_MAX_PROCS; pi++) {
+                if (sched.procs[pi].pid == pid) {
+                    sched.procs[pi].loaded_bytes = exec_loaded_bytes;
+                    sched_assign_slot(&sched, pi, slot);
+                    break;
+                }
+            }
+        }
     }
+    /* Name set by sched_create */
     if (!background) {
         orch_state = EXEC_RUNNING;
     } else {
         ser_puts("  [");
         ser_put_dec((unsigned int)slot);
         ser_puts("] PID ");
-        ser_put_dec(proctab[slot].pid);
+        ser_put_dec(slot_proc(slot) ? slot_proc(slot)->pid : 0);
         ser_puts("\n");
         print_prompt();
     }

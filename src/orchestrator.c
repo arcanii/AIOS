@@ -46,17 +46,23 @@ static uintptr_t sbx_io[NUM_SANDBOXES];
 static uintptr_t sbx_code[NUM_SANDBOXES];
 
 /* Process table */
-typedef struct {
-    int in_use;
-    uint32_t pid;
-    uint32_t parent_pid;
-    uint32_t loaded_bytes;
-    int foreground;
-    uint32_t owner_uid;
-    char name[64];
-} process_t;
-static process_t proctab[NUM_SANDBOXES];
-static uint32_t next_pid = 1;
+/* Process scheduler (replaces old proctab[8]) */
+#include "proc_sched.h"
+static scheduler_t sched;
+
+/* Helper: get process for a sandbox slot */
+static inline sched_proc_t *slot_proc(int slot) {
+    int idx = sched.slot_to_proc[slot];
+    if (idx >= 0) return &sched.procs[idx];
+    return (sched_proc_t *)0;
+}
+
+/* Helper: check if slot has a running process */
+static inline int slot_in_use(int slot) {
+    return sched.slot_to_proc[slot] >= 0;
+}
+
+
 
 
 /* Slot-to-channel mapping (not contiguous due to other PD channels) */
@@ -66,9 +72,7 @@ static const int sbx_channel[NUM_SANDBOXES] = {
 };
 
 static int find_free_slot(void) {
-    for (int i = 0; i < NUM_SANDBOXES; i++)
-        if (!proctab[i].in_use) return i;
-    return -1;
+    return sched_find_free_slot(&sched);
 }
 
 static int ch_to_slot(microkit_channel ch) {
@@ -201,9 +205,9 @@ static void cmd_kill(const char *arg) {
     }
     /* Find slot with matching PID */
     for (int s = 0; s < NUM_SANDBOXES; s++) {
-        if (proctab[s].in_use && proctab[s].pid == pid) {
+        if (slot_in_use(s) && slot_proc(s)->pid == pid) {
             /* Permission check: owner or root */
-            if (auth_check_kill_sync(proctab[s].owner_uid) != 0) {
+            if (auth_check_kill_sync(slot_proc(s)->owner_uid) != 0) {
                 ser_puts("  Permission denied: not owner\n");
                 ser_flush();
                 return;
@@ -213,12 +217,12 @@ static void cmd_kill(const char *arg) {
             ser_puts("  Killed PID ");
             ser_put_dec(pid);
             ser_puts(" (");
-            ser_puts(proctab[s].name);
+            ser_puts(slot_proc(s)->name);
             ser_puts(")\n");
-            if (proctab[s].foreground) {
+            if (slot_proc(s)->foreground) {
                 orch_state = RUNNING;
             }
-            proctab[s].in_use = 0;
+            sched_release_slot(&sched, s);
             return;
         }
     }
@@ -232,14 +236,14 @@ static void cmd_ps(void) {
     ser_puts("  SLOT  PID  NAME\n");
     int any = 0;
     for (int i = 0; i < NUM_SANDBOXES; i++) {
-        if (proctab[i].in_use) {
+        if (slot_in_use(i)) {
             ser_puts("  ");
             ser_put_dec((unsigned int)i);
             ser_puts("     ");
-            ser_put_dec(proctab[i].pid);
+            ser_put_dec(slot_proc(i)->pid);
             ser_puts("  ");
-            ser_puts(proctab[i].name);
-            if (proctab[i].foreground) ser_puts(" (fg)");
+            ser_puts(slot_proc(i)->name);
+            if (slot_proc(i)->foreground) ser_puts(" (fg)");
             else ser_puts(" (bg)");
             ser_puts("\n");
             any = 1;

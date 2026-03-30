@@ -342,7 +342,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
     case SYS_GETPID: {
-        result = (int64_t)proctab[slot].pid;
+        result = (int64_t)slot_proc(slot)->pid;
         break;
     }
     case SYS_SLEEP: {
@@ -561,19 +561,19 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         while (spawn_args[i] && i < 255) { sargs[i] = spawn_args[i]; i++; }
         sargs[i] = '\0';
 
-        uint32_t ppid = proctab[slot].pid;
+        uint32_t ppid = slot_proc(slot)->pid;
         int child_slot = internal_spawn(fname, sargs, ppid, 0 /* always bg for spawned */);
         if (child_slot < 0) {
             result = -1;
         } else {
-            result = (int64_t)proctab[child_slot].pid;
+            result = (int64_t)slot_proc(child_slot)->pid;
         }
         break;
     }
     case SYS_WAITPID: {
         /* MR1 = pid to wait for (0 = any child) */
         uint32_t wait_pid = (uint32_t)seL4_GetMR(1);
-        uint32_t my_pid = proctab[slot].pid;
+        uint32_t my_pid = slot_proc(slot)->pid;
 
         /* Check exit_queue for already-exited child */
         int found = 0;
@@ -602,9 +602,9 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         (void)sig; /* For now, all signals terminate the process */
         int found = 0;
         for (int s = 0; s < NUM_SANDBOXES; s++) {
-            if (proctab[s].in_use && proctab[s].pid == target_pid) {
+            if (slot_in_use(s) && slot_proc(s)->pid == target_pid) {
                 /* Permission check */
-                if (proctab[s].owner_uid != current_uid && current_uid != 0) {
+                if (slot_proc(s)->owner_uid != current_uid && current_uid != 0) {
                     result = -1;  /* EPERM */
                     found = 1;
                     break;
@@ -615,13 +615,13 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
                 for (int ei = 0; ei < MAX_EXIT_QUEUE; ei++) {
                     if (!exit_queue[ei].active) {
                         exit_queue[ei].active = 1;
-                        exit_queue[ei].pid = proctab[s].pid;
-                        exit_queue[ei].parent_pid = proctab[s].parent_pid;
+                        exit_queue[ei].pid = slot_proc(s)->pid;
+                        exit_queue[ei].parent_pid = slot_proc(s)->parent_pid;
                         exit_queue[ei].exit_code = -9;  /* killed */
                         break;
                     }
                 }
-                proctab[s].in_use = 0;
+                sched_release_slot(&sched, s);
                 result = 0;
                 found = 1;
                 break;
@@ -721,8 +721,8 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         uint32_t sig = (uint32_t)seL4_GetMR(2);
         int found = 0;
         for (int s = 0; s < NUM_SANDBOXES; s++) {
-            if (proctab[s].in_use && proctab[s].pid == target_pid) {
-                if (proctab[s].owner_uid != current_uid && current_uid != 0) {
+            if (slot_in_use(s) && slot_proc(s)->pid == target_pid) {
+                if (slot_proc(s)->owner_uid != current_uid && current_uid != 0) {
                     result = -1;
                     found = 1;
                     break;
@@ -737,13 +737,13 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
                     for (int ei = 0; ei < MAX_EXIT_QUEUE; ei++) {
                         if (!exit_queue[ei].active) {
                             exit_queue[ei].active = 1;
-                            exit_queue[ei].pid = proctab[s].pid;
-                            exit_queue[ei].parent_pid = proctab[s].parent_pid;
+                            exit_queue[ei].pid = slot_proc(s)->pid;
+                            exit_queue[ei].parent_pid = slot_proc(s)->parent_pid;
                             exit_queue[ei].exit_code = -(int)sig;
                             break;
                         }
                     }
-                    proctab[s].in_use = 0;
+                    sched_release_slot(&sched, s);
                     result = 0;
                     found = 1;
                 }

@@ -13,11 +13,11 @@ static char rx_getc_blocking(void) {
     /* Ctrl-C: kill foreground process */
     if (c == 0x03 && orch_state == EXEC_RUNNING) {
         for (int s = 0; s < NUM_SANDBOXES; s++) {
-            if (proctab[s].in_use && proctab[s].foreground) {
+            if (slot_in_use(s) && slot_proc(s)->foreground) {
                 microkit_pd_stop(s);
                 microkit_pd_restart(s, SBX_ENTRY_POINT);
                 ser_puts("^C\n");
-                proctab[s].in_use = 0;
+                sched_release_slot(&sched, s);
                 orch_state = RUNNING;
                 print_prompt();
                 /* Return EOF-like value */
@@ -125,16 +125,16 @@ static void handle_serial_input(void) {
             if (orch_state == EXEC_RUNNING) {
                 /* Find foreground process and kill it */
                 for (int s = 0; s < NUM_SANDBOXES; s++) {
-                    if (proctab[s].in_use && proctab[s].foreground) {
+                    if (slot_in_use(s) && slot_proc(s)->foreground) {
                         microkit_pd_stop(s);
                         microkit_pd_restart(s, SBX_ENTRY_POINT);
                         ser_puts("^C\n");
                         ser_puts("  Interrupted PID ");
-                        ser_put_dec(proctab[s].pid);
+                        ser_put_dec(slot_proc(s)->pid);
                         ser_puts(" (");
-                        ser_puts(proctab[s].name);
+                        ser_puts(slot_proc(s)->name);
                         ser_puts(")\n");
-                        proctab[s].in_use = 0;
+                        sched_release_slot(&sched, s);
                         orch_state = RUNNING;
                         print_prompt();
                         break;
@@ -183,14 +183,14 @@ static void handle_exec_done(int slot) {
     ser_put_dec(exit_code);
     ser_puts("\n");
     ser_flush();
-    if (proctab[slot].foreground) {
+    if (slot_proc(slot)->foreground) {
         orch_state = RUNNING;
         print_prompt();
     } else {
         ser_puts("\n[");
         ser_put_dec((unsigned int)slot);
         ser_puts("] Done (PID ");
-        ser_put_dec(proctab[slot].pid);
+        ser_put_dec(slot_proc(slot)->pid);
         ser_puts(", exit ");
         ser_put_dec(exit_code);
         ser_puts(")\n");
@@ -199,13 +199,13 @@ static void handle_exec_done(int slot) {
     for (int ei = 0; ei < MAX_EXIT_QUEUE; ei++) {
         if (!exit_queue[ei].active) {
             exit_queue[ei].active = 1;
-            exit_queue[ei].pid = proctab[slot].pid;
-            exit_queue[ei].parent_pid = proctab[slot].parent_pid;
+            exit_queue[ei].pid = slot_proc(slot)->pid;
+            exit_queue[ei].parent_pid = slot_proc(slot)->parent_pid;
             exit_queue[ei].exit_code = (int32_t)exit_code;
             break;
         }
     }
-    proctab[slot].in_use = 0;
+    sched_release_slot(&sched, slot);
 }
 
 /* ── Handle LLM generation reply ─────────────────────── */

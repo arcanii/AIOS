@@ -36,7 +36,7 @@ void init(void) {
     sbx_code[6] = sbx6_code;
     sbx_io[7]   = sbx7_io;
     sbx_code[7] = sbx7_code;
-    for (int i = 0; i < NUM_SANDBOXES; i++) proctab[i].in_use = 0;
+    sched_init(&sched);
 
     /* Boot: read hello.txt synchronously */
     ser_puts("Boot: reading hello.txt...\n");
@@ -118,15 +118,15 @@ void notified(microkit_channel ch) {
                     rx_scan->read_idx = (scan_ri + 1) % RING_SIZE;
                     /* Kill foreground process */
                     for (int s = 0; s < NUM_SANDBOXES; s++) {
-                        if (proctab[s].in_use && proctab[s].foreground) {
+                        if (slot_in_use(s) && slot_proc(s)->foreground) {
                             microkit_pd_stop(s);
                             microkit_pd_restart(s, SBX_ENTRY_POINT);
                             ser_puts("^C\n");
                             ser_puts("  Interrupted PID ");
-                            ser_put_dec(proctab[s].pid);
+                            ser_put_dec(slot_proc(s)->pid);
                             ser_puts("\n");
                             ser_flush();
-                            proctab[s].in_use = 0;
+                            sched_release_slot(&sched, s);
                             orch_state = RUNNING;
             LOG_INFO("user authenticated");
                             print_prompt();
@@ -207,15 +207,15 @@ seL4_Bool fault(microkit_child child, microkit_msginfo msginfo, microkit_msginfo
     (void)reply_msginfo;
     int slot = (int)child;
     if (slot >= 0 && slot < NUM_SANDBOXES) {
-        proctab[slot].in_use = 0;
+        sched_release_slot(&sched, slot);
         microkit_pd_restart(slot, SBX_ENTRY_POINT);
         ser_puts("FAULT: sandbox ");
         ser_put_dec((unsigned int)slot);
         ser_puts(" crashed (PID ");
-        ser_put_dec(proctab[slot].pid);
+        ser_put_dec(slot_proc(slot)->pid);
         ser_puts("), slot freed\n");
         ser_flush();
-        if (proctab[slot].foreground) {
+        if (slot_proc(slot)->foreground) {
             orch_state = RUNNING;
             print_prompt();
             ser_flush();

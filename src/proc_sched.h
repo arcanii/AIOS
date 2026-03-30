@@ -55,7 +55,7 @@ typedef struct {
     /* Binary info (for QUEUED state - load from disk) */
     char filename[64];
     char args[256];
-    char name[32];
+    char name[64];
     uint32_t loaded_bytes;  /* Size of code segment */
 
     /* Swap info (for READY state - saved in swap region) */
