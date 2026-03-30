@@ -256,6 +256,7 @@ static void cmd_help(void) {
     print("  cmd < file      - redirect input from file\n");
     print("  cmd1 | cmd2     - pipe output of cmd1 to cmd2\n");
     print("  source <file>   - run shell script\n");
+    print("  ps                - list processes\n");
     print("  jobs            - list background jobs\n");
     print("  fg [%n]         - bring job to foreground\n");
     print("  sh <file>       - run shell script\n");
@@ -329,11 +330,35 @@ static void cmd_ls(const char *path) {
                 printc((st.st_mode & 02) ? 'w' : '-');
                 printc((st.st_mode & 01) ? 'x' : '-');
 
-                /* Owner/group */
+                /* Owner/group names */
                 print(" ");
-                print_dec((unsigned long)st.st_uid);
-                print(" ");
-                print_dec((unsigned long)st.st_gid);
+                {
+                    struct passwd *pw = getpwuid(st.st_uid);
+                    if (pw) {
+                        print(pw->pw_name);
+                        /* Pad to 8 chars */
+                        int nl = 0; const char *np = pw->pw_name; while (*np++) nl++;
+                        for (int pad = nl; pad < 8; pad++) printc(' ');
+                    } else {
+                        print_dec((unsigned long)st.st_uid);
+                        /* Rough pad */
+                        if (st.st_uid < 10) print("       ");
+                        else if (st.st_uid < 100) print("      ");
+                        else print("     ");
+                    }
+                    print(" ");
+                    struct group *gr = getgrgid(st.st_gid);
+                    if (gr) {
+                        print(gr->gr_name);
+                        int gl = 0; const char *gp = gr->gr_name; while (*gp++) gl++;
+                        for (int pad = gl; pad < 8; pad++) printc(' ');
+                    } else {
+                        print_dec((unsigned long)st.st_gid);
+                        if (st.st_gid < 10) print("       ");
+                        else if (st.st_gid < 100) print("      ");
+                        else print("     ");
+                    }
+                }
 
                 /* Size */
                 print(" ");
@@ -659,6 +684,24 @@ static void parse_redirects(void) {
 
 /* ── Dispatch a single command in line[] ──────────────── */
 /* ── Script execution ──────────────────────────────────── */
+static void cmd_ps(void) {
+    print("  PID  STAT  NAME\n");
+    /* Current process (the shell) */
+    print("    1  R     shell\n");
+    /* List background processes from job table */
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (jobs[i].active) {
+            print("  ");
+            if (jobs[i].pid < 100) print(" ");
+            if (jobs[i].pid < 10) print(" ");
+            print_dec((unsigned long)jobs[i].pid);
+            print("  R     ");
+            print(jobs[i].name);
+            print("\n");
+        }
+    }
+}
+
 static void dispatch(void);
 
 static void cmd_source(const char *filename) {
@@ -753,6 +796,7 @@ static void dispatch(void) {
     else if (str_eq(line, "pwd"))       cmd_pwd();
     else if (str_eq(line, "clear"))     cmd_clear();
     else if (str_eq(line, "exit"))      { shell_exit = 1; }
+    else if (str_eq(line, "ps"))        cmd_ps();
     else if (str_eq(line, "jobs"))      cmd_jobs();
     else if (str_eq(line, "env"))       {
         for (int ei = 0; ei < 32; ei++) {
@@ -927,11 +971,34 @@ static void dispatch(void) {
                 /* Try cmd directly */
                 rc = spawn(cmd, args);
             }
+            if (rc == -2) {
+                /* Script detected — can't background, run in foreground */
+                print("sh: scripts cannot run in background, running in foreground\n");
+                cmd_source(cmd);
+                return;
+            }
             if (rc >= 0) {
                 int jid = add_job(rc, cmd);
                 print("["); print_dec((unsigned long)jid); print("] ");
                 print_dec((unsigned long)rc); print("\n");
                 return;
+            }
+            /* Try as .sh script */
+            {
+                char sh[72];
+                int shi = 0;
+                for (int k = 0; cmd[k] && shi < 63; k++) sh[shi++] = cmd[k];
+                int has_sh = (shi > 3 && sh[shi-3] == '.' && sh[shi-2] == 's' && sh[shi-1] == 'h');
+                if (!has_sh) { sh[shi++] = '.'; sh[shi++] = 's'; sh[shi++] = 'h'; }
+                sh[shi] = '\0';
+                int sfd = open(sh, O_RDONLY);
+                if (sfd < 0) sfd = open(cmd, O_RDONLY);
+                if (sfd >= 0) {
+                    close(sfd);
+                    print("sh: scripts cannot run in background, running in foreground\n");
+                    cmd_source(has_sh ? cmd : sh);
+                    return;
+                }
             }
             /* Fall through to not-found */
             rc = -1;
