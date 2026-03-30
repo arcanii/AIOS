@@ -74,4 +74,8 @@
 #define SYS_FCNTL      73
 #define SYS_FTRUNCATE  74
 
+/* Process creation */
+#define SYS_FORK       75
+#define SYS_SBRK       76
+
 #endif

@@ -344,6 +344,13 @@ static void sbx_putc_direct(char c) {
 
 
 /* ── Process spawn/wait syscalls ─────────────────────── */
+
+static int sbx_fork(void) {
+    seL4_SetMR(0, 75);  /* SYS_FORK */
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
+    return (int)(int32_t)seL4_GetMR(0);
+}
+
 static int sbx_spawn(const char *path, const char *args) {
     /* Copy path to sio+0x200 */
     volatile char *dst = (volatile char *)(sandbox_io + 0x200);
@@ -573,6 +580,7 @@ typedef struct {
     /* Process management */
     int   (*spawn)(const char *path, const char *args);
     int   (*waitpid)(int pid, int *status);
+    int   (*fork)(void);
     int   (*chmod)(const char *path, unsigned int mode);
     int   (*chown)(const char *path, unsigned int uid, unsigned int gid);
     int   (*ftruncate)(int fd, unsigned long length);
@@ -801,6 +809,7 @@ static void init_syscalls(void) {
     /* Process management */
     syscalls.spawn      = sbx_spawn;
     syscalls.waitpid    = sbx_waitpid;
+    syscalls.fork       = sbx_fork;
 
     syscalls.chmod      = sbx_chmod;
     syscalls.chown      = sbx_chown;

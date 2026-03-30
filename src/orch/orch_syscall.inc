@@ -434,6 +434,14 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
 
+
+    case SYS_FORK: {
+        /* Fork not yet supported - needs context save/restore */
+        /* Returns -1 (ENOSYS) to caller */
+        result = -1;
+        break;
+    }
+
     case SYS_GETUID: {
         result = (int64_t)current_uid;
         break;
@@ -622,6 +630,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
                     }
                 }
                 sched_release_slot(&sched, s);
+        try_load_queued(s);
                 result = 0;
                 found = 1;
                 break;
@@ -744,6 +753,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
                         }
                     }
                     sched_release_slot(&sched, s);
+        try_load_queued(s);
                     result = 0;
                     found = 1;
                 }

@@ -62,7 +62,7 @@ static inline int slot_in_use(int slot) {
     return sched.slot_to_proc[slot] >= 0;
 }
 
-
+static void try_load_queued(int freed_slot);
 
 
 /* Slot-to-channel mapping (not contiguous due to other PD channels) */
@@ -264,3 +264,77 @@ static void cmd_ps(void) {
 #include "orch/orch_syscall.inc"
 
 #include "orch/orch_main.inc"
+
+/* ── Queue drain: load next queued process into a freed slot ── */
+static void try_load_queued(int freed_slot) {
+    int next_idx = sched_drain_queue(&sched);
+    if (next_idx < 0) return;  /* Nothing queued */
+
+    sched_proc_t *p = &sched.procs[next_idx];
+
+    /* Load binary from disk into the freed slot */
+    int st = fs_open_sync(p->filename);
+    if (st < 0) {
+        /* Try /bin/ prefix */
+        char bin_path[128];
+        bin_path[0]='/'; bin_path[1]='b'; bin_path[2]='i';
+        bin_path[3]='n'; bin_path[4]='/';
+        int j = 5;
+        for (int k = 0; p->filename[k] && j < 120; k++) bin_path[j++] = p->filename[k];
+        bin_path[j] = '\0';
+        st = fs_open_sync(bin_path);
+    }
+    if (st < 0) {
+        ser_puts("SCHED: failed to load queued process: ");
+        ser_puts(p->filename);
+        ser_puts("\n");
+        p->state = PROC_FREE;
+        return;
+    }
+
+    int fd = st;
+    uintptr_t cur_sio  = sbx_io[freed_slot];
+    uintptr_t cur_scode = sbx_code[freed_slot];
+    volatile uint8_t *code_dst = (volatile uint8_t *)cur_scode;
+
+    uint32_t offset = 0;
+    while (1) {
+        uint32_t chunk = 0x400000 - offset;
+        if (chunk > 65024) chunk = 65024;
+        st = fs_read_sync(fd, offset, chunk);
+        if (st < 0) break;
+        uint32_t got = RD32(fs_data, 0);
+        if (got == 0) break;
+        volatile uint8_t *src = (volatile uint8_t *)(fs_data + 4);
+        for (uint32_t j = 0; j < got; j++) code_dst[offset + j] = src[j];
+        offset += got;
+        if (got < chunk) break;
+    }
+    fs_close_sync(fd);
+
+    if (offset == 0) {
+        ser_puts("SCHED: empty binary: ");
+        ser_puts(p->filename);
+        ser_puts("\n");
+        p->state = PROC_FREE;
+        return;
+    }
+
+    p->loaded_bytes = offset;
+    sched_assign_slot(&sched, next_idx, freed_slot);
+
+    WR32(cur_sio, SBX_CODE_SIZE, offset);
+    WR32(cur_sio, SBX_CMD, SBX_CMD_RUN);
+    microkit_notify(sbx_channel[freed_slot]);
+
+    ser_puts("SCHED: loaded queued ");
+    ser_puts(p->name);
+    ser_puts(" (PID ");
+    ser_put_dec(p->pid);
+    ser_puts(") -> slot ");
+    ser_put_dec((unsigned int)freed_slot);
+    ser_puts("\n");
+    ser_flush();
+}
+
+

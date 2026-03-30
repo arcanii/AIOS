@@ -18,6 +18,7 @@ static char rx_getc_blocking(void) {
                 microkit_pd_restart(s, SBX_ENTRY_POINT);
                 ser_puts("^C\n");
                 sched_release_slot(&sched, s);
+        try_load_queued(s);
                 orch_state = RUNNING;
                 print_prompt();
                 /* Return EOF-like value */
@@ -135,6 +136,7 @@ static void handle_serial_input(void) {
                         ser_puts(slot_proc(s)->name);
                         ser_puts(")\n");
                         sched_release_slot(&sched, s);
+        try_load_queued(s);
                         orch_state = RUNNING;
                         print_prompt();
                         break;
@@ -206,6 +208,7 @@ static void handle_exec_done(int slot) {
         }
     }
     sched_release_slot(&sched, slot);
+        try_load_queued(slot);
 }
 
 /* ── Handle LLM generation reply ─────────────────────── */

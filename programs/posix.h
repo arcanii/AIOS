@@ -1324,10 +1324,7 @@ static inline void *sbrk(long increment) {
 }
 
 /* ── Process stubs (spawn model, no fork) ─────────────── */
-static inline pid_t fork(void) {
-    errno = ENOSYS;
-    return -1;
-}
+/* fork() provided by aios.h macro */
 
 static inline int execve(const char *pathname, char *const argv[], char *const envp[]) {
     (void)argv; (void)envp;

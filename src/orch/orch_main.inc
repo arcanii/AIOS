@@ -127,6 +127,7 @@ void notified(microkit_channel ch) {
                             ser_puts("\n");
                             ser_flush();
                             sched_release_slot(&sched, s);
+        try_load_queued(s);
                             orch_state = RUNNING;
             LOG_INFO("user authenticated");
                             print_prompt();
@@ -207,18 +208,25 @@ seL4_Bool fault(microkit_child child, microkit_msginfo msginfo, microkit_msginfo
     (void)reply_msginfo;
     int slot = (int)child;
     if (slot >= 0 && slot < NUM_SANDBOXES) {
-        sched_release_slot(&sched, slot);
-        microkit_pd_restart(slot, SBX_ENTRY_POINT);
-        ser_puts("FAULT: sandbox ");
-        ser_put_dec((unsigned int)slot);
-        ser_puts(" crashed (PID ");
-        ser_put_dec(slot_proc(slot)->pid);
-        ser_puts("), slot freed\n");
-        ser_flush();
-        if (slot_proc(slot)->foreground) {
-            orch_state = RUNNING;
-            print_prompt();
+        {
+            /* Save info before releasing slot */
+            sched_proc_t *p = slot_proc(slot);
+            uint32_t crashed_pid = p ? p->pid : 0;
+            int was_fg = p ? p->foreground : 0;
+            sched_release_slot(&sched, slot);
+            microkit_pd_restart(slot, SBX_ENTRY_POINT);
+            ser_puts("FAULT: sandbox ");
+            ser_put_dec((unsigned int)slot);
+            ser_puts(" crashed (PID ");
+            ser_put_dec(crashed_pid);
+            ser_puts("), slot freed\n");
             ser_flush();
+            if (was_fg) {
+                orch_state = RUNNING;
+                print_prompt();
+                ser_flush();
+            }
+            try_load_queued(slot);
         }
     }
     return seL4_False;

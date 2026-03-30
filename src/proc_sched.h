@@ -323,4 +323,47 @@ static inline void sched_stats(scheduler_t *s, int *running, int *ready,
     if (zombie)  *zombie = z;
 }
 
+
+/* ── Queue drain: called when a slot is freed ───────── */
+/* Returns the proc index to load next, or -1 if queue empty */
+static inline int sched_drain_queue(scheduler_t *s) {
+    return sched_pick_next(s);
+}
+
+/* ── Fork support ───────────────────────────────────── */
+/* Create a child process as a copy of the parent in the given slot.
+ * Returns child PID on success, -1 if process table full.
+ * The caller must copy code+heap from parent slot to child slot. */
+static inline int sched_fork(scheduler_t *s, int parent_slot) {
+    sched_proc_t *parent = sched_find_slot(s, parent_slot);
+    if (!parent) return -1;
+
+    int child_idx = sched_alloc(s);
+    if (child_idx < 0) return -1;
+
+    sched_proc_t *child = &s->procs[child_idx];
+    child->state = PROC_QUEUED;  /* Will be RUNNING once assigned a slot */
+    child->pid = s->next_pid++;
+    child->parent_pid = parent->pid;
+    child->owner_uid = parent->owner_uid;
+    child->foreground = 0;  /* Child runs in background */
+    child->priority = parent->priority;
+    child->loaded_bytes = parent->loaded_bytes;
+    child->swap_offset = 0;
+    child->swap_code_sz = 0;
+    child->swap_heap_sz = 0;
+    child->time_slices = 0;
+    child->total_ticks = 0;
+    child->last_scheduled = s->tick_count;
+
+    /* Copy name */
+    for (int i = 0; i < 64; i++) child->name[i] = parent->name[i];
+    /* Copy filename */
+    for (int i = 0; i < 64; i++) child->filename[i] = parent->filename[i];
+    /* Copy args */
+    for (int i = 0; i < 256; i++) child->args[i] = parent->args[i];
+
+    return child->pid;
+}
+
 #endif /* AIOS_PROC_SCHED_H */

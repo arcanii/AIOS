@@ -74,6 +74,7 @@ typedef struct {
     /* Process management */
     int   (*spawn)(const char *path, const char *args);
     int   (*waitpid)(int pid, int *status);
+    int   (*fork)(void);
     int   (*chmod)(const char *path, unsigned int mode);
     int   (*chown)(const char *path, unsigned int uid, unsigned int gid);
     int   (*ftruncate)(int fd, unsigned long length);
@@ -107,6 +108,7 @@ static aios_syscalls_t *sys;
 #define time()         sys->time()
 #define spawn(p,a)     sys->spawn(p,a)
 #define waitpid(p,s)   sys->waitpid(p,s)
+#define fork()         sys->fork()
 #define kill_proc(p, s)   sys->kill_proc(p, s)
 
 /* Access mode constants */
