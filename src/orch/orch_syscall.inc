@@ -366,7 +366,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         if (st != 0) { result = -1; break; }
         uint32_t fd = RD32(fs_data, FS_FD);
         uint32_t child_size = RD32(fs_data, FS_FILESIZE);
-        if (child_size == 0 || child_size > 0x80000) { /* max 512K for child */
+        if (child_size == 0 || child_size > 0x400000) { /* max 512K for child */
             fs_close_sync(fd);
             result = -1;
             break;

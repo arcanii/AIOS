@@ -1407,4 +1407,259 @@ static inline int poll(struct pollfd *fds, unsigned long nfds, int timeout) {
 }
 
 
+
+
+
+/* ── POSIX Tier 3: stubs & wrappers ──────────────────────── */
+#ifndef _POSIX_TIER3
+#define _POSIX_TIER3
+
+static inline int ioctl(int fd, unsigned long request, ...) { (void)fd; (void)request; errno = ENOSYS; return -1; }
+static inline int fsync(int fd) { (void)fd; return 0; }
+static inline int fdatasync(int fd) { (void)fd; return 0; }
+static inline int flock(int fd, int op) { (void)fd; (void)op; return 0; }
+static inline int lockf(int fd, int cmd, off_t len) { (void)fd; (void)cmd; (void)len; return 0; }
+static inline int lstat(const char *path, struct stat *buf) { return stat(path, buf); }
+static inline int fchdir(int fd) { (void)fd; errno = ENOSYS; return -1; }
+static inline void rewinddir(DIR *d) { if (d) d->pos = 0; }
+static inline int scandir(const char *dirp, struct dirent ***namelist,
+    int (*filter)(const struct dirent *),
+    int (*compar)(const struct dirent **, const struct dirent **)) {
+    (void)compar; DIR *d = opendir(dirp); if (!d) return -1;
+    static struct dirent *entries[64]; static struct dirent storage[64]; int count = 0;
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL && count < 64) {
+        if (filter && !filter(ent)) continue;
+        storage[count] = *ent; entries[count] = &storage[count]; count++;
+    }
+    closedir(d); *namelist = entries; return count;
+}
+static inline int execl(const char *path, const char *arg, ...) { (void)arg; return execve(path, (void*)0, (void*)0); }
+static inline int execlp(const char *file, const char *arg, ...) { (void)arg; return execvp(file, (void*)0); }
+static inline void _exit(int status) { while(1) {} (void)status; }
+static inline pid_t getpgrp(void) { return getpid(); }
+static inline int setpgid(pid_t pid, pid_t pgid) { (void)pid; (void)pgid; return 0; }
+static inline pid_t setsid(void) { return getpid(); }
+static inline int sigpending(sigset_t *set) { if (set) *set = 0; return 0; }
+static inline int sigwait(const sigset_t *set, int *sig) { (void)set; (void)sig; errno = ENOSYS; return -1; }
+static inline int pause(void) { sleep(0xFFFFFFFF); errno = EINTR; return -1; }
+static inline int raise(int sig) { return kill(getpid(), sig); }
+static inline int mkfifo(const char *path, mode_t mode) { (void)path; (void)mode; errno = ENOSYS; return -1; }
+static inline int mknod(const char *path, mode_t mode, int dev) { (void)path; (void)mode; (void)dev; errno = ENOSYS; return -1; }
+static inline int inet_pton(int af, const char *src, void *dst) {
+    if (af != AF_INET) { errno = 97; return -1; }
+    unsigned int addr = 0; int shift = 24;
+    while (*src && shift >= 0) {
+        unsigned int octet = 0;
+        while (*src >= '0' && *src <= '9') { octet = octet * 10 + (*src - '0'); src++; }
+        addr |= (octet & 0xFF) << shift; shift -= 8;
+        if (*src == '.') src++;
+    }
+    *(unsigned int *)dst = htonl(addr); return 1;
+}
+static inline const char *inet_ntop(int af, const void *src, char *dst, unsigned int size) {
+    if (af != AF_INET || size < 16) { errno = ENOSPC; return (void *)0; }
+    unsigned int a = ntohl(*(const unsigned int *)src); int pos = 0;
+    for (int i = 3; i >= 0; i--) {
+        unsigned int octet = (a >> (i * 8)) & 0xFF;
+        if (octet >= 100) dst[pos++] = '0' + octet / 100;
+        if (octet >= 10) dst[pos++] = '0' + (octet / 10) % 10;
+        dst[pos++] = '0' + octet % 10;
+        if (i > 0) dst[pos++] = '.';
+    }
+    dst[pos] = '\0'; return dst;
+}
+static inline unsigned int inet_addr(const char *cp) { unsigned int a; inet_pton(AF_INET, cp, &a); return a; }
+static inline char *inet_ntoa(struct in_addr in) {
+    static char buf[16]; inet_ntop(AF_INET, &in.s_addr, buf, 16); return buf;
+}
+struct addrinfo {
+    int ai_flags, ai_family, ai_socktype, ai_protocol;
+    unsigned int ai_addrlen;
+    struct sockaddr *ai_addr;
+    char *ai_canonname;
+    struct addrinfo *ai_next;
+};
+#define AI_PASSIVE 1
+static inline int getaddrinfo(const char *node, const char *service,
+    const struct addrinfo *hints, struct addrinfo **res) {
+    (void)hints;
+    static struct addrinfo ai; static struct sockaddr_in sa;
+    sa.sin_family = AF_INET; sa.sin_port = 0;
+    if (service) { int p = 0; const char *s = service; while (*s >= '0' && *s <= '9') { p = p * 10 + (*s - '0'); s++; } sa.sin_port = htons((unsigned short)p); }
+    if (node) inet_pton(AF_INET, node, &sa.sin_addr); else sa.sin_addr.s_addr = 0;
+    ai.ai_family = AF_INET; ai.ai_socktype = SOCK_STREAM; ai.ai_protocol = 0;
+    ai.ai_addrlen = sizeof(sa); ai.ai_addr = (struct sockaddr *)&sa;
+    ai.ai_canonname = (char *)node; ai.ai_next = (void *)0;
+    *res = &ai; return 0;
+}
+static inline void freeaddrinfo(struct addrinfo *res) { (void)res; }
+static inline const char *gai_strerror(int errcode) { (void)errcode; return "error"; }
+static inline int brk(void *addr) { (void)addr; errno = ENOMEM; return -1; }
+static inline char *strndup(const char *s, unsigned long n) {
+    unsigned long len = 0; while (len < n && s[len]) len++;
+    char *d = (char *)malloc(len + 1);
+    if (d) { for (unsigned long i = 0; i < len; i++) d[i] = s[i]; d[len] = '\0'; }
+    return d;
+}
+static inline void rewind(FILE *f) { if (f) fseek(f, 0, SEEK_SET); }
+static inline void clearerr(FILE *f) { if (f) { f->eof = 0; f->err = 0; } }
+static inline char *gets(char *s) {
+    int i = 0; char c;
+    while (read(STDIN_FILENO, &c, 1) == 1 && c != '\n') s[i++] = c;
+    s[i] = '\0'; return s;
+}
+static inline void perror(const char *s) {
+    if (s && *s) { write(STDERR_FILENO, s, strlen(s)); write(STDERR_FILENO, ": ", 2); }
+    const char *e = strerror(errno); write(STDERR_FILENO, e, strlen(e)); write(STDERR_FILENO, "\n", 1);
+}
+static inline FILE *fdopen(int fd, const char *mode) {
+    (void)mode; if (fd < 0) return (void *)0;
+    static FILE fobj; fobj.fd = fd; fobj.eof = 0; fobj.err = 0; fobj.append = 0;
+    return &fobj;
+}
+static inline int sscanf(const char *str, const char *fmt, ...) { (void)str; (void)fmt; return 0; }
+static inline int fscanf(FILE *f, const char *fmt, ...) { (void)f; (void)fmt; return 0; }
+static inline int scanf(const char *fmt, ...) { (void)fmt; return 0; }
+static inline double atof(const char *s) { (void)s; return 0.0; }
+static inline double strtod(const char *s, char **end) { (void)s; if (end) *end = (char *)s; return 0.0; }
+static inline float strtof(const char *s, char **end) { (void)s; if (end) *end = (char *)s; return 0.0f; }
+typedef struct { int quot, rem; } div_t;
+typedef struct { long quot, rem; } ldiv_t;
+static inline div_t div(int n, int d) { div_t r; r.quot = n / d; r.rem = n % d; return r; }
+static inline ldiv_t ldiv(long n, long d) { ldiv_t r; r.quot = n / d; r.rem = n % d; return r; }
+static unsigned int _rand_seed = 1;
+static inline int rand(void) { _rand_seed = _rand_seed * 1103515245 + 12345; return (_rand_seed >> 16) & 0x7FFF; }
+static inline void srand(unsigned int seed) { _rand_seed = seed; }
+static inline void *bsearch(const void *key, const void *base, unsigned long nmemb,
+    unsigned long size, int (*compar)(const void *, const void *)) {
+    const char *p = (const char *)base; unsigned long lo = 0, hi = nmemb;
+    while (lo < hi) { unsigned long mid = lo + (hi - lo) / 2;
+        int c = compar(key, p + mid * size);
+        if (c == 0) return (void *)(p + mid * size);
+        if (c < 0) hi = mid; else lo = mid + 1; }
+    return (void *)0;
+}
+static void (*_atexit_fns[32])(void);
+static int _atexit_count = 0;
+static inline int atexit(void (*func)(void)) {
+    if (_atexit_count >= 32) return -1; _atexit_fns[_atexit_count++] = func; return 0;
+}
+static inline char *getlogin(void) {
+    static char name[32]; struct passwd *pw = getpwuid(getuid());
+    if (pw) { int i = 0; while (pw->pw_name[i] && i < 31) { name[i] = pw->pw_name[i]; i++; } name[i] = '\0'; }
+    else { name[0] = '?'; name[1] = '\0'; }
+    return name;
+}
+static inline int getlogin_r(char *buf, unsigned long bufsize) {
+    char *n = getlogin(); unsigned long i = 0;
+    while (n[i] && i < bufsize - 1) { buf[i] = n[i]; i++; } buf[i] = '\0'; return 0;
+}
+static inline int putenv(char *string) {
+    char *eq = string; while (*eq && *eq != '=') eq++;
+    if (!*eq) return -1; *eq = '\0';
+    int rc = setenv(string, eq + 1, 1); *eq = '='; return rc;
+}
+static inline double difftime(long t1, long t0) { return (double)(t1 - t0); }
+static inline long sysconf(int name) { (void)name; return -1; }
+static inline long pathconf(const char *path, int name) { (void)path; (void)name; return -1; }
+static inline long fpathconf(int fd, int name) { (void)fd; (void)name; return -1; }
+static inline char *ttyname(int fd) { (void)fd; return "/dev/console"; }
+typedef unsigned int tcflag_t;
+typedef unsigned char cc_t;
+#define NCCS 20
+struct termios { tcflag_t c_iflag, c_oflag, c_cflag, c_lflag; cc_t c_cc[NCCS]; };
+#ifndef ECHO
+#define ECHO 0x0008
+#endif
+#define ICANON 0x0002
+#define TCSANOW 0
+#define TCSADRAIN 1
+#define TCSAFLUSH 2
+static inline int tcgetattr(int fd, struct termios *t) {
+    (void)fd; if (t) { t->c_iflag = 0; t->c_oflag = 0; t->c_cflag = 0; t->c_lflag = ECHO | ICANON; } return 0;
+}
+static inline int tcsetattr(int fd, int acts, const struct termios *t) { (void)fd; (void)acts; (void)t; return 0; }
+#define EPOLL_CTL_ADD 1
+#define EPOLL_CTL_DEL 2
+#define EPOLL_CTL_MOD 3
+#define EPOLLIN  0x001
+#define EPOLLOUT 0x004
+#define EPOLLERR 0x008
+struct epoll_event { unsigned int events; union { void *ptr; int fd; unsigned int u32; unsigned long u64; } data; };
+static inline int epoll_create(int size) { (void)size; return 3; }
+static inline int epoll_ctl(int epfd, int op, int fd, struct epoll_event *ev) { (void)epfd; (void)op; (void)fd; (void)ev; return 0; }
+static inline int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout) {
+    (void)epfd; (void)events; (void)maxevents; if (timeout > 0) sleep((unsigned int)(timeout / 1000)); return 0;
+}
+typedef unsigned long jmp_buf[22];
+typedef unsigned long sigjmp_buf[23];
+static inline int setjmp(jmp_buf env) { (void)env; return 0; }
+static inline void longjmp(jmp_buf env, int val) { (void)env; (void)val; for(;;); }
+static inline int sigsetjmp(sigjmp_buf env, int savesigs) { (void)env; (void)savesigs; return 0; }
+static inline void siglongjmp(sigjmp_buf env, int val) { (void)env; (void)val; for(;;); }
+static int optind = 1;
+static int optopt = 0;
+static char *optarg = (void *)0;
+static int opterr = 1;
+static inline int getopt(int argc, char *const argv[], const char *optstring) {
+    if (optind >= argc || !argv[optind] || argv[optind][0] != '-' || argv[optind][1] == '\0') return -1;
+    if (argv[optind][1] == '-' && argv[optind][2] == '\0') { optind++; return -1; }
+    char c = argv[optind][1]; const char *p = optstring;
+    while (*p) {
+        if (*p == c) {
+            if (p[1] == ':') {
+                if (argv[optind][2]) { optarg = &argv[optind][2]; optind++; }
+                else if (optind + 1 < argc) { optind++; optarg = argv[optind]; optind++; }
+                else { optopt = c; optind++; return '?'; }
+            } else { optind++; }
+            return c;
+        }
+        p++;
+    }
+    optopt = c; optind++; return '?';
+}
+struct option { const char *name; int has_arg; int *flag; int val; };
+static inline int getopt_long(int argc, char *const argv[], const char *optstring,
+    const struct option *longopts, int *longindex) {
+    (void)longopts; (void)longindex; return getopt(argc, argv, optstring);
+}
+typedef struct { int _dummy; } regex_t;
+typedef int regoff_t;
+typedef struct { regoff_t rm_so, rm_eo; } regmatch_t;
+#define REG_EXTENDED 1
+#define REG_NOSUB 2
+#define REG_NOMATCH 1
+static inline int regcomp(regex_t *preg, const char *pattern, int cflags) { (void)preg; (void)pattern; (void)cflags; return 0; }
+static inline int regexec(const regex_t *preg, const char *string, unsigned long nmatch, regmatch_t pmatch[], int eflags) {
+    (void)preg; (void)string; (void)nmatch; (void)pmatch; (void)eflags; return REG_NOMATCH;
+}
+static inline void regfree(regex_t *preg) { (void)preg; }
+typedef struct { unsigned long gl_pathc; char **gl_pathv; unsigned long gl_offs; } glob_t;
+#define GLOB_NOMATCH 3
+static inline int glob(const char *pattern, int flags, int (*errfunc)(const char *, int), glob_t *pglob) {
+    (void)pattern; (void)flags; (void)errfunc; pglob->gl_pathc = 0; pglob->gl_pathv = (void *)0; return GLOB_NOMATCH;
+}
+static inline void globfree(glob_t *pglob) { (void)pglob; }
+static inline int fnmatch(const char *pattern, const char *string, int flags) { (void)pattern; (void)string; (void)flags; return 1; }
+static inline void openlog(const char *ident, int option, int facility) { (void)ident; (void)option; (void)facility; }
+static inline void syslog(int priority, const char *format, ...) { (void)priority; (void)format; }
+static inline void closelog(void) {}
+typedef struct { unsigned long we_wordc; char **we_wordv; unsigned long we_offs; } wordexp_t;
+#define WRDE_SYNTAX 2
+static inline int wordexp(const char *s, wordexp_t *p, int flags) { (void)s; (void)flags; p->we_wordc = 0; p->we_wordv = (void *)0; return WRDE_SYNTAX; }
+static inline void wordfree(wordexp_t *p) { (void)p; }
+struct statvfs {
+    unsigned long f_bsize, f_frsize, f_blocks, f_bfree, f_bavail;
+    unsigned long f_files, f_ffree, f_favail, f_fsid, f_flag, f_namemax;
+};
+static inline int statvfs(const char *path, struct statvfs *buf) {
+    (void)path; if (buf) { buf->f_bsize = 1024; buf->f_frsize = 1024; buf->f_blocks = 65536;
+    buf->f_bfree = 32768; buf->f_bavail = 32768; buf->f_files = 1024; buf->f_ffree = 512;
+    buf->f_favail = 512; buf->f_fsid = 0; buf->f_flag = 0; buf->f_namemax = 255; } return 0;
+}
+static inline int fstatvfs(int fd, struct statvfs *buf) { (void)fd; return statvfs("/", buf); }
+
+#endif /* _POSIX_TIER3 */
+
 #endif /* AIOS_POSIX_H */

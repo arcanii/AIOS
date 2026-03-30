@@ -8,8 +8,8 @@
  *
  * Memory layout:
  *   sandbox_io   (0x20000000) — 4 KiB IPC with orchestrator
- *   sandbox_heap (0x20100000) — 4 MiB heap for malloc/free
- *   sandbox_code (0x20500000) — 1 MiB for compiled machine code
+ *   sandbox_heap — 16 MiB heap for malloc/free
+ *   sandbox_code — 4 MiB for compiled machine code
  */
 
 #include <microkit.h>
@@ -18,6 +18,7 @@
 
 static microkit_channel my_channel;
 #include "sys/syscall.h"
+#include "arch/arch.h"
 
 /* Shared memory regions (set by Microkit loader) */
 uintptr_t sandbox_io;
@@ -27,7 +28,7 @@ uintptr_t sandbox_code;
 
 /* ── Minimal libc ──────────────────────────────────── */
 
-#define HEAP_SIZE (4 * 1024 * 1024)  /* 4 MiB */
+#define HEAP_SIZE  (16 * 1024 * 1024)  /* 128 MiB */
 static uint32_t heap_used = 0;
 
 /* Per-fd file position tracking */
@@ -624,16 +625,7 @@ static int sbx_exec(const char *path, const char *args) {
 
     /* Child is now in sandbox_code — flush caches and run */
     uint32_t child_size = RD32(sandbox_io, SBX_EXEC_CHILD_SIZE);
-    uintptr_t addr = sandbox_code;
-    uintptr_t end = sandbox_code + child_size;
-    for (; addr < end; addr += 64)
-        __asm__ volatile("dc cvau, %0" :: "r"(addr));
-    __asm__ volatile("dsb ish" ::: "memory");
-    addr = sandbox_code;
-    for (; addr < end; addr += 64)
-        __asm__ volatile("ic ivau, %0" :: "r"(addr));
-    __asm__ volatile("dsb ish" ::: "memory");
-    __asm__ volatile("isb" ::: "memory");
+    arch_flush_code_region(sandbox_code, child_size);
 
     /* Reset output buffer before running child */
     out_len = 0;
@@ -660,16 +652,7 @@ static int sbx_exec(const char *path, const char *args) {
     for (uint32_t j = 0; j < parent_size; j++) code[j] = backup[j];
 
     /* Flush caches for restored parent */
-    addr = sandbox_code;
-    end = sandbox_code + parent_size;
-    for (; addr < end; addr += 64)
-        __asm__ volatile("dc cvau, %0" :: "r"(addr));
-    __asm__ volatile("dsb ish" ::: "memory");
-    addr = sandbox_code;
-    for (; addr < end; addr += 64)
-        __asm__ volatile("ic ivau, %0" :: "r"(addr));
-    __asm__ volatile("dsb ish" ::: "memory");
-    __asm__ volatile("isb" ::: "memory");
+    arch_flush_code_region(sandbox_code, parent_size);
 
     /* Tell orchestrator we are done, pass child exit code */
     seL4_SetMR(0, SYS_EXEC_DONE);
@@ -837,7 +820,7 @@ static void init_syscalls(void) {
 
 static void run_program(void) {
     uint32_t code_size = RD32(sandbox_io, SBX_CODE_SIZE);
-    if (code_size == 0 || code_size > (1024 * 1024)) {
+    if (code_size == 0 || code_size > (16 * 1024 * 1024)) {
         WR32(sandbox_io, SBX_STATUS, SBX_ST_ERROR);
         WR32(sandbox_io, SBX_EXIT_CODE, (uint32_t)-1);
         return;
@@ -851,7 +834,7 @@ static void run_program(void) {
     {
         volatile uint8_t *bss_start = (volatile uint8_t *)(sandbox_code + code_size);
         uint32_t bss_clear = 64 * 1024;  /* zero 64KB beyond code for BSS */
-        if (code_size + bss_clear > 1024 * 1024) bss_clear = (1024 * 1024) - code_size;
+        if (code_size + bss_clear > 16 * 1024 * 1024) bss_clear = (16 * 1024 * 1024) - code_size;
         for (uint32_t i = 0; i < bss_clear; i++) bss_start[i] = 0;
     }
 
@@ -859,25 +842,14 @@ static void run_program(void) {
 
     /* Data/instruction cache sync */
     /* Clean data cache and invalidate instruction cache for code region */
-    uintptr_t addr = sandbox_code;
-    uintptr_t end = sandbox_code + code_size;
-    for (; addr < end; addr += 64) {
-        __asm__ volatile("dc cvau, %0" :: "r"(addr));
-    }
-    __asm__ volatile("dsb ish" ::: "memory");
-    addr = sandbox_code;
-    for (; addr < end; addr += 64) {
-        __asm__ volatile("ic ivau, %0" :: "r"(addr));
-    }
-    __asm__ volatile("dsb ish" ::: "memory");
-    __asm__ volatile("isb" ::: "memory");
+    arch_flush_code_region(sandbox_code, code_size);
 
     /* Set args pointer */
     syscalls.args = (const char *)(sandbox_io + SBX_ARGS);
 
     /* Jump to code: entry point is the start of sandbox_code */
     program_entry_t entry = (program_entry_t)sandbox_code;
-    microkit_dbg_puts("SBX: jumping to code at 0x20500000\n");
+    microkit_dbg_puts("SBX: jumping to code at 0x21100000\n");
     microkit_dbg_puts("SBX: entry=0x");
     for (int _i=60;_i>=0;_i-=4) microkit_dbg_putc("0123456789abcdef"[(((uintptr_t)entry)>>_i)&0xf]);
     microkit_dbg_puts(" sys=0x");

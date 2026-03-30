@@ -40,7 +40,7 @@ static int internal_spawn(const char *filename, const char *args,
     if (st != 0) return -1;
     uint32_t fd = RD32(fs_data, FS_FD);
     uint32_t size = RD32(fs_data, FS_FILESIZE);
-    if (size == 0 || size > 0x100000) {
+    if (size == 0 || size > 0x400000) {
         fs_close_sync(fd);
         return -1;
     }
@@ -154,7 +154,7 @@ static void cmd_exec(const char *filename) {
     ser_puts(" bytes\n");
     ser_flush();
 
-    if (size > 0x100000) {
+    if (size > 0x400000) {
         ser_puts("  Error: program too large (max 1 MiB)\n");
         ser_flush();
         fs_close_sync(fd);
