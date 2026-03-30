@@ -10,7 +10,7 @@ It currently is only tested in QEMU on aarch64 a53
 
 ## Current Progress update
 
-Created tools/posix_audit.py
+Created by tools/posix_audit.py
 ```
 ============================================================
   AIOS POSIX.1 Compliance Audit
@@ -64,15 +64,10 @@ Prerequisites:
   - Microkit SDK 2.1.0 (https://trustworthy.systems/projects/microkit/)
   - AArch64 cross-compiler (aarch64-linux-gnu-gcc or aarch64-elf-gcc)
   - QEMU (qemu-system-aarch64)
-  - mtools (mformat, mcopy) - brew install mtools or apt install mtools
+  - (optional for FAT16) mtools (mformat, mcopy) - brew install mtools or apt install mtools
 
 ## AIOS Development Roadmap 
 (see docs/ROADMAP.md)
-
-## Milestone 1: POSIX Foundation (Current Mission)
-
-## Future
-- [ ] port to x86-64
 
 ## Architecture
 (see docs/ARCHITECTURE.md)
