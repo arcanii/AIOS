@@ -45,6 +45,16 @@ static int internal_spawn(const char *filename, const char *args,
         return -1;
     }
 
+    /* Check for shebang — reject scripts */
+    fs_read_sync(fd, 0, 4);
+    {
+        volatile uint8_t *hdr = (volatile uint8_t *)(fs_data + FS_DATA);
+        if (hdr[0] == 0x23 && hdr[1] == 0x21) { /* #! */
+            fs_close_sync(fd);
+            return -2; /* script file, not binary */
+        }
+    }
+
     int slot = find_free_slot();
     if (slot < 0) {
         fs_close_sync(fd);
@@ -149,6 +159,18 @@ static void cmd_exec(const char *filename) {
         ser_flush();
         fs_close_sync(fd);
         return;
+    }
+
+    /* Check for shebang — reject scripts */
+    fs_read_sync(fd, 0, 4);
+    {
+        volatile uint8_t *hdr = (volatile uint8_t *)(fs_data + FS_DATA);
+        if (hdr[0] == 0x23 && hdr[1] == 0x21) { /* #! */
+            ser_puts("  Error: script file, not a binary\n");
+            ser_flush();
+            fs_close_sync(fd);
+            return;
+        }
     }
 
     /* Load into sandbox_code */

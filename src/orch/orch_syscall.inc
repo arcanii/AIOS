@@ -372,6 +372,17 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
             break;
         }
 
+        /* Check for shebang — reject scripts */
+        fs_read_sync(fd, 0, 4);
+        {
+            volatile uint8_t *hdr = (volatile uint8_t *)(fs_data + FS_DATA);
+            if (hdr[0] == 0x23 && hdr[1] == 0x21) { /* #! */
+                fs_close_sync(fd);
+                result = -2;
+                break;
+            }
+        }
+
         /* Store parent size so sandbox can back it up */
         WR32(sio, SBX_EXEC_PARENT_SIZE, exec_loaded_bytes);
 

@@ -481,8 +481,8 @@ static void cmd_source(const char *filename) {
     int fd = open(filename, O_RDONLY);
     if (fd < 0) { print("sh: cannot open "); print(filename); print("\n"); return; }
     
-    /* Read entire script into redir_buf */
-    char script[REDIR_BUF_SIZE];
+    /* Read entire script into static buffer */
+    static char script[REDIR_BUF_SIZE];
     int total = 0;
     ssize_t n;
     while ((n = read(fd, script + total, (size_t)(REDIR_BUF_SIZE - 1 - total))) > 0)
@@ -663,6 +663,8 @@ static void dispatch(void) {
         }
         /* Try as-is first */
         int rc = aios_exec(cmd, args);
+        /* -2 means script file (shebang detected) — run as source */
+        if (rc == -2) { cmd_source(cmd); return; }
         /* Try with .bin extension */
         if (rc < 0) {
             char bin[72];
@@ -688,6 +690,24 @@ static void dispatch(void) {
             for (int k = 0; cmd[k] && bi < 259; k++) bp[bi++] = cmd[k];
             bp[bi++] = '.'; bp[bi++] = 'b'; bp[bi++] = 'i'; bp[bi++] = 'n'; bp[bi] = '\0';
             rc = aios_exec(bp, args);
+        }
+        /* Try as shell script */
+        if (rc < 0) {
+            /* Try cmd.sh */
+            char sh[72];
+            int si = 0;
+            for (int k = 0; cmd[k] && si < 63; k++) sh[si++] = cmd[k];
+            /* Check if it already ends with .sh */
+            int has_sh = (si > 3 && sh[si-3] == '.' && sh[si-2] == 's' && sh[si-1] == 'h');
+            if (!has_sh) { sh[si++] = '.'; sh[si++] = 's'; sh[si++] = 'h'; }
+            sh[si] = '\0';
+            int sfd = open(sh, O_RDONLY);
+            if (sfd < 0) sfd = open(cmd, O_RDONLY); /* try original name */
+            if (sfd >= 0) {
+                close(sfd);
+                cmd_source(has_sh ? cmd : sh);
+                rc = 0;
+            }
         }
         if (rc < 0) { print(line); print(": command not found\n"); }
     }
