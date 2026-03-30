@@ -187,8 +187,12 @@ static void handle_create(void) {
         uint16_t cgid = (uint16_t)RD32(fs_data, FS_CREAT_GID);
         active_fs->set_creator(cuid, cgid);
     }
+    /* Pass creation timestamp */
+    uint32_t create_time = RD32(fs_data, FS_MTIME);
     int rc = active_fs->create(name, &open_files[fd_idx]);
     if (rc == 0) {
+        if (create_time && active_fs->update_mtime)
+            active_fs->update_mtime(&open_files[fd_idx], create_time);
         WR32(fs_data, FS_FD, fd_idx);
         WR32(fs_data, FS_FILESIZE, open_files[fd_idx].file_size);
         reply_status(0);
@@ -211,6 +215,11 @@ static void handle_write(void) {
                               len, &written);
     WR32(fs_data, FS_READLEN, written);
     WR32(fs_data, FS_LENGTH, written);
+    /* Update mtime after write */
+    if (rc == 0 && active_fs->update_mtime) {
+        uint32_t mtime = RD32(fs_data, FS_MTIME);
+        active_fs->update_mtime(&open_files[fd_idx], mtime);
+    }
     reply_status(rc);
 }
 
@@ -258,7 +267,8 @@ static void handle_mkdir(void) {
         uint16_t cgid = (uint16_t)RD32(fs_data, FS_CREAT_GID);
         active_fs->set_creator(cuid, cgid);
     }
-    int rc = active_fs->mkdir ? active_fs->mkdir(name) : -1;
+    /* Pass creation timestamp */
+        int rc = active_fs->mkdir ? active_fs->mkdir(name) : -1;
     reply_status(rc);
 }
 

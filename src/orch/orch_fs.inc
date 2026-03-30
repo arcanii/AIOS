@@ -25,7 +25,16 @@ static int fs_read_sync(uint32_t fd, uint32_t offset, uint32_t len) {
     return (int)RD32(fs_data, FS_STATUS);
 }
 
+static uint32_t orch_get_time(void) {
+    uint64_t cnt, freq;
+    asm volatile("mrs %0, cntpct_el0" : "=r"(cnt));
+    asm volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+    if (freq == 0) freq = 62500000;
+    return (uint32_t)(1735689600ULL + cnt / freq);
+}
+
 static int fs_write_sync(uint32_t fd, uint32_t len) {
+    WR32(fs_data, FS_MTIME, orch_get_time());
     WR32(fs_data, FS_CMD, FS_CMD_WRITE);
     WR32(fs_data, FS_FD, fd);
     WR32(fs_data, FS_LENGTH, len);
@@ -41,6 +50,7 @@ static int fs_close_sync(uint32_t fd) {
 }
 
 static int fs_create_sync(const char *filename) {
+    WR32(fs_data, FS_MTIME, orch_get_time());
     WR32(fs_data, FS_CMD, FS_CMD_CREATE);
     char *dst = (char *)(fs_data + FS_FILENAME);
     int i = 0;

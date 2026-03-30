@@ -616,6 +616,7 @@ static int ext2_close(open_file_t *fd) {
     return 0;
 }
 
+
 static int ext2_create(const char *filename, open_file_t *fd) {
     uint32_t parent_ino;
     char base[64];
@@ -1079,6 +1080,17 @@ static void ext2_set_creator(uint16_t uid, uint16_t gid) {
     ext2_creator_gid = gid;
 }
 
+static void ext2_update_mtime(open_file_t *fd, uint32_t mtime) {
+    uint32_t ino = fd->offset;
+    uint8_t inode_buf[128];
+    if (read_inode(ino, inode_buf) != 0) return;
+    inode_buf[16] = mtime & 0xFF;
+    inode_buf[17] = (mtime >> 8) & 0xFF;
+    inode_buf[18] = (mtime >> 16) & 0xFF;
+    inode_buf[19] = (mtime >> 24) & 0xFF;
+    write_inode(ino, inode_buf);
+}
+
 const aios_fs_ops_t ext2_ops = {
     .name   = "ext2",
     .mount  = ext2_mount,
@@ -1097,6 +1109,7 @@ const aios_fs_ops_t ext2_ops = {
     .stat_ex = ext2_stat_ex,
     .chmod = ext2_chmod,
     .chown = ext2_chown,
+    .update_mtime = ext2_update_mtime,
     .set_creator = ext2_set_creator,
 };
 

@@ -70,6 +70,7 @@ struct aios_fs_ops {
                    uint32_t *mtime_out);
     int (*chmod)(const char *filename, uint16_t mode);
     int (*chown)(const char *filename, uint16_t uid, uint16_t gid);
+    void (*update_mtime)(open_file_t *fd, uint32_t mtime);
     void (*set_creator)(uint16_t uid, uint16_t gid);
 };
 
