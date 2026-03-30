@@ -1575,6 +1575,21 @@ static char rx_getc_blocking(void) {
     while (!ring_get(rx, &c)) {
         asm volatile("wfe");
     }
+    /* Ctrl-C: kill foreground process */
+    if (c == 0x03 && orch_state == EXEC_RUNNING) {
+        for (int s = 0; s < NUM_SANDBOXES; s++) {
+            if (proctab[s].in_use && proctab[s].foreground) {
+                microkit_pd_stop(s);
+                microkit_pd_restart(s, SBX_ENTRY_POINT);
+                ser_puts("^C\n");
+                proctab[s].in_use = 0;
+                orch_state = RUNNING;
+                print_prompt();
+                /* Return EOF-like value */
+                return (char)-1;
+            }
+        }
+    }
     return c;
 }
 
@@ -2358,8 +2373,10 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
     case SYS_KILL_PROC: {
-        /* MR1 = target PID */
+        /* MR1 = target PID, MR2 = signal number */
         uint32_t target_pid = (uint32_t)seL4_GetMR(1);
+        uint32_t sig = (uint32_t)seL4_GetMR(2);
+        (void)sig; /* For now, all signals terminate the process */
         int found = 0;
         for (int s = 0; s < NUM_SANDBOXES; s++) {
             if (proctab[s].in_use && proctab[s].pid == target_pid) {
@@ -2510,11 +2527,16 @@ void notified(microkit_channel ch) {
         } else if (orch_state == RUNNING) {
             handle_serial_input();
         } else if (orch_state == EXEC_RUNNING) {
-            /* Check for Ctrl-C while foreground process runs */
-            ring_buf_t *rx_check = (ring_buf_t *)rx_buf;
-            char cc;
-            while (ring_get(rx_check, &cc)) {
-                if (cc == 0x03) { /* Ctrl-C */
+            /* Scan for Ctrl-C without consuming other characters */
+            ring_buf_t *rx_scan = (ring_buf_t *)rx_buf;
+            uint32_t scan_ri = rx_scan->read_idx;
+            uint32_t scan_wi = rx_scan->write_idx;
+            while (scan_ri != scan_wi) {
+                char cc = (char)rx_scan->data[scan_ri];
+                if (cc == 0x03) { /* Ctrl-C found */
+                    /* Drain buffer up to and including Ctrl-C */
+                    rx_scan->read_idx = (scan_ri + 1) % RING_SIZE;
+                    /* Kill foreground process */
                     for (int s = 0; s < NUM_SANDBOXES; s++) {
                         if (proctab[s].in_use && proctab[s].foreground) {
                             microkit_pd_stop(s);
@@ -2522,9 +2544,8 @@ void notified(microkit_channel ch) {
                             ser_puts("^C\n");
                             ser_puts("  Interrupted PID ");
                             ser_put_dec(proctab[s].pid);
-                            ser_puts(" (");
-                            ser_puts(proctab[s].name);
-                            ser_puts(")\n");
+                            ser_puts("\n");
+                            ser_flush();
                             proctab[s].in_use = 0;
                             orch_state = RUNNING;
                             print_prompt();
@@ -2533,6 +2554,7 @@ void notified(microkit_channel ch) {
                     }
                     break;
                 }
+                scan_ri = (scan_ri + 1) % RING_SIZE;
             }
         }
         break;

@@ -366,9 +366,10 @@ static int sbx_waitpid(int pid, int *status) {
     return -1;  /* timeout */
 }
 
-static int sbx_kill_proc(int pid) {
+static int sbx_kill_proc(int pid, int sig) {
     seL4_SetMR(0, SYS_KILL_PROC);
     seL4_SetMR(1, (seL4_Word)pid);
+    seL4_SetMR(2, (seL4_Word)sig);
     microkit_ppcall(my_channel, microkit_msginfo_new(0, 2));
     return (int)seL4_GetMR(0);
 }
@@ -513,7 +514,7 @@ typedef struct {
     /* Process management */
     int   (*spawn)(const char *path, const char *args);
     int   (*waitpid)(int pid, int *status);
-    int   (*kill_proc)(int pid);
+    int   (*kill_proc)(int pid, int sig);
 } aios_syscalls_t;
 typedef int (*program_entry_t)(aios_syscalls_t *sys);
 

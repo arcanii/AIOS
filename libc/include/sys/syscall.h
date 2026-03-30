@@ -63,4 +63,15 @@
 #define SYS_WAITPID    65
 #define SYS_KILL_PROC  66
 
+/* Signals */
+#define SYS_KILL       67   /* kill(pid, sig) */
+#define SYS_SIGNAL     68   /* signal(sig, handler) - register handler */
+
+/* Additional POSIX file ops */
+#define SYS_CHMOD      70
+#define SYS_CHOWN      71
+#define SYS_LINK       72
+#define SYS_FCNTL      73
+#define SYS_FTRUNCATE  74
+
 #endif

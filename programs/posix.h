@@ -23,6 +23,26 @@ typedef long          ssize_t;
 typedef long          off_t;
 typedef unsigned long ino_t;
 typedef int           pid_t;
+
+/* ── Signal constants ────────────────────────────────── */
+#define SIGHUP     1
+#define SIGINT     2
+#define SIGQUIT    3
+#define SIGILL     4
+#define SIGABRT    6
+#define SIGFPE     8
+#define SIGKILL    9
+#define SIGSEGV   11
+#define SIGPIPE   13
+#define SIGALRM   14
+#define SIGTERM   15
+#define SIGCHLD   17
+#define SIGCONT   18
+#define SIGSTOP   19
+#define SIGTSTP   20
+
+#define SIG_DFL ((void (*)(int))0)
+#define SIG_IGN ((void (*)(int))1)
 typedef unsigned int  mode_t;
 
 /* ── File descriptors ────────────────────────────────── */
@@ -234,6 +254,11 @@ static inline int isatty(int fd) {
 }
 
 static inline pid_t getpid(void) { return (pid_t)sys->getpid(); }
+
+static inline int kill(pid_t pid, int sig) {
+    int (*fn)(int, int) = sys->kill_proc;
+    return fn((int)pid, sig);
+}
 
 /* ── printf family (minimal) ─────────────────────────── */
 /* Programs already have puts/putc from aios.h; for POSIX
