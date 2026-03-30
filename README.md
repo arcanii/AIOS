@@ -8,6 +8,20 @@ Security is also a topic theme : Un-hackable, Un-malwareable, Un-virusable. What
 
 It currently is only tested in QEMU on aarch64 a53 
 
+## Current Progress update
+
+AIOS v0.2.12 (build ~200) - March 30, 2026
+
+- seL4 microkernel, 4-core SMP, 8 sandbox slots
+- ext2 filesystem with full directory tree support
+- 37+ POSIX syscalls, ~50% compliance
+- Shell with pipes, redirects, history, cd/pwd
+- Process management: spawn, waitpid, kill, Ctrl-C
+- Auth: login, users, groups, permissions
+- LLM server (llama2.c)
+- Networking (virtio-net, IP stack)
+- Modular orchestrator (11 modules, 2644 lines)
+
 ## Hardware Targets
 - [x] - Development: QEMU virt (AArch64) — current platform
 - [ ] Primary: Raspberry Pi 4/5 (BCM2711/BCM2712, AArch64)
