@@ -11,10 +11,16 @@ static int  shell_exit;
 static char redir_buf[REDIR_BUF_SIZE];
 static volatile int  redir_buf_len;
 static int  redir_buf_pos;
+static char feed_buf[REDIR_BUF_SIZE];
+static int  feed_buf_len;
+static int  feed_buf_pos;
 
-/* Saved original function pointers */
-static void (*orig_putc_direct)(char c);
-static int  (*orig_getc)(void);
+/* Saved original function pointers (stacked for recursive pipes) */
+#define REDIR_STACK_MAX 4
+static void (*putc_stack[REDIR_STACK_MAX])(char c);
+static int    putc_stack_depth;
+static int  (*getc_stack[REDIR_STACK_MAX])(void);
+static int    getc_stack_depth;
 
 /* Redirect output: capture to redir_buf */
 static void redir_putc(char c) {
@@ -24,29 +30,33 @@ static void redir_putc(char c) {
 
 /* Redirect input: feed from redir_buf */
 static int redir_getc(void) {
-    if (redir_buf_pos < redir_buf_len)
-        return (unsigned char)redir_buf[redir_buf_pos++];
+    if (feed_buf_pos < feed_buf_len)
+        return (unsigned char)feed_buf[feed_buf_pos++];
     return -1;
 }
 
 static void start_capture(void) {
-    orig_putc_direct = sys->putc_direct;
+    if (putc_stack_depth < REDIR_STACK_MAX)
+        putc_stack[putc_stack_depth++] = sys->putc_direct;
     sys->putc_direct = redir_putc;
     redir_buf_len = 0;
 }
 
 static void stop_capture(void) {
-    sys->putc_direct = orig_putc_direct;
+    if (putc_stack_depth > 0)
+        sys->putc_direct = putc_stack[--putc_stack_depth];
 }
 
 static void start_feed(void) {
-    orig_getc = sys->getc;
+    if (getc_stack_depth < REDIR_STACK_MAX)
+        getc_stack[getc_stack_depth++] = sys->getc;
     sys->getc = redir_getc;
-    redir_buf_pos = 0;
+    feed_buf_pos = 0;
 }
 
 static void stop_feed(void) {
-    sys->getc = orig_getc;
+    if (getc_stack_depth > 0)
+        sys->getc = getc_stack[--getc_stack_depth];
 }
 
 static int str_eq(const char *a, const char *b) {
@@ -465,6 +475,9 @@ static void cmd_source(const char *filename) {
         }
         if (redir_pipe) {
             stop_capture();
+            for (int fi = 0; fi < redir_buf_len && fi < REDIR_BUF_SIZE; fi++)
+                feed_buf[fi] = redir_buf[fi];
+            feed_buf_len = redir_buf_len;
             start_feed();
             int i = 0;
             while (pipe_cmd[i] && i < LINE_MAX - 1) { line[i] = pipe_cmd[i]; i++; }
@@ -547,7 +560,7 @@ static void exec_with_redirects(void) {
     if (redir_in_file[0]) {
         int fd = open(redir_in_file, O_RDONLY);
         if (fd < 0) { print("sh: cannot open "); print(redir_in_file); print("\n"); return; }
-        redir_buf_len = (int)read(fd, redir_buf, REDIR_BUF_SIZE - 1);
+        feed_buf_len = (int)read(fd, feed_buf, REDIR_BUF_SIZE - 1);
         close(fd);
         start_feed();
     }
@@ -558,43 +571,35 @@ static void exec_with_redirects(void) {
 
     dispatch();
 
-    /* Write captured output to file */
+    /* Write captured output to file (only if no pipe follows) */
     if (redir_out_file[0] && !redir_pipe) {
         stop_capture();
         if (!redir_append) unlink(redir_out_file);
         int fd = open(redir_out_file, O_WRONLY | O_CREAT);
         if (fd >= 0) {
             if (redir_append) lseek(fd, 0, SEEK_END);
-            ssize_t w = write(fd, redir_buf, (size_t)redir_buf_len);
+            write(fd, redir_buf, (size_t)redir_buf_len);
             close(fd);
         } else {
             print("sh: cannot create "); print(redir_out_file); print("\n");
         }
     }
 
-    /* Pipe: feed captured output as stdin to next command */
+    /* Pipe: feed captured output as stdin to next command (recursive) */
     if (redir_pipe) {
         stop_capture();
+        /* Copy captured output to feed buffer */
+        for (int fi = 0; fi < redir_buf_len && fi < REDIR_BUF_SIZE; fi++)
+            feed_buf[fi] = redir_buf[fi];
+        feed_buf_len = redir_buf_len;
         start_feed();
         int i = 0;
         while (pipe_cmd[i] && i < LINE_MAX - 1) { line[i] = pipe_cmd[i]; i++; }
         line[i] = 0;
         line_len = i;
-        /* Parse any further redirects on the right side */
-        redir_pipe = 0;
-        parse_redirects();
-        if (redir_out_file[0]) start_capture();
-        dispatch();
+        /* Recurse: parse_redirects will find further pipes */
+        exec_with_redirects();
         stop_feed();
-        if (redir_out_file[0]) {
-            stop_capture();
-            unlink(redir_out_file);
-            int fd = open(redir_out_file, O_WRONLY | O_CREAT);
-            if (fd >= 0) {
-                write(fd, redir_buf, (size_t)redir_buf_len);
-                close(fd);
-            }
-        }
     }
 
     if (redir_in_file[0]) stop_feed();
