@@ -81,5 +81,6 @@
 /* Process swap */
 #define SYS_SUSPENDED  80   /* sandbox -> orch: state saved, ready to evict */
 #define SYS_GETPID_    81   /* get current PID (from IO page) */
+#define SYS_GETPROCS   82   /* get process table snapshot */
 
 #endif

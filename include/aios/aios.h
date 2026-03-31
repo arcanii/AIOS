@@ -81,6 +81,7 @@ typedef struct {
     void  (*exit_proc)(int status);  /* terminate current process */
     int   (*fcntl)(int fd, int cmd, int arg);
     int   (*kill_proc)(int pid, int sig);
+    int   (*getprocs)(void *buf, int max_entries);
     /* Sockets */
     int   (*socket)(int domain, int type, int protocol);
     int   (*connect)(int sockfd, const void *addr, int addrlen);
@@ -113,6 +114,28 @@ static aios_syscalls_t *sys;
 #define waitpid(p,s)   sys->waitpid(p,s)
 #define fork()         sys->fork()
 #define kill_proc(p, s)   sys->kill_proc(p, s)
+
+/* Process table entry (returned by getprocs) */
+typedef struct {
+    int pid;
+    int parent_pid;
+    int state;          /* 0=free,1=queued,2=ready,3=running,4=blocked,5=zombie */
+    int uid;
+    int slot;           /* sandbox slot, -1 if swapped */
+    unsigned char foreground;
+    unsigned char _reserved[3];
+    char name[32];
+    unsigned char _pad[8];
+} proc_info_t;
+
+#define PROC_STATE_FREE    0
+#define PROC_STATE_QUEUED  1
+#define PROC_STATE_READY   2
+#define PROC_STATE_RUNNING 3
+#define PROC_STATE_BLOCKED 4
+#define PROC_STATE_ZOMBIE  5
+
+#define getprocs(b, m)    sys->getprocs(b, m)
 
 /* Access mode constants */
 #define F_OK 0

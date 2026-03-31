@@ -65,6 +65,7 @@ typedef struct {
     int   (*ftruncate)(int fd, unsigned long length);
     int   (*fcntl)(int fd, int cmd, int arg);
     int   (*kill_proc)(int pid, int sig);
+    int   (*getprocs)(void *buf, int max_entries);
 
     /* Sockets */
     int   (*socket)(int domain, int type, int protocol);

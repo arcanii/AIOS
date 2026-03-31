@@ -735,6 +735,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
                 if (wait_pid == 0 || exit_queue[i].pid == wait_pid) {
                     result = (int64_t)exit_queue[i].pid;
                     seL4_SetMR(1, (seL4_Word)exit_queue[i].exit_code);
+                    sched_reap(&sched, (int)exit_queue[i].pid, (void *)0);
                     exit_queue[i].active = 0;
                     found = 1;
                     break;
@@ -774,8 +775,8 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
                         break;
                     }
                 }
-                sched_release_slot(&sched, s);
-        try_load_queued(s);
+                sched_exit(&sched, s, -9);
+                try_load_queued(s);
                 result = 0;
                 found = 1;
                 break;
@@ -897,8 +898,8 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
                             break;
                         }
                     }
-                    sched_release_slot(&sched, s);
-        try_load_queued(s);
+                    sched_exit(&sched, s, -9);
+                try_load_queued(s);
                     result = 0;
                     found = 1;
                 }
@@ -1063,6 +1064,67 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
     case SYS_BRK: {
         /* Stub: sandbox has fixed heap, return success */
         result = 0;
+        break;
+    }
+
+
+    case SYS_GETPROCS: {
+        /* Write process table into sio+0x400
+         * Format per entry (64 bytes):
+         *   [0-3]   pid (int32)
+         *   [4-7]   parent_pid (int32)
+         *   [8-11]  state (int32: 0=free,1=queued,2=ready,3=running,4=blocked,5=zombie)
+         *   [12-15] uid (int32)
+         *   [16-19] slot (int32, -1 if not resident)
+         *   [20]    foreground (uint8)
+         *   [21-23] reserved
+         *   [24-55] name (32 bytes, null-terminated)
+         *   [56-63] reserved
+         */
+        volatile uint8_t *dst = (volatile uint8_t *)(sio + 0x400);
+        int count = 0;
+        int max_entries = 0xC00 / 64;  /* fit in 3KB buffer */
+        for (int pi = 0; pi < SCHED_MAX_PROCS && count < max_entries; pi++) {
+            sched_proc_t *pr = &sched.procs[pi];
+            if (pr->state == PROC_FREE) continue;
+            volatile uint8_t *ent = dst + (count * 64);
+            /* pid */
+            ent[0] = (uint8_t)(pr->pid & 0xFF);
+            ent[1] = (uint8_t)((pr->pid >> 8) & 0xFF);
+            ent[2] = (uint8_t)((pr->pid >> 16) & 0xFF);
+            ent[3] = (uint8_t)((pr->pid >> 24) & 0xFF);
+            /* parent_pid */
+            ent[4] = (uint8_t)(pr->parent_pid & 0xFF);
+            ent[5] = (uint8_t)((pr->parent_pid >> 8) & 0xFF);
+            ent[6] = (uint8_t)((pr->parent_pid >> 16) & 0xFF);
+            ent[7] = (uint8_t)((pr->parent_pid >> 24) & 0xFF);
+            /* state */
+            int st = (int)pr->state;
+            ent[8] = (uint8_t)(st & 0xFF);
+            ent[9] = (uint8_t)((st >> 8) & 0xFF);
+            ent[10] = (uint8_t)((st >> 16) & 0xFF);
+            ent[11] = (uint8_t)((st >> 24) & 0xFF);
+            /* uid */
+            ent[12] = (uint8_t)(pr->owner_uid & 0xFF);
+            ent[13] = (uint8_t)((pr->owner_uid >> 8) & 0xFF);
+            ent[14] = (uint8_t)((pr->owner_uid >> 16) & 0xFF);
+            ent[15] = (uint8_t)((pr->owner_uid >> 24) & 0xFF);
+            /* slot */
+            int sl = pr->slot;
+            ent[16] = (uint8_t)(sl & 0xFF);
+            ent[17] = (uint8_t)((sl >> 8) & 0xFF);
+            ent[18] = (uint8_t)((sl >> 16) & 0xFF);
+            ent[19] = (uint8_t)((sl >> 24) & 0xFF);
+            /* foreground */
+            ent[20] = (uint8_t)(pr->foreground ? 1 : 0);
+            ent[21] = 0; ent[22] = 0; ent[23] = 0;
+            /* name */
+            for (int ni = 0; ni < 32; ni++) ent[24 + ni] = 0;
+            for (int ni = 0; pr->name[ni] && ni < 31; ni++) ent[24 + ni] = (uint8_t)pr->name[ni];
+            count++;
+        }
+        seL4_SetMR(1, (seL4_Word)(count * 64));
+        result = count;
         break;
     }
 

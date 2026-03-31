@@ -216,18 +216,37 @@ static void check_jobs(void) {
 }
 
 static void cmd_jobs(void) {
+    /* Get real process state from orchestrator */
+    proc_info_t procs[32];
+    int pcount = getprocs(procs, 32);
     int found = 0;
     for (int i = 0; i < MAX_JOBS; i++) {
-        if (jobs[i].active) {
-            print("["); print_dec((unsigned long)(i + 1)); print("] ");
-            if (jobs[i].done) {
-                print("Done     ");
-            } else {
-                print("Running  ");
+        if (!jobs[i].active) continue;
+        /* Look up real state */
+        int state = -1;
+        for (int p = 0; p < pcount; p++) {
+            if (procs[p].pid == jobs[i].pid) {
+                state = procs[p].state;
+                break;
             }
-            print("pid="); print_dec((unsigned long)jobs[i].pid);
-            print("  "); print(jobs[i].name); print("\n");
-            found = 1;
+        }
+        print("["); print_dec((unsigned long)(i + 1)); print("] ");
+        if (state == PROC_STATE_ZOMBIE || state == -1) {
+            print("Done     ");
+            jobs[i].done = 1;
+        } else if (state == PROC_STATE_BLOCKED) {
+            print("Stopped  ");
+        } else {
+            print("Running  ");
+        }
+        print("pid="); print_dec((unsigned long)jobs[i].pid);
+        print("  "); print(jobs[i].name); print("\n");
+        found = 1;
+        /* Auto-reap done jobs */
+        if (jobs[i].done) {
+            int status = 0;
+            waitpid(jobs[i].pid, &status);
+            jobs[i].active = 0;
         }
     }
     if (!found) print("No active jobs\n");
@@ -794,21 +813,82 @@ static void parse_redirects(void) {
 
 /* ── Dispatch a single command in line[] ──────────────── */
 /* ── Script execution ──────────────────────────────────── */
+static void cmd_kill(const char *arg) {
+    /* Parse PID from argument */
+    int pid = 0;
+    int sig = 9;  /* default: SIGKILL */
+    const char *p = arg;
+    /* Skip leading spaces */
+    while (*p == ' ') p++;
+    /* Check for -<signal> */
+    if (*p == '-') {
+        p++;
+        sig = 0;
+        while (*p >= '0' && *p <= '9') { sig = sig * 10 + (*p - '0'); p++; }
+        while (*p == ' ') p++;
+    }
+    /* Parse PID */
+    while (*p >= '0' && *p <= '9') { pid = pid * 10 + (*p - '0'); p++; }
+    if (pid <= 0) {
+        print("Usage: kill [-signal] <pid>\n");
+        return;
+    }
+    int rc = kill_proc(pid, sig);
+    if (rc < 0) {
+        print("kill: failed to kill pid ");
+        print_dec((unsigned long)pid);
+        print("\n");
+    }
+}
+
 static void cmd_ps(void) {
-    print("  PID  STAT  NAME\n");
-    /* Current process (the shell) */
-    print("    1  R     shell\n");
-    /* List background processes from job table */
-    for (int i = 0; i < MAX_JOBS; i++) {
-        if (jobs[i].active) {
-            print("  ");
-            if (jobs[i].pid < 100) print(" ");
-            if (jobs[i].pid < 10) print(" ");
-            print_dec((unsigned long)jobs[i].pid);
-            print("  R     ");
-            print(jobs[i].name);
-            print("\n");
+    print("  PID  PPID  UID  SLOT  STATE  FG  NAME\n");
+    proc_info_t procs[32];
+    int count = getprocs(procs, 32);
+    if (count <= 0) {
+        print("  (no processes)\n");
+        return;
+    }
+    for (int i = 0; i < count; i++) {
+        proc_info_t *p = &procs[i];
+        /* PID */
+        print("  ");
+        if (p->pid < 1000) print(" ");
+        if (p->pid < 100) print(" ");
+        if (p->pid < 10) print(" ");
+        print_dec((unsigned long)p->pid);
+        /* PPID */
+        print("  ");
+        if (p->parent_pid < 1000) print(" ");
+        if (p->parent_pid < 100) print(" ");
+        if (p->parent_pid < 10) print(" ");
+        print_dec((unsigned long)p->parent_pid);
+        /* UID */
+        print("  ");
+        if (p->uid < 100) print(" ");
+        if (p->uid < 10) print(" ");
+        print_dec((unsigned long)p->uid);
+        /* SLOT */
+        print("    ");
+        if (p->slot < 0) { print(" -"); }
+        else { print(" "); print_dec((unsigned long)p->slot); }
+        /* STATE */
+        print("  ");
+        switch (p->state) {
+            case PROC_STATE_QUEUED:  print("QUEUE "); break;
+            case PROC_STATE_READY:   print("READY "); break;
+            case PROC_STATE_RUNNING: print("RUN   "); break;
+            case PROC_STATE_BLOCKED: print("BLOCK "); break;
+            case PROC_STATE_ZOMBIE:  print("ZOMBI "); break;
+            default:                 print("???   "); break;
         }
+        /* FG */
+        print(" ");
+        print(p->foreground ? "fg" : "bg");
+        /* NAME */
+        print("  ");
+        print(p->name);
+        print("\n");
     }
 }
 
@@ -907,6 +987,7 @@ static void dispatch(void) {
     else if (str_eq(line, "clear"))     cmd_clear();
     else if (str_eq(line, "exit"))      { shell_exit = 1; }
     else if (str_eq(line, "ps"))        cmd_ps();
+    else if (starts_with(line, "kill ")) cmd_kill(line + 5);
     else if (str_eq(line, "jobs"))      cmd_jobs();
     else if (str_eq(line, "env"))       {
         for (int ei = 0; ei < 32; ei++) {

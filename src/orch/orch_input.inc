@@ -234,8 +234,8 @@ static void handle_exec_done(int slot) {
             break;
         }
     }
-    sched_release_slot(&sched, slot);
-        try_load_queued(slot);
+    sched_exit(&sched, slot, (int)exit_code);
+    try_load_queued(slot);
 }
 
 /* ── Handle LLM generation reply ─────────────────────── */

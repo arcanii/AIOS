@@ -161,7 +161,7 @@ void notified(microkit_channel ch) {
                             ser_put_dec(slot_proc(s)->pid);
                             ser_puts("\n");
                             ser_flush();
-                            sched_release_slot(&sched, s);
+                            sched_exit(&sched, s, -2);
         try_load_queued(s);
                             orch_state = RUNNING;
             LOG_INFO("user authenticated");
@@ -272,7 +272,7 @@ seL4_Bool fault(microkit_child child, microkit_msginfo msginfo, microkit_msginfo
             uint64_t fault_addr = seL4_GetMR(seL4_VMFault_Addr);
             uint64_t fault_type = seL4_GetMR(seL4_VMFault_PrefetchFault);
             uint64_t fault_fsr  = seL4_GetMR(seL4_VMFault_FSR);
-            sched_release_slot(&sched, slot);
+            sched_exit(&sched, slot, -11);
             microkit_pd_restart(slot, SBX_ENTRY_POINT);
             ser_puts("FAULT: sandbox ");
             ser_put_dec((unsigned int)slot);

@@ -793,6 +793,22 @@ static long sbx_time(void) {
     return (long)seL4_GetMR(0);
 }
 
+/* ── Process listing syscall ─────────────────────────── */
+static int sbx_getprocs(void *buf, int max_entries) {
+    seL4_SetMR(0, SYS_GETPROCS);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
+    int count = (int)seL4_GetMR(0);
+    unsigned long total_bytes = (unsigned long)seL4_GetMR(1);
+    if (count > 0 && total_bytes > 0) {
+        volatile uint8_t *src = (volatile uint8_t *)(sandbox_io + 0x400);
+        uint8_t *d = (uint8_t *)buf;
+        unsigned long limit = (unsigned long)max_entries * 64;
+        if (total_bytes > limit) total_bytes = limit;
+        for (unsigned long i = 0; i < total_bytes; i++) d[i] = src[i];
+    }
+    return count;
+}
+
 /* Import shared syscall interface — single source of truth */
 #define AIOS_NO_SYS_GLOBAL
 #include <aios/aios.h>
@@ -1022,6 +1038,7 @@ static void init_syscalls(void) {
     syscalls.ftruncate  = sbx_ftruncate;
     syscalls.fcntl      = sbx_fcntl;
     syscalls.kill_proc  = sbx_kill_proc;
+    syscalls.getprocs   = sbx_getprocs;
     syscalls.socket     = sbx_socket;
     syscalls.connect    = sbx_connect;
     syscalls.bind       = sbx_bind;
