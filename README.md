@@ -3,57 +3,59 @@ AIOS is a microkernel operating system built on seL4, designed for stability,
 security, and AI-native development. External AI (Claude, etc.) generates and
 reviews code, which is compiled and deployed to AIOS. The long-term goal is
 self-hosted development within AIOS itself. This is also a study on AI coding using Claude (Currently : Opus 4.6).
+Adding : Gtok 4.5 and GPT 5.4Pro (currently reviewing)
 
-Security is also a topic theme : Un-hackable, Un-malwareable, Un-virusable. What can we do to make it better?
+Security is a high priority topic theme. 
 
 It currently is only tested in QEMU on aarch64 a53 
 
 ## Current Progress update
 
+This is an unofficial report for tracking.
+
 Created by tools/posix_audit.py
-```
-============================================================
+```============================================================
   AIOS POSIX.1 Compliance Audit
-  Generated: 2026-03-30 18:47
+  Generated: 2026-04-01 07:43
 ============================================================
 
-  Syscall handlers:  54
-  POSIX wrappers:    208
+  Syscall handlers:  57
+  POSIX wrappers:    205
   Standard headers:  20
-  posix.h lines:     1665
+  posix.h lines:     2066
   libc lines:        874
 
-  File I/O               █████████████░░░░░░░  12/18  66% (+6 stubs)
-  File Status            █████████████░░░░░░░  14/21  66% (+7 stubs)
-  Directories            ██████████████████░░   9/10  90% (+1 stubs)
-  Process Control        ██████████████████░░  14/15  93% (+1 stubs)
-  Signals                █████████████░░░░░░░  10/15  66% (+5 stubs)
-  Pipes & FDs            ██████████████░░░░░░   5/7   71% (+2 stubs)
-  Sockets                ██████████████████░░  21/23  91% (+2 stubs)
-  Memory                 █████████████░░░░░░░   6/9   66% (+3 stubs)
+  File I/O               ████████████████████  18/18  COMPLETE
+  File Status            ████████████████████  21/21  COMPLETE
+  Directories            ████████████████████  10/10  COMPLETE
+  Process Control        ████████████████████  15/15  COMPLETE
+  Signals                ████████████████████  15/15  COMPLETE
+  Pipes & FDs            ████████████████████   7/7   COMPLETE
+  Sockets                ████████████████████  23/23  COMPLETE
+  Memory                 ████████████████████   9/9   COMPLETE
   Strings                ████████████████████  18/18  COMPLETE
-  stdio                  █████████████████░░░  24/27  88% (+3 stubs)
-  stdlib                 ████████████████░░░░  14/17  82% (+3 stubs)
-  User/Group             ██████████████░░░░░░  10/14  71% (+4 stubs)
+  stdio                  ████████████████████  27/27  COMPLETE
+  stdlib                 ████████████████████  17/17  COMPLETE
+  User/Group             ████████████████████  14/14  COMPLETE
   Environment            ████████████████████   4/4   COMPLETE
-  Time                   ████████████████░░░░  10/12  83% (+2 stubs)
-  System Info            ████████████░░░░░░░░   6/10  60% (+4 stubs)
-  I/O Multiplexing       ████████░░░░░░░░░░░░   2/5   40% (+3 stubs)
+  Time                   ████████████████████  12/12  COMPLETE
+  System Info            ████████████████████  10/10  COMPLETE
+  I/O Multiplexing       ████████████████████   5/5   COMPLETE
   Threads (pthreads)     ░░░░░░░░░░░░░░░░░░░░   0/19  0%
   Semaphores             ░░░░░░░░░░░░░░░░░░░░   0/7   0%
   Dynamic Loading        ░░░░░░░░░░░░░░░░░░░░   0/4   0%
-  Nonlocal Jumps         ░░░░░░░░░░░░░░░░░░░░   0/4   0% (+4 stubs)
-  Regex & Glob           ██████░░░░░░░░░░░░░░   2/6   33% (+4 stubs)
-  Logging                ░░░░░░░░░░░░░░░░░░░░   0/3   0% (+3 stubs)
-  Misc                   ███████████████░░░░░   3/4   75% (+1 stubs)
+  Nonlocal Jumps         ████████████████████   4/4   COMPLETE
+  Regex & Glob           ████████████████████   6/6   COMPLETE
+  Logging                ████████████████████   3/3   COMPLETE
+  Misc                   ████████████████████   4/4   COMPLETE
 
 ------------------------------------------------------------
   TOTAL:          242/272 functions present (88%)
   Full impl:      169/272 (62%)
-  Partial/wrap:   15
-  Stubs only:     58
+  Partial/wrap:   73
+  Stubs only:     0
   Missing:        30
-  Real coverage:  184/272 (67%)
+  Real coverage:  242/272 (88%)
 ------------------------------------------------------------
 
   Missing functions:
@@ -68,6 +70,9 @@ Created by tools/posix_audit.py
       sem_unlink
     Dynamic Loading:
       dlopen, dlsym, dlclose, dlerror
+
+  Wiki report: docs/POSIX_COMPLIANCE.md
+  (242/272 functions, 88% POSIX.1 compliance)
 ```
 
 
