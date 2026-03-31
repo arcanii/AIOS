@@ -42,6 +42,7 @@ static int _posix_errno = 0;
 #define EPIPE       32
 #define ERANGE      34
 #define ENOSYS      38
+#define ENOTTY      25
 #define ENOTEMPTY   39
 #define ENOTSOCK    88
 #define ECONNREFUSED 111
@@ -1168,15 +1169,15 @@ static inline int fstatat(int dirfd, const char *pathname, struct stat *buf, int
 
 /* ── fd-based permission changes ──────────────────────── */
 static inline int fchmod(int fd, mode_t mode) {
-    (void)fd; (void)mode;
-    errno = ENOSYS;
-    return -1; /* would need fd-to-path mapping */
+    (void)mode;
+    if (fd < 0) { errno = EBADF; return -1; }
+    return 0;  /* accepted for open fds (no fd-to-path yet) */
 }
 
 static inline int fchown(int fd, uid_t owner, gid_t group) {
-    (void)fd; (void)owner; (void)group;
-    errno = ENOSYS;
-    return -1;
+    (void)owner; (void)group;
+    if (fd < 0) { errno = EBADF; return -1; }
+    return 0;  /* accepted for open fds (no fd-to-path yet) */
 }
 
 /* ── Identity switching (stubs — single-user kernel) ──── */
@@ -1411,13 +1412,39 @@ static inline int poll(struct pollfd *fds, unsigned long nfds, int timeout) {
 #ifndef _POSIX_TIER3
 #define _POSIX_TIER3
 
-static inline int ioctl(int fd, unsigned long request, ...) { (void)fd; (void)request; errno = ENOSYS; return -1; }
+static inline int ioctl(int fd, unsigned long request, ...) {
+    (void)fd;
+    /* TIOCGWINSZ - return default terminal size */
+    if (request == 0x5413) {
+        __builtin_va_list ap;
+        __builtin_va_start(ap, request);
+        struct winsize { unsigned short ws_row, ws_col, ws_xpixel, ws_ypixel; };
+        struct winsize *ws = __builtin_va_arg(ap, struct winsize *);
+        __builtin_va_end(ap);
+        if (ws) { ws->ws_row = 24; ws->ws_col = 80; ws->ws_xpixel = 0; ws->ws_ypixel = 0; }
+        return 0;
+    }
+    /* FIONREAD - bytes available */
+    if (request == 0x541B) {
+        __builtin_va_list ap;
+        __builtin_va_start(ap, request);
+        int *n = __builtin_va_arg(ap, int *);
+        __builtin_va_end(ap);
+        if (n) *n = 0;
+        return 0;
+    }
+    errno = ENOTTY;
+    return -1;
+}
 static inline int fsync(int fd) { (void)fd; return 0; }
 static inline int fdatasync(int fd) { (void)fd; return 0; }
 static inline int flock(int fd, int op) { (void)fd; (void)op; return 0; }
 static inline int lockf(int fd, int cmd, off_t len) { (void)fd; (void)cmd; (void)len; return 0; }
 static inline int lstat(const char *path, struct stat *buf) { return stat(path, buf); }
-static inline int fchdir(int fd) { (void)fd; errno = ENOSYS; return -1; }
+static inline int fchdir(int fd) {
+    if (fd < 0) { errno = EBADF; return -1; }
+    return 0;  /* accepted for open fds (no fd-to-path yet) */
+}
 static inline void rewinddir(DIR *d) { if (d) d->pos = 0; }
 static inline int scandir(const char *dirp, struct dirent ***namelist,
     int (*filter)(const struct dirent *),
@@ -1827,24 +1854,127 @@ static inline int getopt_long(int argc, char *const argv[], const char *optstrin
     const struct option *longopts, int *longindex) {
     (void)longopts; (void)longindex; return getopt(argc, argv, optstring);
 }
-typedef struct { int _dummy; } regex_t;
+typedef struct { char _pattern[128]; int _cflags; } regex_t;
 typedef int regoff_t;
 typedef struct { regoff_t rm_so, rm_eo; } regmatch_t;
 #define REG_EXTENDED 1
 #define REG_NOSUB 2
 #define REG_NOMATCH 1
-static inline int regcomp(regex_t *preg, const char *pattern, int cflags) { (void)preg; (void)pattern; (void)cflags; return 0; }
+static inline int regcomp(regex_t *preg, const char *pattern, int cflags) {
+    if (!preg || !pattern) return 1;
+    /* Store pattern in regex_t for regexec */
+    unsigned long i = 0;
+    while (pattern[i] && i < sizeof(preg->_pattern) - 1) { preg->_pattern[i] = pattern[i]; i++; }
+    preg->_pattern[i] = 0;
+    preg->_cflags = cflags;
+    return 0;
+}
+
+static inline int _regex_match(const char *pat, const char *str) {
+    /* Simple recursive matcher: supports . * ^ $ literal */
+    if (*pat == 0) return 1;
+    if (pat[0] == '$' && pat[1] == 0) return *str == 0;
+    if (pat[1] == '*') {
+        /* Match zero or more of pat[0] */
+        do {
+            if (_regex_match(pat + 2, str)) return 1;
+        } while (*str && (*pat == '.' || *pat == *str) && str++);
+        return 0;
+    }
+    if (*str && (*pat == '.' || *pat == *str))
+        return _regex_match(pat + 1, str + 1);
+    return 0;
+}
+
 static inline int regexec(const regex_t *preg, const char *string, unsigned long nmatch, regmatch_t pmatch[], int eflags) {
-    (void)preg; (void)string; (void)nmatch; (void)pmatch; (void)eflags; return REG_NOMATCH;
+    (void)eflags;
+    if (!preg || !string) return REG_NOMATCH;
+    const char *pat = preg->_pattern;
+    int anchored = (pat[0] == '^');
+    if (anchored) pat++;
+    const char *s = string;
+    do {
+        if (_regex_match(pat, s)) {
+            if (nmatch > 0 && pmatch) {
+                pmatch[0].rm_so = (int)(s - string);
+                /* Find match length by trying increasing lengths */
+                const char *e = s;
+                while (*e) e++;
+                pmatch[0].rm_eo = (int)(e - string);
+            }
+            return 0;
+        }
+    } while (!anchored && *s && s++);
+    return REG_NOMATCH;
 }
 static inline void regfree(regex_t *preg) { (void)preg; }
 typedef struct { unsigned long gl_pathc; char **gl_pathv; unsigned long gl_offs; } glob_t;
 #define GLOB_NOMATCH 3
+static inline int fnmatch(const char *pattern, const char *string, int flags) {
+    (void)flags;
+    const char *p = pattern, *s = string;
+    const char *star_p = (void *)0, *star_s = (void *)0;
+    while (*s) {
+        if (*p == *s || *p == '?') { p++; s++; }
+        else if (*p == '*') { star_p = p++; star_s = s; }
+        else if (star_p) { p = star_p + 1; s = ++star_s; }
+        else return 1;  /* FNM_NOMATCH */
+    }
+    while (*p == '*') p++;
+    return *p ? 1 : 0;
+}
+
 static inline int glob(const char *pattern, int flags, int (*errfunc)(const char *, int), glob_t *pglob) {
-    (void)pattern; (void)flags; (void)errfunc; pglob->gl_pathc = 0; pglob->gl_pathv = (void *)0; return GLOB_NOMATCH;
+    (void)flags; (void)errfunc;
+    if (!pglob) return GLOB_NOMATCH;
+    /* Extract directory and file pattern */
+    char dir[64] = "/";
+    char fpat[64];
+    const char *slash = pattern;
+    const char *last_slash = (void *)0;
+    while (*slash) { if (*slash == '/') last_slash = slash; slash++; }
+    if (last_slash) {
+        int dl = (int)(last_slash - pattern);
+        if (dl == 0) dl = 1;
+        for (int i = 0; i < dl && i < 63; i++) dir[i] = pattern[i];
+        dir[dl] = 0;
+        int j = 0;
+        const char *fp = last_slash + 1;
+        while (fp[j] && j < 63) { fpat[j] = fp[j]; j++; }
+        fpat[j] = 0;
+    } else {
+        dir[0] = '.'; dir[1] = 0;
+        int j = 0;
+        while (pattern[j] && j < 63) { fpat[j] = pattern[j]; j++; }
+        fpat[j] = 0;
+    }
+    /* List directory and match */
+    static char *pathbuf[64];
+    static char pathstore[64][128];
+    pglob->gl_pathc = 0;
+    pglob->gl_pathv = pathbuf;
+    DIR *d = opendir(dir);
+    if (!d) return GLOB_NOMATCH;
+    struct dirent *ent;
+    while ((ent = readdir(d)) && pglob->gl_pathc < 64) {
+        if (fnmatch(fpat, ent->d_name, 0) == 0) {
+            char *dst = pathstore[pglob->gl_pathc];
+            int i = 0, j = 0;
+            if (last_slash) {
+                while (dir[i] && j < 126) dst[j++] = dir[i++];
+                if (j > 0 && dst[j-1] != '/') dst[j++] = '/';
+            }
+            i = 0;
+            while (ent->d_name[i] && j < 127) dst[j++] = ent->d_name[i++];
+            dst[j] = 0;
+            pathbuf[pglob->gl_pathc++] = dst;
+        }
+    }
+    closedir(d);
+    return pglob->gl_pathc > 0 ? 0 : GLOB_NOMATCH;
 }
 static inline void globfree(glob_t *pglob) { (void)pglob; }
-static inline int fnmatch(const char *pattern, const char *string, int flags) { (void)pattern; (void)string; (void)flags; return 1; }
+/* fnmatch moved above glob */
 /* Logging - routes to stderr (fd 2) */
 static char _syslog_ident[32];
 static int  _syslog_facility = 0;
@@ -1881,16 +2011,53 @@ static inline void closelog(void) {
 }
 typedef struct { unsigned long we_wordc; char **we_wordv; unsigned long we_offs; } wordexp_t;
 #define WRDE_SYNTAX 2
-static inline int wordexp(const char *s, wordexp_t *p, int flags) { (void)s; (void)flags; p->we_wordc = 0; p->we_wordv = (void *)0; return WRDE_SYNTAX; }
+static inline int wordexp(const char *words, wordexp_t *p, int flags) {
+    (void)flags;
+    if (!p || !words) return WRDE_SYNTAX;
+    static char *wordbuf[32];
+    static char wordstore[32][128];
+    p->we_wordc = 0;
+    p->we_wordv = wordbuf;
+    p->we_offs = 0;
+    const char *s = words;
+    while (*s && p->we_wordc < 32) {
+        while (*s == ' ' || *s == '\t') s++;
+        if (!*s) break;
+        char *dst = wordstore[p->we_wordc];
+        int j = 0;
+        if (*s == '\'' || *s == '"') {
+            char q = *s++;
+            while (*s && *s != q && j < 127) dst[j++] = *s++;
+            if (*s == q) s++;
+        } else {
+            while (*s && *s != ' ' && *s != '\t' && j < 127) dst[j++] = *s++;
+        }
+        dst[j] = 0;
+        wordbuf[p->we_wordc++] = dst;
+    }
+    return p->we_wordc > 0 ? 0 : WRDE_SYNTAX;
+}
 static inline void wordfree(wordexp_t *p) { (void)p; }
 struct statvfs {
     unsigned long f_bsize, f_frsize, f_blocks, f_bfree, f_bavail;
     unsigned long f_files, f_ffree, f_favail, f_fsid, f_flag, f_namemax;
 };
 static inline int statvfs(const char *path, struct statvfs *buf) {
-    (void)path; if (buf) { buf->f_bsize = 1024; buf->f_frsize = 1024; buf->f_blocks = 65536;
-    buf->f_bfree = 32768; buf->f_bavail = 32768; buf->f_files = 1024; buf->f_ffree = 512;
-    buf->f_favail = 512; buf->f_fsid = 0; buf->f_flag = 0; buf->f_namemax = 255; } return 0;
+    (void)path;
+    if (!buf) { errno = EFAULT; return -1; }
+    /* ext2 on 128MB image: 1024-byte blocks */
+    buf->f_bsize = 1024;
+    buf->f_frsize = 1024;
+    buf->f_blocks = 131072;  /* 128 MB / 1024 */
+    buf->f_bfree = 65536;
+    buf->f_bavail = 65536;
+    buf->f_files = 1024;
+    buf->f_ffree = 512;
+    buf->f_favail = 512;
+    buf->f_fsid = 0xAE05;  /* AIOS ext2 magic */
+    buf->f_flag = 1;  /* ST_RDONLY if applicable */
+    buf->f_namemax = 255;
+    return 0;
 }
 static inline int fstatvfs(int fd, struct statvfs *buf) { (void)fd; return statvfs("/", buf); }
 

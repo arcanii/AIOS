@@ -309,7 +309,10 @@ def inject(img_path, files):
         if '/etc/' in source_path or '\\etc\\' in source_path:
             if etc_ino:
                 return (etc_ino, f"/etc/{disk_name}")
-        if lower.endswith('.bin'):
+        if '/bin/' in source_path or '\\bin\\' in source_path:
+            if bin_ino:
+                return (bin_ino, f"/bin/{disk_name}")
+        if lower.endswith('.bin') or lower.endswith('.sh'):
             if bin_ino:
                 return (bin_ino, f"/bin/{disk_name}")
         if lower in ('passwd', 'group', 'shadow', 'hostname',
