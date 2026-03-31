@@ -1160,12 +1160,6 @@ static void run_program(void) {
 
     /* Jump to code: entry point is the start of sandbox_code */
     program_entry_t entry = (program_entry_t)sandbox_code;
-    microkit_dbg_puts("SBX: jumping to code at 0x21100000\n");
-    microkit_dbg_puts("SBX: entry=0x");
-    for (int _i=60;_i>=0;_i-=4) microkit_dbg_putc("0123456789abcdef"[(((uintptr_t)entry)>>_i)&0xf]);
-    microkit_dbg_puts(" sys=0x");
-    for (int _i=60;_i>=0;_i-=4) microkit_dbg_putc("0123456789abcdef"[(((uintptr_t)&syscalls)>>_i)&0xf]);
-    microkit_dbg_puts("\n");
     int exit_code = entry(&syscalls);
 
     /* Store results */
@@ -1201,7 +1195,6 @@ void notified(microkit_channel ch) {
             microkit_notify(my_channel);
             break;
         case SBX_CMD_HALT:
-            microkit_dbg_puts("SBX: halt\n");
             break;
         case SBX_CMD_SUSPEND:
             /* Orchestrator wants us to suspend — set flag, will be caught at next syscall */

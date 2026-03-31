@@ -129,7 +129,7 @@ static int str_starts_with(const char *s, const char *prefix) {
 
 /* ── Logging backend ─────────────────────────────────── */
 #define LOG_MODULE "ORCH"
-#define LOG_LEVEL  LOG_LEVEL_INFO
+#define LOG_LEVEL  LOG_LEVEL_WARN
 #include "aios/log.h"
 
 void _log_puts(const char *s) { ser_puts(s); }
@@ -295,7 +295,6 @@ static void try_load_queued(int freed_slot) {
 
     if (p->state == PROC_READY) {
         /* ── Resume from swap ─────────────────────────── */
-        LOG_INFO_V("resume: PID ", (unsigned long)p->pid);
 
         uint32_t swap_off = p->swap_offset;
         volatile uint8_t *swap_base = (volatile uint8_t *)swap_region;

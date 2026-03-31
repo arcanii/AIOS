@@ -177,7 +177,7 @@ static void cmd_cd(const char *path) {
 
 
 /* ── Job control ──────────────────────────────────────── */
-#define MAX_JOBS 8
+#define MAX_JOBS 32
 typedef struct {
     int active;
     int pid;
@@ -189,6 +189,7 @@ static job_t jobs[MAX_JOBS];
 static int next_job_id = 1;
 
 static int add_job(int pid, const char *name) {
+    /* First pass: find an inactive slot */
     for (int i = 0; i < MAX_JOBS; i++) {
         if (!jobs[i].active) {
             jobs[i].active = 1;
@@ -198,7 +199,20 @@ static int add_job(int pid, const char *name) {
             int k = 0;
             while (name[k] && k < 63) { jobs[i].name[k] = name[k]; k++; }
             jobs[i].name[k] = '\0';
-            return i + 1; /* job IDs start at 1 */
+            return i + 1;
+        }
+    }
+    /* Second pass: reclaim done jobs silently */
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (jobs[i].done) {
+            jobs[i].active = 1;
+            jobs[i].pid = pid;
+            jobs[i].done = 0;
+            jobs[i].exit_code = 0;
+            int k = 0;
+            while (name[k] && k < 63) { jobs[i].name[k] = name[k]; k++; }
+            jobs[i].name[k] = '\0';
+            return i + 1;
         }
     }
     return -1;
@@ -1170,8 +1184,12 @@ static void dispatch(void) {
             }
             if (rc >= 0) {
                 int jid = add_job(rc, cmd);
-                print("["); print_dec((unsigned long)jid); print("] ");
-                print_dec((unsigned long)rc); print("\n");
+                if (jid > 0) {
+                    print("["); print_dec((unsigned long)jid); print("] ");
+                    print_dec((unsigned long)rc); print("\n");
+                } else {
+                    print("PID "); print_dec((unsigned long)rc); print(" (job table full)\n");
+                }
                 return;
             }
             /* Try as .sh script */

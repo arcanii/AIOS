@@ -59,8 +59,38 @@ static int internal_spawn(const char *filename, const char *args,
 
     int slot = find_free_slot();
     if (slot < 0) {
-        fs_close_sync(fd);
-        return -1;
+        /* All slots full — try to preempt a background victim */
+        int victim_slot = sched_pick_victim(&sched);
+        if (victim_slot < 0) {
+            fs_close_sync(fd);
+            return -1;  /* No preemptable process */
+        }
+        int victim_idx = sched.slot_to_proc[victim_slot];
+        if (victim_idx < 0) {
+            fs_close_sync(fd);
+            return -1;
+        }
+        sched_proc_t *vp = &sched.procs[victim_idx];
+        /* Save victim code+heap to swap */
+        uint32_t code_sz = vp->loaded_bytes + 64*1024;
+        if (code_sz > SCHED_CODE_SIZE) code_sz = SCHED_CODE_SIZE;
+        uint32_t heap_sz = 256*1024;  /* save first 256K of heap */
+        if (sched_swap_alloc(&sched, victim_idx, code_sz, heap_sz) < 0) {
+            fs_close_sync(fd);
+            return -1;  /* Swap full */
+        }
+        microkit_pd_stop(victim_slot);
+        volatile uint8_t *swap = (volatile uint8_t *)swap_region;
+        volatile uint8_t *vc = (volatile uint8_t *)sbx_code[victim_slot];
+        for (uint32_t j = 0; j < code_sz; j++) swap[vp->swap_offset + j] = vc[j];
+        volatile uint8_t *vh = (volatile uint8_t *)sbx_heap[victim_slot];
+        uint32_t ho = vp->swap_offset + code_sz;
+        for (uint32_t j = 0; j < heap_sz; j++) swap[ho + j] = vh[j];
+        vp->state = PROC_READY;
+        vp->slot = -1;
+        sched.slot_to_proc[victim_slot] = -1;
+        microkit_pd_restart(victim_slot, SBX_ENTRY_POINT);
+        slot = victim_slot;
     }
 
     uintptr_t cur_sio = sbx_io[slot];
@@ -180,10 +210,6 @@ static void cmd_exec(const char *filename) {
         }
         filename = fname_buf;
     }
-    ser_puts("Loading program: ");
-    ser_puts(filename);
-    ser_puts("\n");
-    ser_flush();
 
     int st = fs_open_sync(filename);
     /* Fallback: try /bin/<filename> if direct open fails */
@@ -201,10 +227,6 @@ static void cmd_exec(const char *filename) {
     }
     uint32_t fd   = RD32(fs_data, FS_FD);
     uint32_t size = RD32(fs_data, FS_FILESIZE);
-    ser_puts("  Program size: ");
-    ser_put_dec(size);
-    ser_puts(" bytes\n");
-    ser_flush();
 
     if (size > 0x400000) {
         ser_puts("  Error: program too large (max 1 MiB)\n");
@@ -228,10 +250,48 @@ static void cmd_exec(const char *filename) {
     /* Load into sandbox_code */
     int slot = find_free_slot();
     if (slot < 0) {
-        ser_puts("  Error: no free process slots\n");
-        ser_flush();
-        fs_close_sync(fd);
-        return;
+        /* Try preemption */
+        int victim_slot = sched_pick_victim(&sched);
+        if (victim_slot < 0) {
+            ser_puts("  Error: no free process slots\n");
+            ser_flush();
+            fs_close_sync(fd);
+            return;
+        }
+        int victim_idx = sched.slot_to_proc[victim_slot];
+        if (victim_idx < 0) {
+            ser_puts("  Error: no free process slots\n");
+            ser_flush();
+            fs_close_sync(fd);
+            return;
+        }
+        sched_proc_t *vp = &sched.procs[victim_idx];
+        uint32_t code_sz = vp->loaded_bytes + 64*1024;
+        if (code_sz > SCHED_CODE_SIZE) code_sz = SCHED_CODE_SIZE;
+        uint32_t heap_sz = 256*1024;
+        if (sched_swap_alloc(&sched, victim_idx, code_sz, heap_sz) < 0) {
+            ser_puts("  Error: swap region full\n");
+            ser_flush();
+            fs_close_sync(fd);
+            return;
+        }
+        microkit_pd_stop(victim_slot);
+        volatile uint8_t *swap = (volatile uint8_t *)swap_region;
+        volatile uint8_t *vc = (volatile uint8_t *)sbx_code[victim_slot];
+        for (uint32_t j = 0; j < code_sz; j++) swap[vp->swap_offset + j] = vc[j];
+        volatile uint8_t *vh = (volatile uint8_t *)sbx_heap[victim_slot];
+        uint32_t ho = vp->swap_offset + code_sz;
+        for (uint32_t j = 0; j < heap_sz; j++) swap[ho + j] = vh[j];
+        vp->state = PROC_READY;
+        vp->slot = -1;
+        sched.slot_to_proc[victim_slot] = -1;
+        microkit_pd_restart(victim_slot, SBX_ENTRY_POINT);
+        slot = victim_slot;
+        ser_puts("  Preempted PID ");
+        ser_put_dec((unsigned int)vp->pid);
+        ser_puts(" from slot ");
+        ser_put_dec((unsigned int)victim_slot);
+        ser_puts("\n");
     }
     uintptr_t cur_sio = sbx_io[slot];
     uintptr_t cur_scode = sbx_code[slot];
@@ -287,11 +347,6 @@ static void cmd_exec(const char *filename) {
 
     exec_loaded_bytes = offset;
 
-    LOG_INFO("program loaded into sandbox");
-    ser_puts("  Loaded ");
-    ser_put_dec(exec_loaded_bytes);
-    ser_puts(" bytes into sandbox. Executing...\n");
-    ser_flush();
 
     /* Copy args to sandbox_io for the program */
     {

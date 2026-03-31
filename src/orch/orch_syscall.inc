@@ -17,6 +17,79 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
     uint64_t syscall_nr = seL4_GetMR(0);
     int64_t result = -1;
 
+
+    /* ── Scheduling tick + housekeeping ─────────────────── */
+    sched.tick_count++;
+
+    /* Auto-reap zombies after a grace period (2 ticks) for waitpid */
+    for (int zi = 0; zi < SCHED_MAX_PROCS; zi++) {
+        if (sched.procs[zi].state == PROC_ZOMBIE) {
+            /* Use last_scheduled as death timestamp */
+            if (sched.procs[zi].last_scheduled == 0)
+                sched.procs[zi].last_scheduled = sched.tick_count;
+            if (sched.tick_count - sched.procs[zi].last_scheduled >= 2) {
+                /* Clear any lingering exit record */
+                for (int ei = 0; ei < MAX_EXIT_QUEUE; ei++) {
+                    if (exit_queue[ei].active && exit_queue[ei].pid == (uint32_t)sched.procs[zi].pid) {
+                        exit_queue[ei].active = 0;
+                        break;
+                    }
+                }
+                sched.procs[zi].state = PROC_FREE;
+                sched.procs[zi].pid = 0;
+            }
+        }
+    }
+
+
+    /* ── Preemption check: swap out victim if better process waiting ── */
+    if ((sched.tick_count & 0x3F) == 0) {
+        int next = sched_pick_next(&sched);
+        if (next >= 0) {
+            /* There's a queued/ready process waiting */
+            int free_slot = sched_find_free_slot(&sched);
+            if (free_slot < 0) {
+                /* All slots full — need to preempt a victim */
+                int victim_slot = sched_pick_victim(&sched);
+                if (victim_slot >= 0 && victim_slot != slot) {
+                    /* Save victim to swap */
+                    int victim_idx = sched.slot_to_proc[victim_slot];
+                    if (victim_idx >= 0) {
+                        sched_proc_t *vp = &sched.procs[victim_idx];
+                        uint32_t code_sz = vp->loaded_bytes + 64*1024;
+                        if (code_sz > SCHED_CODE_SIZE) code_sz = SCHED_CODE_SIZE;
+                        uint32_t heap_sz = 256*1024; /* save first 256K of heap */
+                        if (sched_swap_alloc(&sched, victim_idx, code_sz, heap_sz) == 0) {
+                            /* Stop the victim PD */
+                            microkit_pd_stop(victim_slot);
+                            /* Copy code to swap */
+                            volatile uint8_t *swap = (volatile uint8_t *)swap_region;
+                            volatile uint8_t *vc = (volatile uint8_t *)sbx_code[victim_slot];
+                            for (uint32_t j = 0; j < code_sz; j++) swap[vp->swap_offset + j] = vc[j];
+                            /* Copy heap to swap */
+                            volatile uint8_t *vh = (volatile uint8_t *)sbx_heap[victim_slot];
+                            uint32_t ho = vp->swap_offset + code_sz;
+                            for (uint32_t j = 0; j < heap_sz; j++) swap[ho + j] = vh[j];
+                            /* Mark victim as READY (suspended) */
+                            vp->state = PROC_READY;
+                            vp->slot = -1;
+                            sched.slot_to_proc[victim_slot] = -1;
+                            /* Restart the PD so it's clean for next use */
+                            microkit_pd_restart(victim_slot, SBX_ENTRY_POINT);
+                            /* Now load the waiting process into freed slot */
+                            try_load_queued(victim_slot);
+                        }
+                    }
+                }
+            }
+            /* If there was a free slot, try_load_queued would have been called
+               by the previous exit/kill — but check anyway */
+            else {
+                try_load_queued(free_slot);
+            }
+        }
+    }
+
     switch (syscall_nr) {
     case SYS_OPEN: {
         volatile char *path = (volatile char *)(sio + 0x200);
@@ -185,19 +258,23 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
     }
     case SYS_PUTC: {
         char c = (char)seL4_GetMR(1);
-        ser_putc(c);
-        ser_flush();
+        if (slot_proc(slot) && slot_proc(slot)->foreground) {
+            ser_putc(c);
+            ser_flush();
+        }
         result = 0;
         break;
     }
     case 32: { /* SYS_PUTS_DIRECT */
-        volatile char *str = (volatile char *)(sio + 0x200);
-        char buf[256];
-        int i = 0;
-        while (str[i] && i < 255) { buf[i] = str[i]; i++; }
-        buf[i] = '\0';
-        ser_puts(buf);
-        ser_flush();
+        if (slot_proc(slot) && slot_proc(slot)->foreground) {
+            volatile char *str = (volatile char *)(sio + 0x200);
+            char buf[256];
+            int i = 0;
+            while (str[i] && i < 255) { buf[i] = str[i]; i++; }
+            buf[i] = '\0';
+            ser_puts(buf);
+            ser_flush();
+        }
         result = 0;
         break;
     }
