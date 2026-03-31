@@ -5,7 +5,7 @@ Scans source files and generates terminal + wiki reports."""
 import os, re, sys, datetime
 
 SCAN_FILES = [
-    "programs/posix.h",
+    "include/posix.h",
     "programs/aios.h",
     "src/orch/orch_syscall.inc",
     "src/sandbox.c",
@@ -236,8 +236,8 @@ def main():
     
     wrapper_count = 0
     posix_lines = 0
-    if os.path.exists("programs/posix.h"):
-        with open("programs/posix.h") as f:
+    if os.path.exists("include/posix.h"):
+        with open("include/posix.h") as f:
             content = f.read()
             wrapper_count = content.count("static inline")
             posix_lines = content.count("\n")

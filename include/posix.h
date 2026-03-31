@@ -889,7 +889,7 @@ static inline int uname(struct utsname *buf) {
     /* nodename */
     s = "aios"; i = 0; while (s[i] && i < 64) { buf->nodename[i] = s[i]; i++; } buf->nodename[i] = 0;
     /* release */
-    s = "0.2.23"; i = 0; while (s[i] && i < 64) { buf->release[i] = s[i]; i++; } buf->release[i] = 0;
+    s = "0.2.38"; i = 0; while (s[i] && i < 64) { buf->release[i] = s[i]; i++; } buf->release[i] = 0;
     /* version */
     s = "seL4 14.0.0 Microkit 2.1.0"; i = 0; while (s[i] && i < 64) { buf->version[i] = s[i]; i++; } buf->version[i] = 0;
     /* machine */
@@ -1558,9 +1558,65 @@ static inline int putenv(char *string) {
     int rc = setenv(string, eq + 1, 1); *eq = '='; return rc;
 }
 static inline double difftime(long t1, long t0) { return (double)(t1 - t0); }
-static inline long sysconf(int name) { (void)name; return -1; }
-static inline long pathconf(const char *path, int name) { (void)path; (void)name; return -1; }
-static inline long fpathconf(int fd, int name) { (void)fd; (void)name; return -1; }
+/* sysconf constants */
+#define _SC_ARG_MAX        0
+#define _SC_CHILD_MAX      1
+#define _SC_CLK_TCK        2
+#define _SC_NGROUPS_MAX    3
+#define _SC_OPEN_MAX       4
+#define _SC_PAGESIZE       5
+#define _SC_PAGE_SIZE      _SC_PAGESIZE
+#define _SC_NPROCESSORS_CONF 6
+#define _SC_NPROCESSORS_ONLN 7
+#define _SC_PHYS_PAGES     8
+#define _SC_HOST_NAME_MAX  9
+#define _SC_LINE_MAX      10
+#define _SC_LOGIN_NAME_MAX 11
+#define _SC_SYMLOOP_MAX   12
+
+static inline long sysconf(int name) {
+    switch (name) {
+    case _SC_ARG_MAX:        return 4096;
+    case _SC_CHILD_MAX:      return 256;
+    case _SC_CLK_TCK:        return 100;
+    case _SC_NGROUPS_MAX:    return 8;
+    case _SC_OPEN_MAX:       return 16;
+    case _SC_PAGESIZE:       return 4096;
+    case _SC_NPROCESSORS_CONF: return 4;
+    case _SC_NPROCESSORS_ONLN: return 4;
+    case _SC_PHYS_PAGES:     return 524288;  /* 2 GB / 4096 */
+    case _SC_HOST_NAME_MAX:  return 64;
+    case _SC_LINE_MAX:       return 2048;
+    case _SC_LOGIN_NAME_MAX: return 32;
+    default: errno = EINVAL; return -1;
+    }
+}
+/* pathconf constants */
+#define _PC_NAME_MAX     0
+#define _PC_PATH_MAX     1
+#define _PC_PIPE_BUF     2
+#define _PC_LINK_MAX     3
+#define _PC_MAX_CANON    4
+#define _PC_MAX_INPUT    5
+#define _PC_NO_TRUNC     6
+
+static inline long pathconf(const char *path, int name) {
+    (void)path;
+    switch (name) {
+    case _PC_NAME_MAX:   return 255;
+    case _PC_PATH_MAX:   return 4096;
+    case _PC_PIPE_BUF:   return 4096;
+    case _PC_LINK_MAX:   return 65000;
+    case _PC_MAX_CANON:  return 255;
+    case _PC_MAX_INPUT:  return 255;
+    case _PC_NO_TRUNC:   return 1;
+    default: errno = EINVAL; return -1;
+    }
+}
+static inline long fpathconf(int fd, int name) {
+    (void)fd;
+    return pathconf("/", name);
+}
 static inline char *ttyname(int fd) { (void)fd; return "/dev/console"; }
 typedef unsigned int tcflag_t;
 typedef unsigned char cc_t;
