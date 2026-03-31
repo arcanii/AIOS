@@ -296,6 +296,7 @@ def inject(img_path, files):
 
     # Create standard directories
     bin_ino  = create_dir(ROOT_INO, "bin")
+    tests_ino = create_dir(bin_ino, "tests")
     etc_ino  = create_dir(ROOT_INO, "etc")
     home_ino = create_dir(ROOT_INO, "home")
     tmp_ino  = create_dir(ROOT_INO, "tmp")
@@ -309,9 +310,15 @@ def inject(img_path, files):
         if '/etc/' in source_path or '\\etc\\' in source_path:
             if etc_ino:
                 return (etc_ino, f"/etc/{disk_name}")
+        if '/tests/' in source_path or '\\tests\\' in source_path:
+            if tests_ino:
+                return (tests_ino, f"/bin/tests/{disk_name}")
         if '/bin/' in source_path or '\\bin\\' in source_path:
             if bin_ino:
                 return (bin_ino, f"/bin/{disk_name}")
+        if lower.startswith('test_') and (lower.endswith('.bin') or lower.endswith('.sh')):
+            if tests_ino:
+                return (tests_ino, f"/bin/tests/{disk_name}")
         if lower.endswith('.bin') or lower.endswith('.sh'):
             if bin_ino:
                 return (bin_ino, f"/bin/{disk_name}")
