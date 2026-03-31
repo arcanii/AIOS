@@ -374,9 +374,14 @@ static int sbx_getpid(void) {
 /* ── Interactive I/O (PPC, immediate) ────────────────── */
 
 static int sbx_getc(void) {
-    seL4_SetMR(0, SYS_GETC);
-    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
-    return (int)seL4_GetMR(0);
+    for (;;) {
+        seL4_SetMR(0, SYS_GETC);
+        microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
+        int result = (int)seL4_GetMR(0);
+        if (result != -2) return result;  /* got a char or EOF */
+        /* EAGAIN: yield and retry */
+        seL4_Yield();
+    }
 }
 
 static void sbx_puts_direct(const char *s) {
@@ -794,6 +799,13 @@ static long sbx_time(void) {
 }
 
 /* ── Process listing syscall ─────────────────────────── */
+static unsigned long long sbx_timer_freq(void) {
+    uint64_t freq;
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+    if (freq == 0) freq = 62500000;
+    return (unsigned long long)freq;
+}
+
 static int sbx_getprocs(void *buf, int max_entries) {
     seL4_SetMR(0, SYS_GETPROCS);
     microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
@@ -1039,6 +1051,7 @@ static void init_syscalls(void) {
     syscalls.fcntl      = sbx_fcntl;
     syscalls.kill_proc  = sbx_kill_proc;
     syscalls.getprocs   = sbx_getprocs;
+    syscalls.timer_freq = sbx_timer_freq;
     syscalls.socket     = sbx_socket;
     syscalls.connect    = sbx_connect;
     syscalls.bind       = sbx_bind;

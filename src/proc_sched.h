@@ -65,8 +65,9 @@ typedef struct {
 
     /* Scheduling stats */
     uint32_t time_slices;   /* Number of times scheduled */
-    uint32_t total_ticks;   /* Total CPU time consumed */
-    uint32_t last_scheduled;/* Tick count when last scheduled */
+    uint64_t cpu_time;      /* Total CPU time (timer ticks, high-res) */
+    uint64_t last_scheduled;/* Timestamp when last scheduled (arch_timestamp) */
+    uint32_t total_ticks;   /* Legacy: coarse syscall tick count */
 } sched_proc_t;
 
 typedef struct {
@@ -125,8 +126,9 @@ static inline int sched_create(scheduler_t *s, const char *filename,
     p->swap_code_sz = 0;
     p->swap_heap_sz = 0;
     p->time_slices = 0;
-    p->total_ticks = 0;
+    p->cpu_time = 0;
     p->last_scheduled = 0;
+    p->total_ticks = 0;
 
     /* Copy filename */
     int i = 0;
@@ -166,7 +168,6 @@ static inline void sched_assign_slot(scheduler_t *s, int proc_idx, int slot) {
     s->procs[proc_idx].state = PROC_RUNNING;
     s->slot_to_proc[slot] = proc_idx;
     s->procs[proc_idx].time_slices++;
-    s->procs[proc_idx].last_scheduled = s->tick_count;
 }
 
 static inline void sched_release_slot(scheduler_t *s, int slot) {
@@ -353,6 +354,7 @@ static inline int sched_fork(scheduler_t *s, int parent_slot) {
     child->swap_code_sz = 0;
     child->swap_heap_sz = 0;
     child->time_slices = 0;
+    child->cpu_time = 0;
     child->total_ticks = 0;
     child->last_scheduled = s->tick_count;
 

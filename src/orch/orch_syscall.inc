@@ -18,8 +18,31 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
     int64_t result = -1;
 
 
-    /* ── Scheduling tick + housekeeping ─────────────────── */
+    /* ── Scheduling tick + high-res CPU accounting ──────── */
     sched.tick_count++;
+    {
+        uint64_t now = arch_timestamp();
+        /* Account CPU time for ALL running slots, not just the caller */
+        for (int si = 0; si < NUM_SANDBOXES; si++) {
+            if (slot_in_use(si)) {
+                sched_proc_t *p = slot_proc(si);
+                if (p && p->last_scheduled > 0) {
+                    p->cpu_time += now - p->last_scheduled;
+                }
+                if (p) p->last_scheduled = now;
+            }
+        }
+    }
+
+    /* Check for completed background sandboxes */
+    for (int si = 0; si < NUM_SANDBOXES; si++) {
+        if (slot_in_use(si)) {
+            uint32_t st = RD32(sbx_io[si], SBX_STATUS);
+            if (st == SBX_ST_DONE) {
+                handle_exec_done(si);
+            }
+        }
+    }
 
     /* Auto-reap zombies after a grace period (2 ticks) for waitpid */
     for (int zi = 0; zi < SCHED_MAX_PROCS; zi++) {
@@ -279,7 +302,42 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
     case SYS_GETC: {
-        result = (int64_t)(unsigned char)rx_getc_blocking();
+        /* Non-blocking check for completed background sandboxes */
+        for (int si = 0; si < NUM_SANDBOXES; si++) {
+            if (slot_in_use(si)) {
+                uint32_t st = RD32(sbx_io[si], SBX_STATUS);
+                if (st == SBX_ST_DONE) {
+                    handle_exec_done(si);
+                } else if (st == SBX_ST_IDLE && RD32(sbx_io[si], SBX_CMD) == SBX_CMD_RUN) {
+                    microkit_notify(sbx_channel[si]);
+                }
+            }
+        }
+        ring_buf_t *rx = (ring_buf_t *)rx_buf;
+        char c;
+        if (ring_get(rx, &c)) {
+            /* Handle Ctrl-C */
+            if (c == 0x03 && orch_state == EXEC_RUNNING) {
+                for (int s = 0; s < NUM_SANDBOXES; s++) {
+                    if (slot_in_use(s) && slot_proc(s)->foreground) {
+                        microkit_pd_stop(s);
+                        microkit_pd_restart(s, SBX_ENTRY_POINT);
+                        ser_puts("^C\n");
+                        sched_exit(&sched, s, -2);
+                        try_load_queued(s);
+                        orch_state = RUNNING;
+                        print_prompt();
+                        result = -1;
+                        break;
+                    }
+                }
+                if (result != -1) result = (int64_t)(unsigned char)c;
+            } else {
+                result = (int64_t)(unsigned char)c;
+            }
+        } else {
+            result = -2;  /* EAGAIN — no input available */
+        }
         break;
     }
     case SYS_STAT: {
@@ -424,10 +482,12 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
     case SYS_SLEEP: {
-        /* Busy-wait approximation */
+        /* Non-blocking sleep: return target timestamp, sandbox polls */
         uint32_t secs = (uint32_t)seL4_GetMR(1);
-        for (volatile uint32_t s = 0; s < secs; s++)
-            for (volatile uint32_t i = 0; i < 1000000; i++);
+        uint64_t freq = arch_timer_freq();
+        uint64_t target = arch_timestamp() + (uint64_t)secs * freq;
+        seL4_SetMR(1, (seL4_Word)(target & 0xFFFFFFFF));
+        seL4_SetMR(2, (seL4_Word)(target >> 32));
         result = 0;
         break;
     }
@@ -1156,7 +1216,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
          *   [20]    foreground (uint8)
          *   [21-23] reserved
          *   [24-55] name (32 bytes, null-terminated)
-         *   [56-63] reserved
+         *   [56-63] cpu_time (uint64, arch timer ticks)
          */
         volatile uint8_t *dst = (volatile uint8_t *)(sio + 0x400);
         int count = 0;
@@ -1198,6 +1258,18 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
             /* name */
             for (int ni = 0; ni < 32; ni++) ent[24 + ni] = 0;
             for (int ni = 0; pr->name[ni] && ni < 31; ni++) ent[24 + ni] = (uint8_t)pr->name[ni];
+            /* cpu_time (high-res timer ticks) */
+            {
+                uint64_t ct = pr->cpu_time;
+                ent[56] = (uint8_t)(ct & 0xFF);
+                ent[57] = (uint8_t)((ct >> 8) & 0xFF);
+                ent[58] = (uint8_t)((ct >> 16) & 0xFF);
+                ent[59] = (uint8_t)((ct >> 24) & 0xFF);
+                ent[60] = (uint8_t)((ct >> 32) & 0xFF);
+                ent[61] = (uint8_t)((ct >> 40) & 0xFF);
+                ent[62] = (uint8_t)((ct >> 48) & 0xFF);
+                ent[63] = (uint8_t)((ct >> 56) & 0xFF);
+            }
             count++;
         }
         seL4_SetMR(1, (seL4_Word)(count * 64));

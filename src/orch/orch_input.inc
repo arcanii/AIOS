@@ -4,32 +4,7 @@
  */
 
 /* ── Serial input handler ────────────────────────────── */
-static char rx_getc_blocking(void) {
-    ring_buf_t *rx = (ring_buf_t *)rx_buf;
-    char c;
-    while (!ring_get(rx, &c)) {
-        asm volatile("wfe");
-    }
-    /* Ctrl-C: kill foreground process */
-    if (c == 0x03 && orch_state == EXEC_RUNNING) {
-        for (int s = 0; s < NUM_SANDBOXES; s++) {
-            if (slot_in_use(s) && slot_proc(s)->foreground) {
-                microkit_pd_stop(s);
-                microkit_pd_restart(s, SBX_ENTRY_POINT);
-                ser_puts("^C\n");
-                sched_release_slot(&sched, s);
-        try_load_queued(s);
-                orch_state = RUNNING;
-                print_prompt();
-                /* Return EOF-like value */
-                return (char)-1;
-            }
-        }
-    }
-    return c;
-}
-
-
+static void handle_exec_done(int slot);
 /* ── Login input handler ───────────────────────────── */
 static char login_buf[64];
 static int  login_pos = 0;
@@ -185,23 +160,29 @@ static void handle_serial_input(void) {
 
 /* ── Handle sandbox completion ───────────────────────── */
 static void handle_exec_done(int slot) {
+    if (!slot_in_use(slot)) return;  /* already cleaned up */
+    sched_proc_t *proc = slot_proc(slot);
+    if (!proc) return;
     uintptr_t sio = sbx_io[slot];
-    (void)RD32(sio, SBX_STATUS);
+    WR32(sio, SBX_STATUS, SBX_ST_IDLE);  /* clear status immediately to prevent re-entry */
     uint32_t exit_code = RD32(sio, SBX_EXIT_CODE);
     uint32_t out_len = RD32(sio, SBX_OUTPUT_LEN);
+    int is_fg = proc->foreground;
 
-    if (out_len > 0) {
-        ser_puts("--- program output ---\n");
-        ser_flush();
-        volatile char *out = (volatile char *)(sio + SBX_OUTPUT);
-        for (uint32_t i = 0; i < out_len && i < 4096; i++) ser_putc(out[i]);
-        ser_puts("\n--- end output ---\n");
+    if (is_fg) {
+        if (out_len > 0) {
+            ser_puts("--- program output ---\n");
+            ser_flush();
+            volatile char *out = (volatile char *)(sio + SBX_OUTPUT);
+            for (uint32_t i = 0; i < out_len && i < 4096; i++) ser_putc(out[i]);
+            ser_puts("\n--- end output ---\n");
+            ser_flush();
+        }
+        ser_puts("  Exit code: ");
+        ser_put_dec(exit_code);
+        ser_puts("\n");
         ser_flush();
     }
-    ser_puts("  Exit code: ");
-    ser_put_dec(exit_code);
-    ser_puts("\n");
-    ser_flush();
     if (slot_proc(slot)->foreground) {
         if (slot == session_shell_slot) {
             /* Login shell exited — respawn login prompt */
@@ -234,6 +215,9 @@ static void handle_exec_done(int slot) {
             break;
         }
     }
+    /* Stop and restart sandbox PD so it re-enters notified() cleanly */
+    microkit_pd_stop(slot);
+    microkit_pd_restart(slot, SBX_ENTRY_POINT);
     sched_exit(&sched, slot, (int)exit_code);
     try_load_queued(slot);
 }

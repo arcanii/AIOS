@@ -12,6 +12,7 @@
 #include "aios/version.h"
 #include <kernel/gen_config.h>
 #include "aios/ring.h"
+#include "arch/aarch64/timer.h"
 
 
 

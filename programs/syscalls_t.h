@@ -66,6 +66,7 @@ typedef struct {
     int   (*fcntl)(int fd, int cmd, int arg);
     int   (*kill_proc)(int pid, int sig);
     int   (*getprocs)(void *buf, int max_entries);
+    unsigned long long (*timer_freq)(void);
 
     /* Sockets */
     int   (*socket)(int domain, int type, int protocol);

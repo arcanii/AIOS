@@ -82,6 +82,7 @@ typedef struct {
     int   (*fcntl)(int fd, int cmd, int arg);
     int   (*kill_proc)(int pid, int sig);
     int   (*getprocs)(void *buf, int max_entries);
+    unsigned long long (*timer_freq)(void);
     /* Sockets */
     int   (*socket)(int domain, int type, int protocol);
     int   (*connect)(int sockfd, const void *addr, int addrlen);
@@ -125,7 +126,7 @@ typedef struct {
     unsigned char foreground;
     unsigned char _reserved[3];
     char name[32];
-    unsigned char _pad[8];
+    unsigned long long cpu_time;  /* arch timer ticks */
 } proc_info_t;
 
 #define PROC_STATE_FREE    0
@@ -136,6 +137,7 @@ typedef struct {
 #define PROC_STATE_ZOMBIE  5
 
 #define getprocs(b, m)    sys->getprocs(b, m)
+#define get_timer_freq()  sys->timer_freq()
 
 /* Access mode constants */
 #define F_OK 0

@@ -290,6 +290,7 @@ static void cmd_help(void) {
     print("  cmd1 | cmd2     - pipe output of cmd1 to cmd2\n");
     print("  source <file>   - run shell script\n");
     print("  ps                - list processes\n");
+  print("  top               - live process monitor\n");
     print("  jobs            - list background jobs\n");
     print("  fg [%n]         - bring job to foreground\n");
     print("  sh <file>       - run shell script\n");
@@ -855,6 +856,150 @@ static void cmd_kill(const char *arg) {
     }
 }
 
+
+static void cmd_top(void) {
+    proc_info_t procs[32];
+    proc_info_t prev[32];
+    unsigned long long freq = get_timer_freq();
+    int prev_count = 0;
+
+    print("\033[2J");  /* clear screen */
+    print("top - press q to quit, any key to refresh\n\n");
+
+    for (;;) {
+        int count = getprocs(procs, 32);
+
+        /* Calculate total CPU delta */
+        unsigned long long total_delta = 0;
+        for (int i = 0; i < count; i++) {
+            unsigned long long delta = procs[i].cpu_time;
+            /* Find previous sample for this PID */
+            for (int j = 0; j < prev_count; j++) {
+                if (prev[j].pid == procs[i].pid) {
+                    delta = procs[i].cpu_time - prev[j].cpu_time;
+                    break;
+                }
+            }
+            total_delta += delta;
+        }
+        if (total_delta == 0) total_delta = 1;  /* avoid div by zero */
+
+        /* Header */
+        print("\033[H");  /* cursor home */
+        print("\033[2J");  /* clear screen */
+        print("AIOS top - ");
+        print_dec((unsigned long)count);
+        print(" processes, ");
+        print_dec((unsigned long)freq / 1000000);
+        print(" MHz timer\n");
+        print("\n");
+        print("  PID  PPID  UID  SLOT  STATE    CPU%   TIME     NAME\n");
+        print("  ---  ----  ---  ----  -----  ------  --------  ----\n");
+
+        for (int i = 0; i < count; i++) {
+            /* Find previous entry for CPU delta */
+            unsigned long long delta = procs[i].cpu_time;
+            for (int j = 0; j < prev_count; j++) {
+                if (prev[j].pid == procs[i].pid) {
+                    delta = procs[i].cpu_time - prev[j].cpu_time;
+                    break;
+                }
+            }
+
+            /* CPU percentage (delta / total_delta * 100) */
+            unsigned long pct_x10 = 0;
+            if (total_delta > 0)
+                pct_x10 = (unsigned long)((delta * 1000) / total_delta);
+
+            /* Total CPU time in ms */
+            unsigned long long cpu_ms = 0;
+            if (freq > 0)
+                cpu_ms = (procs[i].cpu_time * 1000) / freq;
+            unsigned long secs = (unsigned long)(cpu_ms / 1000);
+            unsigned long ms = (unsigned long)(cpu_ms % 1000);
+
+            /* PID (5 wide) */
+            if (procs[i].pid < 10) print("    ");
+            else if (procs[i].pid < 100) print("   ");
+            else if (procs[i].pid < 1000) print("  ");
+            else print(" ");
+            print_dec((unsigned long)procs[i].pid);
+
+            /* PPID (5 wide) */
+            if (procs[i].parent_pid < 10) print("     ");
+            else if (procs[i].parent_pid < 100) print("    ");
+            else if (procs[i].parent_pid < 1000) print("   ");
+            else print("  ");
+            print_dec((unsigned long)procs[i].parent_pid);
+
+            /* UID (5 wide) */
+            if (procs[i].uid < 10) print("    ");
+            else if (procs[i].uid < 100) print("   ");
+            else if (procs[i].uid < 1000) print("  ");
+            else print(" ");
+            print_dec((unsigned long)procs[i].uid);
+
+            /* SLOT (5 wide) */
+            if (procs[i].slot < 0) {
+                print("     -");
+            } else {
+                if (procs[i].slot < 10) print("     ");
+                else print("    ");
+                print_dec((unsigned long)procs[i].slot);
+            }
+
+            /* STATE (7 wide) */
+            switch (procs[i].state) {
+                case 1: print("  QUEUE"); break;
+                case 2: print("  READY"); break;
+                case 3: print("  RUN  "); break;
+                case 4: print("  BLOCK"); break;
+                case 5: print("  ZOMBI"); break;
+                default: print("  ?????"); break;
+            }
+
+            /* CPU% (7 wide, one decimal) */
+            print("  ");
+            if (pct_x10 < 100) print(" ");
+            if (pct_x10 < 10) print(" ");
+            print_dec(pct_x10 / 10);
+            print(".");
+            print_dec(pct_x10 % 10);
+            print("%");
+
+            /* TIME (9 wide: SSS.mmm) */
+            print("  ");
+            if (secs < 100) print(" ");
+            if (secs < 10) print(" ");
+            print_dec(secs);
+            print(".");
+            if (ms < 100) print("0");
+            if (ms < 10) print("0");
+            print_dec(ms);
+
+            /* NAME */
+            print("  ");
+            print(procs[i].name);
+            print("\n");
+        }
+
+        print("\n[q=quit, any key=refresh]");
+
+        /* Save current as previous */
+        for (int i = 0; i < count && i < 32; i++) {
+            unsigned char *d = (unsigned char *)&prev[i];
+            unsigned char *sr = (unsigned char *)&procs[i];
+            for (int b = 0; b < (int)sizeof(proc_info_t); b++) d[b] = sr[b];
+        }
+        prev_count = count;
+
+        /* Wait for keypress */
+        int ch = sys->getc();
+        if (ch == 'q' || ch == 'Q') break;
+    }
+    print("\033[2J\033[H");  /* clear screen */
+}
+
 static void cmd_ps(void) {
     print("  PID  PPID  UID  SLOT  STATE  FG  NAME\n");
     proc_info_t procs[32];
@@ -1001,6 +1146,7 @@ static void dispatch(void) {
     else if (str_eq(line, "clear"))     cmd_clear();
     else if (str_eq(line, "exit"))      { shell_exit = 1; }
     else if (str_eq(line, "ps"))        cmd_ps();
+    else if (str_eq(line, "top"))       cmd_top();
     else if (starts_with(line, "kill ")) cmd_kill(line + 5);
     else if (str_eq(line, "jobs"))      cmd_jobs();
     else if (str_eq(line, "env"))       {
