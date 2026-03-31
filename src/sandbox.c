@@ -15,6 +15,7 @@
 #include <microkit.h>
 #include <aios/channels.h>
 #include <aios/ipc.h>
+#include <aios/proc_state.h>
 
 static microkit_channel my_channel;
 #include "sys/syscall.h"
@@ -29,7 +30,13 @@ uintptr_t sandbox_code;
 /* ── Minimal libc ──────────────────────────────────── */
 
 #define HEAP_SIZE  (16 * 1024 * 1024)  /* 128 MiB */
-static uint32_t heap_used = 0;
+static uint32_t heap_used = PROC_STATE_RESERVE;  /* Reserve proc_state area */
+static uintptr_t stack_top = 0;  /* SP at run_program entry */
+
+/* Stack bounds for fork — recorded at main() entry */
+#define FORK_STACK_SAVE_MAX (1024)  /* max stack to save */
+/* Stack save area: stored at end of heap, before exec backup */
+#define FORK_STACK_OFFSET  (HEAP_SIZE - FORK_STACK_SAVE_MAX - 128 * 1024)
 
 /* Per-fd file position tracking */
 #define MAX_FDS 16
@@ -51,7 +58,7 @@ static void sbx_free(void *ptr) {
 }
 
 static void sbx_heap_reset(void) {
-    heap_used = 0;
+    heap_used = PROC_STATE_RESERVE;  /* Reserve space for proc_state_t + stack snapshot */
 }
 
 static void *sbx_memcpy(void *dst, const void *src, unsigned long n) {
@@ -102,8 +109,29 @@ static void sbx_putc(char c) {
 }
 
 static uint32_t puts_count = 0;
+static volatile uint32_t suspend_pending = 0;
+
+/* Forward declarations for suspend/resume */
+static int save_and_yield(int syscall_result);
+#define SUSPEND_CHECK(result) do { \
+    if (suspend_pending || RD32(sandbox_io, SBX_SUSPEND_FLAG)) { \
+        suspend_pending = 0; \
+        WR32(sandbox_io, SBX_SUSPEND_FLAG, 0); \
+        return save_and_yield(result); \
+    } \
+} while(0)
+
+static void sbx_putc_direct(char c);
+
 static void sbx_puts(const char *s) {
+    if (!s) return;
     puts_count++;
+    /* Suspension checkpoint — puts is called frequently */
+    if (suspend_pending || RD32(sandbox_io, SBX_SUSPEND_FLAG)) {
+        suspend_pending = 0;
+        WR32(sandbox_io, SBX_SUSPEND_FLAG, 0);
+        save_and_yield(0);
+    }
     while (*s) sbx_putc(*s++);
 }
 
@@ -159,6 +187,7 @@ static int sbx_read(int fd, void *buf, unsigned long len) {
         for (int i = 0; i < got; i++) d[i] = src[i];
         if (fd >= 0 && fd < MAX_FDS) fd_pos[fd] += (uint32_t)got;
     }
+    SUSPEND_CHECK(got);
     return got;
 }
 
@@ -310,7 +339,9 @@ static int sbx_chdir(const char *path) {
 }
 
 static int sbx_getpid(void) {
-    return 1;
+    seL4_SetMR(0, SYS_GETPID);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
+    return (int)seL4_GetMR(0);
 }
 
 /* ── Interactive I/O (PPC, immediate) ────────────────── */
@@ -336,6 +367,138 @@ static void sbx_putc_direct(char c) {
     microkit_ppcall(my_channel, microkit_msginfo_new(0, 2));
 }
 
+static __attribute__((unused)) void sbx_debug(const char *msg) {
+    while (*msg) { sbx_putc_direct(*msg); msg++; }
+}
+
+/* ── Process state save/restore for suspend/resume/fork ──── */
+
+static void save_process_state(int syscall_result) {
+    proc_state_t *ps = (proc_state_t *)sandbox_heap;
+
+    ps->magic = PROC_STATE_MAGIC;
+    ps->version = 1;
+
+    /* Save sandbox globals */
+    ps->heap_used = heap_used;
+    ps->out_len = out_len;
+    ps->puts_count = puts_count;
+    ps->stack_top = stack_top;
+    for (int i = 0; i < MAX_PROC_FDS; i++) {
+        ps->fd_pos[i] = fd_pos[i];
+        ps->fd_size[i] = fd_size[i];
+    }
+
+    ps->pending_result = syscall_result;
+    ps->is_valid = 1;
+}
+
+static void save_stack_snapshot(proc_state_t *ps) {
+    uintptr_t cur_sp = ps->saved_sp;  /* Set by caller from ctx.sp */
+    uint32_t stack_size = 0;
+    if (stack_top > cur_sp) {
+        stack_size = (uint32_t)(stack_top - cur_sp);
+    }
+    if (stack_size > (uint32_t)PROC_STACK_MAX) {
+        stack_size = (uint32_t)PROC_STACK_MAX;
+    }
+    ps->saved_stack_size = stack_size;
+
+    /* Copy stack data right after the struct */
+    uint8_t *dst = (uint8_t *)ps + sizeof(proc_state_t);
+    uint8_t *src = (uint8_t *)cur_sp;
+    for (uint32_t i = 0; i < stack_size; i++)
+        dst[i] = src[i];
+}
+
+static void __attribute__((unused)) restore_process_state(void) {
+    proc_state_t *ps = (proc_state_t *)sandbox_heap;
+
+    if (ps->magic != PROC_STATE_MAGIC || !ps->is_valid)
+        return;
+
+    /* Restore sandbox globals */
+    heap_used = ps->heap_used;
+    out_len = ps->out_len;
+    puts_count = ps->puts_count;
+    stack_top = ps->stack_top;
+    for (int i = 0; i < MAX_PROC_FDS; i++) {
+        fd_pos[i] = ps->fd_pos[i];
+        fd_size[i] = ps->fd_size[i];
+    }
+
+    /* Restore stack snapshot */
+    if (ps->saved_stack_size > 0 && ps->saved_sp != 0) {
+        uint8_t *src = (uint8_t *)ps + sizeof(proc_state_t);
+        uint8_t *dst = (uint8_t *)ps->saved_sp;
+        for (uint32_t i = 0; i < ps->saved_stack_size; i++)
+            dst[i] = src[i];
+    }
+}
+
+/* Save context + state, tell orchestrator, never returns (until resumed) */
+static int save_and_yield(int syscall_result) {
+    proc_state_t *ps = (proc_state_t *)sandbox_heap;
+
+    /* Save CPU context — arch_save_context returns 0 on save, 1 on resume */
+    arch_context_t *ctx = (arch_context_t *)ps->ctx;
+    int resumed = arch_save_context(ctx);
+
+    if (resumed) {
+        /* We were resumed on this (or another) slot.
+         * Stack was already restored by the RESUME handler in notified().
+         * Restore globals only. */
+        proc_state_t *rps = (proc_state_t *)sandbox_heap;
+        heap_used    = rps->heap_used;
+        out_len      = rps->out_len;
+        puts_count   = rps->puts_count;
+        stack_top    = rps->stack_top;
+        for (int i = 0; i < MAX_PROC_FDS; i++) {
+            fd_pos[i]  = rps->fd_pos[i];
+            fd_size[i] = rps->fd_size[i];
+        }
+        suspend_pending = 0;
+        sbx_putc_direct('P');
+        sbx_putc_direct('R');
+        sbx_putc_direct('=');
+        int pr = rps->pending_result;
+        sbx_putc_direct('0' + (pr & 0xf));
+        sbx_putc_direct(10);
+        return pr;
+    }
+
+    /* Save globals and stack */
+    save_process_state(syscall_result);
+    ps->saved_sp = ctx->sp;
+    save_stack_snapshot(ps);
+    ps->suspended = 1;
+
+    /* Flush any buffered output before suspending */
+    if (out_len > 0) {
+        volatile char *out = (volatile char *)(sandbox_io + SBX_OUTPUT);
+        for (uint32_t oi = 0; oi < out_len; oi++)
+            sbx_putc_direct(out[oi]);
+        out_len = 0;
+        WR32(sandbox_io, SBX_OUTPUT_LEN, 0);
+    }
+
+    /* Tell orchestrator we are suspended */
+    WR32(sandbox_io, SBX_STATUS, SBX_ST_SUSPENDED);
+    seL4_SetMR(0, SYS_SUSPENDED);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
+
+    /* Orchestrator will copy our heap to swap, then later restore us.
+     * When restored, arch_restore_context jumps back to arch_save_context
+     * which returns 1, hitting the 'resumed' path above. */
+
+    /* Should not reach here in suspend case, but might in fork */
+    return syscall_result;
+}
+
+
+
+
+
 /* ── Syscall table (passed to user programs) ───────── */
 /*
  * User programs receive a pointer to this struct as their argument.
@@ -345,11 +508,94 @@ static void sbx_putc_direct(char c) {
 
 /* ── Process spawn/wait syscalls ─────────────────────── */
 
-static int sbx_fork(void) {
-    seL4_SetMR(0, 75);  /* SYS_FORK */
-    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
-    return (int)(int32_t)seL4_GetMR(0);
+
+/* Exit current process — sends SYS_EXIT to orchestrator */
+static void sbx_exit_proc(int status) {
+    /* Flush any buffered output */
+    if (out_len > 0) {
+        volatile char *out = (volatile char *)(sandbox_io + SBX_OUTPUT);
+        for (uint32_t oi = 0; oi < out_len; oi++)
+            sbx_putc_direct(out[oi]);
+        out_len = 0;
+        WR32(sandbox_io, SBX_OUTPUT_LEN, 0);
+    }
+
+    WR32(sandbox_io, SBX_EXIT_CODE, (uint32_t)status);
+    WR32(sandbox_io, SBX_STATUS, SBX_ST_DONE);
+
+    /* Tell orchestrator we are exiting */
+    seL4_SetMR(0, SYS_EXIT);
+    seL4_SetMR(1, (uint64_t)(uint32_t)status);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 2));
+
+    /* Notify orchestrator that we are done (triggers handle_exec_done) */
+    microkit_notify(my_channel);
+
+    /* Halt — orchestrator will restart this PD when needed */
+    while (1) {
+        seL4_Yield();
+    }
 }
+
+static int sbx_fork(void) {
+    /*
+     * Child-inherits-slot fork:
+     * 1. Save our full process state to proc_state_t at heap[0]
+     * 2. PPC to orchestrator (SYS_FORK)
+     * 3. Orchestrator copies our heap+code to swap (that's the parent image)
+     * 4. Orchestrator returns 0 — we are now the child
+     * 5. Parent will be resumed later from swap via SBX_CMD_RESUME
+     *
+     * When the parent is eventually resumed, arch_restore_context
+     * jumps into save_process_state's arch_save_context which returns 1,
+     * and save_and_yield returns the child PID (set by orchestrator).
+     */
+
+    proc_state_t *ps = (proc_state_t *)sandbox_heap;
+
+    /* Save CPU context */
+    arch_context_t *ctx = (arch_context_t *)ps->ctx;
+    int resumed = arch_save_context(ctx);
+
+    if (resumed) {
+        proc_state_t *rps = (proc_state_t *)sandbox_heap;
+        heap_used    = rps->heap_used;
+        out_len      = rps->out_len;
+        puts_count   = rps->puts_count;
+        stack_top    = rps->stack_top;
+        for (int i = 0; i < MAX_PROC_FDS; i++) {
+            fd_pos[i]  = rps->fd_pos[i];
+            fd_size[i] = rps->fd_size[i];
+        }
+        suspend_pending = 0;
+        out_len = 0;  /* Don't replay pre-fork buffered output */
+        int pr = rps->pending_result;
+
+        /* Dump current SP, FP, LR and stack contents */
+        sbx_putc_direct(10);
+        return pr;
+    }
+
+    /* First time through — save everything */
+    save_process_state(0);  /* result=0 placeholder, orchestrator will set child PID */
+    ps->saved_sp = ctx->sp;
+    save_stack_snapshot(ps);
+    ps->suspended = 0;  /* This is a fork, not a suspend */
+
+    /* PPC to orchestrator — it will:
+     * 1. Copy our heap (including proc_state) to swap
+     * 2. Set parent's pending_result = child_pid in the swap copy
+     * 3. Reassign this slot to the child
+     * 4. Return 0 to us (we are the child now)
+     */
+    seL4_SetMR(0, SYS_FORK);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
+
+    /* We are the child — orchestrator returned 0 */
+    int child_result = (int)seL4_GetMR(0);
+    return child_result;
+}
+
 
 static int sbx_spawn(const char *path, const char *args) {
     /* Copy path to sio+0x200 */
@@ -520,82 +766,11 @@ static long sbx_time(void) {
     return (long)seL4_GetMR(0);
 }
 
-typedef struct {
-    /* Console I/O */
-    void (*puts)(const char *s);
-    void (*putc)(char c);
-    void (*put_dec)(unsigned int n);
-    void (*put_hex)(unsigned int n);
-
-    /* Memory */
-    void *(*malloc)(unsigned long size);
-    void  (*free)(void *ptr);
-    void *(*memcpy)(void *dst, const void *src, unsigned long n);
-    void *(*memset)(void *dst, int c, unsigned long n);
-
-    /* Strings */
-    int   (*strlen)(const char *s);
-    int   (*strcmp)(const char *a, const char *b);
-    char *(*strcpy)(char *dst, const char *src);
-    char *(*strncpy)(char *dst, const char *src, unsigned long n);
-    /* File I/O */
-    int   (*open)(const char *path);
-    int   (*open_flags)(const char *path, int flags);
-    int   (*read)(int fd, void *buf, unsigned long len);
-    int   (*write_file)(int fd, const void *buf, unsigned long len);
-    int   (*close)(int fd);
-    int   (*unlink)(const char *path);
-    int   (*mkdir)(const char *path);
-    int   (*rmdir)(const char *path);
-    int   (*rename)(const char *oldpath, const char *newpath);
-    int   (*exec)(const char *path, const char *args);
-    int   (*readdir)(void *buf, unsigned long max_entries);
-    int   (*filesize)(void);
-    /* Extended POSIX */
-    int   (*stat_file)(const char *path, unsigned long *size_out);
-    int   (*stat_ex)(unsigned int *uid, unsigned int *gid, unsigned int *mode, unsigned int *mtime);
-    int   (*lseek)(int fd, long offset, int whence);
-    int   (*getcwd)(char *buf, unsigned long size);
-    int   (*chdir)(const char *path);
-    int   (*getpid)(void);
-    /* Args */
-    const char *args;
-    /* Interactive I/O */
-    int   (*getc)(void);
-    void  (*puts_direct)(const char *s);
-    void  (*putc_direct)(char c);
-    int   (*sleep)(unsigned int seconds);
-    /* POSIX extensions */
-    int   (*getuid)(void);
-    int   (*getgid)(void);
-    int   (*geteuid)(void);
-    int   (*getegid)(void);
-    int   (*getppid)(void);
-    int   (*access)(const char *path, int amode);
-    int   (*umask)(int mask);
-    int   (*dup)(int oldfd);
-    int   (*dup2)(int oldfd, int newfd);
-    int   (*pipe)(int pipefd[2]);
-    long  (*time)(void);
-    /* Process management */
-    int   (*spawn)(const char *path, const char *args);
-    int   (*waitpid)(int pid, int *status);
-    int   (*fork)(void);
-    int   (*chmod)(const char *path, unsigned int mode);
-    int   (*chown)(const char *path, unsigned int uid, unsigned int gid);
-    int   (*ftruncate)(int fd, unsigned long length);
-    int   (*fcntl)(int fd, int cmd, int arg);
-    int   (*kill_proc)(int pid, int sig);
-    /* Sockets */
-    int   (*socket)(int domain, int type, int protocol);
-    int   (*connect)(int sockfd, const void *addr, int addrlen);
-    int   (*bind)(int sockfd, const void *addr, int addrlen);
-    int   (*listen)(int sockfd, int backlog);
-    int   (*accept)(int sockfd, void *addr, int *addrlen);
-    int   (*send)(int sockfd, const void *buf, unsigned long len, int flags);
-    int   (*recv)(int sockfd, void *buf, unsigned long len, int flags);
-} aios_syscalls_t;
+/* Import shared syscall interface — single source of truth */
+#define AIOS_NO_SYS_GLOBAL
+#include <aios/aios.h>
 typedef int (*program_entry_t)(aios_syscalls_t *sys);
+
 
 static aios_syscalls_t syscalls;
 
@@ -813,6 +988,7 @@ static void init_syscalls(void) {
     syscalls.spawn      = sbx_spawn;
     syscalls.waitpid    = sbx_waitpid;
     syscalls.fork       = sbx_fork;
+    syscalls.exit_proc  = sbx_exit_proc;
 
     syscalls.chmod      = sbx_chmod;
     syscalls.chown      = sbx_chown;
@@ -831,6 +1007,85 @@ static void init_syscalls(void) {
 /* ── Execute code ──────────────────────────────────── */
 
 static void run_program(void) {
+    /* Record stack top on first call */
+    /* stack_top already set in init() */
+
+
+    /* Check for fork resume */
+    uint32_t fork_flag = RD32(sandbox_io, SBX_FORK_FLAG);
+    /* Check for suspend/resume (proc_state in heap) */
+    proc_state_t *ps = (proc_state_t *)sandbox_heap;
+    if (ps->magic == PROC_STATE_MAGIC && ps->is_valid) {
+            WR32(sandbox_io, SBX_STATUS, SBX_ST_RUNNING);
+
+        /* Flush code icache */
+        uint32_t code_size = RD32(sandbox_io, SBX_CODE_SIZE);
+        arch_flush_code_region(sandbox_code, code_size + 64 * 1024);
+
+        /* Restore globals */
+        heap_used    = ps->heap_used;
+        out_len      = ps->out_len;
+        puts_count   = ps->puts_count;
+        stack_top    = ps->stack_top;
+        for (int fi = 0; fi < MAX_PROC_FDS; fi++) {
+            fd_pos[fi]  = ps->fd_pos[fi];
+            fd_size[fi] = ps->fd_size[fi];
+        }
+        suspend_pending = 0;
+        out_len = 0;  /* Clear output buffer to avoid replaying pre-fork output */
+
+        /* Copy saved stack snapshot back to its original location.
+         * This is safe because we are running on the Microkit HANDLER stack,
+         * which is separate from the execution stack being restored. */
+        uint8_t *snap_src = (uint8_t *)((uintptr_t)ps + sizeof(proc_state_t));
+        uint8_t *snap_dst = (uint8_t *)ps->saved_sp;
+        for (uint32_t si = 0; si < ps->saved_stack_size; si++)
+            snap_dst[si] = snap_src[si];
+
+        /* Clear the magic so we don't re-trigger on next run */
+        ps->magic = 0;
+        ps->is_valid = 0;
+
+    
+        /* Restore CPU context — jumps into sbx_fork() on the execution stack */
+        arch_context_t *ctx = (arch_context_t *)ps->ctx;
+        arch_restore_context(ctx);
+        /* Never reached */
+        return;
+    }
+
+    if (fork_flag) {
+        /* This is a forked child — code and heap already copied by orchestrator */
+        WR32(sandbox_io, SBX_STATUS, SBX_ST_RUNNING);
+        out_len = 0;
+
+        /* Restore sandbox stack from heap copy FIRST (before context restore) */
+        uint8_t *stack_save = (uint8_t *)(sandbox_heap + FORK_STACK_OFFSET);
+        uint32_t save_size = *(uint32_t *)stack_save;
+        uintptr_t save_sp = *(uintptr_t *)(stack_save + 4);
+        uint8_t *stack_data = stack_save + 16;
+        uint8_t *dst = (uint8_t *)save_sp;
+        for (uint32_t i = 0; i < save_size; i++)
+            dst[i] = stack_data[i];
+
+        /* Read context from IO page */
+        arch_context_t fork_ctx;
+        volatile uint8_t *ctx_src = (volatile uint8_t *)(sandbox_io + SBX_FORK_CTX);
+        uint8_t *ctx_dst = (uint8_t *)&fork_ctx;
+        for (int i = 0; i < (int)sizeof(arch_context_t); i++)
+            ctx_dst[i] = ctx_src[i];
+
+        /* Flush code region icache */
+        uint32_t code_size = RD32(sandbox_io, SBX_CODE_SIZE);
+        uint32_t bss_extra = 64 * 1024;
+        arch_flush_code_region(sandbox_code, code_size + bss_extra);
+
+            /* Jump into the forked context — returns into sbx_fork() as child */
+        arch_restore_context(&fork_ctx);
+        /* Never reached */
+        return;
+    }
+
     uint32_t code_size = RD32(sandbox_io, SBX_CODE_SIZE);
     if (code_size == 0 || code_size > (16 * 1024 * 1024)) {
         WR32(sandbox_io, SBX_STATUS, SBX_ST_ERROR);
@@ -886,6 +1141,10 @@ void init(void) {
         my_channel = CH_SBX4 + (sbx_id - 4);     /* 14, 15, 16, 17 */
     init_syscalls();
     /* boot message silenced to avoid UART interleave */
+    /* Record stack top at earliest point — covers notified() and run_program() frames */
+    if (stack_top == 0) {
+        __asm__ volatile("mov %0, sp" : "=r"(stack_top));
+    }
     WR32(sandbox_io, SBX_STATUS, SBX_ST_IDLE);
 }
 
@@ -900,6 +1159,26 @@ void notified(microkit_channel ch) {
         case SBX_CMD_HALT:
             microkit_dbg_puts("SBX: halt\n");
             break;
+        case SBX_CMD_SUSPEND:
+            /* Orchestrator wants us to suspend — set flag, will be caught at next syscall */
+            suspend_pending = 1;
+            WR32(sandbox_io, SBX_SUSPEND_FLAG, 1);
+            break;
+        case SBX_CMD_RESUME: {
+            /* Restore a previously suspended process.
+             * The orchestrator has already copied code+heap from swap.
+             * proc_state_t at heap[0] has the saved context.
+             * 
+             * We delegate to run_program() which runs on the HANDLER stack.
+             * run_program() detects the resume via proc_state magic,
+             * restores globals, then calls arch_restore_context() which
+             * switches SP to the EXECUTION stack (saved in proc_state).
+             * This avoids the handler stack / execution stack overlap problem.
+             */
+            run_program();
+            microkit_notify(my_channel);
+            break;
+        }
         default:
             break;
         }

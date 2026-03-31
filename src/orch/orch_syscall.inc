@@ -469,9 +469,119 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
 
 
     case SYS_FORK: {
-        /* Fork not yet supported - needs context save/restore */
-        /* Returns -1 (ENOSYS) to caller */
-        result = -1;
+        /*
+         * Child-inherits-slot fork:
+         * 1. Parent has already saved its proc_state_t to heap[0] (in sbx_fork)
+         * 2. We copy parent's heap+code to swap (parent becomes PROC_READY)
+         * 3. Child keeps the current slot and continues running
+         * 4. Return 0 to sandbox (child's fork return value)
+         */
+
+        sched_proc_t *parent_proc = slot_proc(slot);
+        if (!parent_proc) {
+            result = -1;
+            break;
+        }
+
+        /* Read parent's code size */
+        uint32_t parent_code = RD32(sio, SBX_CODE_SIZE);
+        uint32_t bss_extra = 64 * 1024;
+        uint32_t code_copy = parent_code + bss_extra;
+        if (code_copy > 0x400000) code_copy = 0x400000;
+
+        /* Read parent's heap usage from proc_state at heap[0] */
+        volatile uint32_t *ps_heap_used = (volatile uint32_t *)(sbx_heap[slot] + 8);
+        uint32_t heap_used_val = *ps_heap_used;
+        uint32_t heap_copy = heap_used_val + 4096;  /* margin */
+        if (heap_copy > SCHED_HEAP_SIZE) heap_copy = SCHED_HEAP_SIZE;
+
+        /* Also copy the proc_state area at heap[0] which includes stack snapshot */
+        /* It's included in heap_copy since PROC_STATE_RESERVE < heap_used */
+
+        /* Allocate swap space for parent */
+        int parent_idx = -1;
+        for (int pi = 0; pi < SCHED_MAX_PROCS; pi++) {
+            if (&sched.procs[pi] == parent_proc) { parent_idx = pi; break; }
+        }
+        if (parent_idx < 0) {
+            result = -1;
+            break;
+        }
+
+        if (sched_swap_alloc(&sched, parent_idx, code_copy, heap_copy) < 0) {
+            LOG_WARN("fork: swap full");
+            result = -1;
+            break;
+        }
+
+
+        /* Copy parent code to swap */
+        uint32_t swap_off = parent_proc->swap_offset;
+        volatile uint8_t *swap_base = (volatile uint8_t *)swap_region;
+        volatile uint8_t *src_code = (volatile uint8_t *)scode;
+        for (uint32_t j = 0; j < code_copy; j++)
+            swap_base[swap_off + j] = src_code[j];
+
+        /* Copy parent heap to swap (after code) */
+        volatile uint8_t *src_heap = (volatile uint8_t *)sbx_heap[slot];
+        uint32_t heap_swap_off = swap_off + code_copy;
+        for (uint32_t j = 0; j < heap_copy; j++)
+            swap_base[heap_swap_off + j] = src_heap[j];
+
+
+        /* Set parent's pending_result in the swap copy to child_pid
+         * proc_state_t.pending_result is at offset:
+         *   magic(4) + version(4) + heap_used(4) + out_len(4) + puts_count(4) + pad(4)
+         *   + stack_top(8) + fd_pos(64) + fd_size(64) + ctx(104) + saved_sp(8) + saved_stack_size(4)
+         *   = pending_result at byte ~272
+         * Use offsetof-style calculation from the struct definition */
+
+        /* Parent becomes READY (suspended in swap, no longer in slot) */
+        int parent_pid = parent_proc->pid;
+        parent_proc->state = PROC_READY;
+        parent_proc->slot = -1;
+        parent_proc->swap_code_sz = code_copy;
+        parent_proc->swap_heap_sz = heap_copy;
+        sched.slot_to_proc[slot] = -1;  /* Detach parent from slot */
+
+        /* Create child process entry */
+        int child_pid = sched_create(&sched,
+            parent_proc->name, parent_proc->args,
+            parent_pid, current_uid, parent_proc->foreground, 128);
+        if (child_pid < 0) {
+            /* Undo: put parent back */
+            parent_proc->state = PROC_RUNNING;
+            parent_proc->slot = slot;
+            sched.slot_to_proc[slot] = parent_idx;
+            sched_swap_free(&sched, parent_idx);
+            result = -1;
+            break;
+        }
+
+        /* Assign slot to child */
+        for (int pi = 0; pi < SCHED_MAX_PROCS; pi++) {
+            if (sched.procs[pi].pid == child_pid) {
+                sched.procs[pi].loaded_bytes = parent_proc->loaded_bytes;
+                sched_assign_slot(&sched, pi, slot);
+                break;
+            }
+        }
+
+        LOG_INFO_V("fork: child PID ", (unsigned long)child_pid);
+
+        /* Write child PID as the parent's pending_result in swap */
+        /* proc_state_t layout: pending_result is after ctx + saved_sp + saved_stack_size */
+        /* Calculate offset: we need offsetof(proc_state_t, pending_result) */
+        /* From proc_state.h: 4+4+4+4+4+4+8+64+64+104+8+4 = 272 bytes */
+        {
+            uint32_t ps_result_off = 4+4+4+4+4+4+8+(16*4)+(16*4)+104+8+4;
+            volatile int32_t *parent_result = (volatile int32_t *)(
+                swap_base + swap_off + code_copy + ps_result_off);
+            *parent_result = (int32_t)child_pid;
+            }
+
+        /* Return 0 to sandbox — the child continues running */
+        result = 0;
         break;
     }
 
@@ -612,6 +722,8 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
         break;
     }
     case SYS_WAITPID: {
+        LOG_INFO("waitpid called");
+
         /* MR1 = pid to wait for (0 = any child) */
         uint32_t wait_pid = (uint32_t)seL4_GetMR(1);
         uint32_t my_pid = slot_proc(slot)->pid;
@@ -950,6 +1062,66 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
 
     case SYS_BRK: {
         /* Stub: sandbox has fixed heap, return success */
+        result = 0;
+        break;
+    }
+
+    case SYS_SUSPENDED: {
+        /*
+         * Sandbox has saved its process state to heap[0] and is yielding the slot.
+         * Copy heap+code to swap, mark process READY, free the slot.
+         */
+        sched_proc_t *proc = slot_proc(slot);
+        if (!proc) {
+            result = -1;
+            break;
+        }
+
+        int proc_idx = -1;
+        for (int pi = 0; pi < SCHED_MAX_PROCS; pi++) {
+            if (&sched.procs[pi] == proc) { proc_idx = pi; break; }
+        }
+
+        uint32_t parent_code = RD32(sio, SBX_CODE_SIZE);
+        uint32_t bss_extra = 64 * 1024;
+        uint32_t code_copy = parent_code + bss_extra;
+        if (code_copy > 0x400000) code_copy = 0x400000;
+
+        /* Read heap usage from proc_state at heap[0] */
+        volatile uint32_t *ps_heap_used = (volatile uint32_t *)(sbx_heap[slot] + 8);
+        uint32_t heap_used_val = *ps_heap_used;
+        uint32_t heap_copy = heap_used_val + 4096;
+        if (heap_copy > SCHED_HEAP_SIZE) heap_copy = SCHED_HEAP_SIZE;
+
+        if (proc_idx >= 0 && sched_swap_alloc(&sched, proc_idx, code_copy, heap_copy) == 0) {
+            uint32_t swap_off = proc->swap_offset;
+            volatile uint8_t *swap_base = (volatile uint8_t *)swap_region;
+
+            /* Copy code to swap */
+            volatile uint8_t *src_code = (volatile uint8_t *)scode;
+            for (uint32_t j = 0; j < code_copy; j++)
+                swap_base[swap_off + j] = src_code[j];
+
+            /* Copy heap to swap */
+            volatile uint8_t *src_heap = (volatile uint8_t *)sbx_heap[slot];
+            uint32_t heap_swap_off = swap_off + code_copy;
+            for (uint32_t j = 0; j < heap_copy; j++)
+                swap_base[heap_swap_off + j] = src_heap[j];
+
+            proc->state = PROC_READY;
+            proc->slot = -1;
+            proc->swap_code_sz = code_copy;
+            proc->swap_heap_sz = heap_copy;
+            sched_release_slot(&sched, slot);
+
+            LOG_INFO_V("suspend: PID ", (unsigned long)proc->pid);
+            LOG_INFO_V("suspend: saved to swap, code=", (unsigned long)code_copy);
+            LOG_INFO_V("suspend: heap=", (unsigned long)heap_copy);
+
+            /* Try to load next queued/ready process into freed slot */
+            try_load_queued(slot);
+        }
+
         result = 0;
         break;
     }

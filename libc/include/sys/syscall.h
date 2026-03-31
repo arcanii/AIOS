@@ -78,4 +78,8 @@
 #define SYS_FORK       75
 #define SYS_SBRK       76
 
+/* Process swap */
+#define SYS_SUSPENDED  80   /* sandbox -> orch: state saved, ready to evict */
+#define SYS_GETPID_    81   /* get current PID (from IO page) */
+
 #endif

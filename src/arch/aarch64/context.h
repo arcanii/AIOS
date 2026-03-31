@@ -34,10 +34,10 @@ typedef struct {
  *
  * Similar to setjmp/longjmp but explicit two-pointer form.
  */
-static inline int arch_save_context(arch_context_t *ctx) {
+static __attribute__((noinline)) int arch_save_context(arch_context_t *ctx) {
     register int ret __asm__("x0");
     __asm__ volatile(
-        "mov x2, sp\n"
+        "add x2, sp, #0x10\n"  /* Adjust for arch_save_context own frame */
         "stp x19, x20, [%1, #0]\n"
         "stp x21, x22, [%1, #16]\n"
         "stp x23, x24, [%1, #32]\n"
@@ -53,7 +53,7 @@ static inline int arch_save_context(arch_context_t *ctx) {
     return ret;
 }
 
-static inline void arch_restore_context(arch_context_t *ctx) {
+static __attribute__((noinline)) void arch_restore_context(arch_context_t *ctx) {
     __asm__ volatile(
         "ldp x19, x20, [%0, #0]\n"
         "ldp x21, x22, [%0, #16]\n"

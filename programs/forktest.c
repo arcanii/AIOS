@@ -3,41 +3,33 @@
 
 int main(aios_syscalls_t *sys_arg) {
     sys = sys_arg;
-    
+
     puts("=== Fork Test ===\n");
-    puts("Parent PID: ");
+    puts("Before fork, PID=");
     put_dec((unsigned int)getpid());
     puts("\n");
-    
+
     int pid = fork();
-    
+
     if (pid < 0) {
-        puts("Fork returned -1 (not yet supported)\n");
-        puts("Using spawn() instead...\n\n");
-        
-        /* Test spawn instead */
-        int child = spawn("/bin/hello.bin", "");
-        if (child >= 0) {
-            puts("Spawned hello.bin as PID ");
-            put_dec((unsigned int)child);
-            puts("\n");
-            sleep(1);
-            int status = 0;
-            int rc = waitpid(child, &status);
-            if (rc >= 0) {
-                puts("Child exited with code ");
-                put_dec((unsigned int)status);
-                puts("\n");
-            }
-        }
+        puts("Fork FAILED\n");
     } else if (pid == 0) {
-        puts("Child process running\n");
+        /* Child — inherits the slot, continues immediately */
+        puts("Child: I am the child! PID=");
+        put_dec((unsigned int)getpid());
+        puts("\n");
+        puts("Child: exiting with code 42\n");
+        _exit(42);
     } else {
-        puts("Parent: forked child PID=");
+        /* Parent — resumed from swap after child exits */
+        puts("Parent: resumed! Child was PID=");
         put_dec((unsigned int)pid);
         puts("\n");
+        puts("Parent: my PID=");
+        put_dec((unsigned int)getpid());
+        puts("\n");
     }
-    
+
     puts("=== Fork Test Done ===\n");
     return 0;
 }

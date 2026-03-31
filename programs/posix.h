@@ -1433,7 +1433,7 @@ static inline int scandir(const char *dirp, struct dirent ***namelist,
 }
 static inline int execl(const char *path, const char *arg, ...) { (void)arg; return execve(path, (void*)0, (void*)0); }
 static inline int execlp(const char *file, const char *arg, ...) { (void)arg; return execvp(file, (void*)0); }
-static inline void _exit(int status) { while(1) {} (void)status; }
+static inline void _exit(int status) { if (sys && sys->exit_proc) sys->exit_proc(status); while(1) {} }
 static inline pid_t getpgrp(void) { return getpid(); }
 static inline int setpgid(pid_t pid, pid_t pgid) { (void)pid; (void)pgid; return 0; }
 static inline pid_t setsid(void) { return getpid(); }

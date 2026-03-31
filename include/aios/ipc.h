@@ -109,9 +109,26 @@
 #define SBX_OUTPUT_LEN  0x010
 #define SBX_ARGS        0x014   /* null-terminated args string (max 236 bytes) */
 #define SBX_ARGS_MAX    236
+
+/* Fork support */
+#define SBX_FORK_FLAG       0x0C0  /* non-zero = this is a fork-resumed child */
+#define SBX_FORK_HEAP_USED  0x0C4  /* parent's heap_used at fork time */
+#define SBX_FORK_CTX        0x0D0  /* arch_context_t (104 bytes, fits in 0x0D0-0x0D0+104) */
+#define SBX_FORK_PARENT_PID 0x0C8  /* parent PID for child's getppid */
+#define SBX_FORK_CHILD_PID  0x0CC  /* child PID (written by orchestrator) */
 #define SBX_EXEC_PARENT_SIZE  0x0F0  /* saved parent code size */
 #define SBX_EXEC_CHILD_SIZE   0x0F4  /* loaded child code size */
 #define SBX_EXEC_MAGIC        0x45584543  /* "EXEC" */
+
+
+/* ── Process suspend/resume ────────────────────── */
+#define SBX_SUSPEND_FLAG    0x0F8  /* orchestrator sets non-zero to request suspend */
+#define SBX_PROC_STATE_MAGIC 0x50524F43  /* "PROC" */
+
+#define SBX_CMD_SUSPEND  3       /* save state and yield slot */
+#define SBX_CMD_RESUME   4       /* restore saved process state */
+
+#define SBX_ST_SUSPENDED 4       /* process state saved, slot can be reused */
 
 #define SBX_OUTPUT_MAX  3840
 

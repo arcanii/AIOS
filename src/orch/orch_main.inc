@@ -36,6 +36,10 @@ void init(void) {
     sbx_code[6] = sbx6_code;
     sbx_io[7]   = sbx7_io;
     sbx_code[7] = sbx7_code;
+    sbx_heap[0] = sbx0_heap; sbx_heap[1] = sbx1_heap;
+    sbx_heap[2] = sbx2_heap; sbx_heap[3] = sbx3_heap;
+    sbx_heap[4] = sbx4_heap; sbx_heap[5] = sbx5_heap;
+    sbx_heap[6] = sbx6_heap; sbx_heap[7] = sbx7_heap;
     sched_init(&sched);
 
     /* Boot: read hello.txt synchronously */
@@ -154,8 +158,23 @@ void notified(microkit_channel ch) {
             if (sbx_channel[i] == (int)ch) { slot = i; break; }
         }
         if (slot < 0) break;
-        if (orch_state == EXEC_RUNNING)
-            handle_exec_done(slot);
+
+        /* Check sandbox status — handle completion regardless of orch_state */
+        {
+            uintptr_t sio = sbx_io[slot];
+            uint32_t status = RD32(sio, SBX_STATUS);
+
+            if (status == SBX_ST_DONE) {
+                /* Process exited */
+                handle_exec_done(slot);
+            } else if (status == SBX_ST_SUSPENDED) {
+                /* Process suspended — slot already freed by SYS_SUSPENDED handler */
+                /* Nothing to do here */
+            } else if (orch_state == EXEC_RUNNING) {
+                /* Legacy path: sandbox finished run_program normally */
+                handle_exec_done(slot);
+            }
+        }
         break;
     }
 
@@ -213,6 +232,11 @@ seL4_Bool fault(microkit_child child, microkit_msginfo msginfo, microkit_msginfo
             sched_proc_t *p = slot_proc(slot);
             uint32_t crashed_pid = p ? p->pid : 0;
             int was_fg = p ? p->foreground : 0;
+            /* Log fault details (seL4 VMFault format) */
+            uint64_t fault_ip   = seL4_GetMR(seL4_VMFault_IP);
+            uint64_t fault_addr = seL4_GetMR(seL4_VMFault_Addr);
+            uint64_t fault_type = seL4_GetMR(seL4_VMFault_PrefetchFault);
+            uint64_t fault_fsr  = seL4_GetMR(seL4_VMFault_FSR);
             sched_release_slot(&sched, slot);
             microkit_pd_restart(slot, SBX_ENTRY_POINT);
             ser_puts("FAULT: sandbox ");
@@ -220,6 +244,11 @@ seL4_Bool fault(microkit_child child, microkit_msginfo msginfo, microkit_msginfo
             ser_puts(" crashed (PID ");
             ser_put_dec(crashed_pid);
             ser_puts("), slot freed\n");
+            ser_puts("  IP=0x"); ser_put_hex((unsigned long)fault_ip);
+            ser_puts(" ADDR=0x"); ser_put_hex((unsigned long)fault_addr);
+            ser_puts(" FSR=0x"); ser_put_hex((unsigned long)fault_fsr);
+            ser_puts(fault_type ? " (prefetch)" : " (data)");
+            ser_puts("\n");
             ser_flush();
             if (was_fg) {
                 orch_state = RUNNING;

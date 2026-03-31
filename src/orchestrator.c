@@ -26,24 +26,36 @@ uintptr_t auth_io;
 /* Per-sandbox memory regions (set by Microkit loader via setvar) */
 uintptr_t sbx0_io;
 uintptr_t sbx0_code;
+uintptr_t sbx0_heap;
 uintptr_t sbx1_io;
 uintptr_t sbx1_code;
+uintptr_t sbx1_heap;
 uintptr_t sbx2_io;
 uintptr_t sbx2_code;
+uintptr_t sbx2_heap;
 uintptr_t sbx3_io;
 uintptr_t sbx3_code;
+uintptr_t sbx3_heap;
 uintptr_t sbx4_io;
 uintptr_t sbx4_code;
+uintptr_t sbx4_heap;
 uintptr_t sbx5_io;
 uintptr_t sbx5_code;
+uintptr_t sbx5_heap;
 uintptr_t sbx6_io;
 uintptr_t sbx6_code;
+uintptr_t sbx6_heap;
 uintptr_t sbx7_io;
 uintptr_t sbx7_code;
+uintptr_t sbx7_heap;
+
+/* Process swap region (256 MiB) */
+uintptr_t swap_region;
 
 /* Runtime arrays initialized in init() */
 static uintptr_t sbx_io[NUM_SANDBOXES];
 static uintptr_t sbx_code[NUM_SANDBOXES];
+static uintptr_t sbx_heap[NUM_SANDBOXES];
 
 /* Process table */
 /* Process scheduler (replaces old proctab[8]) */
@@ -268,11 +280,49 @@ static void cmd_ps(void) {
 /* ── Queue drain: load next queued process into a freed slot ── */
 static void try_load_queued(int freed_slot) {
     int next_idx = sched_drain_queue(&sched);
-    if (next_idx < 0) return;  /* Nothing queued */
+    if (next_idx < 0) return;  /* Nothing queued or ready */
 
     sched_proc_t *p = &sched.procs[next_idx];
 
-    /* Load binary from disk into the freed slot */
+    uintptr_t cur_sio  = sbx_io[freed_slot];
+    uintptr_t cur_scode = sbx_code[freed_slot];
+
+    if (p->state == PROC_READY) {
+        /* ── Resume from swap ─────────────────────────── */
+        LOG_INFO_V("resume: PID ", (unsigned long)p->pid);
+
+        uint32_t swap_off = p->swap_offset;
+        volatile uint8_t *swap_base = (volatile uint8_t *)swap_region;
+
+        /* Copy code from swap back to sandbox */
+        volatile uint8_t *dst_code = (volatile uint8_t *)cur_scode;
+        for (uint32_t j = 0; j < p->swap_code_sz; j++)
+            dst_code[j] = swap_base[swap_off + j];
+
+        /* Copy heap from swap back to sandbox */
+        volatile uint8_t *dst_heap = (volatile uint8_t *)sbx_heap[freed_slot];
+        uint32_t heap_swap_off = swap_off + p->swap_code_sz;
+        for (uint32_t j = 0; j < p->swap_heap_sz; j++)
+            dst_heap[j] = swap_base[heap_swap_off + j];
+
+        /* Free swap space */
+        sched_swap_free(&sched, next_idx);
+
+        /* Assign slot and tell sandbox to resume */
+        sched_assign_slot(&sched, next_idx, freed_slot);
+        WR32(cur_sio, SBX_CODE_SIZE, p->loaded_bytes);
+        WR32(cur_sio, SBX_CMD, SBX_CMD_RESUME);
+
+        /* Restart the sandbox PD (it may be in a halted/exited state) */
+        microkit_pd_stop(freed_slot);
+        microkit_pd_restart(freed_slot, SBX_ENTRY_POINT);
+
+        /* After restart, sandbox runs init() then waits for notification */
+        microkit_notify(sbx_channel[freed_slot]);
+        return;
+    }
+
+    /* ── Load from disk (PROC_QUEUED) ─────────────── */
     int st = fs_open_sync(p->filename);
     if (st < 0) {
         /* Try /bin/ prefix */
@@ -293,8 +343,6 @@ static void try_load_queued(int freed_slot) {
     }
 
     int fd = st;
-    uintptr_t cur_sio  = sbx_io[freed_slot];
-    uintptr_t cur_scode = sbx_code[freed_slot];
     volatile uint8_t *code_dst = (volatile uint8_t *)cur_scode;
 
     uint32_t offset = 0;
@@ -326,15 +374,6 @@ static void try_load_queued(int freed_slot) {
     WR32(cur_sio, SBX_CODE_SIZE, offset);
     WR32(cur_sio, SBX_CMD, SBX_CMD_RUN);
     microkit_notify(sbx_channel[freed_slot]);
-
-    ser_puts("SCHED: loaded queued ");
-    ser_puts(p->name);
-    ser_puts(" (PID ");
-    ser_put_dec(p->pid);
-    ser_puts(") -> slot ");
-    ser_put_dec((unsigned int)freed_slot);
-    ser_puts("\n");
-    ser_flush();
 }
 
 

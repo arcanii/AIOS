@@ -47,6 +47,7 @@
 
     <memory_region name="sbx7_io"   size="0x1000" />
     <memory_region name="sbx7_heap" size="0x1000000" />
+    <memory_region name="swap_region" size="0x10000000" />  <!-- 256 MiB process swap -->
     <memory_region name="sbx7_code" size="0x400000" />
 
 
@@ -134,6 +135,29 @@
                  setvar_vaddr="sbx7_io" />
             <map mr="sbx7_code" vaddr="0x33801000" perms="rw" cached="false"
                  setvar_vaddr="sbx7_code" />
+
+        <!-- Process swap region (256 MiB) -->
+        <map mr="swap_region" vaddr="0x50000000" perms="rw" cached="true"
+             setvar_vaddr="swap_region" />
+
+        <!-- Orchestrator maps sandbox heaps for fork -->
+        <map mr="sbx0_heap" vaddr="0x40000000" perms="rw" cached="true"
+             setvar_vaddr="sbx0_heap" />
+        <map mr="sbx1_heap" vaddr="0x41000000" perms="rw" cached="true"
+             setvar_vaddr="sbx1_heap" />
+        <map mr="sbx2_heap" vaddr="0x42000000" perms="rw" cached="true"
+             setvar_vaddr="sbx2_heap" />
+        <map mr="sbx3_heap" vaddr="0x43000000" perms="rw" cached="true"
+             setvar_vaddr="sbx3_heap" />
+        <map mr="sbx4_heap" vaddr="0x44000000" perms="rw" cached="true"
+             setvar_vaddr="sbx4_heap" />
+        <map mr="sbx5_heap" vaddr="0x45000000" perms="rw" cached="true"
+             setvar_vaddr="sbx5_heap" />
+        <map mr="sbx6_heap" vaddr="0x46000000" perms="rw" cached="true"
+             setvar_vaddr="sbx6_heap" />
+        <map mr="sbx7_heap" vaddr="0x47000000" perms="rw" cached="true"
+             setvar_vaddr="sbx7_heap" />
+
 
         <!-- ── Child sandbox PD 0 ── -->
         <map mr="auth_io" vaddr="0x6200000" perms="rw" cached="false"
