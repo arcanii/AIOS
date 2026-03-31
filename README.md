@@ -7,6 +7,8 @@ Adding : Gtok 4.5 and GPT 5.4Pro (currently reviewing)
 
 Security is a high priority topic theme. 
 
+This is in an experimental / research phase, welcome for collaborators.
+
 It currently is only tested in QEMU on aarch64 a53 
 
 ## Current Progress update
