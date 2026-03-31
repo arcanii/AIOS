@@ -102,9 +102,6 @@
 #define LOG_MSG_OFF     0xF00   /* offset in shared mem for log string */
 #define LOG_MSG_MAX     240     /* max log message length */
 
-#endif /* AIOS_IPC_H */
-
-
 /* ── sandbox_io layout (4 KiB page) ───────────── */
 #define SBX_CMD         0x000
 #define SBX_STATUS      0x004
@@ -114,6 +111,13 @@
 #define SBX_OUTPUT_LEN  0x010
 #define SBX_ARGS        0x014   /* null-terminated args string (max 236 bytes) */
 #define SBX_ARGS_MAX    236
+
+/* Sandbox shared-memory buffer offsets (replace hardcoded 0x200/0x400/0x600) */
+#define SBX_PATH_BUF    0x200   /* filename/path string buffer (256 bytes) */
+#define SBX_DATA_BUF    0x400   /* data transfer buffer (up to SBX_IO_SIZE - 0x400) */
+#define SBX_ARGS_BUF    0x600   /* secondary args buffer for exec/spawn */
+#define SBX_PATH_MAX    255     /* max path length in SBX_PATH_BUF */
+#define SBX_DATA_BUF_MAX 4096   /* max transfer in SBX_DATA_BUF */
 
 /* Fork support */
 #define SBX_FORK_FLAG       0x0C0  /* non-zero = this is a fork-resumed child */
@@ -193,3 +197,5 @@
 
 #define SOCK_STREAM   1   /* TCP */
 #define SOCK_DGRAM    2   /* UDP */
+
+#endif /* AIOS_IPC_H */

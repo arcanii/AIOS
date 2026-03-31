@@ -181,7 +181,7 @@ unsigned long _log_get_time(void) {
 /* ── File I/O syscalls (PPC to orchestrator) ─────────── */
 
 static int sbx_open_flags(const char *path, int flags) {
-    volatile char *dst = (volatile char *)(sandbox_io + 0x200);
+    volatile char *dst = (volatile char *)(sandbox_io + SBX_PATH_BUF);
     int i = 0;
     while (path[i] && i < 255) { dst[i] = path[i]; i++; }
     dst[i] = '\0';
@@ -208,8 +208,11 @@ static int sbx_read(int fd, void *buf, unsigned long len) {
     seL4_SetMR(3, len);
     microkit_ppcall(my_channel, microkit_msginfo_new(0, 4));
     int got = (int)seL4_GetMR(0);
+    /* BOUNDS_CHECK_APPLIED: clamp read result to requested length */
+    if (got > (int)len) got = (int)len;
+    if (got > (int)SBX_DATA_BUF_MAX) got = (int)SBX_DATA_BUF_MAX;
     if (got > 0) {
-        volatile uint8_t *src = (volatile uint8_t *)(sandbox_io + 0x400);
+        volatile uint8_t *src = (volatile uint8_t *)(sandbox_io + SBX_DATA_BUF);
         uint8_t *d = (uint8_t *)buf;
         for (int i = 0; i < got; i++) d[i] = src[i];
         if (fd >= 0 && fd < MAX_FDS) fd_pos[fd] += (uint32_t)got;
@@ -220,7 +223,7 @@ static int sbx_read(int fd, void *buf, unsigned long len) {
 
 static int sbx_write_file(int fd, const void *buf, unsigned long len) {
     const uint8_t *s = (const uint8_t *)buf;
-    volatile uint8_t *dst = (volatile uint8_t *)(sandbox_io + 0x400);
+    volatile uint8_t *dst = (volatile uint8_t *)(sandbox_io + SBX_DATA_BUF);
     for (unsigned long i = 0; i < len && i < 4096; i++) dst[i] = s[i];
     seL4_SetMR(0, SYS_WRITE);
     seL4_SetMR(1, fd);
@@ -238,7 +241,7 @@ static int sbx_close(int fd) {
 }
 
 static int sbx_unlink(const char *path) {
-    volatile char *dst = (volatile char *)(sandbox_io + 0x200);
+    volatile char *dst = (volatile char *)(sandbox_io + SBX_PATH_BUF);
     int i = 0;
     while (path[i] && i < 255) { dst[i] = path[i]; i++; }
     dst[i] = '\0';
@@ -248,7 +251,7 @@ static int sbx_unlink(const char *path) {
 }
 
 static int sbx_mkdir(const char *path) {
-    volatile char *dst = (volatile char *)(sandbox_io + 0x200);
+    volatile char *dst = (volatile char *)(sandbox_io + SBX_PATH_BUF);
     int i = 0;
     while (path[i] && i < 255) { dst[i] = path[i]; i++; }
     dst[i] = '\0';
@@ -258,7 +261,7 @@ static int sbx_mkdir(const char *path) {
 }
 
 static int sbx_rmdir(const char *path) {
-    volatile char *dst = (volatile char *)(sandbox_io + 0x200);
+    volatile char *dst = (volatile char *)(sandbox_io + SBX_PATH_BUF);
     int i = 0;
     while (path[i] && i < 255) { dst[i] = path[i]; i++; }
     dst[i] = '\0';
@@ -268,7 +271,7 @@ static int sbx_rmdir(const char *path) {
 }
 
 static int sbx_rename(const char *oldpath, const char *newpath) {
-    volatile char *dst = (volatile char *)(sandbox_io + 0x200);
+    volatile char *dst = (volatile char *)(sandbox_io + SBX_PATH_BUF);
     int i = 0;
     while (oldpath[i] && i < 127) { dst[i] = oldpath[i]; i++; }
     dst[i] = '\0';
@@ -289,8 +292,10 @@ static int sbx_readdir(void *buf, unsigned long max_entries) {
     microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
     int count = (int)seL4_GetMR(0);
     unsigned long total_bytes = (unsigned long)seL4_GetMR(1);
+    /* BOUNDS_CHECK_APPLIED: clamp readdir to buffer and shared memory limits */
+    if (total_bytes > SBX_DATA_BUF_MAX) total_bytes = SBX_DATA_BUF_MAX;
     if (count > 0 && total_bytes > 0) {
-        volatile uint8_t *src = (volatile uint8_t *)(sandbox_io + 0x400);
+        volatile uint8_t *src = (volatile uint8_t *)(sandbox_io + SBX_DATA_BUF);
         uint8_t *d = (uint8_t *)buf;
         if (total_bytes > max_entries) total_bytes = max_entries;
         for (unsigned long i = 0; i < total_bytes; i++) d[i] = src[i];
@@ -307,7 +312,7 @@ static int sbx_filesize(void) {
 static uint32_t last_stat_uid, last_stat_gid, last_stat_mode, last_stat_mtime;
 
 static int sbx_stat(const char *path, unsigned long *size_out) {
-    volatile char *dst = (volatile char *)(sandbox_io + 0x200);
+    volatile char *dst = (volatile char *)(sandbox_io + SBX_PATH_BUF);
     int i = 0;
     while (path[i] && i < 255) { dst[i] = path[i]; i++; }
     dst[i] = '\0';
@@ -348,7 +353,7 @@ static int sbx_getcwd(char *buf, unsigned long size) {
     if (buf && size > 0) {
         volatile char *sio = (volatile char *)sandbox_io;
         unsigned long i = 0;
-        while (sio[0x200 + i] && i < size - 1) { buf[i] = sio[0x200 + i]; i++; }
+        while (sio[SBX_PATH_BUF + i] && i < size - 1) { buf[i] = sio[SBX_PATH_BUF + i]; i++; }
         buf[i] = '\0';
     }
     return (int)seL4_GetMR(0);
@@ -358,8 +363,8 @@ static int sbx_chdir(const char *path) {
     volatile char *sio = (volatile char *)sandbox_io;
     /* Copy path to sandbox_io+0x200 */
     int i = 0;
-    while (path[i] && i < 255) { sio[0x200 + i] = path[i]; i++; }
-    sio[0x200 + i] = 0;
+    while (path[i] && i < 255) { sio[SBX_PATH_BUF + i] = path[i]; i++; }
+    sio[SBX_PATH_BUF + i] = 0;
     seL4_SetMR(0, SYS_CHDIR);
     microkit_ppcall(my_channel, microkit_msginfo_new(0, 1));
     return (int)seL4_GetMR(0);
@@ -385,7 +390,7 @@ static int sbx_getc(void) {
 }
 
 static void sbx_puts_direct(const char *s) {
-    volatile char *dst = (volatile char *)(sandbox_io + 0x200);
+    volatile char *dst = (volatile char *)(sandbox_io + SBX_PATH_BUF);
     int i = 0;
     while (s[i] && i < 255) { dst[i] = s[i]; i++; }
     dst[i] = '\0';
@@ -631,12 +636,12 @@ static int sbx_fork(void) {
 
 static int sbx_spawn(const char *path, const char *args) {
     /* Copy path to sio+0x200 */
-    volatile char *dst = (volatile char *)(sandbox_io + 0x200);
+    volatile char *dst = (volatile char *)(sandbox_io + SBX_PATH_BUF);
     int i = 0;
     while (path[i] && i < 255) { dst[i] = path[i]; i++; }
     dst[i] = '\0';
     /* Copy args to sio+0x600 */
-    volatile char *adst = (volatile char *)(sandbox_io + 0x600);
+    volatile char *adst = (volatile char *)(sandbox_io + SBX_ARGS_BUF);
     i = 0;
     if (args) {
         while (args[i] && i < 255) { adst[i] = args[i]; i++; }
@@ -672,8 +677,8 @@ static int sbx_waitpid(int pid, int *status) {
 static int sbx_chmod(const char *path, unsigned int mode) {
     volatile char *sio = (volatile char *)sandbox_io;
     int i = 0;
-    while (path[i] && i < 255) { sio[0x200 + i] = path[i]; i++; }
-    sio[0x200 + i] = 0;
+    while (path[i] && i < 255) { sio[SBX_PATH_BUF + i] = path[i]; i++; }
+    sio[SBX_PATH_BUF + i] = 0;
     seL4_SetMR(0, SYS_CHMOD);
     seL4_SetMR(1, mode);
     microkit_ppcall(my_channel, microkit_msginfo_new(0, 2));
@@ -683,8 +688,8 @@ static int sbx_chmod(const char *path, unsigned int mode) {
 static int sbx_chown(const char *path, unsigned int uid, unsigned int gid) {
     volatile char *sio = (volatile char *)sandbox_io;
     int i = 0;
-    while (path[i] && i < 255) { sio[0x200 + i] = path[i]; i++; }
-    sio[0x200 + i] = 0;
+    while (path[i] && i < 255) { sio[SBX_PATH_BUF + i] = path[i]; i++; }
+    sio[SBX_PATH_BUF + i] = 0;
     seL4_SetMR(0, SYS_CHOWN);
     seL4_SetMR(1, uid);
     seL4_SetMR(2, gid);
@@ -749,7 +754,7 @@ static int sbx_getppid(void) {
 }
 
 static int sbx_access(const char *path, int amode) {
-    volatile char *dst = (volatile char *)(sandbox_io + 0x200);
+    volatile char *dst = (volatile char *)(sandbox_io + SBX_PATH_BUF);
     int i = 0;
     while (path[i] && i < 255) { dst[i] = path[i]; i++; }
     dst[i] = '\0';
@@ -812,7 +817,7 @@ static int sbx_getprocs(void *buf, int max_entries) {
     int count = (int)seL4_GetMR(0);
     unsigned long total_bytes = (unsigned long)seL4_GetMR(1);
     if (count > 0 && total_bytes > 0) {
-        volatile uint8_t *src = (volatile uint8_t *)(sandbox_io + 0x400);
+        volatile uint8_t *src = (volatile uint8_t *)(sandbox_io + SBX_DATA_BUF);
         uint8_t *d = (uint8_t *)buf;
         unsigned long limit = (unsigned long)max_entries * 64;
         if (total_bytes > limit) total_bytes = limit;
@@ -840,7 +845,7 @@ static int sbx_exec(const char *path, const char *args) {
     for (uint32_t i = 0; i < parent_size; i++) backup[i] = code[i];
 
     /* Write filename + args to path buffer */
-    volatile char *dst = (volatile char *)(sandbox_io + 0x200);
+    volatile char *dst = (volatile char *)(sandbox_io + SBX_PATH_BUF);
     int i = 0;
     while (path[i] && i < 127) { dst[i] = path[i]; i++; }
     dst[i] = '\0';
@@ -908,9 +913,22 @@ static int sbx_exec(const char *path, const char *args) {
 
 
 static int sbx_sleep(unsigned int seconds) {
-    /* Busy-wait locally — don't block orchestrator */
-    for (volatile unsigned int s = 0; s < seconds; s++)
-        for (volatile unsigned int i = 0; i < 50000000; i++);
+    /* Send sleep request; orchestrator returns target timestamp in MR1/MR2 */
+    if (seconds == 0) return 0;
+    seL4_SetMR(0, SYS_SLEEP);
+    seL4_SetMR(1, (seL4_Word)seconds);
+    microkit_ppcall(my_channel, microkit_msginfo_new(0, 2));
+    /* Read target timestamp from response */
+    uint64_t lo = (uint64_t)seL4_GetMR(1);
+    uint64_t hi = (uint64_t)seL4_GetMR(2);
+    uint64_t target = lo | (hi << 32);
+    /* Poll timer, yielding CPU each iteration */
+    uint64_t now;
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
+    while (now < target) {
+        seL4_Yield();
+        __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
+    }
     return 0;
 }
 
@@ -928,7 +946,7 @@ static int sbx_socket(int domain, int type, int protocol) {
 static int sbx_connect(int sockfd, const void *addr, int addrlen) {
     (void)addrlen;
     const uint8_t *sa = (const uint8_t *)addr;
-    volatile uint8_t *dst = (volatile uint8_t *)(sandbox_io + 0x200);
+    volatile uint8_t *dst = (volatile uint8_t *)(sandbox_io + SBX_PATH_BUF);
     dst[0] = sa[4]; dst[1] = sa[5]; dst[2] = sa[6]; dst[3] = sa[7];
     dst[4] = sa[3]; dst[5] = sa[2];
     seL4_SetMR(0, SYS_CONNECT);
@@ -966,7 +984,7 @@ static int sbx_accept(int sockfd, void *addr, int *addrlen) {
 
 static int sbx_send(int sockfd, const void *buf, unsigned long len, int flags) {
     (void)flags;
-    volatile uint8_t *dst = (volatile uint8_t *)(sandbox_io + 0x200);
+    volatile uint8_t *dst = (volatile uint8_t *)(sandbox_io + SBX_PATH_BUF);
     for (unsigned long i = 0; i < len && i < 4096; i++) dst[i] = ((const uint8_t *)buf)[i];
     seL4_SetMR(0, SYS_SEND);
     seL4_SetMR(1, (seL4_Word)sockfd);
@@ -983,7 +1001,7 @@ static int sbx_recv(int sockfd, void *buf, unsigned long len, int flags) {
     microkit_ppcall(my_channel, microkit_msginfo_new(0, 3));
     int got = (int)seL4_GetMR(0);
     if (got > 0) {
-        volatile uint8_t *src = (volatile uint8_t *)(sandbox_io + 0x200);
+        volatile uint8_t *src = (volatile uint8_t *)(sandbox_io + SBX_PATH_BUF);
         for (int i = 0; i < got; i++) ((uint8_t *)buf)[i] = src[i];
     }
     return got;

@@ -13,6 +13,7 @@
 #include <microkit.h>
 #include "aios/channels.h"
 #include "aios/ipc.h"
+#include "aios/version.h"
 
 /* ── Logging backend ─────────────────────────────── */
 #define LOG_MODULE "NET_SRV"
@@ -308,7 +309,7 @@ static const char http_response[] =
     "<h1>AIOS Status</h1>"
     "<table>"
     "<tr><th>Component</th><th>Status</th></tr>"
-    "<tr><td>AIOS</td><td>v0.2.43</td></tr>"
+    "<tr><td>AIOS</td><td>v" AIOS_VERSION_STR "</td></tr>"
     "<tr><td>Kernel</td><td>seL4 14.0.0 (Microkit 2.1.0)</td></tr>"
     "<tr><td>Arch</td><td>AArch64 Cortex-A53 (4 cores)</td></tr>"
     "<tr><td>Network</td><td class=ok>virtio-net active</td></tr>"

@@ -79,13 +79,16 @@ $(BUILD)/fs_ext2.o: src/fs/ext2.c
 	$(CC) -c $(CFLAGS) $< -o $@
 
 # ── Link fs_server with FAT backends ───────────────────
-$(BUILD)/fs_server.elf: $(BUILD)/fs_server.o $(BUILD)/fs_fat16.o $(BUILD)/fs_fat32.o $(BUILD)/fs_ext2.o
+$(BUILD)/fs_server.elf: $(BUILD)/fs_server.o $(BUILD)/fs_fat16.o $(BUILD)/fs_fat32.o $(BUILD)/fs_ext2.o $(BUILD)/util.o
 	$(LD) $^ $(LDFLAGS) -o $@
 
-$(BUILD)/orchestrator.elf: $(BUILD)/orchestrator.o $(BUILD)/memset.o
+$(BUILD)/orchestrator.elf: $(BUILD)/orchestrator.o $(BUILD)/memset.o $(BUILD)/util.o
 	$(LD) $^ $(LDFLAGS) -o $@
 
 $(BUILD)/memset.o: src/memset.c | $(BUILD)
+	$(CC) $(CFLAGS) $< -o $@
+
+$(BUILD)/util.o: src/util.c | $(BUILD)
 	$(CC) $(CFLAGS) $< -o $@
 
 $(BUILD)/%.elf: $(BUILD)/%.o

@@ -94,8 +94,10 @@ static void reply_status(int status) {
 
 /* ── Get filename from IPC buffer ──────────────────────── */
 static void get_filename(char *buf, int max) {
+    /* VFS_BOUNDS_CHECK: safe filename extraction with guaranteed NUL */
     volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_FILENAME);
     int i;
+    if (max <= 0) return;
     for (i = 0; i < max - 1 && src[i]; i++) buf[i] = src[i];
     buf[i] = '\0';
 }
@@ -160,10 +162,12 @@ static void handle_read(void) {
     uint32_t offset = RD32(fs_data, FS_OFFSET);
     uint32_t len    = RD32(fs_data, FS_LENGTH);
 
+    /* VFS_BOUNDS_CHECK: validate fd and clamp length */
     if (fd_idx >= MAX_OPEN_FILES || !open_files[fd_idx].in_use) {
         reply_status(-1); return;
     }
     if (len > FS_DATA_MAX) len = FS_DATA_MAX;
+    if (len == 0) { WR32(fs_data, FS_READLEN, 0); reply_status(0); return; }
 
     volatile uint8_t *dst = (volatile uint8_t *)(fs_data + FS_DATA);
     uint32_t bytes_read = 0;

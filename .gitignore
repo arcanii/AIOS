@@ -20,4 +20,6 @@ include/aios/build_number.h
 *.bak4
 aios_system_roundtrip.xml
 *.elf
+*.o
 *.old
+programs/*.BIN
