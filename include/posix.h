@@ -1515,12 +1515,161 @@ static inline FILE *fdopen(int fd, const char *mode) {
     static FILE fobj; fobj.fd = fd; fobj.eof = 0; fobj.err = 0; fobj.append = 0;
     return &fobj;
 }
-static inline int sscanf(const char *str, const char *fmt, ...) { (void)str; (void)fmt; return 0; }
-static inline int fscanf(FILE *f, const char *fmt, ...) { (void)f; (void)fmt; return 0; }
-static inline int scanf(const char *fmt, ...) { (void)fmt; return 0; }
-static inline double atof(const char *s) { (void)s; return 0.0; }
-static inline double strtod(const char *s, char **end) { (void)s; if (end) *end = (char *)s; return 0.0; }
-static inline float strtof(const char *s, char **end) { (void)s; if (end) *end = (char *)s; return 0.0f; }
+/* sscanf - supports %d %u %x %o %s %c %n %% and field widths */
+static inline int _posix_sscanf(const char *str, const char *fmt, __builtin_va_list ap) {
+    int matched = 0;
+    const char *s = str;
+    while (*fmt && *s) {
+        if (*fmt == '%') {
+            fmt++;
+            if (*fmt == '%') { if (*s != '%') return matched; s++; fmt++; continue; }
+            /* Parse width */
+            int width = 0;
+            while (*fmt >= '0' && *fmt <= '9') { width = width * 10 + (*fmt - '0'); fmt++; }
+            /* Skip 'l' or 'h' length modifiers */
+            int is_long = 0;
+            if (*fmt == 'l') { is_long = 1; fmt++; if (*fmt == 'l') fmt++; }
+            else if (*fmt == 'h') { fmt++; if (*fmt == 'h') fmt++; }
+            if (*fmt == 'd' || *fmt == 'i') {
+                long val = 0; int neg = 0, digits = 0;
+                while (*s == ' ') s++;
+                if (*s == '-') { neg = 1; s++; } else if (*s == '+') s++;
+                while (*s >= '0' && *s <= '9' && (!width || digits < width))
+                    { val = val * 10 + (*s - '0'); s++; digits++; }
+                if (!digits) return matched;
+                if (neg) val = -val;
+                if (is_long) *__builtin_va_arg(ap, long *) = val;
+                else *__builtin_va_arg(ap, int *) = (int)val;
+                matched++; fmt++;
+            } else if (*fmt == 'u') {
+                unsigned long val = 0; int digits = 0;
+                while (*s == ' ') s++;
+                while (*s >= '0' && *s <= '9' && (!width || digits < width))
+                    { val = val * 10 + (*s - '0'); s++; digits++; }
+                if (!digits) return matched;
+                if (is_long) *__builtin_va_arg(ap, unsigned long *) = val;
+                else *__builtin_va_arg(ap, unsigned int *) = (unsigned int)val;
+                matched++; fmt++;
+            } else if (*fmt == 'x' || *fmt == 'X') {
+                unsigned long val = 0; int digits = 0;
+                while (*s == ' ') s++;
+                if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) s += 2;
+                while ((!width || digits < width)) {
+                    if (*s >= '0' && *s <= '9') val = val * 16 + (*s - '0');
+                    else if (*s >= 'a' && *s <= 'f') val = val * 16 + (*s - 'a' + 10);
+                    else if (*s >= 'A' && *s <= 'F') val = val * 16 + (*s - 'A' + 10);
+                    else break;
+                    s++; digits++;
+                }
+                if (!digits) return matched;
+                if (is_long) *__builtin_va_arg(ap, unsigned long *) = val;
+                else *__builtin_va_arg(ap, unsigned int *) = (unsigned int)val;
+                matched++; fmt++;
+            } else if (*fmt == 'o') {
+                unsigned long val = 0; int digits = 0;
+                while (*s == ' ') s++;
+                while (*s >= '0' && *s <= '7' && (!width || digits < width))
+                    { val = val * 8 + (*s - '0'); s++; digits++; }
+                if (!digits) return matched;
+                if (is_long) *__builtin_va_arg(ap, unsigned long *) = val;
+                else *__builtin_va_arg(ap, unsigned int *) = (unsigned int)val;
+                matched++; fmt++;
+            } else if (*fmt == 's') {
+                char *dst = __builtin_va_arg(ap, char *);
+                int cnt = 0;
+                while (*s == ' ') s++;
+                while (*s && *s != ' ' && *s != '\t' && *s != '\n' && (!width || cnt < width))
+                    { dst[cnt++] = *s++; }
+                dst[cnt] = 0;
+                if (!cnt) return matched;
+                matched++; fmt++;
+            } else if (*fmt == 'c') {
+                *__builtin_va_arg(ap, char *) = *s++;
+                matched++; fmt++;
+            } else if (*fmt == 'n') {
+                *__builtin_va_arg(ap, int *) = (int)(s - str);
+                fmt++;  /* %n does not count as a match */
+            } else { fmt++; }
+        } else if (*fmt == ' ') {
+            while (*s == ' ' || *s == '\t' || *s == '\n') s++;
+            fmt++;
+        } else {
+            if (*s != *fmt) return matched;
+            s++; fmt++;
+        }
+    }
+    return matched;
+}
+
+static inline int sscanf(const char *str, const char *fmt, ...) {
+    __builtin_va_list ap;
+    __builtin_va_start(ap, fmt);
+    int r = _posix_sscanf(str, fmt, ap);
+    __builtin_va_end(ap);
+    return r;
+}
+
+static inline int scanf(const char *fmt, ...) {
+    char buf[256];
+    int n = (int)read(STDIN_FILENO, buf, sizeof(buf) - 1);
+    if (n <= 0) return EOF;
+    buf[n] = 0;
+    __builtin_va_list ap;
+    __builtin_va_start(ap, fmt);
+    int r = _posix_sscanf(buf, fmt, ap);
+    __builtin_va_end(ap);
+    return r;
+}
+
+static inline int fscanf(FILE *f, const char *fmt, ...) {
+    if (!f) return EOF;
+    char buf[256];
+    int n = (int)fread(buf, 1, sizeof(buf) - 1, f);
+    if (n <= 0) return EOF;
+    buf[n] = 0;
+    __builtin_va_list ap;
+    __builtin_va_start(ap, fmt);
+    int r = _posix_sscanf(buf, fmt, ap);
+    __builtin_va_end(ap);
+    return r;
+}
+/* strtod - real float parsing (integer, decimal, optional exponent) */
+static inline double strtod(const char *s, char **end) {
+    const char *p = s;
+    while (*p == ' ' || *p == '\t') p++;
+    double sign = 1.0;
+    if (*p == '-') { sign = -1.0; p++; }
+    else if (*p == '+') p++;
+    double val = 0.0;
+    int got_digits = 0;
+    while (*p >= '0' && *p <= '9') { val = val * 10.0 + (*p - '0'); p++; got_digits = 1; }
+    if (*p == '.') {
+        p++;
+        double frac = 0.1;
+        while (*p >= '0' && *p <= '9') { val += (*p - '0') * frac; frac *= 0.1; p++; got_digits = 1; }
+    }
+    if (got_digits && (*p == 'e' || *p == 'E')) {
+        p++;
+        int esign = 1, exp = 0;
+        if (*p == '-') { esign = -1; p++; }
+        else if (*p == '+') p++;
+        while (*p >= '0' && *p <= '9') { exp = exp * 10 + (*p - '0'); p++; }
+        double epow = 1.0;
+        for (int i = 0; i < exp; i++) epow *= 10.0;
+        if (esign < 0) val /= epow; else val *= epow;
+    }
+    if (!got_digits) { if (end) *end = (char *)s; return 0.0; }
+    if (end) *end = (char *)p;
+    return sign * val;
+}
+
+static inline float strtof(const char *s, char **end) {
+    return (float)strtod(s, end);
+}
+
+static inline double atof(const char *s) {
+    return strtod(s, (char **)0);
+}
 typedef struct { int quot, rem; } div_t;
 typedef struct { long quot, rem; } ldiv_t;
 static inline div_t div(int n, int d) { div_t r; r.quot = n / d; r.rem = n % d; return r; }
@@ -1647,10 +1796,11 @@ static inline int epoll_wait(int epfd, struct epoll_event *events, int maxevents
 }
 typedef unsigned long jmp_buf[22];
 typedef unsigned long sigjmp_buf[23];
-static inline int setjmp(jmp_buf env) { (void)env; return 0; }
-static inline void longjmp(jmp_buf env, int val) { (void)env; (void)val; for(;;); }
-static inline int sigsetjmp(sigjmp_buf env, int savesigs) { (void)env; (void)savesigs; return 0; }
-static inline void siglongjmp(sigjmp_buf env, int val) { (void)env; (void)val; for(;;); }
+/* Real implementations in setjmp.S (aarch64 asm) */
+int setjmp(jmp_buf env);
+void longjmp(jmp_buf env, int val) __attribute__((noreturn));
+int sigsetjmp(sigjmp_buf env, int savesigs);
+void siglongjmp(sigjmp_buf env, int val) __attribute__((noreturn));
 static int optind = 1;
 static int optopt = 0;
 static char *optarg = (void *)0;
@@ -1695,9 +1845,40 @@ static inline int glob(const char *pattern, int flags, int (*errfunc)(const char
 }
 static inline void globfree(glob_t *pglob) { (void)pglob; }
 static inline int fnmatch(const char *pattern, const char *string, int flags) { (void)pattern; (void)string; (void)flags; return 1; }
-static inline void openlog(const char *ident, int option, int facility) { (void)ident; (void)option; (void)facility; }
-static inline void syslog(int priority, const char *format, ...) { (void)priority; (void)format; }
-static inline void closelog(void) {}
+/* Logging - routes to stderr (fd 2) */
+static char _syslog_ident[32];
+static int  _syslog_facility = 0;
+
+static inline void openlog(const char *ident, int option, int facility) {
+    (void)option;
+    _syslog_facility = facility;
+    if (ident) {
+        int i = 0;
+        while (ident[i] && i < 31) { _syslog_ident[i] = ident[i]; i++; }
+        _syslog_ident[i] = 0;
+    }
+}
+
+static inline void syslog(int priority, const char *format, ...) {
+    int lvl = priority & 7;
+    if (_syslog_ident[0]) {
+        write(STDERR_FILENO, _syslog_ident, strlen(_syslog_ident));
+        write(STDERR_FILENO, ": ", 2);
+    }
+    const char *lname =
+        lvl == 0 ? "EMERG" : lvl == 1 ? "ALERT" : lvl == 2 ? "CRIT" :
+        lvl == 3 ? "ERR" : lvl == 4 ? "WARN" : lvl == 5 ? "NOTICE" :
+        lvl == 6 ? "INFO" : "DEBUG";
+    write(STDERR_FILENO, lname, strlen(lname));
+    write(STDERR_FILENO, ": ", 2);
+    write(STDERR_FILENO, format, strlen(format));
+    write(STDERR_FILENO, "\n", 1);
+}
+
+static inline void closelog(void) {
+    _syslog_ident[0] = 0;
+    _syslog_facility = 0;
+}
 typedef struct { unsigned long we_wordc; char **we_wordv; unsigned long we_offs; } wordexp_t;
 #define WRDE_SYNTAX 2
 static inline int wordexp(const char *s, wordexp_t *p, int flags) { (void)s; (void)flags; p->we_wordc = 0; p->we_wordv = (void *)0; return WRDE_SYNTAX; }
