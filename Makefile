@@ -238,11 +238,14 @@ bump-patch:
 	@PATCH=$$(grep 'AIOS_VERSION_PATCH' include/aios/version.h | head -1 | awk '{print $$3}'); \
 	NEW=$$((PATCH + 1)); \
 	sed -i '' "s/AIOS_VERSION_PATCH  *$$PATCH/AIOS_VERSION_PATCH  $$NEW/" include/aios/version.h; \
-	echo "Version bumped to 0.1.$$NEW"
+	MAJ=$$(grep AIOS_VERSION_MAJOR include/aios/version.h | head -1 | awk '{print $$3}'); \
+	MIN=$$(grep AIOS_VERSION_MINOR include/aios/version.h | head -1 | awk '{print $$3}'); \
+	echo "Version bumped to $$MAJ.$$MIN.$$NEW"
 
 bump-minor:
 	@MINOR=$$(grep 'AIOS_VERSION_MINOR' include/aios/version.h | head -1 | awk '{print $$3}'); \
 	NEW=$$((MINOR + 1)); \
 	sed -i '' "s/AIOS_VERSION_MINOR  *$$MINOR/AIOS_VERSION_MINOR  $$NEW/" include/aios/version.h; \
 	sed -i '' "s/AIOS_VERSION_PATCH  *[0-9]*/AIOS_VERSION_PATCH  0/" include/aios/version.h; \
-	echo "Version bumped to 0.$$NEW.0"
+	MAJ=$$(grep AIOS_VERSION_MAJOR include/aios/version.h | head -1 | awk '{print $$3}'); \
+	echo "Version bumped to $$MAJ.$$NEW.0"
