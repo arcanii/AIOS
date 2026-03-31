@@ -1,6 +1,6 @@
 CC = aarch64-linux-gnu-gcc
 OBJCOPY = aarch64-linux-gnu-objcopy
-CFLAGS = -nostdlib -nostartfiles -ffreestanding -mcpu=cortex-a53 -mstrict-align -I. -I../include -O2
+CFLAGS = -nostdlib -nostartfiles -ffreestanding -mcpu=cortex-a53 -mstrict-align -I. -I../include -O2 -ffunction-sections
 LDFLAGS = -T link.ld -Wl,--build-id=none
 
 SOURCES = $(wildcard *.c)

@@ -17,6 +17,11 @@
 #include <aios/ipc.h>
 #include <aios/proc_state.h>
 
+/* ── Logging backend for sandbox ─────────────────────── */
+#define LOG_MODULE "SBX"
+#define LOG_LEVEL  LOG_LEVEL_DEBUG
+#include <aios/log.h>
+
 static microkit_channel my_channel;
 #include "sys/syscall.h"
 #include "arch/arch.h"
@@ -149,6 +154,28 @@ static void sbx_put_hex(unsigned int n) {
     for (int i = 28; i >= 0; i -= 4)
         sbx_putc(hex[(n >> i) & 0xf]);
 }
+
+/* ── Logging backend implementation ─────────────────── */
+void _log_puts(const char *s) {
+    if (!s) return;
+    while (*s) { sbx_putc_direct(*s); s++; }
+}
+void _log_put_dec(unsigned long n) {
+    char buf[20];
+    int i = 0;
+    if (n == 0) { sbx_putc_direct('0'); return; }
+    while (n > 0) { buf[i++] = '0' + (n % 10); n /= 10; }
+    while (i > 0) sbx_putc_direct(buf[--i]);
+}
+void _log_flush(void) { /* sbx_putc_direct is unbuffered */ }
+unsigned long _log_get_time(void) {
+    uint64_t cnt, freq;
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(cnt));
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+    if (freq == 0) freq = 62500000;
+    return (unsigned long)(cnt / freq);
+}
+
 
 
 /* ── File I/O syscalls (PPC to orchestrator) ─────────── */
