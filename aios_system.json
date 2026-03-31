@@ -1,0 +1,1078 @@
+{
+  "memory_regions": [
+    {
+      "name": "uart_mmio",
+      "size": "0x1000",
+      "phys_addr": "0x9000000"
+    },
+    {
+      "name": "rx_buf",
+      "size": "0x1000"
+    },
+    {
+      "name": "tx_buf",
+      "size": "0x1000"
+    },
+    {
+      "name": "blk_mmio",
+      "size": "0x1000",
+      "phys_addr": "0x0a003000"
+    },
+    {
+      "name": "blk_dma",
+      "size": "0x10000",
+      "phys_addr": "0xB0000000"
+    },
+    {
+      "name": "blk_data",
+      "size": "0x10000"
+    },
+    {
+      "name": "fs_data",
+      "size": "0x10000"
+    },
+    {
+      "name": "model_data",
+      "size": "0x8000000"
+    },
+    {
+      "name": "llm_io",
+      "size": "0x4000"
+    },
+    {
+      "name": "sbx0_io",
+      "size": "0x1000"
+    },
+    {
+      "name": "sbx0_heap",
+      "size": "0x1000000"
+    },
+    {
+      "name": "sbx0_code",
+      "size": "0x400000"
+    },
+    {
+      "name": "sbx1_io",
+      "size": "0x1000"
+    },
+    {
+      "name": "sbx1_heap",
+      "size": "0x1000000"
+    },
+    {
+      "name": "sbx1_code",
+      "size": "0x400000"
+    },
+    {
+      "name": "sbx2_io",
+      "size": "0x1000"
+    },
+    {
+      "name": "sbx2_heap",
+      "size": "0x1000000"
+    },
+    {
+      "name": "sbx2_code",
+      "size": "0x400000"
+    },
+    {
+      "name": "sbx3_io",
+      "size": "0x1000"
+    },
+    {
+      "name": "sbx3_heap",
+      "size": "0x1000000"
+    },
+    {
+      "name": "sbx3_code",
+      "size": "0x400000"
+    },
+    {
+      "name": "sbx4_io",
+      "size": "0x1000"
+    },
+    {
+      "name": "sbx4_heap",
+      "size": "0x1000000"
+    },
+    {
+      "name": "sbx4_code",
+      "size": "0x400000"
+    },
+    {
+      "name": "sbx5_io",
+      "size": "0x1000"
+    },
+    {
+      "name": "sbx5_heap",
+      "size": "0x1000000"
+    },
+    {
+      "name": "sbx5_code",
+      "size": "0x400000"
+    },
+    {
+      "name": "sbx6_io",
+      "size": "0x1000"
+    },
+    {
+      "name": "sbx6_heap",
+      "size": "0x1000000"
+    },
+    {
+      "name": "sbx6_code",
+      "size": "0x400000"
+    },
+    {
+      "name": "sbx7_io",
+      "size": "0x1000"
+    },
+    {
+      "name": "sbx7_heap",
+      "size": "0x1000000"
+    },
+    {
+      "name": "swap_region",
+      "size": "0x10000000"
+    },
+    {
+      "name": "sbx7_code",
+      "size": "0x400000"
+    },
+    {
+      "name": "auth_io",
+      "size": "0x1000"
+    },
+    {
+      "name": "auth_store",
+      "size": "0x10000"
+    },
+    {
+      "name": "net_dma",
+      "size": "0x20000",
+      "phys_addr": "0xB0100000"
+    },
+    {
+      "name": "net_data",
+      "size": "0x10000"
+    },
+    {
+      "name": "sock_data",
+      "size": "0x10000"
+    },
+    {
+      "name": "echo_io",
+      "size": "0x1000"
+    }
+  ],
+  "protection_domains": [
+    {
+      "name": "serial_driver",
+      "priority": 254,
+      "program_image": "serial_driver.elf",
+      "maps": [
+        {
+          "mr": "uart_mmio",
+          "vaddr": "0x4000000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "uart_base_vaddr"
+        },
+        {
+          "mr": "rx_buf",
+          "vaddr": "0x4200000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "rx_buf"
+        },
+        {
+          "mr": "tx_buf",
+          "vaddr": "0x4201000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "tx_buf"
+        }
+      ],
+      "irqs": [
+        {
+          "irq": 33,
+          "id": 2
+        }
+      ]
+    },
+    {
+      "name": "blk_driver",
+      "priority": 250,
+      "program_image": "blk_driver.elf",
+      "maps": [
+        {
+          "mr": "blk_mmio",
+          "vaddr": "0x5000000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "virtio_blk_base_vaddr"
+        },
+        {
+          "mr": "blk_dma",
+          "vaddr": "0x5100000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "dma_base"
+        },
+        {
+          "mr": "blk_data",
+          "vaddr": "0x5200000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "blk_data"
+        }
+      ]
+    },
+    {
+      "name": "fs_server",
+      "priority": 240,
+      "program_image": "fs_server.elf",
+      "maps": [
+        {
+          "mr": "blk_data",
+          "vaddr": "0x6000000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "blk_data"
+        },
+        {
+          "mr": "fs_data",
+          "vaddr": "0x6100000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "fs_data"
+        }
+      ]
+    },
+    {
+      "name": "orchestrator",
+      "priority": 200,
+      "program_image": "orchestrator.elf",
+      "maps": [
+        {
+          "mr": "rx_buf",
+          "vaddr": "0x4200000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "rx_buf"
+        },
+        {
+          "mr": "tx_buf",
+          "vaddr": "0x4201000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "tx_buf"
+        },
+        {
+          "mr": "fs_data",
+          "vaddr": "0x6100000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "fs_data"
+        },
+        {
+          "mr": "model_data",
+          "vaddr": "0x10000000",
+          "perms": "rw",
+          "cached": "true",
+          "setvar_vaddr": "model_data"
+        },
+        {
+          "mr": "llm_io",
+          "vaddr": "0x18100000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "llm_io"
+        },
+        {
+          "mr": "sock_data",
+          "vaddr": "0x5700000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "sock_data"
+        },
+        {
+          "mr": "sbx0_io",
+          "vaddr": "0x30000000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "sbx0_io"
+        },
+        {
+          "mr": "sbx0_code",
+          "vaddr": "0x30001000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "sbx0_code"
+        },
+        {
+          "mr": "sbx1_io",
+          "vaddr": "0x30800000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "sbx1_io"
+        },
+        {
+          "mr": "sbx1_code",
+          "vaddr": "0x30801000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "sbx1_code"
+        },
+        {
+          "mr": "sbx2_io",
+          "vaddr": "0x31000000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "sbx2_io"
+        },
+        {
+          "mr": "sbx2_code",
+          "vaddr": "0x31001000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "sbx2_code"
+        },
+        {
+          "mr": "sbx3_io",
+          "vaddr": "0x31800000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "sbx3_io"
+        },
+        {
+          "mr": "sbx3_code",
+          "vaddr": "0x31801000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "sbx3_code"
+        },
+        {
+          "mr": "sbx4_io",
+          "vaddr": "0x32000000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "sbx4_io"
+        },
+        {
+          "mr": "sbx4_code",
+          "vaddr": "0x32001000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "sbx4_code"
+        },
+        {
+          "mr": "sbx5_io",
+          "vaddr": "0x32800000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "sbx5_io"
+        },
+        {
+          "mr": "sbx5_code",
+          "vaddr": "0x32801000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "sbx5_code"
+        },
+        {
+          "mr": "sbx6_io",
+          "vaddr": "0x33000000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "sbx6_io"
+        },
+        {
+          "mr": "sbx6_code",
+          "vaddr": "0x33001000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "sbx6_code"
+        },
+        {
+          "mr": "sbx7_io",
+          "vaddr": "0x33800000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "sbx7_io"
+        },
+        {
+          "mr": "sbx7_code",
+          "vaddr": "0x33801000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "sbx7_code"
+        },
+        {
+          "mr": "swap_region",
+          "vaddr": "0x50000000",
+          "perms": "rw",
+          "cached": "true",
+          "setvar_vaddr": "swap_region"
+        },
+        {
+          "mr": "sbx0_heap",
+          "vaddr": "0x40000000",
+          "perms": "rw",
+          "cached": "true",
+          "setvar_vaddr": "sbx0_heap"
+        },
+        {
+          "mr": "sbx1_heap",
+          "vaddr": "0x41000000",
+          "perms": "rw",
+          "cached": "true",
+          "setvar_vaddr": "sbx1_heap"
+        },
+        {
+          "mr": "sbx2_heap",
+          "vaddr": "0x42000000",
+          "perms": "rw",
+          "cached": "true",
+          "setvar_vaddr": "sbx2_heap"
+        },
+        {
+          "mr": "sbx3_heap",
+          "vaddr": "0x43000000",
+          "perms": "rw",
+          "cached": "true",
+          "setvar_vaddr": "sbx3_heap"
+        },
+        {
+          "mr": "sbx4_heap",
+          "vaddr": "0x44000000",
+          "perms": "rw",
+          "cached": "true",
+          "setvar_vaddr": "sbx4_heap"
+        },
+        {
+          "mr": "sbx5_heap",
+          "vaddr": "0x45000000",
+          "perms": "rw",
+          "cached": "true",
+          "setvar_vaddr": "sbx5_heap"
+        },
+        {
+          "mr": "sbx6_heap",
+          "vaddr": "0x46000000",
+          "perms": "rw",
+          "cached": "true",
+          "setvar_vaddr": "sbx6_heap"
+        },
+        {
+          "mr": "sbx7_heap",
+          "vaddr": "0x47000000",
+          "perms": "rw",
+          "cached": "true",
+          "setvar_vaddr": "sbx7_heap"
+        },
+        {
+          "mr": "auth_io",
+          "vaddr": "0x6200000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "auth_io"
+        },
+        {
+          "mr": "echo_io",
+          "vaddr": "0x6000000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "echo_io"
+        }
+      ],
+      "children": [
+        {
+          "name": "sbx0",
+          "priority": 150,
+          "id": 0,
+          "budget": 5000,
+          "period": 10000,
+          "cpu": 0,
+          "program_image": "sandbox.elf",
+          "maps": [
+            {
+              "mr": "sbx0_io",
+              "vaddr": "0x20000000",
+              "perms": "rw",
+              "cached": "false",
+              "setvar_vaddr": "sandbox_io"
+            },
+            {
+              "mr": "sbx0_heap",
+              "vaddr": "0x20100000",
+              "perms": "rw",
+              "cached": "true",
+              "setvar_vaddr": "sandbox_heap"
+            },
+            {
+              "mr": "sbx0_code",
+              "vaddr": "0x21100000",
+              "perms": "rwx",
+              "cached": "false",
+              "setvar_vaddr": "sandbox_code"
+            }
+          ]
+        },
+        {
+          "name": "sbx1",
+          "priority": 150,
+          "id": 1,
+          "budget": 5000,
+          "period": 10000,
+          "cpu": 0,
+          "program_image": "sandbox.elf",
+          "maps": [
+            {
+              "mr": "sbx1_io",
+              "vaddr": "0x20000000",
+              "perms": "rw",
+              "cached": "false",
+              "setvar_vaddr": "sandbox_io"
+            },
+            {
+              "mr": "sbx1_heap",
+              "vaddr": "0x20100000",
+              "perms": "rw",
+              "cached": "true",
+              "setvar_vaddr": "sandbox_heap"
+            },
+            {
+              "mr": "sbx1_code",
+              "vaddr": "0x21100000",
+              "perms": "rwx",
+              "cached": "false",
+              "setvar_vaddr": "sandbox_code"
+            }
+          ]
+        },
+        {
+          "name": "sbx2",
+          "priority": 150,
+          "id": 2,
+          "budget": 5000,
+          "period": 10000,
+          "cpu": 0,
+          "program_image": "sandbox.elf",
+          "maps": [
+            {
+              "mr": "sbx2_io",
+              "vaddr": "0x20000000",
+              "perms": "rw",
+              "cached": "false",
+              "setvar_vaddr": "sandbox_io"
+            },
+            {
+              "mr": "sbx2_heap",
+              "vaddr": "0x20100000",
+              "perms": "rw",
+              "cached": "true",
+              "setvar_vaddr": "sandbox_heap"
+            },
+            {
+              "mr": "sbx2_code",
+              "vaddr": "0x21100000",
+              "perms": "rwx",
+              "cached": "false",
+              "setvar_vaddr": "sandbox_code"
+            }
+          ]
+        },
+        {
+          "name": "sbx3",
+          "priority": 150,
+          "id": 3,
+          "budget": 5000,
+          "period": 10000,
+          "cpu": 0,
+          "program_image": "sandbox.elf",
+          "maps": [
+            {
+              "mr": "sbx3_io",
+              "vaddr": "0x20000000",
+              "perms": "rw",
+              "cached": "false",
+              "setvar_vaddr": "sandbox_io"
+            },
+            {
+              "mr": "sbx3_heap",
+              "vaddr": "0x20100000",
+              "perms": "rw",
+              "cached": "true",
+              "setvar_vaddr": "sandbox_heap"
+            },
+            {
+              "mr": "sbx3_code",
+              "vaddr": "0x21100000",
+              "perms": "rwx",
+              "cached": "false",
+              "setvar_vaddr": "sandbox_code"
+            }
+          ]
+        },
+        {
+          "name": "sbx4",
+          "priority": 150,
+          "id": 4,
+          "budget": 5000,
+          "period": 10000,
+          "cpu": 0,
+          "program_image": "sandbox.elf",
+          "maps": [
+            {
+              "mr": "sbx4_io",
+              "vaddr": "0x20000000",
+              "perms": "rw",
+              "cached": "false",
+              "setvar_vaddr": "sandbox_io"
+            },
+            {
+              "mr": "sbx4_heap",
+              "vaddr": "0x20100000",
+              "perms": "rw",
+              "cached": "true",
+              "setvar_vaddr": "sandbox_heap"
+            },
+            {
+              "mr": "sbx4_code",
+              "vaddr": "0x21100000",
+              "perms": "rwx",
+              "cached": "false",
+              "setvar_vaddr": "sandbox_code"
+            }
+          ]
+        },
+        {
+          "name": "sbx5",
+          "priority": 150,
+          "id": 5,
+          "budget": 5000,
+          "period": 10000,
+          "cpu": 0,
+          "program_image": "sandbox.elf",
+          "maps": [
+            {
+              "mr": "sbx5_io",
+              "vaddr": "0x20000000",
+              "perms": "rw",
+              "cached": "false",
+              "setvar_vaddr": "sandbox_io"
+            },
+            {
+              "mr": "sbx5_heap",
+              "vaddr": "0x20100000",
+              "perms": "rw",
+              "cached": "true",
+              "setvar_vaddr": "sandbox_heap"
+            },
+            {
+              "mr": "sbx5_code",
+              "vaddr": "0x21100000",
+              "perms": "rwx",
+              "cached": "false",
+              "setvar_vaddr": "sandbox_code"
+            }
+          ]
+        },
+        {
+          "name": "sbx6",
+          "priority": 150,
+          "id": 6,
+          "budget": 5000,
+          "period": 10000,
+          "cpu": 0,
+          "program_image": "sandbox.elf",
+          "maps": [
+            {
+              "mr": "sbx6_io",
+              "vaddr": "0x20000000",
+              "perms": "rw",
+              "cached": "false",
+              "setvar_vaddr": "sandbox_io"
+            },
+            {
+              "mr": "sbx6_heap",
+              "vaddr": "0x20100000",
+              "perms": "rw",
+              "cached": "true",
+              "setvar_vaddr": "sandbox_heap"
+            },
+            {
+              "mr": "sbx6_code",
+              "vaddr": "0x21100000",
+              "perms": "rwx",
+              "cached": "false",
+              "setvar_vaddr": "sandbox_code"
+            }
+          ]
+        },
+        {
+          "name": "sbx7",
+          "priority": 150,
+          "id": 7,
+          "budget": 5000,
+          "period": 10000,
+          "cpu": 0,
+          "program_image": "sandbox.elf",
+          "maps": [
+            {
+              "mr": "sbx7_io",
+              "vaddr": "0x20000000",
+              "perms": "rw",
+              "cached": "false",
+              "setvar_vaddr": "sandbox_io"
+            },
+            {
+              "mr": "sbx7_heap",
+              "vaddr": "0x20100000",
+              "perms": "rw",
+              "cached": "true",
+              "setvar_vaddr": "sandbox_heap"
+            },
+            {
+              "mr": "sbx7_code",
+              "vaddr": "0x21100000",
+              "perms": "rwx",
+              "cached": "false",
+              "setvar_vaddr": "sandbox_code"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "llm_server",
+      "priority": 180,
+      "stack_size": "0x10000",
+      "program_image": "llm_server.elf",
+      "maps": [
+        {
+          "mr": "model_data",
+          "vaddr": "0x10000000",
+          "perms": "rw",
+          "cached": "true",
+          "setvar_vaddr": "model_data"
+        },
+        {
+          "mr": "llm_io",
+          "vaddr": "0x18100000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "llm_io"
+        }
+      ]
+    },
+    {
+      "name": "echo_server",
+      "priority": 100,
+      "program_image": "echo_server.elf",
+      "maps": [
+        {
+          "mr": "echo_io",
+          "vaddr": "0x6000000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "echo_io"
+        }
+      ]
+    },
+    {
+      "name": "auth_server",
+      "priority": 210,
+      "program_image": "auth_server.elf",
+      "maps": [
+        {
+          "mr": "auth_io",
+          "vaddr": "0x30000000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "auth_io"
+        },
+        {
+          "mr": "auth_store",
+          "vaddr": "0x30100000",
+          "perms": "rw",
+          "cached": "true",
+          "setvar_vaddr": "auth_store"
+        }
+      ]
+    },
+    {
+      "name": "net_driver",
+      "priority": 230,
+      "program_image": "net_driver.elf",
+      "maps": [
+        {
+          "mr": "blk_mmio",
+          "vaddr": "0x5200000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "virtio_net_base_vaddr"
+        },
+        {
+          "mr": "net_dma",
+          "vaddr": "0x5300000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "net_dma_base"
+        },
+        {
+          "mr": "net_data",
+          "vaddr": "0x5500000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "net_data"
+        }
+      ],
+      "irqs": [
+        {
+          "irq": 78,
+          "id": 9
+        }
+      ]
+    },
+    {
+      "name": "net_server",
+      "priority": 210,
+      "program_image": "net_server.elf",
+      "maps": [
+        {
+          "mr": "net_data",
+          "vaddr": "0x5500000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "net_data"
+        },
+        {
+          "mr": "sock_data",
+          "vaddr": "0x5600000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "sock_data"
+        }
+      ]
+    }
+  ],
+  "channels": [
+    {
+      "ends": [
+        {
+          "pd": "serial_driver",
+          "id": 1
+        },
+        {
+          "pd": "orchestrator",
+          "id": 1
+        }
+      ]
+    },
+    {
+      "ends": [
+        {
+          "pd": "orchestrator",
+          "id": 2
+        },
+        {
+          "pd": "blk_driver",
+          "id": 2
+        }
+      ]
+    },
+    {
+      "ends": [
+        {
+          "pd": "orchestrator",
+          "id": 3
+        },
+        {
+          "pd": "echo_server",
+          "id": 3
+        }
+      ]
+    },
+    {
+      "ends": [
+        {
+          "pd": "orchestrator",
+          "id": 4,
+          "pp": true
+        },
+        {
+          "pd": "fs_server",
+          "id": 4
+        }
+      ]
+    },
+    {
+      "ends": [
+        {
+          "pd": "orchestrator",
+          "id": 6
+        },
+        {
+          "pd": "llm_server",
+          "id": 6
+        }
+      ]
+    },
+    {
+      "ends": [
+        {
+          "pd": "orchestrator",
+          "id": 7
+        },
+        {
+          "pd": "sbx0",
+          "id": 7,
+          "pp": true
+        }
+      ]
+    },
+    {
+      "ends": [
+        {
+          "pd": "orchestrator",
+          "id": 8
+        },
+        {
+          "pd": "sbx1",
+          "id": 8,
+          "pp": true
+        }
+      ]
+    },
+    {
+      "ends": [
+        {
+          "pd": "orchestrator",
+          "id": 9
+        },
+        {
+          "pd": "sbx2",
+          "id": 9,
+          "pp": true
+        }
+      ]
+    },
+    {
+      "ends": [
+        {
+          "pd": "orchestrator",
+          "id": 10
+        },
+        {
+          "pd": "sbx3",
+          "id": 10,
+          "pp": true
+        }
+      ]
+    },
+    {
+      "ends": [
+        {
+          "pd": "orchestrator",
+          "id": 14
+        },
+        {
+          "pd": "sbx4",
+          "id": 14,
+          "pp": true
+        }
+      ]
+    },
+    {
+      "ends": [
+        {
+          "pd": "orchestrator",
+          "id": 15
+        },
+        {
+          "pd": "sbx5",
+          "id": 15,
+          "pp": true
+        }
+      ]
+    },
+    {
+      "ends": [
+        {
+          "pd": "orchestrator",
+          "id": 16
+        },
+        {
+          "pd": "sbx6",
+          "id": 16,
+          "pp": true
+        }
+      ]
+    },
+    {
+      "ends": [
+        {
+          "pd": "orchestrator",
+          "id": 17
+        },
+        {
+          "pd": "sbx7",
+          "id": 17,
+          "pp": true
+        }
+      ]
+    },
+    {
+      "ends": [
+        {
+          "pd": "orchestrator",
+          "id": 11,
+          "pp": true
+        },
+        {
+          "pd": "auth_server",
+          "id": 1
+        }
+      ]
+    },
+    {
+      "ends": [
+        {
+          "pd": "orchestrator",
+          "id": 12,
+          "pp": true
+        },
+        {
+          "pd": "net_server",
+          "id": 12
+        }
+      ]
+    },
+    {
+      "ends": [
+        {
+          "pd": "net_driver",
+          "id": 8
+        },
+        {
+          "pd": "net_server",
+          "id": 8
+        }
+      ]
+    },
+    {
+      "ends": [
+        {
+          "pd": "fs_server",
+          "id": 10
+        },
+        {
+          "pd": "blk_driver",
+          "id": 10
+        }
+      ]
+    }
+  ]
+}

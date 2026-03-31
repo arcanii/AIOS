@@ -11,6 +11,27 @@
 #include "aios/ipc.h"
 #include "virtio.h"
 
+#define LOG_MODULE "NET"
+#define LOG_LEVEL  LOG_LEVEL_INFO
+#include "aios/log.h"
+
+/* Logging backend */
+void _log_puts(const char *s) { microkit_dbg_puts(s); }
+void _log_put_dec(unsigned long n) {
+    char buf[20]; int i = 0;
+    if (n == 0) { microkit_dbg_putc('0'); return; }
+    while (n) { buf[i++] = '0' + (n % 10); n /= 10; }
+    while (i--) microkit_dbg_putc(buf[i]);
+}
+void _log_flush(void) {}
+unsigned long _log_get_time(void) {
+    uint64_t cnt, freq;
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(cnt));
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+    if (freq == 0) freq = 62500000;
+    return (unsigned long)(cnt / freq);
+}
+
 /* ── Memory regions ──────────────────────────────────── */
 uintptr_t virtio_net_base_vaddr;
 uintptr_t net_data;         /* shared with net_server */
@@ -18,17 +39,6 @@ uintptr_t net_dma_base;     /* DMA region for virtqueues */
 
 #define NET_DMA_PADDR  0xB0100000
 #define NET_DMA_SIZE   0x20000    /* 128 KiB */
-
-/* DMA layout:
- * 0x0000 - 0x00FF: RX descriptors (16 entries * 16 bytes)
- * 0x0100 - 0x01FF: RX avail ring
- * 0x1000 - 0x10FF: RX used ring
- * 0x2000 - 0x20FF: TX descriptors
- * 0x2100 - 0x21FF: TX avail ring
- * 0x3000 - 0x30FF: TX used ring
- * 0x4000 - 0x0FFFF: RX packet buffers (12 * 2048 = 24 KiB)
- * 0x10000 - 0x1BFFF: TX packet buffers (12 * 2048 = 24 KiB... actually we reuse)
- */
 
 #define RX_DESC_OFF    0x0000
 #define RX_AVAIL_OFF   0x0100
@@ -50,7 +60,6 @@ struct virtio_net_hdr {
     uint16_t gso_size;
     uint16_t csum_start;
     uint16_t csum_offset;
-    /* uint16_t num_buffers;  -- only for mergeable rx buffers */
 } __attribute__((packed));
 
 #define VIRTIO_NET_HDR_SIZE  10
@@ -77,10 +86,6 @@ static uint16_t tx_last_used __attribute__((unused)) = 0;
 
 static uint8_t mac_addr[6];
 
-/* ── net_data IPC layout ─────────────────────────────── */
-
-
-
 /* ── Helpers ─────────────────────────────────────────── */
 static void my_memset(void *dst, int c, unsigned long n) {
     uint8_t *d = dst; while (n--) *d++ = c;
@@ -95,7 +100,7 @@ static void rx_replenish(void) {
         uint64_t buf_pa = NET_DMA_PADDR + RX_BUF_OFF + i * PKT_BUF_SIZE;
         rx_descs[i].addr  = buf_pa;
         rx_descs[i].len   = PKT_BUF_SIZE;
-        rx_descs[i].flags = VIRTQ_DESC_F_WRITE; /* device writes to this */
+        rx_descs[i].flags = VIRTQ_DESC_F_WRITE;
         rx_descs[i].next  = 0;
         rx_avail->ring[rx_avail->idx % QUEUE_SIZE] = i;
         rx_avail->idx++;
@@ -104,41 +109,34 @@ static void rx_replenish(void) {
 
 /* ── Init ────────────────────────────────────────────── */
 static int virtio_net_init(void) {
-    /* Verify magic */
     if (vio_read32(VIRTIO_MMIO_MAGIC) != VIRTIO_MAGIC) {
-        microkit_dbg_puts("NET: bad magic\n");
+        LOG_ERROR("bad magic");
         return -1;
     }
     if (vio_read32(VIRTIO_MMIO_VERSION) != 1) {
-        microkit_dbg_puts("NET: bad version\n");
+        LOG_ERROR("bad version");
         return -1;
     }
     if (vio_read32(VIRTIO_MMIO_DEVICE_ID) != VIRTIO_NET_DEVICE_ID) {
-        microkit_dbg_puts("NET: not a network device\n");
+        LOG_ERROR("not a network device");
         return -1;
     }
 
-    /* Reset */
     vio_write32(VIRTIO_MMIO_STATUS, 0);
-    /* Acknowledge */
     vio_write32(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACK);
     vio_write32(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER);
 
-    /* Read features, accept none (keep it simple) */
     (void)vio_read32(VIRTIO_MMIO_HOST_FEATURES);
     vio_write32(VIRTIO_MMIO_DRV_FEATURES, 0);
-
-    /* Page size */
     vio_write32(VIRTIO_MMIO_GUEST_PAGE_SIZE, 4096);
 
-    /* Zero DMA region */
     my_memset((void *)net_dma_base, 0, NET_DMA_SIZE);
 
     /* Setup RX queue (queue 0) */
     vio_write32(VIRTIO_MMIO_QUEUE_SEL, 0);
     uint32_t rx_qmax = vio_read32(VIRTIO_MMIO_QUEUE_NUM_MAX);
     if (rx_qmax < QUEUE_SIZE) {
-        microkit_dbg_puts("NET: RX queue too small\n");
+        LOG_ERROR("RX queue too small");
         return -1;
     }
     vio_write32(VIRTIO_MMIO_QUEUE_NUM, QUEUE_SIZE);
@@ -153,7 +151,7 @@ static int virtio_net_init(void) {
     vio_write32(VIRTIO_MMIO_QUEUE_SEL, 1);
     uint32_t tx_qmax = vio_read32(VIRTIO_MMIO_QUEUE_NUM_MAX);
     if (tx_qmax < QUEUE_SIZE) {
-        microkit_dbg_puts("NET: TX queue too small\n");
+        LOG_ERROR("TX queue too small");
         return -1;
     }
     vio_write32(VIRTIO_MMIO_QUEUE_NUM, QUEUE_SIZE);
@@ -164,12 +162,11 @@ static int virtio_net_init(void) {
     tx_avail = (volatile struct virtq_avail *)(net_dma_base + TX_AVAIL_OFF);
     tx_used  = (volatile struct virtq_used *)(net_dma_base + TX_USED_OFF);
 
-    /* Replenish RX buffers */
     rx_replenish();
     __asm__ volatile("dmb sy" ::: "memory");
-    vio_write32(VIRTIO_MMIO_QUEUE_NOTIFY, 0);  /* kick RX queue */
+    vio_write32(VIRTIO_MMIO_QUEUE_NOTIFY, 0);
 
-    /* Read MAC address from config space */
+    /* Read MAC address */
     for (int i = 0; i < 6; i++) {
         mac_addr[i] = *(volatile uint8_t *)(virtio_net_base_vaddr + 0xc00 + VIRTIO_MMIO_CONFIG + i);
     }
@@ -178,16 +175,17 @@ static int virtio_net_init(void) {
     vio_write32(VIRTIO_MMIO_STATUS,
         VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK);
 
-    microkit_dbg_puts("NET: virtio-net ready, MAC=");
+    /* Print MAC using log backend directly for multi-part output */
+    _log_puts("NET: virtio-net ready, MAC=");
     for (int i = 0; i < 6; i++) {
         char hex[3];
         hex[0] = "0123456789abcdef"[(mac_addr[i] >> 4) & 0xf];
         hex[1] = "0123456789abcdef"[mac_addr[i] & 0xf];
         hex[2] = 0;
-        microkit_dbg_puts(hex);
-        if (i < 5) microkit_dbg_puts(":");
+        _log_puts(hex);
+        if (i < 5) _log_puts(":");
     }
-    microkit_dbg_puts("\n");
+    _log_puts("\n");
 
     return 0;
 }
@@ -196,19 +194,16 @@ static int virtio_net_init(void) {
 static int net_send(const uint8_t *data, uint32_t len) {
     if (len > PKT_BUF_SIZE - VIRTIO_NET_HDR_SIZE) return -1;
 
-    /* Use a TX buffer */
     uint16_t idx = tx_avail->idx % QUEUE_SIZE;
     uint8_t *buf = (uint8_t *)(net_dma_base + TX_BUF_OFF + idx * PKT_BUF_SIZE);
     uint64_t buf_pa = NET_DMA_PADDR + TX_BUF_OFF + idx * PKT_BUF_SIZE;
 
-    /* Write virtio-net header (all zeros = no offload) */
     my_memset(buf, 0, VIRTIO_NET_HDR_SIZE);
-    /* Copy frame data */
     my_memcpy(buf + VIRTIO_NET_HDR_SIZE, data, len);
 
     tx_descs[idx].addr  = buf_pa;
     tx_descs[idx].len   = VIRTIO_NET_HDR_SIZE + len;
-    tx_descs[idx].flags = 0; /* device reads from this */
+    tx_descs[idx].flags = 0;
     tx_descs[idx].next  = 0;
 
     tx_avail->ring[idx] = idx;
@@ -216,16 +211,13 @@ static int net_send(const uint8_t *data, uint32_t len) {
     tx_avail->idx++;
     __sync_synchronize();
 
-    /* Notify device */
     vio_write32(VIRTIO_MMIO_QUEUE_NOTIFY, 1);
-
     return 0;
 }
 
 /* ── Receive a frame ─────────────────────────────────── */
-/* ── Receive a frame ─────────────────────────────────── */
 static int net_recv(uint8_t *out_buf, uint32_t *out_len) {
-    if (rx_used->idx == rx_last_used) return -1; /* no packet */
+    if (rx_used->idx == rx_last_used) return -1;
 
     uint16_t used_idx = rx_last_used % QUEUE_SIZE;
     uint32_t desc_idx = rx_used->ring[used_idx].id;
@@ -243,7 +235,6 @@ static int net_recv(uint8_t *out_buf, uint32_t *out_len) {
 
     rx_last_used++;
 
-    /* Re-queue the descriptor */
     rx_descs[desc_idx].addr  = NET_DMA_PADDR + RX_BUF_OFF + desc_idx * PKT_BUF_SIZE;
     rx_descs[desc_idx].len   = PKT_BUF_SIZE;
     rx_descs[desc_idx].flags = VIRTQ_DESC_F_WRITE;
@@ -260,23 +251,20 @@ static int net_recv(uint8_t *out_buf, uint32_t *out_len) {
 void init(void) {
     if (virtio_net_init() == 0) {
         WR32(net_data, NET_STATUS, NET_ST_OK);
-        microkit_dbg_puts("NET: driver ready\n");
+        LOG_INFO("driver ready");
     } else {
         WR32(net_data, NET_STATUS, NET_ST_ERR);
-        microkit_dbg_puts("NET: init FAILED\n");
+        LOG_ERROR("init FAILED");
     }
 }
 
 void notified(microkit_channel ch) {
     if (ch == CH_NET_IRQ) {
-        /* Acknowledge interrupt */
         uint32_t isr = vio_read32(VIRTIO_MMIO_INTERRUPT_STATUS);
         vio_write32(VIRTIO_MMIO_INTERRUPT_ACK, isr);
         microkit_irq_ack(ch);
 
-        /* Check for received packets */
         while (rx_used->idx != rx_last_used) {
-            /* Copy packet to net_data and notify net_server */
             uint32_t pkt_len = 0;
             volatile uint8_t *dst = (volatile uint8_t *)(net_data + NET_PKT_DATA);
             net_recv((uint8_t *)dst, &pkt_len);
@@ -289,7 +277,6 @@ void notified(microkit_channel ch) {
     }
 
     if (ch == CH_NET) {
-        /* net_server wants to send a packet */
         uint32_t cmd = RD32(net_data, NET_CMD);
         if (cmd == NET_CMD_SEND) {
             uint32_t len = RD32(net_data, NET_PKT_LEN);

@@ -66,6 +66,21 @@ static void cmd_help(void) {
 
 /* ── Command: ls ─────────────────────────────────────── */
 static void cmd_ls(const char *path) {
+    /* Check if path is a file (not a directory) */
+    {
+        uint32_t fsize = 0, fuid = 0, fgid = 0, fmode = 0, fmt = 0;
+        int fst = fs_stat_ex_sync(path, &fsize, &fuid, &fgid, &fmode, &fmt);
+        if (fst == 0 && (fmode & 0x4000) == 0) {
+            /* It is a regular file, not a directory */
+            ser_puts("  ");
+            ser_puts(path);
+            ser_puts("  ");
+            ser_put_dec(fsize);
+            ser_puts(" bytes\n");
+            ser_flush();
+            return;
+        }
+    }
     int st = fs_list_sync(path);
     if (st != 0) {
         ser_puts("  Error listing directory\n");

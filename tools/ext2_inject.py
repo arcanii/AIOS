@@ -218,11 +218,40 @@ def inject(img_path, files):
     # Root inode is always 2
     ROOT_INO = 2
 
+    def find_dir_entry(parent_ino, name):
+        """Look up a name in a directory, return its inode or None."""
+        ino_off = inode_off(parent_ino)
+        i_block_off = ino_off + 40
+        for bi in range(12):
+            blk = rd32(data, i_block_off + bi * 4)
+            if blk == 0:
+                break
+            off = block_off(blk)
+            end = off + block_size
+            pos = off
+            while pos < end:
+                d_ino = rd32(data, pos)
+                d_rec = rd16(data, pos + 4)
+                d_name_len = data[pos + 6]
+                if d_rec == 0:
+                    break
+                if d_ino != 0 and d_name_len == len(name):
+                    d_name = data[pos + 8:pos + 8 + d_name_len].decode('ascii', errors='ignore')
+                    if d_name == name:
+                        return d_ino
+                pos += d_rec
+        return None
+
     # ── Create a subdirectory under a parent inode ──
     dir_inode_map = {}  # path -> inode
 
     def create_dir(parent_ino, dirname):
-        """Create a directory entry and initialize its inode."""
+        """Create a directory entry and initialize its inode, or return existing."""
+        # Check if directory already exists
+        existing = find_dir_entry(parent_ino, dirname)
+        if existing is not None:
+            dir_inode_map[dirname] = existing
+            return existing
         ino = alloc_inode()
         if ino is None:
             print(f"  ERROR: no free inodes for dir {dirname}")
@@ -273,13 +302,19 @@ def inject(img_path, files):
     dev_ino  = create_dir(ROOT_INO, "dev")
     var_ino  = create_dir(ROOT_INO, "var")
 
-    def get_target_dir(disk_name):
+    def get_target_dir(disk_name, source_path=""):
         """Return (parent_inode, display_path) for a file."""
         lower = disk_name.lower()
+        # If source path contains etc/, place in /etc/
+        if '/etc/' in source_path or '\\etc\\' in source_path:
+            if etc_ino:
+                return (etc_ino, f"/etc/{disk_name}")
         if lower.endswith('.bin'):
             if bin_ino:
                 return (bin_ino, f"/bin/{disk_name}")
-        if lower == 'passwd' or lower == 'group' or lower == 'shadow':
+        if lower in ('passwd', 'group', 'shadow', 'hostname',
+                     'motd', 'hosts', 'fstab', 'inittab',
+                     'services.conf', 'resolv.conf'):
             if etc_ino:
                 return (etc_ino, f"/etc/{disk_name}")
         return (ROOT_INO, f"/{disk_name}")
@@ -322,7 +357,7 @@ def inject(img_path, files):
         write_inode(ino, file_mode, size, blocks)
 
         # Add directory entry (file_type=1 for regular file)
-        target_ino, target_path = get_target_dir(disk_name)
+        target_ino, target_path = get_target_dir(disk_name, filepath)
         if add_dir_entry(target_ino, disk_name, ino, 1):
             print(f"  {target_path}: inode {ino}, {size} bytes, {num_blocks} blocks")
         else:
@@ -342,8 +377,25 @@ def inject(img_path, files):
         f.write(data)
     print(f"Injected {len(files)} files into {img_path}")
 
+def inject_tree(img_path, tree_dir):
+    """Inject all files from a directory tree into the ext2 image.
+    Files in etc/ go to /etc/, files in bin/ go to /bin/, others to /."""
+    import os as _os
+    files = []
+    for root, dirs, fnames in _os.walk(tree_dir):
+        for fn in fnames:
+            full = _os.path.join(root, fn)
+            files.append(full)
+    if files:
+        inject(img_path, files)
+
+
 if __name__ == '__main__':
     if len(sys.argv) < 3:
         print("Usage: python3 tools/ext2_inject.py <image> <file1> [file2 ...]")
+        print("       python3 tools/ext2_inject.py <image> --disk-dir <dir>")
         sys.exit(1)
-    inject(sys.argv[1], sys.argv[2:])
+    if sys.argv[2] == '--disk-dir':
+        inject_tree(sys.argv[1], sys.argv[3])
+    else:
+        inject(sys.argv[1], sys.argv[2:])

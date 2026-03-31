@@ -22,6 +22,7 @@ uintptr_t sock_data;
 uintptr_t fs_data;
 uintptr_t model_data;
 uintptr_t llm_io;
+uintptr_t echo_io;
 uintptr_t auth_io;
 /* Per-sandbox memory regions (set by Microkit loader via setvar) */
 uintptr_t sbx0_io;
@@ -164,6 +165,10 @@ static int auth_state = AUTH_LOGIN_USER;
 static uint32_t current_session = 0;
 static uint32_t current_uid = 0;
 static uint32_t current_gid = 0;
+static char hostname[64] = "aios";
+static char current_shell[64] = "/bin/osh";
+static char current_home[64] = "/root";
+static int session_shell_slot = -1;  /* slot running login shell, -1 if none */
 
 
 #include "orch/orch_pipe.inc"
@@ -275,6 +280,7 @@ static void cmd_ps(void) {
 #include "orch/orch_input.inc"
 #include "orch/orch_syscall.inc"
 
+#include "orch/orch_log.inc"
 #include "orch/orch_main.inc"
 
 /* ── Queue drain: load next queued process into a freed slot ── */

@@ -11,6 +11,22 @@
 #include <microkit.h>
 #include "aios/ipc.h"
 
+/* ── Logging backend ─────────────────────────────── */
+#define LOG_MODULE "LLM"
+#define LOG_LEVEL  LOG_LEVEL_INFO
+#include "aios/log.h"
+
+void _log_puts(const char *s) { (void)s; }
+void _log_put_dec(unsigned long n) { (void)n; }
+void _log_flush(void) { }
+unsigned long _log_get_time(void) {
+    uint64_t cnt, freq;
+    asm volatile("mrs %0, cntpct_el0" : "=r"(cnt));
+    asm volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+    if (freq == 0) freq = 62500000;
+    return (unsigned long)(cnt / freq);
+}
+
 /* ══════════════════════════════════════════════
    Shared memory regions
    ══════════════════════════════════════════════ */
@@ -75,7 +91,7 @@ static void *bump_alloc(uint32_t size) {
     /* align to 16 bytes */
     work_mem_used = (work_mem_used + 15) & ~15u;
     if (work_mem_used + size > WORK_MEM_SIZE) {
-        microkit_dbg_puts("LLM: OOM!\n");
+        LOG_ERROR("OOM");
         return (void *)0;
     }
     void *ptr = &work_mem[work_mem_used];
@@ -379,7 +395,7 @@ static int init_model(uint32_t model_size) {
     #define TOK_RESERVE (1 * 1024 * 1024)
     uint32_t work_start = (model_size + TOK_RESERVE + 15) & ~15UL;
     if (work_start + WORK_MEM_SIZE > MODEL_DATA_MAX) {
-        microkit_dbg_puts("LLM: not enough space for work mem\n");
+        LOG_ERROR("not enough space for work mem");
         return -1;
     }
     work_mem = (uint8_t *)(model_data + work_start);
@@ -427,41 +443,11 @@ static int init_model(uint32_t model_size) {
     state.logits = bump_calloc(config.vocab_size, sizeof(float));
 
     if (!state.x || !state.logits) {
-        microkit_dbg_puts("LLM: RunState alloc failed\n");
+        LOG_ERROR("RunState alloc failed");
         return -1;
     }
 
-    microkit_dbg_puts("LLM: model init OK, dim=");
-    char buf[12]; int pos = 0; int v = config.dim;
-    if (v == 0) buf[pos++] = '0';
-    else { char tmp[12]; int t = 0; while (v > 0) { tmp[t++] = '0' + v % 10; v /= 10; } while (t > 0) buf[pos++] = tmp[--t]; }
-    buf[pos] = '\0';
-    microkit_dbg_puts(buf);
-    microkit_dbg_puts(" layers=");
-    pos = 0; v = config.n_layers;
-    if (v == 0) buf[pos++] = '0';
-    else { char tmp[12]; int t = 0; while (v > 0) { tmp[t++] = '0' + v % 10; v /= 10; } while (t > 0) buf[pos++] = tmp[--t]; }
-    buf[pos] = '\0';
-    microkit_dbg_puts(buf);
-    microkit_dbg_puts(" vocab=");
-    pos = 0; v = config.vocab_size;
-    if (v == 0) buf[pos++] = '0';
-    else { char tmp[12]; int t = 0; while (v > 0) { tmp[t++] = '0' + v % 10; v /= 10; } while (t > 0) buf[pos++] = tmp[--t]; }
-    buf[pos] = '\0';
-    microkit_dbg_puts(buf);
-    microkit_dbg_puts(" seq_len=");
-    pos = 0; v = config.seq_len;
-    if (v == 0) buf[pos++] = '0';
-    else { char tmp[12]; int t = 0; while (v > 0) { tmp[t++] = '0' + v % 10; v /= 10; } while (t > 0) buf[pos++] = tmp[--t]; }
-    buf[pos] = '\0';
-    microkit_dbg_puts(buf);
-    microkit_dbg_puts(" work_mem=");
-    pos = 0; v = work_mem_used;
-    if (v == 0) buf[pos++] = '0';
-    else { char tmp[12]; int t = 0; while (v > 0) { tmp[t++] = '0' + v % 10; v /= 10; } while (t > 0) buf[pos++] = tmp[--t]; }
-    buf[pos] = '\0';
-    microkit_dbg_puts(buf);
-    microkit_dbg_puts(" bytes\n");
+    LOG_INFO_V("model init OK, dim=", (unsigned long)config.dim);
 
     return 0;
 }
@@ -473,15 +459,11 @@ static int init_model(uint32_t model_size) {
 
 static int init_tokenizer(uint32_t tok_offset, uint32_t tok_size) {
     
-    microkit_dbg_puts("LLM: init_tokenizer off=");
-    microkit_dbg_put32(tok_offset);
-    microkit_dbg_puts(" sz=");
-    microkit_dbg_put32(tok_size);
-    microkit_dbg_puts("\n");
+    LOG_INFO_V("init_tokenizer off=", (unsigned long)tok_offset);
 
     if (tok_offset == 0 || tok_size == 0 ||
         tok_offset + tok_size > MODEL_DATA_MAX) {
-        microkit_dbg_puts("LLM: bad tok offset/size\n");
+        LOG_ERROR("bad tok offset/size");
         return -1;
     }
    
@@ -496,7 +478,7 @@ static int init_tokenizer(uint32_t tok_offset, uint32_t tok_size) {
     vocab = (char **)bump_alloc(tok_vocab_size * sizeof(char *));
     vocab_scores = (float *)bump_alloc(tok_vocab_size * sizeof(float));
     if (!vocab || !vocab_scores) {
-        microkit_dbg_puts("LLM: tokenizer alloc failed\n");
+        LOG_ERROR("tokenizer alloc failed");
         return -1;
     }
 
@@ -513,11 +495,7 @@ static int init_tokenizer(uint32_t tok_offset, uint32_t tok_size) {
          scan_off += 4; /* skip score */
 
          if (scan_off + 4 > tok_size) {
-             microkit_dbg_puts("LLM: tok scan OOB at i=");
-             microkit_dbg_put32(i);
-             microkit_dbg_puts(" scan_off=");
-             microkit_dbg_put32(scan_off);
-             microkit_dbg_puts("\n");
+              LOG_ERROR_V("tok scan OOB at i=", (unsigned long)i);
              return -1;
          }
 
@@ -526,13 +504,7 @@ static int init_tokenizer(uint32_t tok_offset, uint32_t tok_size) {
          scan_off += 4;
 
          if (len < 0 || len > 1024) {
-             microkit_dbg_puts("LLM: bad len=");
-             microkit_dbg_put32((uint32_t)len);
-             microkit_dbg_puts(" at i=");
-             microkit_dbg_put32(i);
-             microkit_dbg_puts(" scan_off=");
-             microkit_dbg_put32(scan_off);
-             microkit_dbg_puts("\n");
+              LOG_ERROR_V("bad token len at i=", (unsigned long)i);
              return -1;
          }
 
@@ -540,14 +512,12 @@ static int init_tokenizer(uint32_t tok_offset, uint32_t tok_size) {
          scan_off += len;
      }
 
-     microkit_dbg_puts("LLM: scan OK total_str=");
-     microkit_dbg_put32(total_str_bytes);
-     microkit_dbg_puts("\n");
+      LOG_DEBUG_V("scan OK total_str=", (unsigned long)total_str_bytes);
 
     /* Single bulk allocation for all token strings */
     char *str_pool = (char *)bump_alloc(total_str_bytes);
     if (!str_pool) {
-        microkit_dbg_puts("LLM: tokenizer string pool alloc failed\n");
+        LOG_ERROR("tokenizer string pool alloc failed");
         return -1;
     }
 
@@ -570,7 +540,7 @@ static int init_tokenizer(uint32_t tok_offset, uint32_t tok_size) {
     /* Build sorted vocab for BPE encoding */
     sorted_vocab = (TokenIndex *)bump_alloc(tok_vocab_size * sizeof(TokenIndex));
     if (!sorted_vocab) {
-        microkit_dbg_puts("LLM: sorted_vocab alloc failed\n");
+        LOG_ERROR("sorted_vocab alloc failed");
         return -1;
     }
     for (int i = 0; i < tok_vocab_size; i++) {
@@ -589,7 +559,7 @@ static int init_tokenizer(uint32_t tok_offset, uint32_t tok_size) {
         sorted_vocab[j + 1] = key;
     }
 
-    microkit_dbg_puts("LLM: tokenizer ready, vocab_size=");
+    LOG_INFO_V("tokenizer ready, vocab_size=", (unsigned long)tok_vocab_size);
     return 0;
 }
 
@@ -762,7 +732,7 @@ static void gen_start(void) {
         gen_prompt_alloc = config.seq_len;
         gen_prompt_tokens = (int *)bump_alloc(gen_prompt_alloc * sizeof(int));
         if (!gen_prompt_tokens) {
-            microkit_dbg_puts("LLM: prompt alloc failed\n");
+            LOG_ERROR("prompt alloc failed");
             WR32(llm_io, LLM_STATUS, LLM_ST_ERROR);
             microkit_notify(CH_ORCH);
             return;
@@ -779,7 +749,7 @@ static void gen_start(void) {
     gen_token = gen_prompt_tokens[0];
     gen_active = 1;
 
-    microkit_dbg_puts("LLM: generating (streaming)...\n");
+    LOG_INFO("generating (streaming)...");
 
     /* Generate first token immediately */
     gen_step();
@@ -827,7 +797,7 @@ static void gen_step(void) {
    ══════════════════════════════════════════════ */
 
 void init(void) {
-    microkit_dbg_puts("LLM: server ready, waiting for model\n");
+    LOG_INFO("server ready, waiting for model");
 }
 
 void notified(microkit_channel ch) {
@@ -867,7 +837,7 @@ void notified(microkit_channel ch) {
     }
     case LLM_CMD_GENERATE: {
         if (!model_ready || !tokenizer_ready) {
-            microkit_dbg_puts("LLM: not ready\n");
+            LOG_WARN("not ready");
             WR32(llm_io, LLM_STATUS, LLM_ST_ERROR);
             microkit_notify(CH_ORCH);
             break;

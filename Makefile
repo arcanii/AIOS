@@ -191,6 +191,37 @@ inject: $(PROGS_BIN) $(DISK_IMG)
 	@echo "Disk contents:"
 	@mdir -i $(DISK_IMG) :: | grep BIN
 
+# ── ext2 disk build ─────────────────────────────────────
+EXT2_SIZE_MB := 128
+
+.PHONY: ext2-create ext2-inject ext2-disk
+
+# Create a fresh ext2 image
+ext2-create:
+	@echo "Creating ext2 disk image ($(EXT2_SIZE_MB) MB)..."
+	dd if=/dev/zero of=$(DISK_IMG) bs=1M count=$(EXT2_SIZE_MB) 2>/dev/null
+	python3 tools/mkext2.py $(DISK_IMG) $(EXT2_SIZE_MB)
+	@echo "Created $(DISK_IMG)"
+
+# Inject programs + config files into ext2 image
+ext2-inject: $(DISK_IMG)
+	@echo "Injecting programs into ext2 image..."
+	python3 tools/ext2_inject.py $(DISK_IMG) programs/*.BIN
+	@echo "Injecting config files..."
+	@if [ -d disk/etc ]; then \
+		for f in disk/etc/*; do \
+			echo "  $$f"; \
+			python3 tools/ext2_inject.py $(DISK_IMG) "$$f"; \
+		done; \
+	fi
+	@if [ -f disk/hello.txt ]; then \
+		python3 tools/ext2_inject.py $(DISK_IMG) disk/hello.txt; \
+	fi
+
+# Full disk rebuild: create + inject
+ext2-disk: ext2-create ext2-inject
+	@echo "ext2 disk ready: $(DISK_IMG)"
+
 # ── Version management ──────────────────────────────────
 # Usage:
 #   make              — builds and increments build number

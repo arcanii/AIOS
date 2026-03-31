@@ -110,7 +110,7 @@ static void process_command(void) {
         cmd_passwd(input_line + 6);
     } else if (str_starts_with(input_line, "su")) {
         cmd_su(input_line + 2);
-    } else if (my_strcmp(input_line, "logout") == 0) {
+    } else if (my_strcmp(input_line, "logout") == 0 || my_strcmp(input_line, "exit") == 0) {
         auth_logout_sync();
         auth_state = AUTH_LOGIN_USER;
         input_pos = 0;

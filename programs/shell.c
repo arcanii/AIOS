@@ -284,10 +284,120 @@ static void cmd_ls(const char *path) {
     char cwdbuf[256];
     const char *dir;
     if (dir_arg && dir_arg[0]) {
-        dir = dir_arg;
+        if (dir_arg[0] != '/') {
+            /* Relative path — prepend cwd */
+            getcwd(cwdbuf, sizeof(cwdbuf));
+            int ci = 0;
+            while (cwdbuf[ci]) ci++;
+            if (ci > 1) cwdbuf[ci++] = '/';  /* add / unless cwd is root */
+            int di = 0;
+            while (dir_arg[di] && ci < 254) cwdbuf[ci++] = dir_arg[di++];
+            cwdbuf[ci] = 0;
+            dir = cwdbuf;
+        } else {
+            dir = dir_arg;
+        }
     } else {
         getcwd(cwdbuf, sizeof(cwdbuf));
         dir = cwdbuf;
+    }
+    /* Check if target is a file (not a directory) */
+    struct stat ls_st;
+    if (stat(dir, &ls_st) == 0 && !S_ISDIR(ls_st.st_mode)) {
+        if (flag_l) {
+            /* Permissions */
+            printc('-');
+            printc((ls_st.st_mode & 0400) ? 'r' : '-');
+            printc((ls_st.st_mode & 0200) ? 'w' : '-');
+            printc((ls_st.st_mode & 0100) ? 'x' : '-');
+            printc((ls_st.st_mode & 040) ? 'r' : '-');
+            printc((ls_st.st_mode & 020) ? 'w' : '-');
+            printc((ls_st.st_mode & 010) ? 'x' : '-');
+            printc((ls_st.st_mode & 04) ? 'r' : '-');
+            printc((ls_st.st_mode & 02) ? 'w' : '-');
+            printc((ls_st.st_mode & 01) ? 'x' : '-');
+            /* Owner */
+            print(" ");
+            {
+                struct passwd *pw = getpwuid(ls_st.st_uid);
+                if (pw) {
+                    print(pw->pw_name);
+                    int nl = 0; const char *np = pw->pw_name; while (*np++) nl++;
+                    for (int pad = nl; pad < 8; pad++) printc(' ');
+                } else {
+                    print_dec((unsigned long)ls_st.st_uid);
+                    if (ls_st.st_uid < 10) print("       ");
+                    else if (ls_st.st_uid < 100) print("      ");
+                    else print("     ");
+                }
+                print(" ");
+                struct group *gr = getgrgid(ls_st.st_gid);
+                if (gr) {
+                    print(gr->gr_name);
+                    int gl = 0; const char *gp = gr->gr_name; while (*gp++) gl++;
+                    for (int pad = gl; pad < 8; pad++) printc(' ');
+                } else {
+                    print_dec((unsigned long)ls_st.st_gid);
+                    if (ls_st.st_gid < 10) print("       ");
+                    else if (ls_st.st_gid < 100) print("      ");
+                    else print("     ");
+                }
+            }
+            /* Size */
+            print(" ");
+            {
+                char szbuf[12]; int si = 0;
+                unsigned long sz = (unsigned long)ls_st.st_size;
+                if (sz == 0) { szbuf[si++] = '0'; }
+                else {
+                    char tmp[12]; int ti = 0;
+                    while (sz > 0) { tmp[ti++] = '0' + (sz % 10); sz /= 10; }
+                    while (ti > 0) szbuf[si++] = tmp[--ti];
+                }
+                szbuf[si] = '\0';
+                for (int pad = si; pad < 8; pad++) printc(' ');
+                print(szbuf);
+            }
+            /* Timestamp */
+            if (ls_st.st_mtime > 0) {
+                unsigned long ut = (unsigned long)ls_st.st_mtime;
+                unsigned long days = ut / 86400;
+                unsigned long secs = ut % 86400;
+                unsigned long hrs = secs / 3600;
+                unsigned long mins = (secs % 3600) / 60;
+                unsigned long y = 1970;
+                while (1) {
+                    unsigned long yd = 365;
+                    if ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0) yd = 366;
+                    if (days < yd) break;
+                    days -= yd; y++;
+                }
+                static const unsigned short md[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+                unsigned long m = 0;
+                int leap = ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0);
+                while (m < 12) {
+                    unsigned long dd = md[m];
+                    if (m == 1 && leap) dd = 29;
+                    if (days < dd) break;
+                    days -= dd; m++;
+                }
+                static const char *months[] = {"Jan","Feb","Mar","Apr","May","Jun",
+                                                "Jul","Aug","Sep","Oct","Nov","Dec"};
+                print(" ");
+                if (m < 12) print(months[m]); else print("???");
+                printc(' ');
+                if (days + 1 < 10) printc(' ');
+                print_dec(days + 1);
+                printc(' ');
+                if (hrs < 10) printc('0'); print_dec(hrs);
+                printc(':');
+                if (mins < 10) printc('0'); print_dec(mins);
+            }
+            print(" ");
+        }
+        print(dir);
+        printc('\n');
+        return;
     }
     DIR *d = opendir(dir);
     if (!d) { print("ls: cannot open "); print(dir); print("\n"); return; }

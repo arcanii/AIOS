@@ -42,10 +42,10 @@ void init(void) {
     sbx_heap[6] = sbx6_heap; sbx_heap[7] = sbx7_heap;
     sched_init(&sched);
 
-    /* Boot: read hello.txt synchronously */
-    ser_puts("Boot: reading hello.txt...\n");
+    /* Boot: read license.txt synchronously */
+    ser_puts("Boot: reading license.txt...\n");
     ser_flush();
-    int st = fs_open_sync("hello.txt");
+    int st = fs_open_sync("license.txt");
     if (st == 0) {
         uint32_t fd   = RD32(fs_data, FS_FD);
         uint32_t size = RD32(fs_data, FS_FILESIZE);
@@ -59,7 +59,7 @@ void init(void) {
         }
         fs_close_sync(fd);
     } else {
-        ser_puts("  hello.txt not found\n");
+        ser_puts("  license.txt not found\n");
     }
     ser_flush();
 
@@ -99,8 +99,39 @@ void init(void) {
     }
     ser_flush();
 
+    /* Read /etc/hostname */
+    st = fs_open_sync("/etc/hostname");
+    if (st == 0) {
+        uint32_t hfd = RD32(fs_data, FS_FD);
+        uint32_t hsz = RD32(fs_data, FS_FILESIZE);
+        if (hsz > 63) hsz = 63;
+        fs_read_sync(hfd, 0, hsz);
+        volatile char *hdata = (volatile char *)(fs_data + FS_DATA);
+        int hi = 0;
+        while (hi < (int)hsz && hdata[hi] && hdata[hi] != '\n') {
+            hostname[hi] = hdata[hi]; hi++;
+        }
+        hostname[hi] = '\0';
+        fs_close_sync(hfd);
+    }
+
+    /* Read and display /etc/motd */
+    st = fs_open_sync("/etc/motd");
+    if (st == 0) {
+        uint32_t mfd = RD32(fs_data, FS_FD);
+        uint32_t msz = RD32(fs_data, FS_FILESIZE);
+        if (msz > 2048) msz = 2048;
+        fs_read_sync(mfd, 0, msz);
+        uint32_t mgot = RD32(fs_data, FS_LENGTH);
+        volatile char *mdata = (volatile char *)(fs_data + FS_DATA);
+        for (uint32_t mi = 0; mi < mgot; mi++) ser_putc(mdata[mi]);
+        fs_close_sync(mfd);
+    }
+    ser_flush();
+
     LOG_INFO("system ready, awaiting login");
     ser_puts("\nLogin: ");
+    ser_flush();
 }
 
 void notified(microkit_channel ch) {
@@ -215,6 +246,10 @@ void notified(microkit_channel ch) {
             orch_state = RUNNING;
         } else if (orch_state == GEN_WAITING)
             handle_gen_reply();
+        break;
+
+    case CH_ECHO:
+        handle_log_message((volatile uint8_t *)echo_io);
         break;
 
     default:

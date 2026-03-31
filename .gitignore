@@ -14,3 +14,10 @@ __pycache__/
 # OS files
 .DS_Store
 include/aios/build_number.h
+*.bak
+*.bak2
+*.bak3
+*.bak4
+aios_system_roundtrip.xml
+*.elf
+*.old

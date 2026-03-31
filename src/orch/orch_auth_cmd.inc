@@ -3,6 +3,11 @@
  * Lines 447-804
  */
 
+/* ── Auth IPC layout (extended) ────────────────────── */
+#define AUTH_HOME       0x140   /* 64 bytes */
+#define AUTH_SHELL      0x180   /* 64 bytes */
+#define AUTH_GECOS      0x1C0   /* 64 bytes */
+
 /* ── Auth server helpers (PPC via CH_AUTH) ──────────── */
 static int auth_login_sync(const char *username, const char *password) {
     volatile char *u = (volatile char *)(auth_io + AUTH_USERNAME);
@@ -21,6 +26,14 @@ static int auth_login_sync(const char *username, const char *password) {
         current_uid = RD32(auth_io, AUTH_UID);
         current_gid = RD32(auth_io, AUTH_GID);
         current_is_root = (current_uid == 0) ? 1 : 0;
+        /* Read shell and home from auth response */
+        {
+            volatile char *sh = (volatile char *)(auth_io + AUTH_SHELL);
+            volatile char *hm = (volatile char *)(auth_io + AUTH_HOME);
+            int k;
+            k = 0; while (sh[k] && k < 63) { current_shell[k] = sh[k]; k++; } current_shell[k] = '\0';
+            k = 0; while (hm[k] && k < 63) { current_home[k] = hm[k]; k++; } current_home[k] = '\0';
+        }
         /* Copy username */
         int j = 0;
         while (username[j] && j < 31) { current_username[j] = username[j]; j++; }
@@ -76,6 +89,8 @@ static void auth_logout_sync(void) {
     current_gid = 0;
     current_is_root = 0;
     current_username[0] = '\0';
+    current_shell[0] = '\0';
+    current_home[0] = '\0';
 }
 
 static void __attribute__((unused)) auth_whoami_sync(void) {

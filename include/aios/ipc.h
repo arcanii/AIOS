@@ -97,6 +97,11 @@
 /* ── model_data region ─────────────────────────── */
 #define MODEL_DATA_MAX  0x8000000   /* 128 MiB */
 
+/* ── Universal log command (works on any PD shared memory) ── */
+#define CMD_LOG         0xFF    /* PD -> orchestrator: log message */
+#define LOG_MSG_OFF     0xF00   /* offset in shared mem for log string */
+#define LOG_MSG_MAX     240     /* max log message length */
+
 #endif /* AIOS_IPC_H */
 
 

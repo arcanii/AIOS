@@ -56,8 +56,6 @@ def mkext2(img="disk_ext2.img", size_mb=64):
     used_inodes_total = 0
 
     root_data_block = 0
-    hello_inode = 11
-    hello_data_block = 0
 
     for g in range(num_groups):
         group_start = 1 + g * blocks_per_group  # first data block is 1
@@ -110,9 +108,6 @@ def mkext2(img="disk_ext2.img", size_mb=64):
             free_inodes_in_group -= 2
             data[ib * block_size : ib * block_size + block_size] = ib_data
 
-            # Also mark hello.txt inode (inode 11) and its data block
-            hello_data_block = data_start + 1
-            ib_data[(hello_inode - 1) // 8] |= (1 << ((hello_inode - 1) % 8))
             bb_data[(overhead + 1) // 8] |= (1 << ((overhead + 1) % 8))
             free_inodes_in_group -= 1
             free_in_group -= 1
@@ -185,44 +180,29 @@ def mkext2(img="disk_ext2.img", size_mb=64):
     root_dir[pos+9] = ord('.')
     pos += 12
 
-    # "hello.txt" entry
-    hello_name = b'hello.txt'
     rec_len = block_size - pos  # last entry takes remaining space
-    struct.pack_into('<I', root_dir, pos, hello_inode)
     struct.pack_into('<H', root_dir, pos+4, rec_len)
-    root_dir[pos+6] = len(hello_name)
     root_dir[pos+7] = 1                              # file_type (regular)
-    root_dir[pos+8:pos+8+len(hello_name)] = hello_name
     pos += rec_len
 
     data[root_data_block * block_size : root_data_block * block_size + block_size] = root_dir
 
-    # ── hello.txt inode (inode 11) ──
-    hello_content = b'Hello from AIOS ext2 filesystem!\n'
-    hello_inode_off = it0 * block_size + (hello_inode - 1) * inode_size
 
     hi = bytearray(inode_size)
     struct.pack_into('<H', hi, 0, 0o100644)           # i_mode (regular file)
-    struct.pack_into('<I', hi, 4, len(hello_content))  # i_size
     struct.pack_into('<I', hi, 8, now)                 # i_atime
     struct.pack_into('<I', hi, 12, now)                # i_ctime
     struct.pack_into('<I', hi, 16, now)                # i_mtime
     struct.pack_into('<H', hi, 26, 1)                  # i_links_count
     struct.pack_into('<I', hi, 28, 2)                  # i_blocks (512-byte units)
-    struct.pack_into('<I', hi, 40, hello_data_block)   # i_block[0]
 
-    data[hello_inode_off:hello_inode_off + inode_size] = hi
 
-    # ── hello.txt data ──
-    data[hello_data_block * block_size : hello_data_block * block_size + len(hello_content)] = hello_content
 
     # Write image
     with open(img, 'wb') as f:
         f.write(data)
 
     print(f"  Root dir at block {root_data_block}")
-    print(f"  hello.txt: inode {hello_inode}, data block {hello_data_block}")
-    print(f"  Content: {hello_content.decode()}", end='')
     print("Done.")
 
 if __name__ == '__main__':

@@ -1,5 +1,27 @@
 #include <stdint.h>
 #include <microkit.h>
+
+/* ── Logging backend ─────────────────────────────── */
+#define LOG_MODULE "AUTH"
+#define LOG_LEVEL  LOG_LEVEL_INFO
+#include "aios/log.h"
+
+void _log_puts(const char *s) { microkit_dbg_puts(s); }
+void _log_put_dec(unsigned long n) {
+    char buf[12]; int i = 0;
+    if (n == 0) { microkit_dbg_putc('0'); return; }
+    while (n) { buf[i++] = '0' + (n % 10); n /= 10; }
+    while (i--) microkit_dbg_putc(buf[i]);
+}
+void _log_flush(void) { }
+unsigned long _log_get_time(void) {
+    uint64_t cnt, freq;
+    asm volatile("mrs %0, cntpct_el0" : "=r"(cnt));
+    asm volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+    if (freq == 0) freq = 62500000;
+    return (unsigned long)(cnt / freq);
+}
+
 /*
  * auth_server.c — Authentication & Authorization PD
  *
@@ -37,6 +59,10 @@ uintptr_t auth_store;  /* 64 KiB private credential store — no other PD can ac
 #define AUTH_MODE       0x100
 /* File permission fields (reuse AUTH_UID/AUTH_GID for file owner) */
 #define AUTH_FILE_MODE_SHIFT 16  /* file mode in upper 16 bits of AUTH_MODE */
+
+#define AUTH_HOME       0x140   /* 64 bytes: user home directory */
+#define AUTH_SHELL      0x180   /* 64 bytes: user login shell */
+#define AUTH_GECOS      0x1C0   /* 64 bytes: user full name */
 
 #define AUTH_DATA       0x200
 #define AUTH_DATA_MAX   3584
@@ -177,6 +203,9 @@ typedef struct {
     uint32_t groups[MAX_GROUPS_PER_USER];  /* supplementary groups */
     int      ngroups;                       /* count of supplementary groups */
     int    is_root;
+    char   home[64];      /* home directory, e.g. /root */
+    char   shell[64];     /* login shell, e.g. /bin/osh */
+    char   gecos[64];     /* full name / comment */
 } user_entry_t;
 
 static user_entry_t users[MAX_USERS];
@@ -211,6 +240,9 @@ static void init_default_users(void) {
     users[0].gid = 0;
     users[0].ngroups = 0;
     users[0].is_root = 1;
+    my_strcpy(users[0].home, "/root");
+    my_strcpy(users[0].shell, "/bin/osh");
+    my_strcpy(users[0].gecos, "System Administrator");
 
     /* user:user */
     users[1].active = 1;
@@ -222,6 +254,9 @@ static void init_default_users(void) {
     users[1].gid = 1000;
     users[1].ngroups = 0;
     users[1].is_root = 0;
+    my_strcpy(users[1].home, "/home/user");
+    my_strcpy(users[1].shell, "/bin/shell.bin");
+    my_strcpy(users[1].gecos, "Regular User");
 
     num_users = 2;
 }
@@ -273,7 +308,17 @@ void handle_login(void) {
                     WR32(auth_io, AUTH_STATUS, 0);
                     WR32(auth_io, AUTH_UID, users[ui].uid);
                     WR32(auth_io, AUTH_GID, users[ui].gid);
-                    WR32(auth_io, AUTH_SESSION, sessions[si].token);
+                                        WR32(auth_io, AUTH_SESSION, sessions[si].token);
+                    /* Write home/shell/gecos to shared memory */
+                    {
+                        volatile char *hp = (volatile char *)(auth_io + AUTH_HOME);
+                        volatile char *sp = (volatile char *)(auth_io + AUTH_SHELL);
+                        volatile char *gp = (volatile char *)(auth_io + AUTH_GECOS);
+                        int k;
+                        k = 0; while (users[ui].home[k] && k < 63) { hp[k] = users[ui].home[k]; k++; } hp[k] = '\0';
+                        k = 0; while (users[ui].shell[k] && k < 63) { sp[k] = users[ui].shell[k]; k++; } sp[k] = '\0';
+                        k = 0; while (users[ui].gecos[k] && k < 63) { gp[k] = users[ui].gecos[k]; k++; } gp[k] = '\0';
+                    }
                     return;
                 }
             }
@@ -512,56 +557,107 @@ void handle_load_passwd(void) {
     my_memset(users, 0, sizeof(users));
     num_users = 0;
 
-    /* Parse line by line */
+    /* Parse line by line: username:hash:uid:gid[:gecos:home:shell] */
     int pos = 0;
     while (buf[pos] && num_users < MAX_USERS) {
-        /* username */
-        int start = pos;
-        while (buf[pos] && buf[pos] != ':') pos++;
-        if (buf[pos] != ':') break;
-        int ulen = pos - start;
-        if (ulen > 31) ulen = 31;
+        /* Skip blank lines and comments */
+        if (buf[pos] == '\n') { pos++; continue; }
+        if (buf[pos] == '#') {
+            while (buf[pos] && buf[pos] != '\n') pos++;
+            if (buf[pos] == '\n') pos++;
+            continue;
+        }
 
         user_entry_t *u = &users[num_users];
-        for (int j = 0; j < ulen; j++) u->username[j] = buf[start + j];
-        u->username[ulen] = '\0';
-        pos++; /* skip : */
+        int start, flen;
 
-        /* password hash */
+        /* Field 1: username */
         start = pos;
-        while (buf[pos] && buf[pos] != ':') pos++;
-        if (buf[pos] != ':') break;
-        int hlen = pos - start;
-        if (hlen > 64) hlen = 64;
-        for (int j = 0; j < hlen; j++) u->passhash[j] = buf[start + j];
-        u->passhash[hlen] = '\0';
-        pos++; /* skip : */
+        while (buf[pos] && buf[pos] != ':' && buf[pos] != '\n') pos++;
+        if (buf[pos] != ':') goto next_line;
+        flen = pos - start; if (flen > 31) flen = 31;
+        for (int j = 0; j < flen; j++) u->username[j] = buf[start + j];
+        u->username[flen] = '\0';
+        pos++;
 
-        /* uid */
+        /* Field 2: password hash */
+        start = pos;
+        while (buf[pos] && buf[pos] != ':' && buf[pos] != '\n') pos++;
+        if (buf[pos] != ':') goto next_line;
+        flen = pos - start; if (flen > 64) flen = 64;
+        for (int j = 0; j < flen; j++) u->passhash[j] = buf[start + j];
+        u->passhash[flen] = '\0';
+        pos++;
+
+        /* Field 3: uid */
         u->uid = (uint32_t)parse_uint(buf, &pos);
-        if (buf[pos] == ':') pos++;
+        if (buf[pos] == ':') pos++; else goto next_line;
 
-        /* gid */
+        /* Field 4: gid */
         u->gid = (uint32_t)parse_uint(buf, &pos);
+
+        /* Fields 5-7 are optional (backwards compat with 4-field format) */
+        if (buf[pos] == ':') {
+            pos++;
+            /* Field 5: gecos */
+            start = pos;
+            while (buf[pos] && buf[pos] != ':' && buf[pos] != '\n') pos++;
+            flen = pos - start; if (flen > 63) flen = 63;
+            for (int j = 0; j < flen; j++) u->gecos[j] = buf[start + j];
+            u->gecos[flen] = '\0';
+
+            if (buf[pos] == ':') {
+                pos++;
+                /* Field 6: home */
+                start = pos;
+                while (buf[pos] && buf[pos] != ':' && buf[pos] != '\n') pos++;
+                flen = pos - start; if (flen > 63) flen = 63;
+                for (int j = 0; j < flen; j++) u->home[j] = buf[start + j];
+                u->home[flen] = '\0';
+
+                if (buf[pos] == ':') {
+                    pos++;
+                    /* Field 7: shell */
+                    start = pos;
+                    while (buf[pos] && buf[pos] != ':' && buf[pos] != '\n') pos++;
+                    flen = pos - start; if (flen > 63) flen = 63;
+                    for (int j = 0; j < flen; j++) u->shell[j] = buf[start + j];
+                    u->shell[flen] = '\0';
+                }
+            }
+        }
+
+        /* Defaults for missing fields */
+        if (u->home[0] == '\0') {
+            if (u->uid == 0) {
+                my_strcpy(u->home, "/root");
+            } else {
+                my_strcpy(u->home, "/home/");
+                int hlen = 6;
+                for (int j = 0; u->username[j] && hlen < 63; j++)
+                    u->home[hlen++] = u->username[j];
+                u->home[hlen] = '\0';
+            }
+        }
+        if (u->shell[0] == '\0') {
+            my_strcpy(u->shell, "/bin/osh");
+        }
 
         u->active = 1;
         u->is_root = (u->uid == 0) ? 1 : 0;
         num_users++;
 
-        /* Skip to next line */
+next_line:
         while (buf[pos] && buf[pos] != '\n') pos++;
         if (buf[pos] == '\n') pos++;
     }
 
-    /* Clear data from shared memory */
-    for (int j = 0; j < 3584; j++) data[j] = 0;
-
-    microkit_dbg_puts("AUTH: loaded ");
-    char nb[4]; int n = num_users; int ni = 0;
-    if (n == 0) { nb[ni++] = '0'; }
-    else { while (n > 0) { nb[ni++] = '0' + (n % 10); n /= 10; } }
-    for (int j = ni - 1; j >= 0; j--) microkit_dbg_putc(nb[j]);
-    microkit_dbg_puts(" users from /etc/passwd\n");
+    /* Log how many users loaded */
+    {
+        char msg[] = "loaded X users from /etc/passwd";
+        msg[7] = '0' + (num_users % 10);  /* works for 0-9 */
+        LOG_INFO(msg);
+    }
 
     WR32(auth_io, AUTH_STATUS, 0);
 }
@@ -681,7 +777,7 @@ void handle_su(void) {
             sess->uid = users[ui].uid;
             sess->gid = users[ui].gid;
             sess->ngroups = users[ui].ngroups;
-            microkit_dbg_puts("\n");
+            _log_puts("\n");
             for (int gi = 0; gi < users[ui].ngroups; gi++)
                 sess->groups[gi] = users[ui].groups[gi];
             sess->is_root = users[ui].is_root;
@@ -703,13 +799,12 @@ void init(void) {
     my_memset(users, 0, sizeof(users));
     my_memset(sessions, 0, sizeof(sessions));
     init_default_users();
-    microkit_dbg_puts("AUTH: server ready (");
-    /* Print user count */
-    char nb[4]; int n = num_users; int ni = 0;
-    if (n == 0) { nb[ni++] = '0'; }
-    else { while (n > 0) { nb[ni++] = '0' + (n % 10); n /= 10; } }
-    for (int i = ni - 1; i >= 0; i--) microkit_dbg_putc(nb[i]);
-    microkit_dbg_puts(" users)\n");
+    /* Log server ready with user count */
+    {
+        char msg[] = "server ready (X users)";
+        msg[14] = '0' + (num_users % 10);  /* works for 0-9 */
+        LOG_INFO(msg);
+    }
 }
 
 void notified(microkit_channel ch) {

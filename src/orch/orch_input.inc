@@ -85,7 +85,22 @@ static void handle_login_input(void) {
                     ser_puts(current_username);
                     if (current_is_root) ser_puts(" (root)");
                     ser_puts("\n\n");
-                    print_prompt();
+                    /* auto-launch user shell from /etc/passwd */
+                    if (current_shell[0] != '\0' &&
+                        my_strcmp(current_shell, "/bin/osh") != 0) {
+                        /* Launch external shell program */
+                        cmd_exec(current_shell);
+                        /* Track which slot is the login shell */
+                        for (int ss = 0; ss < NUM_SANDBOXES; ss++) {
+                            if (slot_in_use(ss) && slot_proc(ss)->foreground) {
+                                session_shell_slot = ss;
+                                break;
+                            }
+                        }
+                    } else {
+                        /* Built-in orchestrator shell */
+                        print_prompt();
+                    }
                 } else {
                     ser_puts("Login incorrect\n\n");
                     ser_puts("Login: ");
@@ -110,10 +125,12 @@ static void handle_login_input(void) {
 
 static void print_prompt(void) {
     ser_puts(current_username);
+    ser_puts("@");
+    ser_puts(hostname);
     if (current_is_root)
-        ser_puts("@aios# ");
+        ser_puts("# ");
     else
-        ser_puts("@aios$ ");
+        ser_puts("$ ");
     ser_flush();
 }
 
@@ -186,8 +203,18 @@ static void handle_exec_done(int slot) {
     ser_puts("\n");
     ser_flush();
     if (slot_proc(slot)->foreground) {
-        orch_state = RUNNING;
-        print_prompt();
+        if (slot == session_shell_slot) {
+            /* Login shell exited — respawn login prompt */
+            session_shell_slot = -1;
+            orch_state = RUNNING;
+            auth_logout_sync();
+            auth_state = AUTH_LOGIN_USER;
+            ser_puts("\n\nLogin: ");
+            ser_flush();
+        } else {
+            orch_state = RUNNING;
+            print_prompt();
+        }
     } else {
         ser_puts("\n[");
         ser_put_dec((unsigned int)slot);

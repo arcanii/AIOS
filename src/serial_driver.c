@@ -12,6 +12,30 @@
 #include <microkit.h>
 #include "aios/channels.h"
 #include "aios/ring.h"
+#define LOG_MODULE "SERIAL"
+#define LOG_LEVEL  LOG_LEVEL_INFO
+#include "aios/log.h"
+
+/* Logging backend — serial driver uses direct UART output */
+static void uart_put_char(uint8_t c);  /* forward decl */
+
+void _log_puts(const char *s) {
+    while (*s) uart_put_char((uint8_t)*s++);
+}
+void _log_put_dec(unsigned long n) {
+    char buf[20]; int i = 0;
+    if (n == 0) { uart_put_char('0'); return; }
+    while (n) { buf[i++] = '0' + (n % 10); n /= 10; }
+    while (i--) uart_put_char((uint8_t)buf[i]);
+}
+void _log_flush(void) { /* direct UART — nothing to flush */ }
+unsigned long _log_get_time(void) {
+    uint64_t cnt, freq;
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(cnt));
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+    if (freq == 0) freq = 62500000;
+    return (unsigned long)(cnt / freq);
+}
 
 /* ── Memory regions (set by Microkit loader via setvar) ── */
 uintptr_t uart_base_vaddr;
@@ -76,7 +100,7 @@ void init(void) {
     REG(UART_IMSC) = (1 << 4);
     uart_clear_irq();
 
-    microkit_dbg_puts("SERIAL: ready\n");
+    LOG_INFO("ready");
 }
 
 void notified(microkit_channel ch) {
@@ -113,12 +137,3 @@ void notified(microkit_channel ch) {
         break;
     }
 }
-
-/* Protected procedure (unused, required by Microkit if declared) */
-/*
-microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
-    (void)ch;
-    (void)msginfo;
-    return microkit_msginfo_new(0, 0);
-}
-*/

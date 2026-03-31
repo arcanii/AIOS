@@ -14,6 +14,28 @@
 #include "aios/channels.h"
 #include "aios/ipc.h"
 
+/* ── Logging backend ─────────────────────────────── */
+#define LOG_MODULE "NET_SRV"
+#define LOG_LEVEL  LOG_LEVEL_INFO
+#include "aios/log.h"
+
+void _log_puts(const char *s) { microkit_dbg_puts(s); }
+void _log_put_dec(unsigned long n) {
+    char buf[12]; int i = 0;
+    if (n == 0) { microkit_dbg_putc('0'); return; }
+    while (n) { buf[i++] = '0' + (n % 10); n /= 10; }
+    while (i--) microkit_dbg_putc(buf[i]);
+}
+void _log_flush(void) { }
+unsigned long _log_get_time(void) {
+    uint64_t cnt, freq;
+    asm volatile("mrs %0, cntpct_el0" : "=r"(cnt));
+    asm volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+    if (freq == 0) freq = 62500000;
+    return (unsigned long)(cnt / freq);
+}
+
+
 #ifndef NULL
 #define NULL ((void *)0)
 #endif
@@ -547,7 +569,7 @@ void init(void) {
     /* Check if net_driver initialized successfully */
     int32_t drv_status = *(volatile int32_t *)(net_data + NET_STATUS);
     if (drv_status != NET_ST_OK) {
-        microkit_dbg_puts("NET_SRV: no network device, skipping\n");
+        LOG_INFO("no network device, skipping");
         net_up = 0;
         return;
     }
@@ -560,7 +582,7 @@ void init(void) {
     for (int i = 0; i < 6; i++) my_mac[i] = mac[i];
 
     net_up = 1;
-    microkit_dbg_puts("NET_SRV: IP stack ready, IP=10.0.2.15\n");
+    LOG_INFO("IP stack ready, IP=10.0.2.15");
 }
 
 void notified(microkit_channel ch) {

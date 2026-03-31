@@ -15,6 +15,27 @@
 #include "aios/ipc.h"
 #include "virtio.h"
 
+#define LOG_MODULE "BLK"
+#define LOG_LEVEL  LOG_LEVEL_INFO
+#include "aios/log.h"
+
+/* Logging backend — uses seL4 debug console */
+void _log_puts(const char *s) { microkit_dbg_puts(s); }
+void _log_put_dec(unsigned long n) {
+    char buf[20]; int i = 0;
+    if (n == 0) { microkit_dbg_putc('0'); return; }
+    while (n) { buf[i++] = '0' + (n % 10); n /= 10; }
+    while (i--) microkit_dbg_putc(buf[i]);
+}
+void _log_flush(void) {}
+unsigned long _log_get_time(void) {
+    uint64_t cnt, freq;
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(cnt));
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+    if (freq == 0) freq = 62500000;
+    return (unsigned long)(cnt / freq);
+}
+
 /* ── Memory regions (set by Microkit loader via setvar) ── */
 uintptr_t virtio_blk_base_vaddr;
 uintptr_t blk_data;
@@ -50,7 +71,7 @@ static inline void mb(void) {
 
 static int blk_read_write(uint64_t sector, int is_write, void *buf) {
     if (sector >= blk_capacity_sectors) {
-        microkit_dbg_puts("BLK: sector out of range\n");
+        LOG_WARN("sector out of range");
         return -1;
     }
 
@@ -93,7 +114,7 @@ static int blk_read_write(uint64_t sector, int is_write, void *buf) {
     while (used->idx == last_used_idx) {
         mb();
         if (++timeout > 10000000) {
-            microkit_dbg_puts("BLK: TIMEOUT\n");
+            LOG_ERROR("TIMEOUT waiting for virtio-blk");
             return -1;
         }
     }
@@ -163,9 +184,9 @@ static int virtio_blk_init(void) {
 
 void init(void) {
     if (virtio_blk_init() == 0)
-        microkit_dbg_puts("BLK: virtio-blk ready\n");
+        LOG_INFO("virtio-blk ready");
     else
-        microkit_dbg_puts("BLK: init FAILED\n");
+        LOG_ERROR("init FAILED");
 }
 
 void notified(microkit_channel ch) {

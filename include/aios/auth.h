@@ -16,6 +16,9 @@
 #define AUTH_PASSWORD   0x080
 #define AUTH_PATH       0x0C0
 #define AUTH_MODE       0x100
+#define AUTH_HOME       0x140   /* 64 bytes: user home directory */
+#define AUTH_SHELL      0x180   /* 64 bytes: user login shell */
+#define AUTH_GECOS      0x1C0   /* 64 bytes: user full name */
 #define AUTH_DATA       0x200  /* passwd file contents (up to 3584 bytes) */
 #define AUTH_DATA_MAX   3584
 
