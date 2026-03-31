@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="2956" font-family="Consolas, Monaco, monospace" font-size="12">
-<rect width="1400" height="2956" fill="#1a1a2e"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="3004" font-family="Consolas, Monaco, monospace" font-size="12">
+<rect width="1400" height="3004" fill="#1a1a2e"/>
 <text x="700" y="35" text-anchor="middle" font-size="20" font-weight="bold" fill="#e0e0e0">AIOS System Memory Map</text>
-<text x="20" y="80" font-size="16" font-weight="bold" fill="#96CEB4">Memory Regions (39)</text>
+<text x="20" y="80" font-size="16" font-weight="bold" fill="#96CEB4">Memory Regions (40)</text>
 <text x="30" y="109" fill="#FFD93D" font-size="11">uart_mmio                       0x1000  (4 KiB) @ 0x9000000</text>
 <text x="30" y="129" fill="#a0a0c0" font-size="11">rx_buf                          0x1000  (4 KiB)</text>
 <text x="30" y="149" fill="#a0a0c0" font-size="11">tx_buf                          0x1000  (4 KiB)</text>
@@ -41,293 +41,299 @@
 <text x="30" y="829" fill="#FFD93D" font-size="11">net_dma                        0x20000  (128 KiB) @ 0xB0100000</text>
 <text x="30" y="849" fill="#a0a0c0" font-size="11">net_data                       0x10000  (64 KiB)</text>
 <text x="30" y="869" fill="#a0a0c0" font-size="11">sock_data                      0x10000  (64 KiB)</text>
-<rect x="20" y="905" width="320" height="956" rx="8" fill="rgb(57,71,65)" stroke="#96CEB4" stroke-width="2"/>
-<text x="30" y="927" font-size="14" font-weight="bold" fill="#96CEB4">orchestrator</text>
-<text x="330" y="927" text-anchor="end" font-size="11" fill="#808080">prio 200</text>
-<rect x="28" y="947" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="961" font-size="10" fill="#e0e0e0">rx_buf</text>
-<text x="330" y="961" text-anchor="end" font-size="10" fill="#a0a0a0">0x04200000 rw 4K</text>
-<rect x="28" y="975" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="989" font-size="10" fill="#e0e0e0">tx_buf</text>
-<text x="330" y="989" text-anchor="end" font-size="10" fill="#a0a0a0">0x04201000 rw 4K</text>
-<rect x="28" y="1003" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1017" font-size="10" fill="#e0e0e0">fs_data</text>
-<text x="330" y="1017" text-anchor="end" font-size="10" fill="#a0a0a0">0x06100000 rw 64K</text>
-<rect x="28" y="1031" width="190" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1045" font-size="10" fill="#e0e0e0">model_data</text>
-<text x="330" y="1045" text-anchor="end" font-size="10" fill="#a0a0a0">0x10000000 rw 128M</text>
-<rect x="28" y="1059" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1073" font-size="10" fill="#e0e0e0">llm_io</text>
-<text x="330" y="1073" text-anchor="end" font-size="10" fill="#a0a0a0">0x18100000 rw 16K</text>
-<rect x="28" y="1087" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1101" font-size="10" fill="#e0e0e0">sock_data</text>
-<text x="330" y="1101" text-anchor="end" font-size="10" fill="#a0a0a0">0x05700000 rw 64K</text>
-<rect x="28" y="1115" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1129" font-size="10" fill="#e0e0e0">sbx0_io</text>
-<text x="330" y="1129" text-anchor="end" font-size="10" fill="#a0a0a0">0x30000000 rw 4K</text>
-<rect x="28" y="1143" width="40" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1157" font-size="10" fill="#e0e0e0">sbx0_code</text>
-<text x="330" y="1157" text-anchor="end" font-size="10" fill="#a0a0a0">0x30001000 rw 4M</text>
-<rect x="28" y="1171" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1185" font-size="10" fill="#e0e0e0">sbx1_io</text>
-<text x="330" y="1185" text-anchor="end" font-size="10" fill="#a0a0a0">0x30800000 rw 4K</text>
-<rect x="28" y="1199" width="40" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1213" font-size="10" fill="#e0e0e0">sbx1_code</text>
-<text x="330" y="1213" text-anchor="end" font-size="10" fill="#a0a0a0">0x30801000 rw 4M</text>
-<rect x="28" y="1227" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1241" font-size="10" fill="#e0e0e0">sbx2_io</text>
-<text x="330" y="1241" text-anchor="end" font-size="10" fill="#a0a0a0">0x31000000 rw 4K</text>
-<rect x="28" y="1255" width="40" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1269" font-size="10" fill="#e0e0e0">sbx2_code</text>
-<text x="330" y="1269" text-anchor="end" font-size="10" fill="#a0a0a0">0x31001000 rw 4M</text>
-<rect x="28" y="1283" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1297" font-size="10" fill="#e0e0e0">sbx3_io</text>
-<text x="330" y="1297" text-anchor="end" font-size="10" fill="#a0a0a0">0x31800000 rw 4K</text>
-<rect x="28" y="1311" width="40" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1325" font-size="10" fill="#e0e0e0">sbx3_code</text>
-<text x="330" y="1325" text-anchor="end" font-size="10" fill="#a0a0a0">0x31801000 rw 4M</text>
-<rect x="28" y="1339" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1353" font-size="10" fill="#e0e0e0">sbx4_io</text>
-<text x="330" y="1353" text-anchor="end" font-size="10" fill="#a0a0a0">0x32000000 rw 4K</text>
-<rect x="28" y="1367" width="40" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1381" font-size="10" fill="#e0e0e0">sbx4_code</text>
-<text x="330" y="1381" text-anchor="end" font-size="10" fill="#a0a0a0">0x32001000 rw 4M</text>
-<rect x="28" y="1395" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1409" font-size="10" fill="#e0e0e0">sbx5_io</text>
-<text x="330" y="1409" text-anchor="end" font-size="10" fill="#a0a0a0">0x32800000 rw 4K</text>
-<rect x="28" y="1423" width="40" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1437" font-size="10" fill="#e0e0e0">sbx5_code</text>
-<text x="330" y="1437" text-anchor="end" font-size="10" fill="#a0a0a0">0x32801000 rw 4M</text>
-<rect x="28" y="1451" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1465" font-size="10" fill="#e0e0e0">sbx6_io</text>
-<text x="330" y="1465" text-anchor="end" font-size="10" fill="#a0a0a0">0x33000000 rw 4K</text>
-<rect x="28" y="1479" width="40" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1493" font-size="10" fill="#e0e0e0">sbx6_code</text>
-<text x="330" y="1493" text-anchor="end" font-size="10" fill="#a0a0a0">0x33001000 rw 4M</text>
-<rect x="28" y="1507" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1521" font-size="10" fill="#e0e0e0">sbx7_io</text>
-<text x="330" y="1521" text-anchor="end" font-size="10" fill="#a0a0a0">0x33800000 rw 4K</text>
-<rect x="28" y="1535" width="40" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1549" font-size="10" fill="#e0e0e0">sbx7_code</text>
-<text x="330" y="1549" text-anchor="end" font-size="10" fill="#a0a0a0">0x33801000 rw 4M</text>
-<rect x="28" y="1563" width="190" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1577" font-size="10" fill="#e0e0e0">swap_region</text>
-<text x="330" y="1577" text-anchor="end" font-size="10" fill="#a0a0a0">0x50000000 rw 256M</text>
-<rect x="28" y="1591" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1605" font-size="10" fill="#e0e0e0">sbx0_heap</text>
-<text x="330" y="1605" text-anchor="end" font-size="10" fill="#a0a0a0">0x40000000 rw 16M</text>
-<rect x="28" y="1619" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1633" font-size="10" fill="#e0e0e0">sbx1_heap</text>
-<text x="330" y="1633" text-anchor="end" font-size="10" fill="#a0a0a0">0x41000000 rw 16M</text>
-<rect x="28" y="1647" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1661" font-size="10" fill="#e0e0e0">sbx2_heap</text>
-<text x="330" y="1661" text-anchor="end" font-size="10" fill="#a0a0a0">0x42000000 rw 16M</text>
-<rect x="28" y="1675" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1689" font-size="10" fill="#e0e0e0">sbx3_heap</text>
-<text x="330" y="1689" text-anchor="end" font-size="10" fill="#a0a0a0">0x43000000 rw 16M</text>
-<rect x="28" y="1703" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1717" font-size="10" fill="#e0e0e0">sbx4_heap</text>
-<text x="330" y="1717" text-anchor="end" font-size="10" fill="#a0a0a0">0x44000000 rw 16M</text>
-<rect x="28" y="1731" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1745" font-size="10" fill="#e0e0e0">sbx5_heap</text>
-<text x="330" y="1745" text-anchor="end" font-size="10" fill="#a0a0a0">0x45000000 rw 16M</text>
-<rect x="28" y="1759" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1773" font-size="10" fill="#e0e0e0">sbx6_heap</text>
-<text x="330" y="1773" text-anchor="end" font-size="10" fill="#a0a0a0">0x46000000 rw 16M</text>
-<rect x="28" y="1787" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1801" font-size="10" fill="#e0e0e0">sbx7_heap</text>
-<text x="330" y="1801" text-anchor="end" font-size="10" fill="#a0a0a0">0x47000000 rw 16M</text>
-<rect x="28" y="1815" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1829" font-size="10" fill="#e0e0e0">auth_io</text>
-<text x="330" y="1829" text-anchor="end" font-size="10" fill="#a0a0a0">0x06200000 rw 4K</text>
-<rect x="360" y="905" width="320" height="144" rx="8" fill="rgb(83,46,46)" stroke="#FF6B6B" stroke-width="2"/>
-<text x="370" y="927" font-size="14" font-weight="bold" fill="#FF6B6B">serial_driver</text>
-<text x="670" y="927" text-anchor="end" font-size="11" fill="#808080">prio 254</text>
-<rect x="368" y="947" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="372" y="961" font-size="10" fill="#e0e0e0">uart_mmio</text>
-<text x="670" y="961" text-anchor="end" font-size="10" fill="#a0a0a0">0x04000000 rw 4K</text>
-<rect x="368" y="975" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="372" y="989" font-size="10" fill="#e0e0e0">rx_buf</text>
-<text x="670" y="989" text-anchor="end" font-size="10" fill="#a0a0a0">0x04200000 rw 4K</text>
-<rect x="368" y="1003" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="372" y="1017" font-size="10" fill="#e0e0e0">tx_buf</text>
-<text x="670" y="1017" text-anchor="end" font-size="10" fill="#a0a0a0">0x04201000 rw 4K</text>
-<rect x="700" y="905" width="320" height="144" rx="8" fill="rgb(39,71,69)" stroke="#4ECDC4" stroke-width="2"/>
-<text x="710" y="927" font-size="14" font-weight="bold" fill="#4ECDC4">blk_driver</text>
-<text x="1010" y="927" text-anchor="end" font-size="11" fill="#808080">prio 250</text>
-<rect x="708" y="947" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="712" y="961" font-size="10" fill="#e0e0e0">blk_mmio</text>
-<text x="1010" y="961" text-anchor="end" font-size="10" fill="#a0a0a0">0x05000000 rw 4K</text>
-<rect x="708" y="975" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="712" y="989" font-size="10" fill="#e0e0e0">blk_dma</text>
-<text x="1010" y="989" text-anchor="end" font-size="10" fill="#a0a0a0">0x05100000 rw 64K</text>
-<rect x="708" y="1003" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="712" y="1017" font-size="10" fill="#e0e0e0">blk_data</text>
-<text x="1010" y="1017" text-anchor="end" font-size="10" fill="#a0a0a0">0x05200000 rw 64K</text>
-<rect x="1040" y="905" width="320" height="116" rx="8" fill="rgb(37,65,72)" stroke="#45B7D1" stroke-width="2"/>
-<text x="1050" y="927" font-size="14" font-weight="bold" fill="#45B7D1">fs_server</text>
-<text x="1350" y="927" text-anchor="end" font-size="11" fill="#808080">prio 240</text>
-<rect x="1048" y="947" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="1052" y="961" font-size="10" fill="#e0e0e0">blk_data</text>
-<text x="1350" y="961" text-anchor="end" font-size="10" fill="#a0a0a0">0x06000000 rw 64K</text>
-<rect x="1048" y="975" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="1052" y="989" font-size="10" fill="#e0e0e0">fs_data</text>
-<text x="1350" y="989" text-anchor="end" font-size="10" fill="#a0a0a0">0x06100000 rw 64K</text>
-<rect x="20" y="1881" width="320" height="144" rx="8" fill="rgb(33,58,74)" stroke="#3498DB" stroke-width="2"/>
-<text x="30" y="1903" font-size="14" font-weight="bold" fill="#3498DB">net_driver</text>
-<text x="330" y="1903" text-anchor="end" font-size="11" fill="#808080">prio 230</text>
-<rect x="28" y="1923" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1937" font-size="10" fill="#e0e0e0">blk_mmio</text>
-<text x="330" y="1937" text-anchor="end" font-size="10" fill="#a0a0a0">0x05200000 rw 4K</text>
-<rect x="28" y="1951" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1965" font-size="10" fill="#e0e0e0">net_dma</text>
-<text x="330" y="1965" text-anchor="end" font-size="10" fill="#a0a0a0">0x05300000 rw 128K</text>
-<rect x="28" y="1979" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="1993" font-size="10" fill="#e0e0e0">net_data</text>
-<text x="330" y="1993" text-anchor="end" font-size="10" fill="#a0a0a0">0x05500000 rw 64K</text>
-<rect x="360" y="1881" width="320" height="116" rx="8" fill="rgb(80,59,24)" stroke="#F39C12" stroke-width="2"/>
-<text x="370" y="1903" font-size="14" font-weight="bold" fill="#F39C12">auth_server</text>
-<text x="670" y="1903" text-anchor="end" font-size="11" fill="#808080">prio 210</text>
-<rect x="368" y="1923" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="372" y="1937" font-size="10" fill="#e0e0e0">auth_io</text>
-<text x="670" y="1937" text-anchor="end" font-size="10" fill="#a0a0a0">0x30000000 rw 4K</text>
-<rect x="368" y="1951" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="372" y="1965" font-size="10" fill="#e0e0e0">auth_store</text>
-<text x="670" y="1965" text-anchor="end" font-size="10" fill="#a0a0a0">0x30100000 rw 64K</text>
-<rect x="700" y="1881" width="320" height="116" rx="8" fill="rgb(31,71,48)" stroke="#2ECC71" stroke-width="2"/>
-<text x="710" y="1903" font-size="14" font-weight="bold" fill="#2ECC71">net_server</text>
-<text x="1010" y="1903" text-anchor="end" font-size="11" fill="#808080">prio 210</text>
-<rect x="708" y="1923" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="712" y="1937" font-size="10" fill="#e0e0e0">net_data</text>
-<text x="1010" y="1937" text-anchor="end" font-size="10" fill="#a0a0a0">0x05500000 rw 64K</text>
-<rect x="708" y="1951" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="712" y="1965" font-size="10" fill="#e0e0e0">sock_data</text>
-<text x="1010" y="1965" text-anchor="end" font-size="10" fill="#a0a0a0">0x05600000 rw 64K</text>
-<rect x="1040" y="1881" width="320" height="116" rx="8" fill="rgb(83,78,61)" stroke="#FFEAA7" stroke-width="2"/>
-<text x="1050" y="1903" font-size="14" font-weight="bold" fill="#FFEAA7">llm_server</text>
-<text x="1350" y="1903" text-anchor="end" font-size="11" fill="#808080">prio 180</text>
-<rect x="1048" y="1923" width="190" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="1052" y="1937" font-size="10" fill="#e0e0e0">model_data</text>
-<text x="1350" y="1937" text-anchor="end" font-size="10" fill="#a0a0a0">0x10000000 rw 128M</text>
-<rect x="1048" y="1951" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="1052" y="1965" font-size="10" fill="#e0e0e0">llm_io</text>
-<text x="1350" y="1965" text-anchor="end" font-size="10" fill="#a0a0a0">0x18100000 rw 16K</text>
-<rect x="20" y="2045" width="320" height="144" rx="8" fill="rgb(68,68,68)" stroke="#C0C0C0" stroke-width="2"/>
-<text x="30" y="2067" font-size="14" font-weight="bold" fill="#C0C0C0">sbx0</text>
-<text x="330" y="2067" text-anchor="end" font-size="11" fill="#808080">prio 150 (child of orchestrator)</text>
-<rect x="28" y="2087" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="2101" font-size="10" fill="#e0e0e0">sbx0_io</text>
-<text x="330" y="2101" text-anchor="end" font-size="10" fill="#a0a0a0">0x20000000 rw 4K</text>
-<rect x="28" y="2115" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="2129" font-size="10" fill="#e0e0e0">sbx0_heap</text>
-<text x="330" y="2129" text-anchor="end" font-size="10" fill="#a0a0a0">0x20100000 rw 16M</text>
-<rect x="28" y="2143" width="40" height="22" rx="3" fill="#FF6B6B" opacity="0.4"/>
-<text x="32" y="2157" font-size="10" fill="#e0e0e0">sbx0_code</text>
-<text x="330" y="2157" text-anchor="end" font-size="10" fill="#a0a0a0">0x21100000 rwx 4M</text>
-<rect x="360" y="2045" width="320" height="144" rx="8" fill="rgb(68,68,68)" stroke="#C0C0C0" stroke-width="2"/>
-<text x="370" y="2067" font-size="14" font-weight="bold" fill="#C0C0C0">sbx1</text>
-<text x="670" y="2067" text-anchor="end" font-size="11" fill="#808080">prio 150 (child of orchestrator)</text>
-<rect x="368" y="2087" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="372" y="2101" font-size="10" fill="#e0e0e0">sbx1_io</text>
-<text x="670" y="2101" text-anchor="end" font-size="10" fill="#a0a0a0">0x20000000 rw 4K</text>
-<rect x="368" y="2115" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="372" y="2129" font-size="10" fill="#e0e0e0">sbx1_heap</text>
-<text x="670" y="2129" text-anchor="end" font-size="10" fill="#a0a0a0">0x20100000 rw 16M</text>
-<rect x="368" y="2143" width="40" height="22" rx="3" fill="#FF6B6B" opacity="0.4"/>
-<text x="372" y="2157" font-size="10" fill="#e0e0e0">sbx1_code</text>
-<text x="670" y="2157" text-anchor="end" font-size="10" fill="#a0a0a0">0x21100000 rwx 4M</text>
-<rect x="700" y="2045" width="320" height="144" rx="8" fill="rgb(68,68,68)" stroke="#C0C0C0" stroke-width="2"/>
-<text x="710" y="2067" font-size="14" font-weight="bold" fill="#C0C0C0">sbx2</text>
-<text x="1010" y="2067" text-anchor="end" font-size="11" fill="#808080">prio 150 (child of orchestrator)</text>
-<rect x="708" y="2087" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="712" y="2101" font-size="10" fill="#e0e0e0">sbx2_io</text>
-<text x="1010" y="2101" text-anchor="end" font-size="10" fill="#a0a0a0">0x20000000 rw 4K</text>
-<rect x="708" y="2115" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="712" y="2129" font-size="10" fill="#e0e0e0">sbx2_heap</text>
-<text x="1010" y="2129" text-anchor="end" font-size="10" fill="#a0a0a0">0x20100000 rw 16M</text>
-<rect x="708" y="2143" width="40" height="22" rx="3" fill="#FF6B6B" opacity="0.4"/>
-<text x="712" y="2157" font-size="10" fill="#e0e0e0">sbx2_code</text>
-<text x="1010" y="2157" text-anchor="end" font-size="10" fill="#a0a0a0">0x21100000 rwx 4M</text>
-<rect x="1040" y="2045" width="320" height="144" rx="8" fill="rgb(68,68,68)" stroke="#C0C0C0" stroke-width="2"/>
-<text x="1050" y="2067" font-size="14" font-weight="bold" fill="#C0C0C0">sbx3</text>
-<text x="1350" y="2067" text-anchor="end" font-size="11" fill="#808080">prio 150 (child of orchestrator)</text>
-<rect x="1048" y="2087" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="1052" y="2101" font-size="10" fill="#e0e0e0">sbx3_io</text>
-<text x="1350" y="2101" text-anchor="end" font-size="10" fill="#a0a0a0">0x20000000 rw 4K</text>
-<rect x="1048" y="2115" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="1052" y="2129" font-size="10" fill="#e0e0e0">sbx3_heap</text>
-<text x="1350" y="2129" text-anchor="end" font-size="10" fill="#a0a0a0">0x20100000 rw 16M</text>
-<rect x="1048" y="2143" width="40" height="22" rx="3" fill="#FF6B6B" opacity="0.4"/>
-<text x="1052" y="2157" font-size="10" fill="#e0e0e0">sbx3_code</text>
-<text x="1350" y="2157" text-anchor="end" font-size="10" fill="#a0a0a0">0x21100000 rwx 4M</text>
-<rect x="20" y="2209" width="320" height="144" rx="8" fill="rgb(68,68,68)" stroke="#C0C0C0" stroke-width="2"/>
-<text x="30" y="2231" font-size="14" font-weight="bold" fill="#C0C0C0">sbx4</text>
-<text x="330" y="2231" text-anchor="end" font-size="11" fill="#808080">prio 150 (child of orchestrator)</text>
-<rect x="28" y="2251" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="2265" font-size="10" fill="#e0e0e0">sbx4_io</text>
-<text x="330" y="2265" text-anchor="end" font-size="10" fill="#a0a0a0">0x20000000 rw 4K</text>
-<rect x="28" y="2279" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="32" y="2293" font-size="10" fill="#e0e0e0">sbx4_heap</text>
-<text x="330" y="2293" text-anchor="end" font-size="10" fill="#a0a0a0">0x20100000 rw 16M</text>
-<rect x="28" y="2307" width="40" height="22" rx="3" fill="#FF6B6B" opacity="0.4"/>
-<text x="32" y="2321" font-size="10" fill="#e0e0e0">sbx4_code</text>
-<text x="330" y="2321" text-anchor="end" font-size="10" fill="#a0a0a0">0x21100000 rwx 4M</text>
-<rect x="360" y="2209" width="320" height="144" rx="8" fill="rgb(68,68,68)" stroke="#C0C0C0" stroke-width="2"/>
-<text x="370" y="2231" font-size="14" font-weight="bold" fill="#C0C0C0">sbx5</text>
-<text x="670" y="2231" text-anchor="end" font-size="11" fill="#808080">prio 150 (child of orchestrator)</text>
-<rect x="368" y="2251" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="372" y="2265" font-size="10" fill="#e0e0e0">sbx5_io</text>
-<text x="670" y="2265" text-anchor="end" font-size="10" fill="#a0a0a0">0x20000000 rw 4K</text>
-<rect x="368" y="2279" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="372" y="2293" font-size="10" fill="#e0e0e0">sbx5_heap</text>
-<text x="670" y="2293" text-anchor="end" font-size="10" fill="#a0a0a0">0x20100000 rw 16M</text>
-<rect x="368" y="2307" width="40" height="22" rx="3" fill="#FF6B6B" opacity="0.4"/>
-<text x="372" y="2321" font-size="10" fill="#e0e0e0">sbx5_code</text>
-<text x="670" y="2321" text-anchor="end" font-size="10" fill="#a0a0a0">0x21100000 rwx 4M</text>
-<rect x="700" y="2209" width="320" height="144" rx="8" fill="rgb(68,68,68)" stroke="#C0C0C0" stroke-width="2"/>
-<text x="710" y="2231" font-size="14" font-weight="bold" fill="#C0C0C0">sbx6</text>
-<text x="1010" y="2231" text-anchor="end" font-size="11" fill="#808080">prio 150 (child of orchestrator)</text>
-<rect x="708" y="2251" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="712" y="2265" font-size="10" fill="#e0e0e0">sbx6_io</text>
-<text x="1010" y="2265" text-anchor="end" font-size="10" fill="#a0a0a0">0x20000000 rw 4K</text>
-<rect x="708" y="2279" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="712" y="2293" font-size="10" fill="#e0e0e0">sbx6_heap</text>
-<text x="1010" y="2293" text-anchor="end" font-size="10" fill="#a0a0a0">0x20100000 rw 16M</text>
-<rect x="708" y="2307" width="40" height="22" rx="3" fill="#FF6B6B" opacity="0.4"/>
-<text x="712" y="2321" font-size="10" fill="#e0e0e0">sbx6_code</text>
-<text x="1010" y="2321" text-anchor="end" font-size="10" fill="#a0a0a0">0x21100000 rwx 4M</text>
-<rect x="1040" y="2209" width="320" height="144" rx="8" fill="rgb(68,68,68)" stroke="#C0C0C0" stroke-width="2"/>
-<text x="1050" y="2231" font-size="14" font-weight="bold" fill="#C0C0C0">sbx7</text>
-<text x="1350" y="2231" text-anchor="end" font-size="11" fill="#808080">prio 150 (child of orchestrator)</text>
-<rect x="1048" y="2251" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="1052" y="2265" font-size="10" fill="#e0e0e0">sbx7_io</text>
-<text x="1350" y="2265" text-anchor="end" font-size="10" fill="#a0a0a0">0x20000000 rw 4K</text>
-<rect x="1048" y="2279" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
-<text x="1052" y="2293" font-size="10" fill="#e0e0e0">sbx7_heap</text>
-<text x="1350" y="2293" text-anchor="end" font-size="10" fill="#a0a0a0">0x20100000 rw 16M</text>
-<rect x="1048" y="2307" width="40" height="22" rx="3" fill="#FF6B6B" opacity="0.4"/>
-<text x="1052" y="2321" font-size="10" fill="#e0e0e0">sbx7_code</text>
-<text x="1350" y="2321" text-anchor="end" font-size="10" fill="#a0a0a0">0x21100000 rwx 4M</text>
-<rect x="20" y="2373" width="320" height="88" rx="8" fill="rgb(75,60,75)" stroke="#DDA0DD" stroke-width="2"/>
-<text x="30" y="2395" font-size="14" font-weight="bold" fill="#DDA0DD">echo_server</text>
-<text x="330" y="2395" text-anchor="end" font-size="11" fill="#808080">prio 100</text>
-<text x="30" y="2429" font-size="11" fill="#606060">(no memory maps)</text>
-<text x="20" y="2501" font-size="16" font-weight="bold" fill="#96CEB4">Channels (17)</text>
-<text x="30" y="2530" fill="#a0a0c0" font-size="11">CH  1: serial_driver        ↔ orchestrator        </text>
-<text x="30" y="2550" fill="#a0a0c0" font-size="11">CH  2: orchestrator         ↔ blk_driver          </text>
-<text x="30" y="2570" fill="#a0a0c0" font-size="11">CH  3: orchestrator         ↔ echo_server         </text>
-<text x="30" y="2590" fill="#a0a0c0" font-size="11">CH  4: orchestrator         ↔ fs_server            (PPC)</text>
-<text x="30" y="2610" fill="#a0a0c0" font-size="11">CH  6: orchestrator         ↔ llm_server          </text>
-<text x="30" y="2630" fill="#a0a0c0" font-size="11">CH  7: orchestrator         ↔ sbx0                 (PPC)</text>
-<text x="30" y="2650" fill="#a0a0c0" font-size="11">CH  8: orchestrator         ↔ sbx1                 (PPC)</text>
-<text x="30" y="2670" fill="#a0a0c0" font-size="11">CH  9: orchestrator         ↔ sbx2                 (PPC)</text>
-<text x="30" y="2690" fill="#a0a0c0" font-size="11">CH 10: orchestrator         ↔ sbx3                 (PPC)</text>
-<text x="30" y="2710" fill="#a0a0c0" font-size="11">CH 14: orchestrator         ↔ sbx4                 (PPC)</text>
-<text x="30" y="2730" fill="#a0a0c0" font-size="11">CH 15: orchestrator         ↔ sbx5                 (PPC)</text>
-<text x="30" y="2750" fill="#a0a0c0" font-size="11">CH 16: orchestrator         ↔ sbx6                 (PPC)</text>
-<text x="30" y="2770" fill="#a0a0c0" font-size="11">CH 17: orchestrator         ↔ sbx7                 (PPC)</text>
-<text x="30" y="2790" fill="#a0a0c0" font-size="11">CH 11: orchestrator         ↔ auth_server          (PPC)</text>
-<text x="30" y="2810" fill="#a0a0c0" font-size="11">CH 12: orchestrator         ↔ net_server           (PPC)</text>
-<text x="30" y="2830" fill="#a0a0c0" font-size="11">CH  8: net_driver           ↔ net_server          </text>
-<text x="30" y="2850" fill="#a0a0c0" font-size="11">CH 10: fs_server            ↔ blk_driver          </text>
+<text x="30" y="889" fill="#a0a0c0" font-size="11">echo_io                         0x1000  (4 KiB)</text>
+<rect x="20" y="925" width="320" height="984" rx="8" fill="rgb(57,71,65)" stroke="#96CEB4" stroke-width="2"/>
+<text x="30" y="947" font-size="14" font-weight="bold" fill="#96CEB4">orchestrator</text>
+<text x="330" y="947" text-anchor="end" font-size="11" fill="#808080">prio 200</text>
+<rect x="28" y="967" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="981" font-size="10" fill="#e0e0e0">rx_buf</text>
+<text x="330" y="981" text-anchor="end" font-size="10" fill="#a0a0a0">0x04200000 rw 4K</text>
+<rect x="28" y="995" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1009" font-size="10" fill="#e0e0e0">tx_buf</text>
+<text x="330" y="1009" text-anchor="end" font-size="10" fill="#a0a0a0">0x04201000 rw 4K</text>
+<rect x="28" y="1023" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1037" font-size="10" fill="#e0e0e0">fs_data</text>
+<text x="330" y="1037" text-anchor="end" font-size="10" fill="#a0a0a0">0x06100000 rw 64K</text>
+<rect x="28" y="1051" width="190" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1065" font-size="10" fill="#e0e0e0">model_data</text>
+<text x="330" y="1065" text-anchor="end" font-size="10" fill="#a0a0a0">0x10000000 rw 128M</text>
+<rect x="28" y="1079" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1093" font-size="10" fill="#e0e0e0">llm_io</text>
+<text x="330" y="1093" text-anchor="end" font-size="10" fill="#a0a0a0">0x18100000 rw 16K</text>
+<rect x="28" y="1107" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1121" font-size="10" fill="#e0e0e0">sock_data</text>
+<text x="330" y="1121" text-anchor="end" font-size="10" fill="#a0a0a0">0x05700000 rw 64K</text>
+<rect x="28" y="1135" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1149" font-size="10" fill="#e0e0e0">sbx0_io</text>
+<text x="330" y="1149" text-anchor="end" font-size="10" fill="#a0a0a0">0x30000000 rw 4K</text>
+<rect x="28" y="1163" width="40" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1177" font-size="10" fill="#e0e0e0">sbx0_code</text>
+<text x="330" y="1177" text-anchor="end" font-size="10" fill="#a0a0a0">0x30001000 rw 4M</text>
+<rect x="28" y="1191" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1205" font-size="10" fill="#e0e0e0">sbx1_io</text>
+<text x="330" y="1205" text-anchor="end" font-size="10" fill="#a0a0a0">0x30800000 rw 4K</text>
+<rect x="28" y="1219" width="40" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1233" font-size="10" fill="#e0e0e0">sbx1_code</text>
+<text x="330" y="1233" text-anchor="end" font-size="10" fill="#a0a0a0">0x30801000 rw 4M</text>
+<rect x="28" y="1247" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1261" font-size="10" fill="#e0e0e0">sbx2_io</text>
+<text x="330" y="1261" text-anchor="end" font-size="10" fill="#a0a0a0">0x31000000 rw 4K</text>
+<rect x="28" y="1275" width="40" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1289" font-size="10" fill="#e0e0e0">sbx2_code</text>
+<text x="330" y="1289" text-anchor="end" font-size="10" fill="#a0a0a0">0x31001000 rw 4M</text>
+<rect x="28" y="1303" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1317" font-size="10" fill="#e0e0e0">sbx3_io</text>
+<text x="330" y="1317" text-anchor="end" font-size="10" fill="#a0a0a0">0x31800000 rw 4K</text>
+<rect x="28" y="1331" width="40" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1345" font-size="10" fill="#e0e0e0">sbx3_code</text>
+<text x="330" y="1345" text-anchor="end" font-size="10" fill="#a0a0a0">0x31801000 rw 4M</text>
+<rect x="28" y="1359" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1373" font-size="10" fill="#e0e0e0">sbx4_io</text>
+<text x="330" y="1373" text-anchor="end" font-size="10" fill="#a0a0a0">0x32000000 rw 4K</text>
+<rect x="28" y="1387" width="40" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1401" font-size="10" fill="#e0e0e0">sbx4_code</text>
+<text x="330" y="1401" text-anchor="end" font-size="10" fill="#a0a0a0">0x32001000 rw 4M</text>
+<rect x="28" y="1415" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1429" font-size="10" fill="#e0e0e0">sbx5_io</text>
+<text x="330" y="1429" text-anchor="end" font-size="10" fill="#a0a0a0">0x32800000 rw 4K</text>
+<rect x="28" y="1443" width="40" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1457" font-size="10" fill="#e0e0e0">sbx5_code</text>
+<text x="330" y="1457" text-anchor="end" font-size="10" fill="#a0a0a0">0x32801000 rw 4M</text>
+<rect x="28" y="1471" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1485" font-size="10" fill="#e0e0e0">sbx6_io</text>
+<text x="330" y="1485" text-anchor="end" font-size="10" fill="#a0a0a0">0x33000000 rw 4K</text>
+<rect x="28" y="1499" width="40" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1513" font-size="10" fill="#e0e0e0">sbx6_code</text>
+<text x="330" y="1513" text-anchor="end" font-size="10" fill="#a0a0a0">0x33001000 rw 4M</text>
+<rect x="28" y="1527" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1541" font-size="10" fill="#e0e0e0">sbx7_io</text>
+<text x="330" y="1541" text-anchor="end" font-size="10" fill="#a0a0a0">0x33800000 rw 4K</text>
+<rect x="28" y="1555" width="40" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1569" font-size="10" fill="#e0e0e0">sbx7_code</text>
+<text x="330" y="1569" text-anchor="end" font-size="10" fill="#a0a0a0">0x33801000 rw 4M</text>
+<rect x="28" y="1583" width="190" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1597" font-size="10" fill="#e0e0e0">swap_region</text>
+<text x="330" y="1597" text-anchor="end" font-size="10" fill="#a0a0a0">0x50000000 rw 256M</text>
+<rect x="28" y="1611" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1625" font-size="10" fill="#e0e0e0">sbx0_heap</text>
+<text x="330" y="1625" text-anchor="end" font-size="10" fill="#a0a0a0">0x40000000 rw 16M</text>
+<rect x="28" y="1639" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1653" font-size="10" fill="#e0e0e0">sbx1_heap</text>
+<text x="330" y="1653" text-anchor="end" font-size="10" fill="#a0a0a0">0x41000000 rw 16M</text>
+<rect x="28" y="1667" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1681" font-size="10" fill="#e0e0e0">sbx2_heap</text>
+<text x="330" y="1681" text-anchor="end" font-size="10" fill="#a0a0a0">0x42000000 rw 16M</text>
+<rect x="28" y="1695" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1709" font-size="10" fill="#e0e0e0">sbx3_heap</text>
+<text x="330" y="1709" text-anchor="end" font-size="10" fill="#a0a0a0">0x43000000 rw 16M</text>
+<rect x="28" y="1723" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1737" font-size="10" fill="#e0e0e0">sbx4_heap</text>
+<text x="330" y="1737" text-anchor="end" font-size="10" fill="#a0a0a0">0x44000000 rw 16M</text>
+<rect x="28" y="1751" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1765" font-size="10" fill="#e0e0e0">sbx5_heap</text>
+<text x="330" y="1765" text-anchor="end" font-size="10" fill="#a0a0a0">0x45000000 rw 16M</text>
+<rect x="28" y="1779" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1793" font-size="10" fill="#e0e0e0">sbx6_heap</text>
+<text x="330" y="1793" text-anchor="end" font-size="10" fill="#a0a0a0">0x46000000 rw 16M</text>
+<rect x="28" y="1807" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1821" font-size="10" fill="#e0e0e0">sbx7_heap</text>
+<text x="330" y="1821" text-anchor="end" font-size="10" fill="#a0a0a0">0x47000000 rw 16M</text>
+<rect x="28" y="1835" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1849" font-size="10" fill="#e0e0e0">auth_io</text>
+<text x="330" y="1849" text-anchor="end" font-size="10" fill="#a0a0a0">0x06200000 rw 4K</text>
+<rect x="28" y="1863" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1877" font-size="10" fill="#e0e0e0">echo_io</text>
+<text x="330" y="1877" text-anchor="end" font-size="10" fill="#a0a0a0">0x06000000 rw 4K</text>
+<rect x="360" y="925" width="320" height="144" rx="8" fill="rgb(83,46,46)" stroke="#FF6B6B" stroke-width="2"/>
+<text x="370" y="947" font-size="14" font-weight="bold" fill="#FF6B6B">serial_driver</text>
+<text x="670" y="947" text-anchor="end" font-size="11" fill="#808080">prio 254</text>
+<rect x="368" y="967" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="372" y="981" font-size="10" fill="#e0e0e0">uart_mmio</text>
+<text x="670" y="981" text-anchor="end" font-size="10" fill="#a0a0a0">0x04000000 rw 4K</text>
+<rect x="368" y="995" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="372" y="1009" font-size="10" fill="#e0e0e0">rx_buf</text>
+<text x="670" y="1009" text-anchor="end" font-size="10" fill="#a0a0a0">0x04200000 rw 4K</text>
+<rect x="368" y="1023" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="372" y="1037" font-size="10" fill="#e0e0e0">tx_buf</text>
+<text x="670" y="1037" text-anchor="end" font-size="10" fill="#a0a0a0">0x04201000 rw 4K</text>
+<rect x="700" y="925" width="320" height="144" rx="8" fill="rgb(39,71,69)" stroke="#4ECDC4" stroke-width="2"/>
+<text x="710" y="947" font-size="14" font-weight="bold" fill="#4ECDC4">blk_driver</text>
+<text x="1010" y="947" text-anchor="end" font-size="11" fill="#808080">prio 250</text>
+<rect x="708" y="967" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="712" y="981" font-size="10" fill="#e0e0e0">blk_mmio</text>
+<text x="1010" y="981" text-anchor="end" font-size="10" fill="#a0a0a0">0x05000000 rw 4K</text>
+<rect x="708" y="995" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="712" y="1009" font-size="10" fill="#e0e0e0">blk_dma</text>
+<text x="1010" y="1009" text-anchor="end" font-size="10" fill="#a0a0a0">0x05100000 rw 64K</text>
+<rect x="708" y="1023" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="712" y="1037" font-size="10" fill="#e0e0e0">blk_data</text>
+<text x="1010" y="1037" text-anchor="end" font-size="10" fill="#a0a0a0">0x05200000 rw 64K</text>
+<rect x="1040" y="925" width="320" height="116" rx="8" fill="rgb(37,65,72)" stroke="#45B7D1" stroke-width="2"/>
+<text x="1050" y="947" font-size="14" font-weight="bold" fill="#45B7D1">fs_server</text>
+<text x="1350" y="947" text-anchor="end" font-size="11" fill="#808080">prio 240</text>
+<rect x="1048" y="967" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="1052" y="981" font-size="10" fill="#e0e0e0">blk_data</text>
+<text x="1350" y="981" text-anchor="end" font-size="10" fill="#a0a0a0">0x06000000 rw 64K</text>
+<rect x="1048" y="995" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="1052" y="1009" font-size="10" fill="#e0e0e0">fs_data</text>
+<text x="1350" y="1009" text-anchor="end" font-size="10" fill="#a0a0a0">0x06100000 rw 64K</text>
+<rect x="20" y="1929" width="320" height="144" rx="8" fill="rgb(33,58,74)" stroke="#3498DB" stroke-width="2"/>
+<text x="30" y="1951" font-size="14" font-weight="bold" fill="#3498DB">net_driver</text>
+<text x="330" y="1951" text-anchor="end" font-size="11" fill="#808080">prio 230</text>
+<rect x="28" y="1971" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="1985" font-size="10" fill="#e0e0e0">blk_mmio</text>
+<text x="330" y="1985" text-anchor="end" font-size="10" fill="#a0a0a0">0x05200000 rw 4K</text>
+<rect x="28" y="1999" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="2013" font-size="10" fill="#e0e0e0">net_dma</text>
+<text x="330" y="2013" text-anchor="end" font-size="10" fill="#a0a0a0">0x05300000 rw 128K</text>
+<rect x="28" y="2027" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="2041" font-size="10" fill="#e0e0e0">net_data</text>
+<text x="330" y="2041" text-anchor="end" font-size="10" fill="#a0a0a0">0x05500000 rw 64K</text>
+<rect x="360" y="1929" width="320" height="116" rx="8" fill="rgb(80,59,24)" stroke="#F39C12" stroke-width="2"/>
+<text x="370" y="1951" font-size="14" font-weight="bold" fill="#F39C12">auth_server</text>
+<text x="670" y="1951" text-anchor="end" font-size="11" fill="#808080">prio 210</text>
+<rect x="368" y="1971" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="372" y="1985" font-size="10" fill="#e0e0e0">auth_io</text>
+<text x="670" y="1985" text-anchor="end" font-size="10" fill="#a0a0a0">0x30000000 rw 4K</text>
+<rect x="368" y="1999" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="372" y="2013" font-size="10" fill="#e0e0e0">auth_store</text>
+<text x="670" y="2013" text-anchor="end" font-size="10" fill="#a0a0a0">0x30100000 rw 64K</text>
+<rect x="700" y="1929" width="320" height="116" rx="8" fill="rgb(31,71,48)" stroke="#2ECC71" stroke-width="2"/>
+<text x="710" y="1951" font-size="14" font-weight="bold" fill="#2ECC71">net_server</text>
+<text x="1010" y="1951" text-anchor="end" font-size="11" fill="#808080">prio 210</text>
+<rect x="708" y="1971" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="712" y="1985" font-size="10" fill="#e0e0e0">net_data</text>
+<text x="1010" y="1985" text-anchor="end" font-size="10" fill="#a0a0a0">0x05500000 rw 64K</text>
+<rect x="708" y="1999" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="712" y="2013" font-size="10" fill="#e0e0e0">sock_data</text>
+<text x="1010" y="2013" text-anchor="end" font-size="10" fill="#a0a0a0">0x05600000 rw 64K</text>
+<rect x="1040" y="1929" width="320" height="116" rx="8" fill="rgb(83,78,61)" stroke="#FFEAA7" stroke-width="2"/>
+<text x="1050" y="1951" font-size="14" font-weight="bold" fill="#FFEAA7">llm_server</text>
+<text x="1350" y="1951" text-anchor="end" font-size="11" fill="#808080">prio 180</text>
+<rect x="1048" y="1971" width="190" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="1052" y="1985" font-size="10" fill="#e0e0e0">model_data</text>
+<text x="1350" y="1985" text-anchor="end" font-size="10" fill="#a0a0a0">0x10000000 rw 128M</text>
+<rect x="1048" y="1999" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="1052" y="2013" font-size="10" fill="#e0e0e0">llm_io</text>
+<text x="1350" y="2013" text-anchor="end" font-size="10" fill="#a0a0a0">0x18100000 rw 16K</text>
+<rect x="20" y="2093" width="320" height="144" rx="8" fill="rgb(68,68,68)" stroke="#C0C0C0" stroke-width="2"/>
+<text x="30" y="2115" font-size="14" font-weight="bold" fill="#C0C0C0">sbx0</text>
+<text x="330" y="2115" text-anchor="end" font-size="11" fill="#808080">prio 150 (child of orchestrator)</text>
+<rect x="28" y="2135" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="2149" font-size="10" fill="#e0e0e0">sbx0_io</text>
+<text x="330" y="2149" text-anchor="end" font-size="10" fill="#a0a0a0">0x20000000 rw 4K</text>
+<rect x="28" y="2163" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="2177" font-size="10" fill="#e0e0e0">sbx0_heap</text>
+<text x="330" y="2177" text-anchor="end" font-size="10" fill="#a0a0a0">0x20100000 rw 16M</text>
+<rect x="28" y="2191" width="40" height="22" rx="3" fill="#FF6B6B" opacity="0.4"/>
+<text x="32" y="2205" font-size="10" fill="#e0e0e0">sbx0_code</text>
+<text x="330" y="2205" text-anchor="end" font-size="10" fill="#a0a0a0">0x21100000 rwx 4M</text>
+<rect x="360" y="2093" width="320" height="144" rx="8" fill="rgb(68,68,68)" stroke="#C0C0C0" stroke-width="2"/>
+<text x="370" y="2115" font-size="14" font-weight="bold" fill="#C0C0C0">sbx1</text>
+<text x="670" y="2115" text-anchor="end" font-size="11" fill="#808080">prio 150 (child of orchestrator)</text>
+<rect x="368" y="2135" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="372" y="2149" font-size="10" fill="#e0e0e0">sbx1_io</text>
+<text x="670" y="2149" text-anchor="end" font-size="10" fill="#a0a0a0">0x20000000 rw 4K</text>
+<rect x="368" y="2163" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="372" y="2177" font-size="10" fill="#e0e0e0">sbx1_heap</text>
+<text x="670" y="2177" text-anchor="end" font-size="10" fill="#a0a0a0">0x20100000 rw 16M</text>
+<rect x="368" y="2191" width="40" height="22" rx="3" fill="#FF6B6B" opacity="0.4"/>
+<text x="372" y="2205" font-size="10" fill="#e0e0e0">sbx1_code</text>
+<text x="670" y="2205" text-anchor="end" font-size="10" fill="#a0a0a0">0x21100000 rwx 4M</text>
+<rect x="700" y="2093" width="320" height="144" rx="8" fill="rgb(68,68,68)" stroke="#C0C0C0" stroke-width="2"/>
+<text x="710" y="2115" font-size="14" font-weight="bold" fill="#C0C0C0">sbx2</text>
+<text x="1010" y="2115" text-anchor="end" font-size="11" fill="#808080">prio 150 (child of orchestrator)</text>
+<rect x="708" y="2135" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="712" y="2149" font-size="10" fill="#e0e0e0">sbx2_io</text>
+<text x="1010" y="2149" text-anchor="end" font-size="10" fill="#a0a0a0">0x20000000 rw 4K</text>
+<rect x="708" y="2163" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="712" y="2177" font-size="10" fill="#e0e0e0">sbx2_heap</text>
+<text x="1010" y="2177" text-anchor="end" font-size="10" fill="#a0a0a0">0x20100000 rw 16M</text>
+<rect x="708" y="2191" width="40" height="22" rx="3" fill="#FF6B6B" opacity="0.4"/>
+<text x="712" y="2205" font-size="10" fill="#e0e0e0">sbx2_code</text>
+<text x="1010" y="2205" text-anchor="end" font-size="10" fill="#a0a0a0">0x21100000 rwx 4M</text>
+<rect x="1040" y="2093" width="320" height="144" rx="8" fill="rgb(68,68,68)" stroke="#C0C0C0" stroke-width="2"/>
+<text x="1050" y="2115" font-size="14" font-weight="bold" fill="#C0C0C0">sbx3</text>
+<text x="1350" y="2115" text-anchor="end" font-size="11" fill="#808080">prio 150 (child of orchestrator)</text>
+<rect x="1048" y="2135" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="1052" y="2149" font-size="10" fill="#e0e0e0">sbx3_io</text>
+<text x="1350" y="2149" text-anchor="end" font-size="10" fill="#a0a0a0">0x20000000 rw 4K</text>
+<rect x="1048" y="2163" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="1052" y="2177" font-size="10" fill="#e0e0e0">sbx3_heap</text>
+<text x="1350" y="2177" text-anchor="end" font-size="10" fill="#a0a0a0">0x20100000 rw 16M</text>
+<rect x="1048" y="2191" width="40" height="22" rx="3" fill="#FF6B6B" opacity="0.4"/>
+<text x="1052" y="2205" font-size="10" fill="#e0e0e0">sbx3_code</text>
+<text x="1350" y="2205" text-anchor="end" font-size="10" fill="#a0a0a0">0x21100000 rwx 4M</text>
+<rect x="20" y="2257" width="320" height="144" rx="8" fill="rgb(68,68,68)" stroke="#C0C0C0" stroke-width="2"/>
+<text x="30" y="2279" font-size="14" font-weight="bold" fill="#C0C0C0">sbx4</text>
+<text x="330" y="2279" text-anchor="end" font-size="11" fill="#808080">prio 150 (child of orchestrator)</text>
+<rect x="28" y="2299" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="2313" font-size="10" fill="#e0e0e0">sbx4_io</text>
+<text x="330" y="2313" text-anchor="end" font-size="10" fill="#a0a0a0">0x20000000 rw 4K</text>
+<rect x="28" y="2327" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="2341" font-size="10" fill="#e0e0e0">sbx4_heap</text>
+<text x="330" y="2341" text-anchor="end" font-size="10" fill="#a0a0a0">0x20100000 rw 16M</text>
+<rect x="28" y="2355" width="40" height="22" rx="3" fill="#FF6B6B" opacity="0.4"/>
+<text x="32" y="2369" font-size="10" fill="#e0e0e0">sbx4_code</text>
+<text x="330" y="2369" text-anchor="end" font-size="10" fill="#a0a0a0">0x21100000 rwx 4M</text>
+<rect x="360" y="2257" width="320" height="144" rx="8" fill="rgb(68,68,68)" stroke="#C0C0C0" stroke-width="2"/>
+<text x="370" y="2279" font-size="14" font-weight="bold" fill="#C0C0C0">sbx5</text>
+<text x="670" y="2279" text-anchor="end" font-size="11" fill="#808080">prio 150 (child of orchestrator)</text>
+<rect x="368" y="2299" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="372" y="2313" font-size="10" fill="#e0e0e0">sbx5_io</text>
+<text x="670" y="2313" text-anchor="end" font-size="10" fill="#a0a0a0">0x20000000 rw 4K</text>
+<rect x="368" y="2327" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="372" y="2341" font-size="10" fill="#e0e0e0">sbx5_heap</text>
+<text x="670" y="2341" text-anchor="end" font-size="10" fill="#a0a0a0">0x20100000 rw 16M</text>
+<rect x="368" y="2355" width="40" height="22" rx="3" fill="#FF6B6B" opacity="0.4"/>
+<text x="372" y="2369" font-size="10" fill="#e0e0e0">sbx5_code</text>
+<text x="670" y="2369" text-anchor="end" font-size="10" fill="#a0a0a0">0x21100000 rwx 4M</text>
+<rect x="700" y="2257" width="320" height="144" rx="8" fill="rgb(68,68,68)" stroke="#C0C0C0" stroke-width="2"/>
+<text x="710" y="2279" font-size="14" font-weight="bold" fill="#C0C0C0">sbx6</text>
+<text x="1010" y="2279" text-anchor="end" font-size="11" fill="#808080">prio 150 (child of orchestrator)</text>
+<rect x="708" y="2299" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="712" y="2313" font-size="10" fill="#e0e0e0">sbx6_io</text>
+<text x="1010" y="2313" text-anchor="end" font-size="10" fill="#a0a0a0">0x20000000 rw 4K</text>
+<rect x="708" y="2327" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="712" y="2341" font-size="10" fill="#e0e0e0">sbx6_heap</text>
+<text x="1010" y="2341" text-anchor="end" font-size="10" fill="#a0a0a0">0x20100000 rw 16M</text>
+<rect x="708" y="2355" width="40" height="22" rx="3" fill="#FF6B6B" opacity="0.4"/>
+<text x="712" y="2369" font-size="10" fill="#e0e0e0">sbx6_code</text>
+<text x="1010" y="2369" text-anchor="end" font-size="10" fill="#a0a0a0">0x21100000 rwx 4M</text>
+<rect x="1040" y="2257" width="320" height="144" rx="8" fill="rgb(68,68,68)" stroke="#C0C0C0" stroke-width="2"/>
+<text x="1050" y="2279" font-size="14" font-weight="bold" fill="#C0C0C0">sbx7</text>
+<text x="1350" y="2279" text-anchor="end" font-size="11" fill="#808080">prio 150 (child of orchestrator)</text>
+<rect x="1048" y="2299" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="1052" y="2313" font-size="10" fill="#e0e0e0">sbx7_io</text>
+<text x="1350" y="2313" text-anchor="end" font-size="10" fill="#a0a0a0">0x20000000 rw 4K</text>
+<rect x="1048" y="2327" width="160" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="1052" y="2341" font-size="10" fill="#e0e0e0">sbx7_heap</text>
+<text x="1350" y="2341" text-anchor="end" font-size="10" fill="#a0a0a0">0x20100000 rw 16M</text>
+<rect x="1048" y="2355" width="40" height="22" rx="3" fill="#FF6B6B" opacity="0.4"/>
+<text x="1052" y="2369" font-size="10" fill="#e0e0e0">sbx7_code</text>
+<text x="1350" y="2369" text-anchor="end" font-size="10" fill="#a0a0a0">0x21100000 rwx 4M</text>
+<rect x="20" y="2421" width="320" height="88" rx="8" fill="rgb(75,60,75)" stroke="#DDA0DD" stroke-width="2"/>
+<text x="30" y="2443" font-size="14" font-weight="bold" fill="#DDA0DD">echo_server</text>
+<text x="330" y="2443" text-anchor="end" font-size="11" fill="#808080">prio 100</text>
+<rect x="28" y="2463" width="20" height="22" rx="3" fill="#4ECDC4" opacity="0.4"/>
+<text x="32" y="2477" font-size="10" fill="#e0e0e0">echo_io</text>
+<text x="330" y="2477" text-anchor="end" font-size="10" fill="#a0a0a0">0x06000000 rw 4K</text>
+<text x="20" y="2549" font-size="16" font-weight="bold" fill="#96CEB4">Channels (17)</text>
+<text x="30" y="2578" fill="#a0a0c0" font-size="11">CH  1: serial_driver        ↔ orchestrator        </text>
+<text x="30" y="2598" fill="#a0a0c0" font-size="11">CH  2: orchestrator         ↔ blk_driver          </text>
+<text x="30" y="2618" fill="#a0a0c0" font-size="11">CH  3: orchestrator         ↔ echo_server         </text>
+<text x="30" y="2638" fill="#a0a0c0" font-size="11">CH  4: orchestrator         ↔ fs_server            (PPC)</text>
+<text x="30" y="2658" fill="#a0a0c0" font-size="11">CH  6: orchestrator         ↔ llm_server          </text>
+<text x="30" y="2678" fill="#a0a0c0" font-size="11">CH  7: orchestrator         ↔ sbx0                 (PPC)</text>
+<text x="30" y="2698" fill="#a0a0c0" font-size="11">CH  8: orchestrator         ↔ sbx1                 (PPC)</text>
+<text x="30" y="2718" fill="#a0a0c0" font-size="11">CH  9: orchestrator         ↔ sbx2                 (PPC)</text>
+<text x="30" y="2738" fill="#a0a0c0" font-size="11">CH 10: orchestrator         ↔ sbx3                 (PPC)</text>
+<text x="30" y="2758" fill="#a0a0c0" font-size="11">CH 14: orchestrator         ↔ sbx4                 (PPC)</text>
+<text x="30" y="2778" fill="#a0a0c0" font-size="11">CH 15: orchestrator         ↔ sbx5                 (PPC)</text>
+<text x="30" y="2798" fill="#a0a0c0" font-size="11">CH 16: orchestrator         ↔ sbx6                 (PPC)</text>
+<text x="30" y="2818" fill="#a0a0c0" font-size="11">CH 17: orchestrator         ↔ sbx7                 (PPC)</text>
+<text x="30" y="2838" fill="#a0a0c0" font-size="11">CH 11: orchestrator         ↔ auth_server          (PPC)</text>
+<text x="30" y="2858" fill="#a0a0c0" font-size="11">CH 12: orchestrator         ↔ net_server           (PPC)</text>
+<text x="30" y="2878" fill="#a0a0c0" font-size="11">CH  8: net_driver           ↔ net_server          </text>
+<text x="30" y="2898" fill="#a0a0c0" font-size="11">CH 10: fs_server            ↔ blk_driver          </text>
 </svg>

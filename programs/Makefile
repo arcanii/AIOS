@@ -10,7 +10,7 @@ BINS = $(shell echo $(SOURCES:.c=.BIN) | tr 'a-z' 'A-Z')
 # Build all .c files into uppercase .BIN files
 all: $(SOURCES:.c=.bin_target)
 
-%.bin_target: %.c aios.h posix.h link.ld
+%.bin_target: %.c aios.h link.ld
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $*.elf $<
 	$(OBJCOPY) -O binary $*.elf $(shell echo $* | tr 'a-z' 'A-Z').BIN
 	@echo "  $(shell echo $* | tr 'a-z' 'A-Z').BIN: $$(ls -la $(shell echo $* | tr 'a-z' 'A-Z').BIN | awk '{print $$5}') bytes"
