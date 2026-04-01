@@ -11,6 +11,13 @@ This is in an experimental / research phase, welcome for collaborators.
 
 It currently is only tested in QEMU on aarch64 a53 
 
+Update April 1, 2026 : hit a brick wall with the 0.2.x design, so having to redesign it. New design : 0.3.x
+
+The new design is to protect the key services (Orchestrator, blk_driver, net_driver, fs_server, vfs_server, auth_server) as PD, and make the Sandbox (the real userspace) as a single unit with a sandbox kernel to oversee it and handle communication with the other PDs.
+Setting aside the LLM for the moment until this design can be fleshed out.
+Let's see how this approach goes.
+
+
 ## Current Progress update
 
 This is an unofficial report for tracking.
