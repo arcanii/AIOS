@@ -8,6 +8,7 @@
     <memory_region name="blk_dma" size="0x10000" phys_addr="0xB0000000" />
     <memory_region name="blk_data" size="0x10000" />
     <memory_region name="fs_data" size="0x10000" />
+    <memory_region name="vfs_data" size="0x10000" />
     <memory_region name="auth_io" size="0x1000" />
     <memory_region name="auth_store" size="0x10000" />
     <memory_region name="net_dma" size="0x20000" phys_addr="0xB0100000" />
@@ -46,6 +47,14 @@
              setvar_vaddr="fs_data" />
     </protection_domain>
 
+    <protection_domain name="vfs_server" priority="235">
+        <program_image path="vfs_server.elf" />
+        <map mr="vfs_data" vaddr="0x6200000" perms="rw" cached="false"
+             setvar_vaddr="vfs_data" />
+        <map mr="fs_data" vaddr="0x6100000" perms="rw" cached="false"
+             setvar_vaddr="fs_data" />
+    </protection_domain>
+
     <protection_domain name="orchestrator" priority="200">
         <program_image path="orchestrator.elf" />
         <irq irq="30" id="14" />
@@ -57,6 +66,8 @@
              setvar_vaddr="fs_data" />
         <map mr="sock_data" vaddr="0x5700000" perms="rw" cached="false"
              setvar_vaddr="sock_data" />
+        <map mr="vfs_data" vaddr="0x6300000" perms="rw" cached="false"
+             setvar_vaddr="vfs_data" />
         <map mr="auth_io" vaddr="0x6200000" perms="rw" cached="false"
              setvar_vaddr="auth_io" />
         <map mr="sandbox_io" vaddr="0x30000000" perms="rw" cached="false"
@@ -110,7 +121,11 @@
         <end pd="blk_driver" id="2" />
     </channel>
     <channel>
-        <end pd="orchestrator" id="4" pp="true" />
+        <end pd="orchestrator" id="5" pp="true" />
+        <end pd="vfs_server" id="5" />
+    </channel>
+    <channel>
+        <end pd="vfs_server" id="4" pp="true" />
         <end pd="fs_server" id="4" />
     </channel>
     <channel>

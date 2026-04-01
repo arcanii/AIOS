@@ -76,6 +76,29 @@ typedef struct {
     int   (*accept)(int sockfd, void *addr, int *addrlen);
     int   (*send)(int sockfd, const void *buf, unsigned long len, int flags);
     int   (*recv)(int sockfd, void *buf, unsigned long len, int flags);
+
+    /* POSIX Threads */
+    int   (*pthread_create)(unsigned long *thread, const void *attr,
+                            void *(*start_routine)(void *), void *arg);
+    int   (*pthread_join)(unsigned long thread, void **retval);
+    int   (*pthread_detach)(unsigned long thread);
+    void  (*pthread_exit)(void *retval);
+    int   (*pthread_mutex_init)(void *mutex, const void *attr);
+    int   (*pthread_mutex_lock)(void *mutex);
+    int   (*pthread_mutex_unlock)(void *mutex);
+    int   (*pthread_mutex_destroy)(void *mutex);
+    int   (*pthread_cond_init)(void *cond, const void *attr);
+    int   (*pthread_cond_wait)(void *cond, void *mutex);
+    int   (*pthread_cond_signal)(void *cond);
+    int   (*pthread_cond_broadcast)(void *cond);
+    int   (*pthread_rwlock_init)(void *rwlock, const void *attr);
+    int   (*pthread_rwlock_rdlock)(void *rwlock);
+    int   (*pthread_rwlock_wrlock)(void *rwlock);
+    int   (*pthread_rwlock_unlock)(void *rwlock);
+    int   (*pthread_key_create)(unsigned int *key, void (*destructor)(void *));
+    int   (*pthread_setspecific)(unsigned int key, const void *value);
+    void *(*pthread_getspecific)(unsigned int key);
+    void  (*sched_yield)(void);
 } aios_syscalls_t;
 
 #endif /* AIOS_SYSCALLS_T_H */

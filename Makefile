@@ -40,7 +40,7 @@ SRC      := src
 DISK_IMG := disk_ext2.img
 
 # ── Protection domains ──────────────────────────────────
-PDS := serial_driver blk_driver fs_server orchestrator sandbox net_driver net_server auth_server
+PDS := serial_driver blk_driver fs_server vfs_server orchestrator sandbox net_driver net_server auth_server
 
 OBJS := $(patsubst %,$(BUILD)/%.o,$(PDS))
 ELFS := $(patsubst %,$(BUILD)/%.elf,$(PDS))
@@ -82,6 +82,9 @@ $(BUILD)/fs_ext2.o: src/fs/ext2.c
 $(BUILD)/fs_server.elf: $(BUILD)/fs_server.o $(BUILD)/fs_fat16.o $(BUILD)/fs_fat32.o $(BUILD)/fs_ext2.o $(BUILD)/util.o
 	$(LD) $^ $(LDFLAGS) -o $@
 
+
+$(BUILD)/vfs_server.elf: $(BUILD)/vfs_server.o $(BUILD)/util.o
+	$(LD) $^ $(LDFLAGS) -o $@
 $(BUILD)/orchestrator.elf: $(BUILD)/orchestrator.o $(BUILD)/memset.o $(BUILD)/util.o
 	$(LD) $^ $(LDFLAGS) -o $@
 

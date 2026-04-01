@@ -674,6 +674,262 @@ static int ks_recv(int s, void *b, unsigned long l, int f) { (void)s; (void)b; (
 static int ks_geteuid(void) { return 0; }
 static int ks_getegid(void) { return 0; }
 
+
+extern void _thread_start(void);
+
+/* ================================================================
+ * POSIX Threads Implementation (sandbox kernel)
+ *
+ * All threading runs inside the sandbox PD. No PPC needed.
+ * Mutex/cond use yield-spin (safe on single-core with preemption).
+ * ================================================================ */
+
+/* ---- Thread management ---- */
+
+static int ks_pthread_create(unsigned long *thread_out, const void *attr,
+                              void *(*start_routine)(void *), void *arg) {
+    (void)attr;
+    if (!start_routine) return 22; /* EINVAL */
+    if (current_thread < 0) return 38; /* ENOSYS */
+
+    int pi = threads[current_thread].proc_idx;
+
+    int ti = thread_alloc();
+    if (ti < 0) return 11; /* EAGAIN - no thread slots */
+
+    uintptr_t stack = pool_alloc(DEFAULT_STACK_SZ);
+    if (!stack) {
+        threads[ti].state = TH_FREE;
+        return 12; /* ENOMEM */
+    }
+
+    thread_t *th = &threads[ti];
+    th->state = TH_READY;
+    th->proc_idx = pi;
+    th->tid = ti;
+    th->stack_base = stack;
+    th->stack_size = DEFAULT_STACK_SZ;
+    th->retval = (void *)0;
+    th->join_waiting = -1;
+    th->fresh = 1;
+
+    /* Setup context: x19 = arg, x20 = start_routine */
+    /* _thread_start trampoline moves x19->x0 then blr x20 */
+    for (int k = 0; k < 24; k++) th->ctx[k] = 0;
+    uintptr_t sp_top = (stack + DEFAULT_STACK_SZ) & ~15UL;
+    th->ctx[12] = sp_top;                        /* sp */
+    th->ctx[11] = (uint64_t)_thread_start;       /* x30/lr */
+    th->ctx[0]  = (uint64_t)arg;                 /* x19 = arg */
+    th->ctx[1]  = (uint64_t)start_routine;       /* x20 = entry */
+
+    if (thread_out) *thread_out = (unsigned long)ti;
+    return 0;
+}
+
+static int ks_pthread_join(unsigned long thread_id, void **retval) {
+    int ti = (int)thread_id;
+    if (ti < 0 || ti >= MAX_THREADS) return 22; /* EINVAL */
+    thread_t *target = &threads[ti];
+    if (target->state == TH_FREE) return 3; /* ESRCH */
+
+    /* Busy-wait with yield until target finishes */
+    while (target->state != TH_FINISHED) {
+        sched_yield();
+    }
+
+    if (retval) *retval = target->retval;
+
+    /* Clean up thread */
+    target->state = TH_FREE;
+    return 0;
+}
+
+static int ks_pthread_detach(unsigned long thread_id) {
+    int ti = (int)thread_id;
+    if (ti < 0 || ti >= MAX_THREADS) return 22;
+    if (threads[ti].state == TH_FREE) return 3;
+    threads[ti].join_waiting = -2; /* -2 = detached, auto-cleanup */
+    return 0;
+}
+
+static void ks_pthread_exit(void *retval) {
+    if (current_thread < 0) return;
+    thread_t *th = &threads[current_thread];
+    th->retval = retval;
+    th->state = TH_FINISHED;
+
+    /* If detached, auto-free */
+    if (th->join_waiting == -2) {
+        th->state = TH_FREE;
+    }
+
+    sched_yield();
+    for (;;) ; /* should never return */
+}
+
+/* ---- Mutex (yield-spin, single-core safe) ---- */
+
+/* Mutex layout: int[0] = lock owner thread (-1 = unlocked), int[1] = initialized */
+#define MTX_UNLOCKED (-1)
+
+static int ks_pthread_mutex_init(void *mutex, const void *attr) {
+    (void)attr;
+    if (!mutex) return 22;
+    int *m = (int *)mutex;
+    m[0] = MTX_UNLOCKED;
+    m[1] = 1; /* initialized */
+    return 0;
+}
+
+static int ks_pthread_mutex_lock(void *mutex) {
+    if (!mutex) return 22;
+    int *m = (int *)mutex;
+    /* Yield-spin until we acquire */
+    while (1) {
+        if (m[0] == MTX_UNLOCKED) {
+            m[0] = current_thread;
+            return 0;
+        }
+        /* Owned by someone else -- yield and retry */
+        sched_yield();
+    }
+}
+
+static int ks_pthread_mutex_unlock(void *mutex) {
+    if (!mutex) return 22;
+    int *m = (int *)mutex;
+    if (m[0] != current_thread) return 1; /* EPERM - not owner */
+    m[0] = MTX_UNLOCKED;
+    return 0;
+}
+
+static int ks_pthread_mutex_destroy(void *mutex) {
+    if (!mutex) return 22;
+    int *m = (int *)mutex;
+    m[0] = MTX_UNLOCKED;
+    m[1] = 0;
+    return 0;
+}
+
+/* ---- Condition variables (yield-spin) ---- */
+
+/* Cond layout: int[0] = signal counter, int[1] = initialized */
+
+static int ks_pthread_cond_init(void *cond, const void *attr) {
+    (void)attr;
+    if (!cond) return 22;
+    int *c = (int *)cond;
+    c[0] = 0; /* signal counter */
+    c[1] = 1; /* initialized */
+    return 0;
+}
+
+static int ks_pthread_cond_wait(void *cond, void *mutex) {
+    if (!cond || !mutex) return 22;
+    int *c = (int *)cond;
+    int snapshot = c[0];
+
+    /* Release mutex, wait for signal, re-acquire */
+    ks_pthread_mutex_unlock(mutex);
+
+    while (c[0] == snapshot) {
+        sched_yield();
+    }
+
+    ks_pthread_mutex_lock(mutex);
+    return 0;
+}
+
+static int ks_pthread_cond_signal(void *cond) {
+    if (!cond) return 22;
+    int *c = (int *)cond;
+    c[0]++; /* wake one waiter (yield-spin will notice) */
+    return 0;
+}
+
+static int ks_pthread_cond_broadcast(void *cond) {
+    if (!cond) return 22;
+    int *c = (int *)cond;
+    c[0]++; /* wake all waiters */
+    return 0;
+}
+
+/* ---- Read-write locks (yield-spin) ---- */
+
+/* RWLock layout: int[0] = reader count, int[1] = writer (thread id or -1), int[2] = init */
+
+static int ks_pthread_rwlock_init(void *rwlock, const void *attr) {
+    (void)attr;
+    if (!rwlock) return 22;
+    int *rw = (int *)rwlock;
+    rw[0] = 0;  /* readers */
+    rw[1] = -1; /* no writer */
+    rw[2] = 1;  /* initialized */
+    return 0;
+}
+
+static int ks_pthread_rwlock_rdlock(void *rwlock) {
+    if (!rwlock) return 22;
+    int *rw = (int *)rwlock;
+    while (rw[1] >= 0) { /* writer active, wait */
+        sched_yield();
+    }
+    rw[0]++;
+    return 0;
+}
+
+static int ks_pthread_rwlock_wrlock(void *rwlock) {
+    if (!rwlock) return 22;
+    int *rw = (int *)rwlock;
+    while (rw[1] >= 0 || rw[0] > 0) { /* writer or readers active */
+        sched_yield();
+    }
+    rw[1] = current_thread;
+    return 0;
+}
+
+static int ks_pthread_rwlock_unlock(void *rwlock) {
+    if (!rwlock) return 22;
+    int *rw = (int *)rwlock;
+    if (rw[1] == current_thread) {
+        rw[1] = -1; /* release write lock */
+    } else if (rw[0] > 0) {
+        rw[0]--; /* release read lock */
+    }
+    return 0;
+}
+
+/* ---- Thread-local storage ---- */
+
+#define KS_TLS_MAX 64
+static const void *_ks_tls[MAX_THREADS][KS_TLS_MAX];
+static int _ks_tls_next_key = 0;
+
+static int ks_pthread_key_create(unsigned int *key, void (*destructor)(void *)) {
+    (void)destructor;
+    if (!key) return 22;
+    if (_ks_tls_next_key >= KS_TLS_MAX) return 12;
+    *key = (unsigned int)_ks_tls_next_key++;
+    return 0;
+}
+
+static int ks_pthread_setspecific(unsigned int key, const void *value) {
+    if (key >= KS_TLS_MAX || current_thread < 0) return 22;
+    _ks_tls[current_thread][key] = value;
+    return 0;
+}
+
+static void *ks_pthread_getspecific(unsigned int key) {
+    if (key >= KS_TLS_MAX || current_thread < 0) return (void *)0;
+    return (void *)_ks_tls[current_thread][key];
+}
+
+static void ks_sched_yield_user(void) {
+    sched_yield();
+}
+
+/* ================================================================ */
+
 static void init_syscall_table(void) {
     /* Console I/O */
     kern_syscalls.puts = ks_puts;
@@ -749,6 +1005,28 @@ static void init_syscall_table(void) {
     kern_syscalls.accept = ks_accept;
     kern_syscalls.send = ks_send;
     kern_syscalls.recv = ks_recv;
+
+    /* POSIX Threads */
+    kern_syscalls.pthread_create = ks_pthread_create;
+    kern_syscalls.pthread_join = ks_pthread_join;
+    kern_syscalls.pthread_detach = ks_pthread_detach;
+    kern_syscalls.pthread_exit = ks_pthread_exit;
+    kern_syscalls.pthread_mutex_init = ks_pthread_mutex_init;
+    kern_syscalls.pthread_mutex_lock = ks_pthread_mutex_lock;
+    kern_syscalls.pthread_mutex_unlock = ks_pthread_mutex_unlock;
+    kern_syscalls.pthread_mutex_destroy = ks_pthread_mutex_destroy;
+    kern_syscalls.pthread_cond_init = ks_pthread_cond_init;
+    kern_syscalls.pthread_cond_wait = ks_pthread_cond_wait;
+    kern_syscalls.pthread_cond_signal = ks_pthread_cond_signal;
+    kern_syscalls.pthread_cond_broadcast = ks_pthread_cond_broadcast;
+    kern_syscalls.pthread_rwlock_init = ks_pthread_rwlock_init;
+    kern_syscalls.pthread_rwlock_rdlock = ks_pthread_rwlock_rdlock;
+    kern_syscalls.pthread_rwlock_wrlock = ks_pthread_rwlock_wrlock;
+    kern_syscalls.pthread_rwlock_unlock = ks_pthread_rwlock_unlock;
+    kern_syscalls.pthread_key_create = ks_pthread_key_create;
+    kern_syscalls.pthread_setspecific = ks_pthread_setspecific;
+    kern_syscalls.pthread_getspecific = ks_pthread_getspecific;
+    kern_syscalls.sched_yield = ks_sched_yield_user;
 }
 
 /* Thread entry trampoline: moves x19->x0, jumps to x20 */

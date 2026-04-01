@@ -91,6 +91,39 @@ typedef struct {
     int   (*accept)(int sockfd, void *addr, int *addrlen);
     int   (*send)(int sockfd, const void *buf, unsigned long len, int flags);
     int   (*recv)(int sockfd, void *buf, unsigned long len, int flags);
+
+    /* POSIX Threads (pthreads) */
+    int   (*pthread_create)(unsigned long *thread, const void *attr,
+                            void *(*start_routine)(void *), void *arg);
+    int   (*pthread_join)(unsigned long thread, void **retval);
+    int   (*pthread_detach)(unsigned long thread);
+    void  (*pthread_exit)(void *retval);
+
+    /* Mutex */
+    int   (*pthread_mutex_init)(void *mutex, const void *attr);
+    int   (*pthread_mutex_lock)(void *mutex);
+    int   (*pthread_mutex_unlock)(void *mutex);
+    int   (*pthread_mutex_destroy)(void *mutex);
+
+    /* Condition variables */
+    int   (*pthread_cond_init)(void *cond, const void *attr);
+    int   (*pthread_cond_wait)(void *cond, void *mutex);
+    int   (*pthread_cond_signal)(void *cond);
+    int   (*pthread_cond_broadcast)(void *cond);
+
+    /* Read-write locks */
+    int   (*pthread_rwlock_init)(void *rwlock, const void *attr);
+    int   (*pthread_rwlock_rdlock)(void *rwlock);
+    int   (*pthread_rwlock_wrlock)(void *rwlock);
+    int   (*pthread_rwlock_unlock)(void *rwlock);
+
+    /* Thread-local storage */
+    int   (*pthread_key_create)(unsigned int *key, void (*destructor)(void *));
+    int   (*pthread_setspecific)(unsigned int key, const void *value);
+    void *(*pthread_getspecific)(unsigned int key);
+
+    /* Yield */
+    void  (*sched_yield)(void);
 } aios_syscalls_t;
 
 /* Global syscall pointer — set by _start */
@@ -192,5 +225,21 @@ typedef struct {
 /* Entry point wrapper */
 #define AIOS_ENTRY __attribute__((section(".text.zmain"))) int aios_main(void); __attribute__((section(".text._start"))) int _start(aios_syscalls_t *_sys) { sys = _sys; return aios_main(); } \
                    __attribute__((section(".text.zmain"))) int aios_main(void)
+
+
+/* ---- POSIX Threads macros ---- */
+#define aios_pthread_create(t,a,f,arg) sys->pthread_create(t,a,f,arg)
+#define aios_pthread_join(t,r)         sys->pthread_join(t,r)
+#define aios_pthread_detach(t)         sys->pthread_detach(t)
+#define aios_pthread_exit(r)           sys->pthread_exit(r)
+#define aios_mutex_init(m,a)           sys->pthread_mutex_init(m,a)
+#define aios_mutex_lock(m)             sys->pthread_mutex_lock(m)
+#define aios_mutex_unlock(m)           sys->pthread_mutex_unlock(m)
+#define aios_mutex_destroy(m)          sys->pthread_mutex_destroy(m)
+#define aios_cond_init(c,a)            sys->pthread_cond_init(c,a)
+#define aios_cond_wait(c,m)            sys->pthread_cond_wait(c,m)
+#define aios_cond_signal(c)            sys->pthread_cond_signal(c)
+#define aios_cond_broadcast(c)         sys->pthread_cond_broadcast(c)
+#define aios_sched_yield()             sys->sched_yield()
 
 #endif /* AIOS_H */

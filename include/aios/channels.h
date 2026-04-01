@@ -9,10 +9,8 @@
 
 #define CH_SERIAL       1   /* orchestrator  <-> serial_driver  */
 #define CH_BLK          2   /* orchestrator  <-> blk_driver     */
-#define CH_ECHO         3   /* orchestrator  <-> echo_server    */
 #define CH_FS           4   /* orchestrator  <-> fs_server      */
-#define CH_FS_BLK       5   /* fs_server     <-> blk_driver     */
-#define CH_LLM          6   /* orchestrator  <-> llm_server     */
+#define CH_VFS          5   /* orchestrator  <-> vfs_server     */
 #define CH_UART_IRQ     2   /* serial_driver <- hardware IRQ    */
 #define CH_FS_BLK_PPC  10  /* fs_server -> blk_driver (PPC)    */
 
@@ -26,7 +24,7 @@
 #define CH_AUTH        11   /* orchestrator <-> auth_server    */
 
 #define CH_NET          8   /* net_driver <-> net_server        */
-#define CH_NET_SRV     12   /* orchestrator <-> net_server      */   /* net_driver <-> net_server        */
+#define CH_NET_SRV     12   /* orchestrator <-> net_server      */
 #define CH_NET_IRQ      9   /* net_driver <- hardware IRQ       */
 
 #endif /* AIOS_CHANNELS_H */

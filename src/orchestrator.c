@@ -31,6 +31,7 @@ uintptr_t tx_buf;
 uintptr_t rx_buf;
 uintptr_t sock_data;
 uintptr_t fs_data;
+uintptr_t vfs_data;    /* shared with vfs_server */
 uintptr_t auth_io;
 uintptr_t sandbox_io;    /* 4 KB IPC page with sandbox kernel */
 uintptr_t sandbox_mem;   /* 128 MB sandbox memory pool */
@@ -143,8 +144,8 @@ seL4_MessageInfo_t protected(microkit_channel ch, seL4_MessageInfo_t msginfo) {
             st = fs_create_sync(fname);
         }
         if (st == 0) {
-            result = RD32(fs_data, FS_FD);
-            seL4_SetMR(1, RD32(fs_data, FS_FILESIZE));
+            result = RD32(vfs_data, FS_FD);
+            seL4_SetMR(1, RD32(vfs_data, FS_FILESIZE));
         } else {
             result = -1;
         }
@@ -156,8 +157,8 @@ seL4_MessageInfo_t protected(microkit_channel ch, seL4_MessageInfo_t msginfo) {
         uint32_t count = (uint32_t)seL4_GetMR(3);
         int st = fs_read_sync(fd, offset, count);
         if (st == 0) {
-            uint32_t got = RD32(fs_data, FS_LENGTH);
-            volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
+            uint32_t got = RD32(vfs_data, FS_LENGTH);
+            volatile uint8_t *src = (volatile uint8_t *)(vfs_data + FS_DATA);
             volatile uint8_t *dst = (volatile uint8_t *)(sandbox_io + 0x200);
             for (uint32_t j = 0; j < got && j < 3584; j++) dst[j] = src[j];
             result = (int64_t)got;
@@ -171,11 +172,11 @@ seL4_MessageInfo_t protected(microkit_channel ch, seL4_MessageInfo_t msginfo) {
         uint32_t count = (uint32_t)seL4_GetMR(2);
         if (count > 3584) count = 3584;
         volatile uint8_t *src = (volatile uint8_t *)(sandbox_io + 0x200);
-        volatile uint8_t *dst = (volatile uint8_t *)(fs_data + FS_DATA);
+        volatile uint8_t *dst = (volatile uint8_t *)(vfs_data + FS_DATA);
         for (uint32_t j = 0; j < count; j++) dst[j] = src[j];
         int st = fs_write_sync(fd, count);
         if (st == 0) {
-            result = (int64_t)RD32(fs_data, FS_LENGTH);
+            result = (int64_t)RD32(vfs_data, FS_LENGTH);
         } else {
             result = -1;
         }
@@ -206,9 +207,9 @@ seL4_MessageInfo_t protected(microkit_channel ch, seL4_MessageInfo_t msginfo) {
         resolve_path(dir, fname, sizeof(fname));
         int st = fs_list_sync(fname);
         if (st == 0) {
-            uint32_t count = RD32(fs_data, FS_LENGTH);
-            uint32_t total = RD32(fs_data, FS_FILESIZE);
-            volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
+            uint32_t count = RD32(vfs_data, FS_LENGTH);
+            uint32_t total = RD32(vfs_data, FS_FILESIZE);
+            volatile uint8_t *src = (volatile uint8_t *)(vfs_data + FS_DATA);
             volatile uint8_t *dst = (volatile uint8_t *)(sandbox_io + 0x200);
             if (total > 3584) total = 3584;
             for (uint32_t j = 0; j < total; j++) dst[j] = src[j];
@@ -345,16 +346,16 @@ seL4_MessageInfo_t protected(microkit_channel ch, seL4_MessageInfo_t msginfo) {
         volatile uint8_t *code_dst = (volatile uint8_t *)(sandbox_mem + mem_offset);
         int st = fs_open_sync(path);
         if (st != 0) { result = -1; break; }
-        uint32_t fd = RD32(fs_data, FS_FD);
-        uint32_t file_size = RD32(fs_data, FS_FILESIZE);
+        uint32_t fd = RD32(vfs_data, FS_FD);
+        uint32_t file_size = RD32(vfs_data, FS_FILESIZE);
         uint32_t loaded = 0;
         while (loaded < file_size) {
             uint32_t chunk = file_size - loaded;
             if (chunk > 4096) chunk = 4096;
             int r = fs_read_sync(fd, loaded, chunk);
             if (r != 0) break;
-            uint32_t got = RD32(fs_data, FS_LENGTH);
-            volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
+            uint32_t got = RD32(vfs_data, FS_LENGTH);
+            volatile uint8_t *src = (volatile uint8_t *)(vfs_data + FS_DATA);
             for (uint32_t j = 0; j < got; j++) code_dst[loaded + j] = src[j];
             loaded += got;
             if (got == 0) break;

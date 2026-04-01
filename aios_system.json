@@ -32,6 +32,10 @@
       "size": "0x10000"
     },
     {
+      "name": "vfs_data",
+      "size": "0x10000"
+    },
+    {
       "name": "auth_io",
       "size": "0x1000"
     },
@@ -146,6 +150,27 @@
       ]
     },
     {
+      "name": "vfs_server",
+      "priority": 235,
+      "program_image": "vfs_server.elf",
+      "maps": [
+        {
+          "mr": "vfs_data",
+          "vaddr": "0x6200000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "vfs_data"
+        },
+        {
+          "mr": "fs_data",
+          "vaddr": "0x6100000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "fs_data"
+        }
+      ]
+    },
+    {
       "name": "orchestrator",
       "priority": 200,
       "program_image": "orchestrator.elf",
@@ -177,6 +202,13 @@
           "perms": "rw",
           "cached": "false",
           "setvar_vaddr": "sock_data"
+        },
+        {
+          "mr": "vfs_data",
+          "vaddr": "0x6300000",
+          "perms": "rw",
+          "cached": "false",
+          "setvar_vaddr": "vfs_data"
         },
         {
           "mr": "auth_io",
@@ -341,6 +373,19 @@
       "ends": [
         {
           "pd": "orchestrator",
+          "id": 5,
+          "pp": true
+        },
+        {
+          "pd": "vfs_server",
+          "id": 5
+        }
+      ]
+    },
+    {
+      "ends": [
+        {
+          "pd": "vfs_server",
           "id": 4,
           "pp": true
         },
