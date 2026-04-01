@@ -196,7 +196,7 @@
           "mr": "sandbox_mem",
           "vaddr": "0x30001000",
           "perms": "rw",
-          "cached": "true",
+          "cached": "false",
           "setvar_vaddr": "sandbox_mem"
         }
       ],

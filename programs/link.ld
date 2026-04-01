@@ -1,5 +1,5 @@
 SECTIONS {
-    . = 0x21100000;
+    . = 0x20101000;
     .text : {
         *(.text._start)
         *(.text.zmain)

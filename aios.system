@@ -60,7 +60,7 @@
              setvar_vaddr="auth_io" />
         <map mr="sandbox_io" vaddr="0x30000000" perms="rw" cached="false"
              setvar_vaddr="sandbox_io" />
-        <map mr="sandbox_mem" vaddr="0x30001000" perms="rw" cached="true"
+        <map mr="sandbox_mem" vaddr="0x30001000" perms="rw" cached="false"
              setvar_vaddr="sandbox_mem" />
 
         <protection_domain name="sandbox" priority="150" id="0" budget="8000" period="10000" cpu="0" stack_size="0x10000">

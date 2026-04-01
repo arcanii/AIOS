@@ -71,7 +71,6 @@ typedef struct {
     uint64_t ctx[24]; /* setjmp buffer: callee-saved regs */
     void *retval;
     int join_waiting; /* thread waiting on join, -1 if none */
-    int fresh;        /* 1 = never run, needs direct jump */
 } thread_t;
 
 #define TH_FREE     0
@@ -127,7 +126,7 @@ static int thread_alloc(void) {
 }
 
 /* ---- Scheduler ---- */
-static uint64_t __attribute__((unused)) sched_ctx[24];  /* kernel scheduler context */
+static uint64_t sched_ctx[24];  /* kernel scheduler context */
 
 static void sched_yield(void) {
     /* Save current thread, pick next ready thread */
@@ -147,21 +146,6 @@ static void sched_yield(void) {
         if (threads[idx].state == TH_READY) {
             current_thread = idx;
             threads[idx].state = TH_RUNNING;
-            if (threads[idx].fresh) {
-                threads[idx].fresh = 0;
-                uintptr_t entry = threads[idx].ctx[1];
-                uintptr_t sys_ptr = threads[idx].ctx[0];
-                uintptr_t sp_val = threads[idx].ctx[12];
-
-                __asm__ volatile(
-                    "mov sp, %[sp]  \n"
-                    "mov x0, %[sys] \n"
-                    "br  %[ent]     \n"
-                    :: [sp]"r"(sp_val), [sys]"r"(sys_ptr), [ent]"r"(entry)
-                    : "memory"
-                );
-                __builtin_unreachable();
-            }
             longjmp(threads[idx].ctx, 1);
         }
     }
@@ -172,7 +156,6 @@ static void sched_yield(void) {
 
 /* ---- Syscall table for user programs ---- */
 #include "aios/aios.h"
-static aios_syscalls_t *sys __attribute__((unused));
 
 /* Global sys pointer used by program macros */
 static aios_syscalls_t kern_syscalls;
@@ -269,8 +252,7 @@ static int ks_close(int fd) {
     return (int)seL4_GetMR(0);
 }
 
-static int ks_exec(const char *path, const char *args) {
-    (void)args;  /* TODO: pass args to new process */
+static int ks_exec(const char *path) {
     return load_program(path, 0);
 }
 
@@ -302,7 +284,7 @@ static int ks_sleep(unsigned int seconds) {
     return 0;
 }
 
-static void __attribute__((unused)) ks_exit(int code) {
+static void ks_exit(int code) {
     if (current_thread < 0) return;
     thread_t *th = &threads[current_thread];
     proc_t *p = &procs[th->proc_idx];
@@ -327,269 +309,34 @@ static unsigned long long ks_timer_freq(void) {
 }
 
 /* ---- Stub syscalls (return error for now) ---- */
-static int __attribute__((unused)) ks_stub_int(void) { return -1; }
-static int __attribute__((unused)) ks_stub_int1(int a) { (void)a; return -1; }
-static int __attribute__((unused)) ks_stub_int2(int a, int b) { (void)a; (void)b; return -1; }
-static void * __attribute__((unused)) ks_stub_ptr(unsigned long n) { (void)n; return (void *)0; }
-static void __attribute__((unused)) ks_stub_free(void *p) { (void)p; }
+static int ks_stub_int(void) { return -1; }
+static int ks_stub_int1(int a) { (void)a; return -1; }
+static int ks_stub_int2(int a, int b) { (void)a; (void)b; return -1; }
+static void *ks_stub_ptr(unsigned long n) { (void)n; return (void *)0; }
+static void ks_stub_free(void *p) { (void)p; }
 
 /* ---- Initialize syscall table ---- */
-
-/* ---- Stub implementations for missing syscalls ---- */
-static void ks_put_dec(unsigned int n) {
-    char buf[12]; int i = 0;
-    if (n == 0) { ks_putc('0'); return; }
-    while (n > 0) { buf[i++] = '0' + (n % 10); n /= 10; }
-    while (i > 0) ks_putc(buf[--i]);
-}
-static void ks_put_hex(unsigned int v) {
-    ks_puts("0x");
-    for (int i = 28; i >= 0; i -= 4)
-        ks_putc("0123456789abcdef"[(v >> i) & 0xf]);
-}
-static void *ks_memcpy(void *dst, const void *s, unsigned long n) {
-    unsigned char *d = dst; const unsigned char *p = s;
-    while (n--) *d++ = *p++;
-    return dst;
-}
-static void *ks_memset(void *dst, int c, unsigned long n) {
-    unsigned char *d = dst;
-    while (n--) *d++ = (unsigned char)c;
-    return dst;
-}
-static int ks_strlen(const char *s) {
-    int n = 0; while (*s++) n++; return n;
-}
-static int ks_strcmp(const char *a, const char *b) {
-    while (*a && *a == *b) { a++; b++; }
-    return *(unsigned char *)a - *(unsigned char *)b;
-}
-static char *ks_strcpy(char *dst, const char *s) {
-    char *d = dst; while ((*d++ = *s++)); return dst;
-}
-static char *ks_strncpy(char *dst, const char *s, unsigned long n) {
-    char *d = dst;
-    while (n-- && (*d++ = *s++));
-    while (n-- > 0) *d++ = 0;
-    return dst;
-}
-static int ks_unlink(const char *path) {
-    volatile char *fn = (volatile char *)(sandbox_io + 0x200);
-    int i = 0; while (path[i] && i < 255) { fn[i] = path[i]; i++; } fn[i] = 0;
-    seL4_SetMR(0, SYS_UNLINK);
-    microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 1));
-    return (int)(int64_t)seL4_GetMR(0);
-}
-static int ks_mkdir(const char *path) {
-    volatile char *fn = (volatile char *)(sandbox_io + 0x200);
-    int i = 0; while (path[i] && i < 255) { fn[i] = path[i]; i++; } fn[i] = 0;
-    seL4_SetMR(0, SYS_MKDIR);
-    microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 1));
-    return (int)(int64_t)seL4_GetMR(0);
-}
-static int ks_rmdir(const char *path) {
-    volatile char *fn = (volatile char *)(sandbox_io + 0x200);
-    int i = 0; while (path[i] && i < 255) { fn[i] = path[i]; i++; } fn[i] = 0;
-    seL4_SetMR(0, SYS_RMDIR);
-    microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 1));
-    return (int)(int64_t)seL4_GetMR(0);
-}
-static int ks_rename(const char *oldp, const char *newp) {
-    volatile char *fn = (volatile char *)(sandbox_io + 0x200);
-    int i = 0; while (oldp[i] && i < 127) { fn[i] = oldp[i]; i++; } fn[i] = 0;
-    volatile char *fn2 = (volatile char *)(sandbox_io + 0x280);
-    int j = 0; while (newp[j] && j < 127) { fn2[j] = newp[j]; j++; } fn2[j] = 0;
-    seL4_SetMR(0, SYS_RENAME);
-    microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 1));
-    return (int)(int64_t)seL4_GetMR(0);
-}
-static int ks_readdir(void *buf, unsigned long max) {
-    seL4_SetMR(0, SYS_READDIR);
-    seL4_SetMR(1, max);
-    microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 2));
-    int count = (int)(int64_t)seL4_GetMR(0);
-    if (count > 0) {
-        volatile char *src = (volatile char *)(sandbox_io + 0x200);
-        char *dst = (char *)buf;
-        for (int i = 0; i < count * 64 && i < (int)(max * 64); i++) dst[i] = src[i];
-    }
-    return count;
-}
-static int ks_filesize(void) {
-    seL4_SetMR(0, SYS_FSTAT);
-    microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 1));
-    return (int)seL4_GetMR(1);
-}
-static int ks_stat_file(const char *path, unsigned long *size_out) {
-    volatile char *fn = (volatile char *)(sandbox_io + 0x200);
-    int i = 0; while (path[i] && i < 255) { fn[i] = path[i]; i++; } fn[i] = 0;
-    seL4_SetMR(0, SYS_STAT);
-    microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 1));
-    int r = (int)(int64_t)seL4_GetMR(0);
-    if (r == 0 && size_out) *size_out = (unsigned long)seL4_GetMR(1);
-    return r;
-}
-static int ks_stat_ex(unsigned int *uid, unsigned int *gid, unsigned int *mode, unsigned int *mtime) {
-    /* Return cached values from last stat */
-    if (uid) *uid = 0;
-    if (gid) *gid = 0;
-    if (mode) *mode = 0755;
-    if (mtime) *mtime = 0;
-    return 0;
-}
-static int ks_lseek(int fd, long offset, int whence) {
-    (void)fd; (void)offset; (void)whence;
-    return 0;
-}
-static int ks_getcwd(char *buf, unsigned long size) {
-    seL4_SetMR(0, SYS_GETCWD);
-    microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 1));
-    volatile char *src = (volatile char *)(sandbox_io + 0x200);
-    unsigned long i = 0;
-    while (src[i] && i < size - 1) { buf[i] = src[i]; i++; }
-    buf[i] = 0;
-    return 0;
-}
-static int ks_chdir(const char *path) {
-    volatile char *fn = (volatile char *)(sandbox_io + 0x200);
-    int i = 0; while (path[i] && i < 255) { fn[i] = path[i]; i++; } fn[i] = 0;
-    seL4_SetMR(0, SYS_CHDIR);
-    microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 1));
-    return (int)(int64_t)seL4_GetMR(0);
-}
-static int ks_access(const char *path, int amode) {
-    (void)path; (void)amode; return 0;
-}
-static int ks_umask(int mask) { (void)mask; return 022; }
-static int ks_dup(int fd) { (void)fd; return -1; }
-static int ks_dup2(int oldfd, int newfd) { (void)oldfd; (void)newfd; return -1; }
-static int ks_pipe(int pipefd[2]) { (void)pipefd; return -1; }
-static long ks_time(void) {
-    seL4_SetMR(0, SYS_TIME);
-    microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 1));
-    return (long)seL4_GetMR(1);
-}
-static int ks_spawn(const char *path, const char *args) { return ks_exec(path, args); }
-static int ks_waitpid(int pid, int *status) { (void)pid; if (status) *status = 0; return pid; }
-static int ks_fork(void) { return -1; }
-static int ks_chmod(const char *path, unsigned int mode) {
-    volatile char *fn = (volatile char *)(sandbox_io + 0x200);
-    int i = 0; while (path[i] && i < 255) { fn[i] = path[i]; i++; } fn[i] = 0;
-    seL4_SetMR(0, SYS_CHMOD);
-    seL4_SetMR(1, mode);
-    microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 2));
-    return (int)(int64_t)seL4_GetMR(0);
-}
-static int ks_chown(const char *path, unsigned int uid, unsigned int gid) {
-    volatile char *fn = (volatile char *)(sandbox_io + 0x200);
-    int i = 0; while (path[i] && i < 255) { fn[i] = path[i]; i++; } fn[i] = 0;
-    seL4_SetMR(0, SYS_CHOWN);
-    seL4_SetMR(1, uid);
-    seL4_SetMR(2, gid);
-    microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 3));
-    return (int)(int64_t)seL4_GetMR(0);
-}
-static int ks_ftruncate(int fd, unsigned long length) { (void)fd; (void)length; return -1; }
-static void ks_exit_proc(int status) { ks_exit(status); }
-static int ks_fcntl(int fd, int cmd, int arg) { (void)fd; (void)cmd; (void)arg; return -1; }
-static int ks_kill_proc(int pid, int sig) { (void)pid; (void)sig; return -1; }
-static int ks_getprocs(void *buf, int max) { (void)buf; (void)max; return 0; }
-static int ks_socket(int d, int t, int p) { (void)d; (void)t; (void)p; return -1; }
-static int ks_connect(int s, const void *a, int l) { (void)s; (void)a; (void)l; return -1; }
-static int ks_bind(int s, const void *a, int l) { (void)s; (void)a; (void)l; return -1; }
-static int ks_listen(int s, int b) { (void)s; (void)b; return -1; }
-static int ks_accept(int s, void *a, int *l) { (void)s; (void)a; (void)l; return -1; }
-static int ks_send(int s, const void *b, unsigned long l, int f) { (void)s; (void)b; (void)l; (void)f; return -1; }
-static int ks_recv(int s, void *b, unsigned long l, int f) { (void)s; (void)b; (void)l; (void)f; return -1; }
-static int ks_geteuid(void) { return 0; }
-static int ks_getegid(void) { return 0; }
-
 static void init_syscall_table(void) {
-    /* Console I/O */
-    kern_syscalls.puts = ks_puts;
     kern_syscalls.putc = ks_putc;
-    kern_syscalls.put_dec = ks_put_dec;
-    kern_syscalls.put_hex = ks_put_hex;
-    /* Memory */
-    kern_syscalls.malloc = ks_stub_ptr;
-    kern_syscalls.free = ks_stub_free;
-    kern_syscalls.memcpy = ks_memcpy;
-    kern_syscalls.memset = ks_memset;
-    /* Strings */
-    kern_syscalls.strlen = ks_strlen;
-    kern_syscalls.strcmp = ks_strcmp;
-    kern_syscalls.strcpy = ks_strcpy;
-    kern_syscalls.strncpy = ks_strncpy;
-    /* File I/O */
+    kern_syscalls.puts = ks_puts;
+    kern_syscalls.puts_direct = ks_puts_direct;
+    kern_syscalls.getc = ks_getc;
     kern_syscalls.open = ks_open;
     kern_syscalls.open_flags = ks_open_flags;
     kern_syscalls.read = ks_read;
     kern_syscalls.write_file = ks_write_file;
     kern_syscalls.close = ks_close;
-    kern_syscalls.unlink = ks_unlink;
-    kern_syscalls.mkdir = ks_mkdir;
-    kern_syscalls.rmdir = ks_rmdir;
-    kern_syscalls.rename = ks_rename;
     kern_syscalls.exec = ks_exec;
-    kern_syscalls.readdir = ks_readdir;
-    kern_syscalls.filesize = ks_filesize;
-    /* Extended POSIX */
-    kern_syscalls.stat_file = ks_stat_file;
-    kern_syscalls.stat_ex = ks_stat_ex;
-    kern_syscalls.lseek = ks_lseek;
-    kern_syscalls.getcwd = ks_getcwd;
-    kern_syscalls.chdir = ks_chdir;
     kern_syscalls.getpid = ks_getpid;
-    /* Args */
-    kern_syscalls.args = "";
-    /* Interactive I/O */
-    kern_syscalls.getc = ks_getc;
-    kern_syscalls.puts_direct = ks_puts_direct;
-    kern_syscalls.putc_direct = ks_putc;
+    kern_syscalls.getppid = ks_getppid;
     kern_syscalls.sleep = ks_sleep;
-    /* POSIX extensions */
     kern_syscalls.getuid = ks_getuid;
     kern_syscalls.getgid = ks_getgid;
-    kern_syscalls.geteuid = ks_geteuid;
-    kern_syscalls.getegid = ks_getegid;
-    kern_syscalls.getppid = ks_getppid;
-    kern_syscalls.access = ks_access;
-    kern_syscalls.umask = ks_umask;
-    kern_syscalls.dup = ks_dup;
-    kern_syscalls.dup2 = ks_dup2;
-    kern_syscalls.pipe = ks_pipe;
-    kern_syscalls.time = ks_time;
-    /* Process management */
-    kern_syscalls.spawn = ks_spawn;
-    kern_syscalls.waitpid = ks_waitpid;
-    kern_syscalls.fork = ks_fork;
-    kern_syscalls.chmod = ks_chmod;
-    kern_syscalls.chown = ks_chown;
-    kern_syscalls.ftruncate = ks_ftruncate;
-    kern_syscalls.exit_proc = ks_exit_proc;
-    kern_syscalls.fcntl = ks_fcntl;
-    kern_syscalls.kill_proc = ks_kill_proc;
-    kern_syscalls.getprocs = ks_getprocs;
     kern_syscalls.timer_freq = ks_timer_freq;
-    /* Sockets */
-    kern_syscalls.socket = ks_socket;
-    kern_syscalls.connect = ks_connect;
-    kern_syscalls.bind = ks_bind;
-    kern_syscalls.listen = ks_listen;
-    kern_syscalls.accept = ks_accept;
-    kern_syscalls.send = ks_send;
-    kern_syscalls.recv = ks_recv;
+    kern_syscalls.malloc = ks_stub_ptr;
+    kern_syscalls.free = ks_stub_free;
+    kern_syscalls.args = "";
 }
-
-/* Thread entry trampoline: moves x19->x0, jumps to x20 */
-__asm__(
-    ".global _thread_start\n"
-    ".type _thread_start, %function\n"
-    "_thread_start:\n"
-    "    mov x0, x19\n"
-    "    br  x20\n"
-);
-extern void _thread_start(void);
 
 /* ---- Program loader ---- */
 static int load_program(const char *path, int parent_pid) {
@@ -631,21 +378,6 @@ static int load_program(const char *path, int parent_pid) {
     }
     uint32_t loaded = (uint32_t)seL4_GetMR(1);
 
-    /* Flush D-cache and invalidate I-cache for loaded code region */
-    {
-        uintptr_t start = code_base & ~63UL;
-        uintptr_t end = (code_base + loaded + 63) & ~63UL;
-        for (uintptr_t a = start; a < end; a += 64) {
-            __asm__ volatile("dc cvau, %0" :: "r"(a));
-        }
-        __asm__ volatile("dsb ish");
-        for (uintptr_t a = start; a < end; a += 64) {
-            __asm__ volatile("ic ivau, %0" :: "r"(a));
-        }
-        __asm__ volatile("dsb ish");
-        __asm__ volatile("isb");
-    }
-
     /* Setup process */
     proc_t *p = &procs[pi];
     p->state = PROC_ALIVE;
@@ -673,7 +405,6 @@ static int load_program(const char *path, int parent_pid) {
     th->stack_base = stack_base;
     th->stack_size = DEFAULT_STACK_SZ;
     th->join_waiting = -1;
-    th->fresh = 1;
 
     /* Initialize thread context to jump to program entry */
     /* Entry point: int _start(aios_syscalls_t *sys) */
@@ -686,12 +417,6 @@ static int load_program(const char *path, int parent_pid) {
     th->ctx[11] = (uint64_t)_thread_start;       /* x30/lr = trampoline */
     th->ctx[0]  = (uint64_t)&kern_syscalls;      /* x19 = syscalls ptr */
     th->ctx[1]  = (uint64_t)entry;               /* x20 = real entry point */
-
-    
-    
-    
-    
-
 
     kputs("sbxk: loaded ");
     kputs(path);
@@ -711,21 +436,21 @@ static int load_program(const char *path, int parent_pid) {
    We need a small trampoline to move x19 -> x0. */
 
 
+__attribute__((naked, used))
+static void _thread_start(void) {
+    __asm__ volatile(
+        "mov x0, x19\n"  /* arg0 = syscalls ptr (was in x19) */
+        "br  x20\n"      /* jump to real entry point (was in x20) */
+    );
+}
 
 
 
 /* ---- Microkit entry points ---- */
 void init(void) {
-    /* Clear all state on (re)start */
+    /* Zero process and thread tables */
     for (int i = 0; i < MAX_PROCS; i++) procs[i].state = PROC_FREE;
-    for (int i = 0; i < MAX_THREADS; i++) {
-        threads[i].state = TH_FREE;
-        threads[i].fresh = 0;
-        for (int k = 0; k < 24; k++) threads[i].ctx[k] = 0;
-    }
-    current_thread = -1;
-    next_pid = 1;
-    pool_offset = KERNEL_RESERVE;
+    for (int i = 0; i < MAX_THREADS; i++) threads[i].state = TH_FREE;
 
     init_syscall_table();
 

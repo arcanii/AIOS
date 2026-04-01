@@ -97,6 +97,13 @@ $(BUILD)/net_server.elf: $(BUILD)/net_server.o $(BUILD)/util.o
 $(BUILD)/net_driver.elf: $(BUILD)/net_driver.o $(BUILD)/util.o
 	$(LD) $^ $(LDFLAGS) -o $@
 
+# ── setjmp.o (AArch64 asm) ───────────────────────────────
+$(BUILD)/setjmp.o: src/arch/aarch64/setjmp.S | $(BUILD)
+	$(CC) $(CFLAGS) $< -o $@
+
+$(BUILD)/sandbox.elf: $(BUILD)/sandbox.o $(BUILD)/setjmp.o
+	$(LD) $^ $(LDFLAGS) -o $@
+
 $(BUILD)/%.elf: $(BUILD)/%.o
 	$(LD) $< $(LDFLAGS) -o $@
 
@@ -182,7 +189,7 @@ PROGS_SRC := $(wildcard programs/*.c)
 PROGS_BIN := $(patsubst programs/%.c,programs/%.bin,$(PROGS_SRC))
 
 programs/%.bin: programs/%.c
-	$(CC) -c -mcpu=cortex-a53 -ffreestanding -nostdlib -O2 -ffunction-sections -Iprograms $< -o /tmp/$*.o
+	$(CC) -c -mcpu=cortex-a53 -ffreestanding -nostdlib -O2 -ffunction-sections -Iprograms -Iinclude $< -o /tmp/$*.o
 	$(LD) -T programs/link.ld /tmp/$*.o -o /tmp/$*.elf
 	aarch64-linux-gnu-objcopy -O binary /tmp/$*.elf $@
 	@echo "  $@: $$(wc -c < $@) bytes"
