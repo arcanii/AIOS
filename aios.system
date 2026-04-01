@@ -48,6 +48,7 @@
 
     <protection_domain name="orchestrator" priority="200">
         <program_image path="orchestrator.elf" />
+        <irq irq="30" id="14" />
         <map mr="rx_buf" vaddr="0x4200000" perms="rw" cached="false"
              setvar_vaddr="rx_buf" />
         <map mr="tx_buf" vaddr="0x4201000" perms="rw" cached="false"

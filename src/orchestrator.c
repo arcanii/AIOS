@@ -14,6 +14,18 @@
 #include <kernel/gen_config.h>
 #include "arch/aarch64/timer.h"
 
+#define TIMER_IRQ_CH    14      /* channel id for timer IRQ */
+#define PREEMPT_MS      10      /* tick interval in ms */
+
+static void arm_preempt_timer(void) {
+    uint64_t freq = arch_timer_freq();
+    uint64_t now;
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
+    uint64_t target = now + (freq * PREEMPT_MS) / 1000;
+    __asm__ volatile("msr cntp_cval_el0, %0" :: "r"(target));
+    __asm__ volatile("msr cntp_ctl_el0, %0" :: "r"((uint64_t)1));
+}
+
 /* ---- Shared memory (set by Microkit loader via setvar) ---- */
 uintptr_t tx_buf;
 uintptr_t rx_buf;
@@ -429,13 +441,21 @@ void init(void) {
     ser_puts("  Drivers: PL011 UART, virtio-blk, virtio-net\n");
     ser_puts("============ Open Aries ================\n\n");
     ser_flush();
+
+    /* Start preemption timer */
+    arm_preempt_timer();
+    ser_puts("[orchestrator] preempt timer started (" );
+    ser_puts("10ms)\n");
 }
 
 /* ---- Notification handler ---- */
 void notified(microkit_channel ch) {
-    (void)ch;
-    /* Serial and sandbox notifications -- no action needed,
-     * sandbox uses PPC for all communication */
+    if (ch == TIMER_IRQ_CH) {
+        /* Timer tick — notify sandbox for preemption */
+        microkit_irq_ack(ch);
+        microkit_notify(CH_SANDBOX);
+        arm_preempt_timer();
+    }
 }
 
 /* ---- Fault handler (sandbox crash) ---- */

@@ -132,8 +132,26 @@ static int thread_alloc(void) {
     return -1;
 }
 
+
+/* ---- Preemptive timer ---- */
+#define TIMER_CH 0          /* notification channel (self) */
+#define TICK_MS  10         /* preemption tick interval in ms */
+
+/* Use ARM generic timer to self-notify after TICK_MS */
+static void __attribute__((unused)) timer_arm(void) {
+    /* Set timer to fire after TICK_MS, notification will arrive via notified() */
+    uint64_t freq, now;
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
+    /* We can't use IRQ, so use polling in sched_yield instead */
+    (void)freq; (void)now;
+}
+
 /* ---- Scheduler ---- */
 static uint64_t __attribute__((unused)) sched_ctx[24];  /* kernel scheduler context */
+
+static uint64_t slice_start = 0;  /* when current thread started running */
+static uint64_t slice_ticks = 0;  /* ticks per time slice */
 
 static void sched_yield(void) {
     /* Save current thread, pick next ready thread */
@@ -142,7 +160,11 @@ static void sched_yield(void) {
         if (cur->state == TH_RUNNING)
             cur->state = TH_READY;
         if (setjmp(cur->ctx) != 0) {
-            return;  /* resumed */
+            /* Resumed — record new slice start */
+            uint64_t now;
+            __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
+            slice_start = now;
+            return;
         }
     }
 
@@ -205,6 +227,18 @@ static void ks_puts_direct(const char *s) {
     microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 1));
 }
 
+
+/* Check if current thread's time slice expired, yield if so */
+static void check_preempt(void) {
+    if (current_thread >= 0 && slice_ticks > 0) {
+        uint64_t now;
+        __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
+        if (now - slice_start >= slice_ticks) {
+            sched_yield();
+        }
+    }
+}
+
 static int ks_getc(void) {
     for (;;) {
         seL4_SetMR(0, SYS_GETC);
@@ -212,8 +246,8 @@ static int ks_getc(void) {
         int64_t r = (int64_t)seL4_GetMR(0);
         if (r >= 0) return (int)(unsigned char)r;
         if (r == -2) {
-            /* EAGAIN -- PPC itself yields to other PDs, allowing serial
-               driver to process UART interrupts. Just retry. */
+            /* EAGAIN -- yield to other threads then retry */
+            check_preempt();
             sched_yield();
             continue;
         }
@@ -929,7 +963,15 @@ void init(void) {
 
     int pid = load_program("/bin/shell.bin", 0);
     if (pid > 0) {
-        kputs("sbxk: starting scheduler\n");
+        /* Init preemptive time slicing */
+        {
+            uint64_t freq;
+            __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+            slice_ticks = (freq * TICK_MS) / 1000;
+        }
+        kputs("sbxk: starting scheduler (preemptive, ");
+        kput_dec(TICK_MS);
+        kputs("ms quantum)\n");
         sched_yield();
         kputs("sbxk: all processes exited\n");
     } else {
@@ -939,6 +981,32 @@ void init(void) {
 
 void notified(microkit_channel ch) {
     (void)ch;
-    /* Preemption tick from orchestrator -- save current, switch to next */
-    /* For now, cooperative only */
+    /* Preemption tick from orchestrator */
+    if (current_thread >= 0 && threads[current_thread].state == TH_RUNNING) {
+        /* Check if there are other ready threads */
+        int start = (current_thread + 1) % MAX_THREADS;
+        int found = 0;
+        for (int i = 0; i < MAX_THREADS; i++) {
+            int idx = (start + i) % MAX_THREADS;
+            if (threads[idx].state == TH_READY) { found = 1; break; }
+        }
+        if (!found) return;  /* no point switching if we're the only thread */
+
+        /* Save current thread and switch */
+        threads[current_thread].state = TH_READY;
+        if (setjmp(threads[current_thread].ctx) != 0) {
+            return;  /* resumed */
+        }
+        /* Pick next ready thread */
+        for (int i = 0; i < MAX_THREADS; i++) {
+            int idx = (start + i) % MAX_THREADS;
+            if (threads[idx].state == TH_READY) {
+                current_thread = idx;
+                threads[idx].state = TH_RUNNING;
+                longjmp(threads[idx].ctx, 1);
+            }
+        }
+        /* Shouldn't reach here, but restore current if so */
+        threads[current_thread].state = TH_RUNNING;
+    }
 }
