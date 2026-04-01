@@ -275,3 +275,15 @@ bump-minor:
 .PHONY: posix-audit
 posix-audit:
 	python3 tools/posix_audit.py
+
+# -- Regenerate aios_system.json from aios.system (single source of truth) --
+.PHONY: gen-json
+gen-json:
+	@python3 tools/gen_system_json.py aios.system aios_system.json
+	@echo "aios_system.json regenerated from aios.system"
+
+# -- Run all validation and generation steps --
+.PHONY: all-checks
+all-checks: gen-json check
+	@echo "All checks and generation complete"
+

@@ -19,11 +19,6 @@
       "phys_addr": "0x0a003000"
     },
     {
-      "name": "net_mmio",
-      "size": "0x1000",
-      "phys_addr": "0x0a003e00"
-    },
-    {
       "name": "blk_dma",
       "size": "0x10000",
       "phys_addr": "0xB0000000"
@@ -205,14 +200,16 @@
           "setvar_vaddr": "sandbox_mem"
         }
       ],
+      "irqs": [
+        {
+          "irq": 30,
+          "id": 14
+        }
+      ],
       "children": [
         {
           "name": "sandbox",
           "priority": 150,
-          "budget": 8000,
-          "period": 10000,
-          "cpu": 0,
-          "stack_size": "0x10000",
           "program_image": "sandbox.elf",
           "maps": [
             {
@@ -230,7 +227,11 @@
               "setvar_vaddr": "sandbox_mem"
             }
           ],
-          "id": 0
+          "id": 0,
+          "budget": 8000,
+          "period": 10000,
+          "cpu": 0,
+          "stack_size": "0x10000"
         }
       ]
     },
@@ -261,7 +262,7 @@
       "program_image": "net_driver.elf",
       "maps": [
         {
-          "mr": "net_mmio",
+          "mr": "blk_mmio",
           "vaddr": "0x5200000",
           "perms": "rw",
           "cached": "false",
