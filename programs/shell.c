@@ -750,7 +750,15 @@ static void cmd_wc(const char *filename) {
 }
 
 static void cmd_echo(const char *text) {
-    print(text);
+    /* Strip surrounding quotes if present */
+    int len = 0;
+    while (text[len]) len++;
+    if (len >= 2 && ((text[0] == '"' && text[len-1] == '"') ||
+                     (text[0] == '\'' && text[len-1] == '\''))) {
+        for (int i = 1; i < len - 1; i++) printc(text[i]);
+    } else {
+        print(text);
+    }
     printc('\n');
 }
 
@@ -1492,8 +1500,20 @@ static void exec_with_redirects(void) {
 
 /* ── Main loop ────────────────────────────────────────── */
 AIOS_ENTRY {
-    print("AIOS Shell v2.0 (POSIX)\n");
-    print("Type \'help\' for commands.\n\n");
+    /* Display MOTD if available */
+    {
+        int mfd = aios_open("/etc/motd");
+        if (mfd >= 0) {
+            char mbuf[512];
+            int n;
+            while ((n = aios_read(mfd, mbuf, sizeof(mbuf) - 1)) > 0) {
+                mbuf[n] = '\0';
+                print(mbuf);
+            }
+            aios_close(mfd);
+            printc('\n');
+        }
+    }
     shell_exit = 0;
 
     while (1) {

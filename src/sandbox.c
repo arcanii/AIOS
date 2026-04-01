@@ -110,6 +110,8 @@ static proc_t procs[MAX_PROCS];
 static thread_t threads[MAX_THREADS];
 static int next_pid = 1;
 static int current_thread = -1;  /* index of running thread */
+static int current_uid = 0;
+static int current_gid = 0;
 
 /* setjmp/longjmp from setjmp.S */
 extern int setjmp(uint64_t buf[24]);
@@ -160,7 +162,8 @@ static void sched_yield(void) {
                 __asm__ volatile(
                     "mov sp, %[sp]  \n"
                     "mov x0, %[sys] \n"
-                    "br  %[ent]     \n"
+                    "blr %[ent]     \n"
+                    "bl  ks_exit    \n"
                     :: [sp]"r"(sp_val), [sys]"r"(sys_ptr), [ent]"r"(entry)
                     : "memory"
                 );
@@ -170,7 +173,8 @@ static void sched_yield(void) {
         }
     }
 
-    /* No ready threads -- return to kernel idle loop */
+    /* No ready threads -- yield to platform to process I/O */
+    seL4_Yield();
     current_thread = -1;
 }
 
@@ -208,7 +212,8 @@ static int ks_getc(void) {
         int64_t r = (int64_t)seL4_GetMR(0);
         if (r >= 0) return (int)(unsigned char)r;
         if (r == -2) {
-            /* EAGAIN -- yield to other threads then retry */
+            /* EAGAIN -- PPC itself yields to other PDs, allowing serial
+               driver to process UART interrupts. Just retry. */
             sched_yield();
             continue;
         }
@@ -295,7 +300,28 @@ static int ks_close(int fd) {
 
 static int ks_exec(const char *path, const char *args) {
     (void)args;
-    return load_program(path, 0);
+    int caller_pi = -1;
+    if (current_thread >= 0)
+        caller_pi = threads[current_thread].proc_idx;
+    int child_pid = load_program(path, caller_pi >= 0 ? procs[caller_pi].pid : 0);
+    if (child_pid < 0) return child_pid;
+    /* Find child process index */
+    int child_pi = -1;
+    for (int i = 0; i < MAX_PROCS; i++) {
+        if (procs[i].state != PROC_FREE && procs[i].pid == child_pid) {
+            child_pi = i;
+            break;
+        }
+    }
+    if (child_pi < 0) return child_pid;
+    /* Wait for child to finish by yielding until it exits */
+    while (procs[child_pi].state == PROC_ALIVE) {
+        sched_yield();
+    }
+    int exit_code = procs[child_pi].exit_code;
+    /* Clean up zombie */
+    procs[child_pi].state = PROC_FREE;
+    return exit_code;
 }
 
 static int ks_getpid(void) {
@@ -326,18 +352,14 @@ static int ks_sleep(unsigned int seconds) {
     return 0;
 }
 
-static void __attribute__((unused)) ks_exit(int code) {
+void ks_exit(int code) {
     if (current_thread < 0) return;
     thread_t *th = &threads[current_thread];
     proc_t *p = &procs[th->proc_idx];
     p->state = PROC_ZOMBIE;
     p->exit_code = code;
     th->state = TH_FINISHED;
-    kputs("Process ");
-    kput_dec(p->pid);
-    kputs(" exited with code ");
-    kput_dec((unsigned int)code);
-    kputs("\n");
+    /* process exited silently */
     sched_yield();
     for (;;) ;  /* should never return */
 }
@@ -366,6 +388,35 @@ static void *ks_malloc(unsigned long n) {
     return (void *)(p->heap_base + alloc);
 }
 static void ks_free(void *ptr) { (void)ptr; /* bump allocator: no-op */ }
+
+/* ---- Login ---- */
+static int ks_login(const char *username, const char *password) {
+    volatile char *uname = (volatile char *)(sandbox_io + 0x200);
+    volatile char *passwd = (volatile char *)(sandbox_io + 0x300);
+    int i = 0;
+    while (username[i] && i < 31) { uname[i] = username[i]; i++; }
+    uname[i] = '\0';
+    i = 0;
+    while (password[i] && i < 63) { passwd[i] = password[i]; i++; }
+    passwd[i] = '\0';
+    seL4_SetMR(0, SYS_LOGIN);
+    microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 1));
+    int r = (int)(int64_t)seL4_GetMR(0);
+    if (r == 0) {
+        /* Update current uid/gid */
+        uint32_t uid = (uint32_t)seL4_GetMR(1);
+        uint32_t gid = (uint32_t)seL4_GetMR(2);
+        if (current_thread >= 0) {
+            int pi = threads[current_thread].proc_idx;
+            procs[pi].uid = (int)uid;
+        }
+        current_uid = (int)uid;
+        current_gid = (int)gid;
+    }
+    /* Clear password from shared memory */
+    for (int j = 0; j < 64; j++) passwd[j] = 0;
+    return r;
+}
 
 /* ---- Initialize syscall table ---- */
 
@@ -544,7 +595,41 @@ static int ks_ftruncate(int fd, unsigned long length) { (void)fd; (void)length; 
 static void ks_exit_proc(int status) { ks_exit(status); }
 static int ks_fcntl(int fd, int cmd, int arg) { (void)fd; (void)cmd; (void)arg; return -1; }
 static int ks_kill_proc(int pid, int sig) { (void)pid; (void)sig; return -1; }
-static int ks_getprocs(void *buf, int max) { (void)buf; (void)max; return 0; }
+static int ks_getprocs(void *buf, int max) {
+    proc_info_t *out = (proc_info_t *)buf;
+    int count = 0;
+    for (int i = 0; i < MAX_PROCS && count < max; i++) {
+        if (procs[i].state == PROC_FREE) continue;
+        out[count].pid = procs[i].pid;
+        out[count].parent_pid = procs[i].parent_pid;
+        /* Map internal state to POSIX states */
+        int th_idx = procs[i].main_thread;
+        int st = 0;
+        if (th_idx >= 0 && th_idx < MAX_THREADS) {
+            switch (threads[th_idx].state) {
+                case TH_READY:    st = 2; break;  /* READY */
+                case TH_RUNNING:  st = 3; break;  /* RUNNING */
+                case TH_BLOCKED:  st = 4; break;  /* BLOCKED */
+                case TH_FINISHED: st = 5; break;  /* ZOMBIE */
+                default:          st = 1; break;  /* QUEUED */
+            }
+        }
+        out[count].state = st;
+        out[count].uid = procs[i].uid;
+        out[count].slot = 0;
+        out[count].foreground = (unsigned char)procs[i].foreground;
+        out[count]._reserved[0] = 0;
+        out[count]._reserved[1] = 0;
+        out[count]._reserved[2] = 0;
+        /* Copy name */
+        int ni = 0;
+        while (procs[i].name[ni] && ni < 31) { out[count].name[ni] = procs[i].name[ni]; ni++; }
+        out[count].name[ni] = '\0';
+        out[count].cpu_time = 0;
+        count++;
+    }
+    return count;
+}
 static int ks_socket(int d, int t, int p) { (void)d; (void)t; (void)p; return -1; }
 static int ks_connect(int s, const void *a, int l) { (void)s; (void)a; (void)l; return -1; }
 static int ks_bind(int s, const void *a, int l) { (void)s; (void)a; (void)l; return -1; }
@@ -638,7 +723,10 @@ __asm__(
     ".type _thread_start, %function\n"
     "_thread_start:\n"
     "    mov x0, x19\n"
-    "    br  x20\n"
+    "    blr x20\n"
+    "    /* program returned in w0 — call ks_exit */\n"
+    "    bl  ks_exit\n"
+    "    b   .\n"
 );
 extern void _thread_start(void);
 
@@ -780,6 +868,65 @@ void init(void) {
     kputs("\n");
 
     /* Load shell as first process */
+    /* Login prompt */
+    {
+        int logged_in = 0;
+        int attempts = 0;
+        while (!logged_in && attempts < 3) {
+            char username[32], password[64];
+            kputs("login: ");
+            /* Read username */
+            int ui = 0;
+            while (ui < 31) {
+                int64_t gc;
+                do {
+                    seL4_SetMR(0, SYS_GETC);
+                    microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 1));
+                    gc = (int64_t)seL4_GetMR(0);
+                } while (gc < 0);
+                char c = (char)(unsigned char)gc;
+                if (c == '\n' || c == '\r') break;
+                if (c == 127 || c == 8) { if (ui > 0) { ui--; kputs("\b \b"); } continue; }
+                if (c >= ' ') { username[ui++] = c; kputc(c); }
+            }
+            username[ui] = '\0';
+            kputc('\n');
+            if (ui == 0) { attempts++; continue; }
+
+            kputs("password: ");
+            int pi = 0;
+            while (pi < 63) {
+                int64_t gc;
+                do {
+                    seL4_SetMR(0, SYS_GETC);
+                    microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 1));
+                    gc = (int64_t)seL4_GetMR(0);
+                } while (gc < 0);
+                char c = (char)(unsigned char)gc;
+                if (c == '\n' || c == '\r') break;
+                if (c == 127 || c == 8) { if (pi > 0) pi--; continue; }
+                if (c >= ' ') { password[pi++] = c; kputc('*'); }
+            }
+            password[pi] = '\0';
+            kputc('\n');
+
+            int r = ks_login(username, password);
+            if (r == 0) {
+                kputs("\n");
+                logged_in = 1;
+            } else {
+                kputs("Login incorrect\n\n");
+                attempts++;
+            }
+            /* Clear password */
+            for (int j = 0; j < 64; j++) password[j] = 0;
+        }
+        if (!logged_in) {
+            kputs("Too many failed attempts\n");
+            return;
+        }
+    }
+
     int pid = load_program("/bin/shell.bin", 0);
     if (pid > 0) {
         kputs("sbxk: starting scheduler\n");

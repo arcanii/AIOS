@@ -84,3 +84,7 @@
 #define SYS_GETPROCS   82   /* get process table snapshot */
 
 #endif
+
+/* Auth syscalls */
+#define SYS_LOGIN      90
+#define SYS_LOGOUT     91

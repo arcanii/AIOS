@@ -7,4 +7,3 @@
 
   Kernel:  seL4 14.0.0 (Microkit 2.1.0)
   Arch:    AArch64 (Cortex-A53, 4 cores)
-  Sandbox: 8 process slots

@@ -354,6 +354,36 @@ seL4_MessageInfo_t protected(microkit_channel ch, seL4_MessageInfo_t msginfo) {
     }
 
     /* ---- Time ---- */
+    case SYS_LOGIN: {
+        /* Read username and password from sandbox_io */
+        volatile char *uname = (volatile char *)(sandbox_io + 0x200);
+        volatile char *passwd = (volatile char *)(sandbox_io + 0x300);
+        /* Copy to auth_io */
+        volatile char *au = (volatile char *)(auth_io + AUTH_USERNAME);
+        volatile char *ap = (volatile char *)(auth_io + AUTH_PASSWORD);
+        int i = 0;
+        while (uname[i] && i < 31) { au[i] = uname[i]; i++; }
+        au[i] = '\0';
+        i = 0;
+        while (passwd[i] && i < 63) { ap[i] = passwd[i]; i++; }
+        ap[i] = '\0';
+        /* Clear password from sandbox_io */
+        for (int j = 0; j < 64; j++) passwd[j] = 0;
+        /* Call auth server */
+        WR32(auth_io, AUTH_CMD, AUTH_CMD_LOGIN);
+        microkit_ppcall(CH_AUTH, microkit_msginfo_new(0, 0));
+        int status = (int)(int32_t)RD32(auth_io, AUTH_STATUS);
+        if (status == 0) {
+            uint32_t uid = RD32(auth_io, AUTH_UID);
+            uint32_t gid = RD32(auth_io, AUTH_GID);
+            seL4_SetMR(1, (seL4_Word)uid);
+            seL4_SetMR(2, (seL4_Word)gid);
+            result = 0;
+        } else {
+            result = -1;
+        }
+        break;
+    }
     case SYS_TIME: {
         uint64_t ts = arch_timestamp();
         uint64_t freq = arch_timer_freq();
