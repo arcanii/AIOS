@@ -81,6 +81,9 @@ typedef struct {
 #define TH_FINISHED 4
 
 /* ---- Process state ---- */
+#define MAX_FDS 16
+typedef struct { int in_use; uint32_t offset; } sbx_fd_t;
+
 typedef struct {
     int state;         /* 0=free, 1=alive, 2=zombie */
     int pid;
@@ -95,6 +98,7 @@ typedef struct {
     int exit_code;
     int foreground;
     char name[PROC_NAME_MAX];
+    sbx_fd_t fds[MAX_FDS];
 } proc_t;
 
 #define PROC_FREE   0
@@ -220,7 +224,13 @@ static int ks_open(const char *path) {
     seL4_SetMR(0, SYS_OPEN);
     seL4_SetMR(1, 0);  /* flags=readonly */
     microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 2));
-    return (int)seL4_GetMR(0);
+    int fd = (int)seL4_GetMR(0);
+    if (fd >= 0 && fd < MAX_FDS && current_thread >= 0) {
+        int pi = threads[current_thread].proc_idx;
+        procs[pi].fds[fd].in_use = 1;
+        procs[pi].fds[fd].offset = 0;
+    }
+    return fd;
 }
 
 static int ks_open_flags(const char *path, int flags) {
@@ -236,9 +246,14 @@ static int ks_open_flags(const char *path, int flags) {
 
 static int ks_read(int fd, void *buf, unsigned long len) {
     if (len > 3584) len = 3584;
+    uint32_t offset = 0;
+    if (current_thread >= 0 && fd >= 0 && fd < MAX_FDS) {
+        int pi = threads[current_thread].proc_idx;
+        offset = procs[pi].fds[fd].offset;
+    }
     seL4_SetMR(0, SYS_READ);
     seL4_SetMR(1, (seL4_Word)fd);
-    seL4_SetMR(2, 0);  /* offset -- managed by sandbox */
+    seL4_SetMR(2, (seL4_Word)offset);
     seL4_SetMR(3, (seL4_Word)len);
     microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 4));
     int64_t got = (int64_t)seL4_GetMR(0);
@@ -246,6 +261,10 @@ static int ks_read(int fd, void *buf, unsigned long len) {
         volatile uint8_t *src = (volatile uint8_t *)(sandbox_io + 0x200);
         uint8_t *dst = (uint8_t *)buf;
         for (int64_t j = 0; j < got; j++) dst[j] = src[j];
+        if (current_thread >= 0 && fd >= 0 && fd < MAX_FDS) {
+            int pi = threads[current_thread].proc_idx;
+            procs[pi].fds[fd].offset += (uint32_t)got;
+        }
     }
     return (int)got;
 }
@@ -263,14 +282,19 @@ static int ks_write_file(int fd, const void *buf, unsigned long len) {
 }
 
 static int ks_close(int fd) {
+    if (current_thread >= 0 && fd >= 0 && fd < MAX_FDS) {
+        int pi = threads[current_thread].proc_idx;
+        procs[pi].fds[fd].in_use = 0;
+        procs[pi].fds[fd].offset = 0;
+    }
     seL4_SetMR(0, SYS_CLOSE);
     seL4_SetMR(1, (seL4_Word)fd);
     microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 2));
-    return (int)seL4_GetMR(0);
+    return (int)(int64_t)seL4_GetMR(0);
 }
 
 static int ks_exec(const char *path, const char *args) {
-    (void)args;  /* TODO: pass args to new process */
+    (void)args;
     return load_program(path, 0);
 }
 
@@ -330,8 +354,18 @@ static unsigned long long ks_timer_freq(void) {
 static int __attribute__((unused)) ks_stub_int(void) { return -1; }
 static int __attribute__((unused)) ks_stub_int1(int a) { (void)a; return -1; }
 static int __attribute__((unused)) ks_stub_int2(int a, int b) { (void)a; (void)b; return -1; }
-static void * __attribute__((unused)) ks_stub_ptr(unsigned long n) { (void)n; return (void *)0; }
-static void __attribute__((unused)) ks_stub_free(void *p) { (void)p; }
+static void *ks_malloc(unsigned long n) {
+    if (current_thread < 0) return (void *)0;
+    int pi = threads[current_thread].proc_idx;
+    proc_t *p = &procs[pi];
+    /* Align to 16 bytes */
+    uint32_t alloc = (p->heap_used + 15) & ~15U;
+    uint32_t end = alloc + (uint32_t)n;
+    if (end > p->heap_size) return (void *)0;
+    p->heap_used = end;
+    return (void *)(p->heap_base + alloc);
+}
+static void ks_free(void *ptr) { (void)ptr; /* bump allocator: no-op */ }
 
 /* ---- Initialize syscall table ---- */
 
@@ -404,14 +438,20 @@ static int ks_rename(const char *oldp, const char *newp) {
     return (int)(int64_t)seL4_GetMR(0);
 }
 static int ks_readdir(void *buf, unsigned long max) {
+    /* Write "." to path field so orchestrator uses cwd */
+    volatile char *fn = (volatile char *)(sandbox_io + 0x200);
+    fn[0] = '.'; fn[1] = 0;
     seL4_SetMR(0, SYS_READDIR);
-    seL4_SetMR(1, max);
+    seL4_SetMR(1, (seL4_Word)max);
     microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 2));
     int count = (int)(int64_t)seL4_GetMR(0);
-    if (count > 0) {
-        volatile char *src = (volatile char *)(sandbox_io + 0x200);
-        char *dst = (char *)buf;
-        for (int i = 0; i < count * 64 && i < (int)(max * 64); i++) dst[i] = src[i];
+    uint32_t total_bytes = (uint32_t)seL4_GetMR(1);
+
+    if (count > 0 && total_bytes > 0) {
+        if (total_bytes > max) total_bytes = max;
+        volatile uint8_t *src_p = (volatile uint8_t *)(sandbox_io + 0x200);
+        uint8_t *dst = (uint8_t *)buf;
+        for (uint32_t i = 0; i < total_bytes; i++) dst[i] = src_p[i];
     }
     return count;
 }
@@ -420,21 +460,30 @@ static int ks_filesize(void) {
     microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 1));
     return (int)seL4_GetMR(1);
 }
+/* Cached stat_ex fields from last stat_file call */
+static unsigned int _cached_uid, _cached_gid, _cached_mode, _cached_mtime;
+
 static int ks_stat_file(const char *path, unsigned long *size_out) {
     volatile char *fn = (volatile char *)(sandbox_io + 0x200);
     int i = 0; while (path[i] && i < 255) { fn[i] = path[i]; i++; } fn[i] = 0;
     seL4_SetMR(0, SYS_STAT);
     microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 1));
     int r = (int)(int64_t)seL4_GetMR(0);
-    if (r == 0 && size_out) *size_out = (unsigned long)seL4_GetMR(1);
+    if (r == 0) {
+        if (size_out) *size_out = (unsigned long)seL4_GetMR(1);
+        _cached_uid = (unsigned int)seL4_GetMR(2);
+        _cached_gid = (unsigned int)seL4_GetMR(3);
+        _cached_mode = (unsigned int)seL4_GetMR(4);
+        _cached_mtime = (unsigned int)seL4_GetMR(5);
+    }
     return r;
 }
 static int ks_stat_ex(unsigned int *uid, unsigned int *gid, unsigned int *mode, unsigned int *mtime) {
-    /* Return cached values from last stat */
-    if (uid) *uid = 0;
-    if (gid) *gid = 0;
-    if (mode) *mode = 0755;
-    if (mtime) *mtime = 0;
+    /* Return cached values from last ks_stat_file call */
+    if (uid) *uid = _cached_uid;
+    if (gid) *gid = _cached_gid;
+    if (mode) *mode = _cached_mode;
+    if (mtime) *mtime = _cached_mtime;
     return 0;
 }
 static int ks_lseek(int fd, long offset, int whence) {
@@ -455,7 +504,9 @@ static int ks_chdir(const char *path) {
     int i = 0; while (path[i] && i < 255) { fn[i] = path[i]; i++; } fn[i] = 0;
     seL4_SetMR(0, SYS_CHDIR);
     microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 1));
-    return (int)(int64_t)seL4_GetMR(0);
+    int r = (int)(int64_t)seL4_GetMR(0);
+
+    return r;
 }
 static int ks_access(const char *path, int amode) {
     (void)path; (void)amode; return 0;
@@ -511,8 +562,8 @@ static void init_syscall_table(void) {
     kern_syscalls.put_dec = ks_put_dec;
     kern_syscalls.put_hex = ks_put_hex;
     /* Memory */
-    kern_syscalls.malloc = ks_stub_ptr;
-    kern_syscalls.free = ks_stub_free;
+    kern_syscalls.malloc = ks_malloc;
+    kern_syscalls.free = ks_free;
     kern_syscalls.memcpy = ks_memcpy;
     kern_syscalls.memset = ks_memset;
     /* Strings */
@@ -624,9 +675,7 @@ static int load_program(const char *path, int parent_pid) {
     microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 2));
     int64_t r = (int64_t)seL4_GetMR(0);
     if (r != 0) {
-        kputs("sbxk: failed to load ");
-        kputs(path);
-        kputs("\n");
+        /* load failed silently — shell handles error */
         return -1;
     }
     uint32_t loaded = (uint32_t)seL4_GetMR(1);
@@ -693,13 +742,7 @@ static int load_program(const char *path, int parent_pid) {
     
 
 
-    kputs("sbxk: loaded ");
-    kputs(path);
-    kputs(" (");
-    kput_dec(loaded);
-    kputs(" bytes) as PID ");
-    kput_dec(p->pid);
-    kputs("\n");
+    /* loaded silently */
 
     return p->pid;
 }

@@ -863,10 +863,16 @@ static int ext2_sync(void) { return 0; }
 
 static int ext2_stat(const char *filename, uint32_t *size_out) {
     uint32_t ino;
-    uint32_t parent_ino_s;
-    char base_s[64];
-    if (resolve_path(filename, &parent_ino_s, base_s, sizeof(base_s)) != 0) return -1;
-    if (dir_lookup(parent_ino_s, base_s, &ino) != 0) return -1;
+    /* Special-case: root directory "/" */
+    if (filename[0] == '/' && filename[1] == '\0') {
+        ino = EXT2_ROOT_INO;
+    } else {
+        uint32_t parent_ino_s;
+        char base_s[64];
+        if (resolve_path(filename, &parent_ino_s, base_s, sizeof(base_s)) != 0) return -1;
+        if (base_s[0] == '\0') ino = EXT2_ROOT_INO;
+        else if (dir_lookup(parent_ino_s, base_s, &ino) != 0) return -1;
+    }
 
     uint8_t inode_buf[128];
     if (read_inode(ino, inode_buf) != 0) return -1;
@@ -1038,10 +1044,16 @@ static int ext2_rename(const char *oldname, const char *newname) {
 static int ext2_stat_ex(const char *filename, uint32_t *size_out,
                         uint16_t *uid_out, uint16_t *gid_out, uint16_t *mode_out,
                         uint32_t *mtime_out) {
-    uint32_t parent_ino, ino;
-    char base[64];
-    if (resolve_path(filename, &parent_ino, base, sizeof(base)) != 0) return -1;
-    if (dir_lookup(parent_ino, base, &ino) != 0) return -1;
+    uint32_t ino;
+    if (filename[0] == '/' && filename[1] == '\0') {
+        ino = EXT2_ROOT_INO;
+    } else {
+        uint32_t parent_ino;
+        char base[64];
+        if (resolve_path(filename, &parent_ino, base, sizeof(base)) != 0) return -1;
+        if (base[0] == '\0') ino = EXT2_ROOT_INO;
+        else if (dir_lookup(parent_ino, base, &ino) != 0) return -1;
+    }
     uint8_t inode_buf[128];
     if (read_inode(ino, inode_buf) != 0) return -1;
     *size_out = inode_size_field(inode_buf);

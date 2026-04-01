@@ -214,11 +214,14 @@ seL4_MessageInfo_t protected(microkit_channel ch, seL4_MessageInfo_t msginfo) {
         while (path[i] && i < 255) { raw[i] = path[i]; i++; }
         raw[i] = '\0';
         resolve_path(raw, fname, sizeof(fname));
-        result = fs_stat_sync(fname);
+        uint32_t st_size = 0, st_uid = 0, st_gid = 0, st_mode = 0, st_mtime = 0;
+        result = fs_stat_ex_sync(fname, &st_size, &st_uid, &st_gid, &st_mode, &st_mtime);
         if (result == 0) {
-            volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
-            volatile uint8_t *dst = (volatile uint8_t *)(sandbox_io + 0x200);
-            for (int j = 0; j < 64; j++) dst[j] = src[j];
+            seL4_SetMR(1, (seL4_Word)st_size);
+            seL4_SetMR(2, (seL4_Word)st_uid);
+            seL4_SetMR(3, (seL4_Word)st_gid);
+            seL4_SetMR(4, (seL4_Word)st_mode);
+            seL4_SetMR(5, (seL4_Word)st_mtime);
         }
         break;
     }
@@ -377,7 +380,7 @@ seL4_MessageInfo_t protected(microkit_channel ch, seL4_MessageInfo_t msginfo) {
     }
 
     seL4_SetMR(0, (seL4_Word)result);
-    return microkit_msginfo_new(0, 4);
+    return microkit_msginfo_new(0, 6);
 }
 
 /* ---- Init ---- */
