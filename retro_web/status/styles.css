@@ -1,0 +1,91 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body { 
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #1a1a2e; 
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+#root { 
+  width: 100%; 
+  max-width: 820px;
+  background: #f5f5f0;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+  position: relative;
+  overflow: hidden;
+}
+
+/* CRT Effects */
+.crt-overlay {
+  pointer-events: none;
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0,0,0,0.03) 0px,
+    rgba(0,0,0,0.03) 1px,
+    transparent 1px,
+    transparent 2px
+  );
+  z-index: 10;
+}
+
+.crt-flicker {
+  animation: flicker 0.15s infinite;
+}
+
+@keyframes flicker {
+  0% { opacity: 0.97; }
+  50% { opacity: 1; }
+  100% { opacity: 0.98; }
+}
+
+/* Log Ticker */
+.log-ticker {
+  font-family: monospace;
+  font-size: 11px;
+  background: #111;
+  color: #0f0;
+  padding: 6px 10px;
+  border-radius: 4px;
+  margin-top: 8px;
+  height: 60px;
+  overflow: hidden;
+  position: relative;
+}
+
+.log-line {
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.log-time { color: #888; }
+.log-pd { color: #0af; }
+.log-action { color: #0f0; }
+.log-warn { color: #fa0; }
+.log-err { color: #f55; }
+
+/* Tooltip */
+.tooltip {
+  position: absolute;
+  background: rgba(0,0,0,0.85);
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 11px;
+  pointer-events: none;
+  z-index: 100;
+  max-width: 200px;
+  line-height: 1.4;
+}
+
+.tooltip-title { 
+  font-weight: 600; 
+  color: #0af; 
+}

@@ -22,12 +22,14 @@ def load_sources():
     text = ""
     for f in SCAN_FILES:
         if os.path.exists(f):
-            text += open(f).read() + "\n"
+            with open(f, "r", encoding="utf-8") as fh:
+                text += fh.read() + "\n"
     for d, ext in SCAN_DIRS:
         if os.path.isdir(d):
             for fn in os.listdir(d):
                 if fn.endswith(ext):
-                    text += open(os.path.join(d, fn)).read() + "\n"
+                    with open(os.path.join(d, fn), "r", encoding="utf-8") as fh:
+                        text += fh.read() + "\n"
     return text
 
 CATEGORIES = {
@@ -349,13 +351,6 @@ def main():
             for i in range(0, len(funcs), 6):
                 print(f"      {', '.join(funcs[i:i+6])}")
 
-    def is_stub_wiki(note):
-        if not note: return False
-        nl = note.lower()
-        return ('stub' in nl or 'no-op' in nl or 'ENOSYS' in note or
-                'returns 0' in nl or 'infinite loop' in nl or 'hardcoded' in nl or
-                'returns -1' in nl or 'zeroed' in nl)
-    
     # ── Wiki output ──
     wiki_path = "docs/POSIX_COMPLIANCE.md"
     os.makedirs("docs", exist_ok=True)
@@ -374,7 +369,7 @@ def main():
         w.write(f"| **Functions present** | **{implemented}/{total} ({pct_total}%)** |\n")
         
         full_count = sum(1 for cat_r in results.values() for fn, f, n in cat_r if f and not n)
-        partial_count = sum(1 for cat_r in results.values() for fn, f, n in cat_r if f and n and not is_stub_wiki(n))
+        partial_count = sum(1 for cat_r in results.values() for fn, f, n in cat_r if f and n and not is_stub(n))
         stub_count = implemented - full_count - partial_count
         real_pct = ((full_count + partial_count) * 100) // total if total else 0
         
@@ -483,11 +478,8 @@ def main():
         w.write(f"|----------|------|-----------|\n")
         w.write(f"| HIGH | Implement pthreads stubs | Many C libraries expect thread primitives |\n")
         w.write(f"| HIGH | Implement semaphore stubs | Required by concurrent programs |\n")
-        w.write(f"| MED | Real sscanf/fscanf | Needed for text parsing |\n")
-        w.write(f"| MED | Real setjmp/longjmp (asm) | Needed for error recovery |\n")
-        w.write(f"| MED | ftruncate syscall | File management |\n")
-        w.write(f"| LOW | Dynamic loading (dlopen) | Only needed for plugin systems |\n")
-        w.write(f"| LOW | Real regex engine | Only needed for text processing |\n")
+        w.write(f"| MED | Dynamic loading (dlopen) | Needed for plugin systems |\n")
+        w.write(f"| LOW | Expand regex engine | Basic patterns work, extended regex missing |\n")
     
     print(f"\n  Wiki report: {wiki_path}")
     print(f"  ({implemented}/{total} functions, {pct_total}% POSIX.1 compliance)")

@@ -28,8 +28,14 @@ static microkit_channel my_channel;
 
 /* Shared memory regions (set by Microkit loader) */
 uintptr_t sandbox_io;
-uintptr_t sandbox_heap;
-uintptr_t sandbox_code;
+uintptr_t sandbox_mem;    /* 512 MB unified memory region */
+
+/* Compatibility: old code references heap and code separately.
+ * In the consolidated sandbox, both are regions within sandbox_mem.
+ * sandbox_code = sandbox_mem (code at start)
+ * sandbox_heap = sandbox_mem + 4MB (heap after code region) */
+static uintptr_t sandbox_heap;
+static uintptr_t sandbox_code;
 
 
 /* ── Minimal libc ──────────────────────────────────── */
@@ -1414,19 +1420,17 @@ static void run_program(void) {
 
 /* ── Microkit entry points ─────────────────────────── */
 void init(void) {
-    /* Derive our channel ID from PD name: sbx0->7, sbx1->8, etc. */
-    /* Channel mapping: sbx0-3 use channels 7-10, sbx4-7 use channels 14-17 */
-    int sbx_id = microkit_name[3] - '0';
-    if (sbx_id < 4)
-        my_channel = CH_SBX_BASE + sbx_id;       /* 7, 8, 9, 10 */
-    else
-        my_channel = CH_SBX4 + (sbx_id - 4);     /* 14, 15, 16, 17 */
+    /* Single sandbox PD uses channel 7 to orchestrator */
+    my_channel = 7;
     init_syscalls();
     /* boot message silenced to avoid UART interleave */
     /* Record stack top at earliest point — covers notified() and run_program() frames */
     if (stack_top == 0) {
         __asm__ volatile("mov %0, sp" : "=r"(stack_top));
     }
+    /* Set up compatibility pointers into sandbox_mem */
+    sandbox_code = sandbox_mem;                    /* code at start of mem */
+    sandbox_heap = sandbox_mem + 0x400000;         /* heap at +4 MB */
     WR32(sandbox_io, SBX_STATUS, SBX_ST_IDLE);
 }
 

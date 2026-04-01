@@ -74,22 +74,8 @@ static void process_command(void) {
             return;
         }
         else { ser_puts("Usage: exec <file.bin> [args]\n"); ser_flush(); }
-    } else if (str_starts_with(input_line, "load ")) {
-        char *fn = &input_line[5];
-        while (*fn == ' ') fn++;
-        if (*fn) cmd_load(fn);
-        else { ser_puts("Usage: load <file>\n"); ser_flush(); }
-    } else if (str_starts_with(input_line, "gen ")) {
-        char *p = &input_line[4];
-        while (*p == ' ') p++;
-        if (*p) {
-            cmd_gen(p);
-            input_pos = 0;
-            return; /* Don't print prompt — waiting for LLM */
-        }
-        else { ser_puts("Usage: gen <prompt>\n"); ser_flush(); }
-    } else if (my_strcmp(input_line, "info") == 0) {
-        cmd_info();
+
+
     } else if (my_strcmp(input_line, "ps") == 0) {
         cmd_ps();
     } else if (my_strcmp(input_line, "whoami") == 0) {
@@ -124,13 +110,7 @@ static void process_command(void) {
         cmd_groups();
     } else if (str_starts_with(input_line, "usermod ")) {
         cmd_usermod(input_line + 8);
-    } else if (my_strcmp(input_line, "shutdown") == 0) {
-        if (auth_check_priv_sync() != 0) {
-            ser_puts("Permission denied: root required\n");
-            ser_flush();
-        } else {
-            cmd_shutdown();
-        }
+
     } else {
         ser_puts("Unknown command: ");
         ser_puts(input_line);

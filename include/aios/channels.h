@@ -17,17 +17,9 @@
 #define CH_FS_BLK_PPC  10  /* fs_server -> blk_driver (PPC)    */
 
 /* Sandbox channels — one per slot */
-#define CH_SBX0         7   /* orchestrator <-> sbx0            */
-#define CH_SBX1         8   /* orchestrator <-> sbx1            */
-#define CH_SBX2         9   /* orchestrator <-> sbx2            */
-#define CH_SBX3        10   /* orchestrator <-> sbx3            */
+#define CH_SANDBOX      7   /* orchestrator <-> sandbox         */
 
-#define NUM_SANDBOXES   8
-#define CH_SBX4        14   /* orchestrator <-> sbx4            */
-#define CH_SBX5        15   /* orchestrator <-> sbx5            */
-#define CH_SBX6        16   /* orchestrator <-> sbx6            */
-#define CH_SBX7        17   /* orchestrator <-> sbx7            */
-#define CH_SBX_BASE     CH_SBX0  /* first sandbox channel ID   */
+#define NUM_SANDBOXES   1
 
 /* Network */
 /* Auth server */

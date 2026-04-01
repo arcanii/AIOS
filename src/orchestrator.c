@@ -27,43 +27,23 @@ uintptr_t tx_buf;
 uintptr_t rx_buf;
 uintptr_t sock_data;
 uintptr_t fs_data;
-uintptr_t model_data;
-uintptr_t llm_io;
-uintptr_t echo_io;
 uintptr_t auth_io;
 /* Per-sandbox memory regions (set by Microkit loader via setvar) */
-uintptr_t sbx0_io;
-uintptr_t sbx0_code;
-uintptr_t sbx0_heap;
-uintptr_t sbx1_io;
-uintptr_t sbx1_code;
-uintptr_t sbx1_heap;
-uintptr_t sbx2_io;
-uintptr_t sbx2_code;
-uintptr_t sbx2_heap;
-uintptr_t sbx3_io;
-uintptr_t sbx3_code;
-uintptr_t sbx3_heap;
-uintptr_t sbx4_io;
-uintptr_t sbx4_code;
-uintptr_t sbx4_heap;
-uintptr_t sbx5_io;
-uintptr_t sbx5_code;
-uintptr_t sbx5_heap;
-uintptr_t sbx6_io;
-uintptr_t sbx6_code;
-uintptr_t sbx6_heap;
-uintptr_t sbx7_io;
-uintptr_t sbx7_code;
-uintptr_t sbx7_heap;
+/* Single consolidated sandbox PD */
+uintptr_t sandbox_io;    /* 4 KB IPC page, shared with sandbox */
+uintptr_t sandbox_mem;   /* 512 MB sandbox memory pool */
 
-/* Process swap region (256 MiB) */
-uintptr_t swap_region;
+/* Compatibility shims: old slot-based code indexes these arrays
+ * with slot=0. All point to the single sandbox regions.
+ * TODO: remove once orchestrator is fully refactored. */
+static uintptr_t sbx_io[1];
+static uintptr_t sbx_code[1];
+static uintptr_t sbx_heap[1];
 
-/* Runtime arrays initialized in init() */
-static uintptr_t sbx_io[NUM_SANDBOXES];
-static uintptr_t sbx_code[NUM_SANDBOXES];
-static uintptr_t sbx_heap[NUM_SANDBOXES];
+/* Swap region stub: in single-sandbox mode, process swapping is handled
+ * by the sandbox kernel. This is a dummy to satisfy old code paths that
+ * will never execute with NUM_SANDBOXES=1. */
+static uintptr_t swap_region = 0;
 
 /* Process table */
 /* Process scheduler (replaces old proctab[8]) */
@@ -87,8 +67,7 @@ static void try_load_queued(int freed_slot);
 
 /* Slot-to-channel mapping (not contiguous due to other PD channels) */
 static const int sbx_channel[NUM_SANDBOXES] = {
-    CH_SBX0, CH_SBX1, CH_SBX2, CH_SBX3,
-    CH_SBX4, CH_SBX5, CH_SBX6, CH_SBX7,
+    7,  /* single sandbox channel */
 };
 
 static int find_free_slot(void) {
@@ -158,9 +137,6 @@ static int session_shell_slot = -1;  /* slot running login shell, -1 if none */
 
 /* ── Execution and model state ── */
 /* ── Model loading state ─────────────────────────────── */
-static uint32_t llm_model_loaded = 0;
-static uint32_t saved_tok_offset = 0;
-static uint32_t saved_tok_size = 0;
 
 /* ── Exec state ──────────────────────────────────────── */
 static uint32_t exec_loaded_bytes = 0;
@@ -257,7 +233,6 @@ static void cmd_ps(void) {
 #include "orch/orch_auth_cmd.inc"
 #include "orch/orch_fs_cmd.inc"
 #include "orch/orch_exec.inc"
-#include "orch/orch_llm.inc"
 #include "orch/orch_dispatch.inc"
 #include "orch/orch_input.inc"
 #include "orch/orch_syscall.inc"

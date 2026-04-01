@@ -11,35 +11,20 @@ void init(void) {
     ser_puts("  CPUs:    ");
     ser_put_dec(CONFIG_MAX_NUM_NODES);
     ser_puts(" cores (SMP)\n");
-    ser_puts("  Sandbox: ");
-    ser_put_dec(NUM_SANDBOXES);
-    ser_puts(" process slots\n");
+    ser_puts("  Sandbox: 1 PD (512 MB user-space kernel)\n");
     const char *fsname = fs_fsinfo_sync();
     ser_puts("  FS:      ");
     ser_puts(fsname);
     ser_puts("\n");
     ser_puts("  Drivers: PL011 UART, virtio-blk, virtio-net\n");
-    ser_puts("  LLM:     llm_server (llama2.c engine)\n");
+
     ser_puts("============ Open Aries ================\n\n");
     ser_flush();
 
-    /* Initialize sandbox slot tables */
-    sbx_io[0] = sbx0_io; sbx_code[0] = sbx0_code;
-    sbx_io[1] = sbx1_io; sbx_code[1] = sbx1_code;
-    sbx_io[2] = sbx2_io; sbx_code[2] = sbx2_code;
-    sbx_io[3] = sbx3_io; sbx_code[3] = sbx3_code;
-    sbx_io[4]   = sbx4_io;
-    sbx_code[4] = sbx4_code;
-    sbx_io[5]   = sbx5_io;
-    sbx_code[5] = sbx5_code;
-    sbx_io[6]   = sbx6_io;
-    sbx_code[6] = sbx6_code;
-    sbx_io[7]   = sbx7_io;
-    sbx_code[7] = sbx7_code;
-    sbx_heap[0] = sbx0_heap; sbx_heap[1] = sbx1_heap;
-    sbx_heap[2] = sbx2_heap; sbx_heap[3] = sbx3_heap;
-    sbx_heap[4] = sbx4_heap; sbx_heap[5] = sbx5_heap;
-    sbx_heap[6] = sbx6_heap; sbx_heap[7] = sbx7_heap;
+    /* Initialize single sandbox slot */
+    sbx_io[0] = sandbox_io;
+    sbx_code[0] = sandbox_mem;          /* code loaded at start of sandbox_mem */
+    sbx_heap[0] = sandbox_mem;          /* heap managed by sandbox kernel */
     sched_init(&sched);
 
     /* Boot: read license.txt synchronously */
@@ -176,19 +161,8 @@ void notified(microkit_channel ch) {
         }
         break;
 
-    case CH_SBX0:
-    case CH_SBX1:
-    case CH_SBX2:
-    case CH_SBX3:
-    case CH_SBX4:
-    case CH_SBX5:
-    case CH_SBX6:
-    case CH_SBX7: {
-        int slot = -1;
-        for (int i = 0; i < NUM_SANDBOXES; i++) {
-            if (sbx_channel[i] == (int)ch) { slot = i; break; }
-        }
-        if (slot < 0) break;
+    case CH_SANDBOX: {
+        int slot = 0;  /* single sandbox */
 
         /* Check sandbox status — handle completion regardless of orch_state */
         {
@@ -209,48 +183,7 @@ void notified(microkit_channel ch) {
         break;
     }
 
-    case CH_LLM:
-        if (orch_state == LLM_INIT_MODEL) {
-            if (RD32(llm_io, LLM_STATUS) != 0) {
-                ser_puts("  Model init FAILED\n");
-                ser_flush();
-                orch_state = RUNNING;
-            } else {
-                ser_puts("  Model initialized\n");
-                ser_flush();
-                if (saved_tok_size > 0) {
-                    WR32(llm_io, LLM_TOK_OFF, saved_tok_offset);
-                    WR32(llm_io, LLM_TOK_SZ, saved_tok_size);
-                    WR32(llm_io, LLM_CMD, LLM_CMD_LOAD_TOK);
-                    orch_state = LLM_INIT_TOK;
-                    microkit_notify(CH_LLM);
-                } else {
-                    llm_model_loaded = 1;
-                    ser_puts("  LLM ready!\n");
-                    print_prompt();
-                    orch_state = RUNNING;
-                }
-            }
-        } else if (orch_state == LLM_INIT_TOK) {
-            if (RD32(llm_io, LLM_STATUS) != 0) {
-                ser_puts("  Tokenizer init FAILED\n");
-                ser_flush();
-            } else {
-                ser_puts("  Tokenizer initialized\n");
-                ser_flush();
-            }
-            llm_model_loaded = 1;
-            ser_puts("  LLM ready!\n");
-            print_prompt();
-            ser_flush();
-            orch_state = RUNNING;
-        } else if (orch_state == GEN_WAITING)
-            handle_gen_reply();
-        break;
 
-    case CH_ECHO:
-        handle_log_message((volatile uint8_t *)echo_io);
-        break;
 
     default:
         break;

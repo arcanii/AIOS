@@ -222,25 +222,3 @@ static void handle_exec_done(int slot) {
     try_load_queued(slot);
 }
 
-/* ── Handle LLM generation reply ─────────────────────── */
-static void handle_gen_reply(void) {
-    uint32_t status = RD32(llm_io, LLM_STATUS);
-    if (status == LLM_ST_TOKEN) {
-        volatile char *tok = (volatile char *)(llm_io + LLM_OUTPUT);
-        for (int i = 0; tok[i] && i < 256; i++) ser_putc(tok[i]);
-        ser_flush();
-        /* Request next token */
-        WR32(llm_io, LLM_CMD, LLM_CMD_NEXT_TOK);
-        microkit_notify(CH_LLM);
-    } else if (status == LLM_ST_DONE) {
-        ser_puts("\n[done]\n");
-        ser_flush();
-        orch_state = RUNNING;
-        print_prompt();
-    } else {
-        ser_puts("\n[LLM error]\n");
-        ser_flush();
-        orch_state = RUNNING;
-        print_prompt();
-    }
-}
