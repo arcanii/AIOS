@@ -225,7 +225,7 @@ ext2-create:
 # Inject programs + config files into ext2 image
 ext2-inject: $(DISK_IMG)
 	@echo "Injecting programs into ext2 image..."
-	python3 tools/ext2_inject.py $(DISK_IMG) programs/*.BIN
+	python3 tools/ext2_inject.py $(DISK_IMG) programs/*.bin
 	@echo "Injecting config files..."
 	@if [ -d disk/etc ]; then \
 		for f in disk/etc/*; do \

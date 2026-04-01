@@ -175,23 +175,26 @@ static void sched_yield(void) {
         if (threads[idx].state == TH_READY) {
             current_thread = idx;
             threads[idx].state = TH_RUNNING;
-            if (threads[idx].fresh) {
-                threads[idx].fresh = 0;
-                uintptr_t entry = threads[idx].ctx[1];
-                uintptr_t sys_ptr = threads[idx].ctx[0];
-                uintptr_t sp_val = threads[idx].ctx[12];
-
-                __asm__ volatile(
-                    "mov sp, %[sp]  \n"
-                    "mov x0, %[sys] \n"
-                    "blr %[ent]     \n"
-                    "bl  ks_exit    \n"
-                    :: [sp]"r"(sp_val), [sys]"r"(sys_ptr), [ent]"r"(entry)
-                    : "memory"
-                );
-                __builtin_unreachable();
-            }
-            longjmp(threads[idx].ctx, 1);
+                if (threads[idx].fresh) {
+                    threads[idx].fresh = 0;
+                    uintptr_t trampoline = threads[idx].ctx[11];
+                    uintptr_t x19_val = threads[idx].ctx[0];
+                    uintptr_t x20_val = threads[idx].ctx[1];
+                    uintptr_t sp_val = threads[idx].ctx[12];
+                    __asm__ volatile(
+                        "mov sp, %[sp]   \n"
+                        "mov x19, %[x19] \n"
+                        "mov x20, %[x20] \n"
+                        "br  %[tramp]    \n"
+                        :: [sp]"r"(sp_val),
+                           [x19]"r"(x19_val),
+                           [x20]"r"(x20_val),
+                           [tramp]"r"(trampoline)
+                        : "memory"
+                    );
+                    __builtin_unreachable();
+                }
+                longjmp(threads[idx].ctx, 1);
         }
     }
 
@@ -676,6 +679,7 @@ static int ks_getegid(void) { return 0; }
 
 
 extern void _thread_start(void);
+extern void _pthread_start(void);
 
 /* ================================================================
  * POSIX Threads Implementation (sandbox kernel)
@@ -718,7 +722,7 @@ static int ks_pthread_create(unsigned long *thread_out, const void *attr,
     for (int k = 0; k < 24; k++) th->ctx[k] = 0;
     uintptr_t sp_top = (stack + DEFAULT_STACK_SZ) & ~15UL;
     th->ctx[12] = sp_top;                        /* sp */
-    th->ctx[11] = (uint64_t)_thread_start;       /* x30/lr */
+    th->ctx[11] = (uint64_t)_pthread_start;      /* x30/lr = pthread trampoline */
     th->ctx[0]  = (uint64_t)arg;                 /* x19 = arg */
     th->ctx[1]  = (uint64_t)start_routine;       /* x20 = entry */
 
@@ -1036,11 +1040,26 @@ __asm__(
     "_thread_start:\n"
     "    mov x0, x19\n"
     "    blr x20\n"
-    "    /* program returned in w0 — call ks_exit */\n"
+    "    /* program returned in w0 -- call ks_exit */\n"
     "    bl  ks_exit\n"
     "    b   .\n"
 );
 extern void _thread_start(void);
+
+/* Pthread trampoline: same as _thread_start but calls ks_pthread_exit
+ * so return value is captured as void* retval, not int exit code,
+ * and only the thread is terminated (not the whole process). */
+__asm__(
+    ".global _pthread_start\n"
+    ".type _pthread_start, %function\n"
+    "_pthread_start:\n"
+    "    mov x0, x19\n"
+    "    blr x20\n"
+    "    /* x0 = void* retval from thread function */\n"
+    "    bl  ks_pthread_exit\n"
+    "    b   .\n"
+);
+extern void _pthread_start(void);
 
 /* ---- Program loader ---- */
 static int load_program(const char *path, int parent_pid) {
