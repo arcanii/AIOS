@@ -72,7 +72,7 @@ static int fs_delete_sync(const char *filename) {
 
 
 /* ── Extended FS helpers ───────────────────────────── */
-static int fs_stat_ex_sync(const char *filename, uint32_t *size,
+static int __attribute__((unused)) fs_stat_ex_sync(const char *filename, uint32_t *size,
                            uint32_t *uid, uint32_t *gid, uint32_t *mode,
                            uint32_t *mtime) {
     volatile char *dst = (volatile char *)(fs_data + FS_FILENAME);

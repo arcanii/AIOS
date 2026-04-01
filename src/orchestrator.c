@@ -1,157 +1,68 @@
-/* AIOS Orchestrator — synchronous rewrite
- * All filesystem operations use microkit_ppcall (blocking).
- * State machine only needed for: LLM generation (async), sandbox exec (async).
+/* orchestrator_new.c -- AIOS Orchestrator (Service Router) CORRECT_V2
+ *
+ * v0.3.x: pure service router. Receives PPC from sandbox kernel,
+ * dispatches to fs/auth/net services, returns results.
+ * No process management, no scheduling, no slot tracking.
  */
 #include <microkit.h>
 #include "aios/ipc.h"
 #include "aios/channels.h"
 #include "aios/auth.h"
-
-#define SBX_ENTRY_POINT 0x200000  /* sandbox.elf entry point */
-#include "sys/syscall.h"
 #include "aios/version.h"
-#include "aios/util.h"
-
-/* str_starts_with mapped to aios_str_starts_with */
-#ifndef str_starts_with
-#define str_starts_with aios_str_starts_with
-#endif
-#include <kernel/gen_config.h>
 #include "aios/ring.h"
+#include "sys/syscall.h"
+#include <kernel/gen_config.h>
 #include "arch/aarch64/timer.h"
 
-
-
-/* ── Shared memory regions (set by Microkit loader) ─── */
+/* ---- Shared memory (set by Microkit loader via setvar) ---- */
 uintptr_t tx_buf;
 uintptr_t rx_buf;
 uintptr_t sock_data;
 uintptr_t fs_data;
 uintptr_t auth_io;
-/* Per-sandbox memory regions (set by Microkit loader via setvar) */
-/* Single consolidated sandbox PD */
-uintptr_t sandbox_io;    /* 4 KB IPC page, shared with sandbox */
-uintptr_t sandbox_mem;   /* 512 MB sandbox memory pool */
+uintptr_t sandbox_io;    /* 4 KB IPC page with sandbox kernel */
+uintptr_t sandbox_mem;   /* 128 MB sandbox memory pool */
 
-/* Compatibility shims: old slot-based code indexes these arrays
- * with slot=0. All point to the single sandbox regions.
- * TODO: remove once orchestrator is fully refactored. */
-static uintptr_t sbx_io[1];
-static uintptr_t sbx_code[1];
-static uintptr_t sbx_heap[1];
-
-/* Swap region stub: in single-sandbox mode, process swapping is handled
- * by the sandbox kernel. This is a dummy to satisfy old code paths that
- * will never execute with NUM_SANDBOXES=1. */
-static uintptr_t swap_region = 0;
-
-/* Process table */
-/* Process scheduler (replaces old proctab[8]) */
-#include "proc_sched.h"
-static scheduler_t sched;
-
-/* Helper: get process for a sandbox slot */
-static inline sched_proc_t *slot_proc(int slot) {
-    int idx = sched.slot_to_proc[slot];
-    if (idx >= 0) return &sched.procs[idx];
-    return (sched_proc_t *)0;
+/* ---- Serial helpers ---- */
+static void ser_putc(char c) {
+    ring_buf_t *tx = (ring_buf_t *)tx_buf;
+    ring_put(tx, c);
+}
+static void ser_flush(void) { microkit_notify(CH_SERIAL); }
+static void ser_puts(const char *s) { while (*s) ser_putc(*s++); }
+static void ser_put_dec(unsigned int n) {
+    char buf[12]; int i = 0;
+    if (n == 0) { ser_putc('0'); return; }
+    while (n > 0) { buf[i++] = '0' + (n % 10); n /= 10; }
+    while (i > 0) ser_putc(buf[--i]);
+}
+static void ser_put_hex64(uint64_t v) {
+    ser_puts("0x");
+    for (int i = 60; i >= 0; i -= 4)
+        ser_putc("0123456789abcdef"[(v >> i) & 0xf]);
 }
 
-/* Helper: check if slot has a running process */
-static inline int slot_in_use(int slot) {
-    return sched.slot_to_proc[slot] >= 0;
-}
-
-static void try_load_queued(int freed_slot);
-
-
-/* Slot-to-channel mapping (not contiguous due to other PD channels) */
-static const int sbx_channel[NUM_SANDBOXES] = {
-    7,  /* single sandbox channel */
-};
-
-static int find_free_slot(void) {
-    return sched_find_free_slot(&sched);
-}
-
-static int ch_to_slot(microkit_channel ch) {
-    int s = -1;
-    for (int i = 0; i < NUM_SANDBOXES; i++) {
-        if (sbx_channel[i] == (int)ch) { s = i; break; }
-    }
-    if (s >= 0 && s < NUM_SANDBOXES) return s;
-    return -1;
-}
-
-
-
-
-#include "orch/orch_serial.inc"
-
-/* ── Logging backend ─────────────────────────────────── */
-#define LOG_MODULE "ORCH"
-#define LOG_LEVEL  LOG_LEVEL_WARN
-#include "aios/log.h"
-
-void _log_puts(const char *s) { ser_puts(s); }
-void _log_put_dec(unsigned long n) { ser_put_dec(n); }
-void _log_flush(void) { ser_flush(); }
-unsigned long _log_get_time(void) {
-    uint64_t cnt, freq;
-    asm volatile("mrs %0, cntpct_el0" : "=r"(cnt));
-    asm volatile("mrs %0, cntfrq_el0" : "=r"(freq));
-    if (freq == 0) freq = 62500000;
-    return (unsigned long)(cnt / freq);
-}
-
-
-
-#include "orch/orch_fs.inc"
-
-/* ── Input buffer and state ── */
-/* ── Input buffer ────────────────────────────────────── */
-#define INPUT_MAX 256
-static char input_line[INPUT_MAX];
-static int  input_pos = 0;
-
-/* ── Orchestrator state (minimal — only for async ops) ─ */
-
-/* ── Auth state machine ────────────────────────────── */
-enum {
-    AUTH_LOGIN_USER,    /* waiting for username */
-    AUTH_LOGIN_PASS,    /* waiting for password */
-    AUTH_AUTHENTICATED  /* logged in */
-};
-static int auth_state = AUTH_LOGIN_USER;
-static uint32_t current_session = 0;
+/* ---- Auth sync helpers ---- */
 static uint32_t current_uid = 0;
 static uint32_t current_gid = 0;
-static char hostname[64] = "aios";
-static char current_shell[64] = "/bin/osh";
-static char current_home[64] = "/root";
-static int session_shell_slot = -1;  /* slot running login shell, -1 if none */
 
+static int __attribute__((unused)) auth_check_file_sync(const char *path, uint32_t mode) {
+    (void)path; (void)mode;
+    return 0;  /* TODO: implement auth checks */
+}
 
-#include "orch/orch_pipe.inc"
-#include "orch/orch_net.inc"
+/* ---- FS sync helpers ---- */
+#include "orch/orch_fs.inc"
 
-/* ── Execution and model state ── */
-/* ── Model loading state ─────────────────────────────── */
-
-/* ── Exec state ──────────────────────────────────────── */
-static uint32_t exec_loaded_bytes = 0;
+/* ---- CWD for path resolution ---- */
 static char cwd[256] = "/";
-static char exec_args[256];
 
-/* Resolve a relative path against cwd into an absolute path */
 static void resolve_path(const char *name, char *out, int out_size) {
     if (name[0] == '/') {
-        /* Already absolute */
         int i = 0;
         while (name[i] && i < out_size - 1) { out[i] = name[i]; i++; }
         out[i] = '\0';
     } else {
-        /* Prepend cwd */
         int j = 0, k = 0;
         while (cwd[k] && j < out_size - 2) out[j++] = cwd[k++];
         if (j > 1) out[j++] = '/';
@@ -161,181 +72,351 @@ static void resolve_path(const char *name, char *out, int out_size) {
     }
 }
 
+/* ---- Protected call handler (PPC from sandbox kernel) ---- */
+seL4_MessageInfo_t protected(microkit_channel ch, seL4_MessageInfo_t msginfo) {
+    (void)msginfo;
+    if (ch != CH_SANDBOX) {
+        seL4_SetMR(0, -1);
+        return microkit_msginfo_new(0, 1);
+    }
 
-/* ── Process commands ── */
-/* ── Command: kill ────────────────────────────────────── */
-static int auth_check_kill_sync(uint32_t target_uid);
-static int auth_check_file_sync(const char *path, uint32_t mode);
-static void cmd_kill(const char *arg) {
-    /* Parse PID */
-    unsigned int pid = 0;
-    int i = 0;
-    while (arg[i] >= '0' && arg[i] <= '9') {
-        pid = pid * 10 + (arg[i] - '0');
-        i++;
+    int64_t syscall_nr = (int64_t)seL4_GetMR(0);
+    int64_t result = -1;
+
+    switch (syscall_nr) {
+
+    /* ---- Serial I/O ---- */
+    case SYS_PUTC: {
+        char c = (char)seL4_GetMR(1);
+        ser_putc(c);
+        ser_flush();
+        result = 0;
+        break;
     }
-    if (pid == 0) {
-        ser_puts("  Usage: kill <pid>\n");
-        return;
-    }
-    /* Find slot with matching PID */
-    for (int s = 0; s < NUM_SANDBOXES; s++) {
-        if (slot_in_use(s) && slot_proc(s)->pid == pid) {
-            /* Permission check: owner or root */
-            if (auth_check_kill_sync(slot_proc(s)->owner_uid) != 0) {
-                ser_puts("  Permission denied: not owner\n");
-                ser_flush();
-                return;
-            }
-            microkit_pd_stop(s);
-            microkit_pd_restart(s, SBX_ENTRY_POINT);
-            ser_puts("  Killed PID ");
-            ser_put_dec(pid);
-            ser_puts(" (");
-            ser_puts(slot_proc(s)->name);
-            ser_puts(")\n");
-            if (slot_proc(s)->foreground) {
-                orch_state = RUNNING;
-            }
-            sched_release_slot(&sched, s);
-            return;
+    case SYS_GETC: {
+        ring_buf_t *rx = (ring_buf_t *)rx_buf;
+        char c;
+        if (ring_get(rx, &c)) {
+            result = (int64_t)(unsigned char)c;
+        } else {
+            result = -2;  /* EAGAIN -- no data, sandbox should yield and retry */
         }
+        break;
     }
-    ser_puts("  No process with PID ");
-    ser_put_dec(pid);
+    case 32: { /* SYS_PUTS_DIRECT */
+        volatile char *str = (volatile char *)(sandbox_io + 0x200);
+        char buf[256];
+        int i = 0;
+        while (str[i] && i < 255) { buf[i] = str[i]; i++; }
+        buf[i] = '\0';
+        ser_puts(buf);
+        ser_flush();
+        result = 0;
+        break;
+    }
+
+    /* ---- Filesystem ---- */
+    case SYS_OPEN: {
+        volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        uint32_t flags = (uint32_t)seL4_GetMR(1);
+        char raw_name[256];
+        int i = 0;
+        while (path[i] && i < 255) { raw_name[i] = path[i]; i++; }
+        raw_name[i] = '\0';
+        char fname[256];
+        resolve_path(raw_name, fname, sizeof(fname));
+        fs_set_creator_sync(current_uid, current_gid);
+        int st = fs_open_sync(fname);
+        if (st != 0 && (flags & 0x0040)) {
+            st = fs_create_sync(fname);
+        }
+        if (st == 0) {
+            result = RD32(fs_data, FS_FD);
+            seL4_SetMR(1, RD32(fs_data, FS_FILESIZE));
+        } else {
+            result = -1;
+        }
+        break;
+    }
+    case SYS_READ: {
+        uint32_t fd = (uint32_t)seL4_GetMR(1);
+        uint32_t offset = (uint32_t)seL4_GetMR(2);
+        uint32_t count = (uint32_t)seL4_GetMR(3);
+        int st = fs_read_sync(fd, offset, count);
+        if (st == 0) {
+            uint32_t got = RD32(fs_data, FS_LENGTH);
+            volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
+            volatile uint8_t *dst = (volatile uint8_t *)(sandbox_io + 0x200);
+            for (uint32_t j = 0; j < got && j < 3584; j++) dst[j] = src[j];
+            result = (int64_t)got;
+        } else {
+            result = -1;
+        }
+        break;
+    }
+    case SYS_WRITE: {
+        uint32_t fd = (uint32_t)seL4_GetMR(1);
+        uint32_t count = (uint32_t)seL4_GetMR(2);
+        if (count > 3584) count = 3584;
+        volatile uint8_t *src = (volatile uint8_t *)(sandbox_io + 0x200);
+        volatile uint8_t *dst = (volatile uint8_t *)(fs_data + FS_DATA);
+        for (uint32_t j = 0; j < count; j++) dst[j] = src[j];
+        int st = fs_write_sync(fd, count);
+        if (st == 0) {
+            result = (int64_t)RD32(fs_data, FS_LENGTH);
+        } else {
+            result = -1;
+        }
+        break;
+    }
+    case SYS_CLOSE: {
+        uint32_t fd = (uint32_t)seL4_GetMR(1);
+        result = fs_close_sync(fd);
+        break;
+    }
+    case SYS_UNLINK: {
+        volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        char raw[256], fname[256];
+        int i = 0;
+        while (path[i] && i < 255) { raw[i] = path[i]; i++; }
+        raw[i] = '\0';
+        resolve_path(raw, fname, sizeof(fname));
+        result = fs_delete_sync(fname);
+        break;
+    }
+    case SYS_READDIR: {
+        volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        char dir[256];
+        int i = 0;
+        while (path[i] && i < 255) { dir[i] = path[i]; i++; }
+        dir[i] = '\0';
+        char fname[256];
+        resolve_path(dir, fname, sizeof(fname));
+        int st = fs_list_sync(fname);
+        if (st == 0) {
+            uint32_t count = RD32(fs_data, FS_LENGTH);
+            uint32_t total = RD32(fs_data, FS_FILESIZE);
+            volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
+            volatile uint8_t *dst = (volatile uint8_t *)(sandbox_io + 0x200);
+            if (total > 3584) total = 3584;
+            for (uint32_t j = 0; j < total; j++) dst[j] = src[j];
+            seL4_SetMR(1, (seL4_Word)total);
+            result = (int64_t)count;
+        } else {
+            result = -1;
+        }
+        break;
+    }
+    case SYS_STAT: {
+        volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        char raw[256], fname[256];
+        int i = 0;
+        while (path[i] && i < 255) { raw[i] = path[i]; i++; }
+        raw[i] = '\0';
+        resolve_path(raw, fname, sizeof(fname));
+        result = fs_stat_sync(fname);
+        if (result == 0) {
+            volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
+            volatile uint8_t *dst = (volatile uint8_t *)(sandbox_io + 0x200);
+            for (int j = 0; j < 64; j++) dst[j] = src[j];
+        }
+        break;
+    }
+    case SYS_MKDIR: {
+        volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        char raw[256], fname[256];
+        int i = 0;
+        while (path[i] && i < 255) { raw[i] = path[i]; i++; }
+        raw[i] = '\0';
+        resolve_path(raw, fname, sizeof(fname));
+        result = fs_mkdir_sync(fname);
+        break;
+    }
+    case SYS_RMDIR: {
+        volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        char raw[256], fname[256];
+        int i = 0;
+        while (path[i] && i < 255) { raw[i] = path[i]; i++; }
+        raw[i] = '\0';
+        resolve_path(raw, fname, sizeof(fname));
+        result = fs_rmdir_sync(fname);
+        break;
+    }
+    case SYS_RENAME: {
+        volatile char *buf = (volatile char *)(sandbox_io + 0x200);
+        char old_raw[128], new_raw[128];
+        char old_path[256], new_path[256];
+        int i = 0, j = 0;
+        while (buf[i] && i < 127) { old_raw[j++] = buf[i++]; }
+        old_raw[j] = '\0';
+        i++;  /* skip null separator */
+        j = 0;
+        while (buf[i] && i < 255 && j < 127) { new_raw[j++] = buf[i++]; }
+        new_raw[j] = '\0';
+        resolve_path(old_raw, old_path, sizeof(old_path));
+        resolve_path(new_raw, new_path, sizeof(new_path));
+        result = fs_rename_sync(old_path, new_path);
+        break;
+    }
+    case SYS_LSEEK: {
+        result = 0;  /* handled client-side */
+        break;
+    }
+    case SYS_ACCESS: {
+        result = 0;  /* TODO: real access check */
+        break;
+    }
+    case SYS_GETCWD: {
+        volatile char *dst = (volatile char *)(sandbox_io + 0x200);
+        int i = 0;
+        while (cwd[i] && i < 255) { dst[i] = cwd[i]; i++; }
+        dst[i] = '\0';
+        result = 0;
+        break;
+    }
+    case SYS_CHDIR: {
+        volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        char raw[256], fname[256];
+        int i = 0;
+        while (path[i] && i < 255) { raw[i] = path[i]; i++; }
+        raw[i] = '\0';
+        resolve_path(raw, fname, sizeof(fname));
+        /* Verify directory exists */
+        int st = fs_stat_sync(fname);
+        if (st == 0) {
+            int k = 0;
+            while (fname[k] && k < 255) { cwd[k] = fname[k]; k++; }
+            cwd[k] = '\0';
+            result = 0;
+        } else {
+            result = -1;
+        }
+        break;
+    }
+    case SYS_CHMOD: {
+        volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        uint32_t mode = (uint32_t)seL4_GetMR(1);
+        char raw[256], fname[256];
+        int i = 0;
+        while (path[i] && i < 255) { raw[i] = path[i]; i++; }
+        raw[i] = '\0';
+        resolve_path(raw, fname, sizeof(fname));
+        result = fs_chmod_sync(fname, mode);
+        break;
+    }
+    case SYS_CHOWN: {
+        volatile char *path = (volatile char *)(sandbox_io + 0x200);
+        uint32_t uid = (uint32_t)seL4_GetMR(1);
+        uint32_t gid = (uint32_t)seL4_GetMR(2);
+        char raw[256], fname[256];
+        int i = 0;
+        while (path[i] && i < 255) { raw[i] = path[i]; i++; }
+        raw[i] = '\0';
+        resolve_path(raw, fname, sizeof(fname));
+        result = fs_chown_sync(fname, uid, gid);
+        break;
+    }
+
+    /* ---- Exec: load binary from fs into sandbox_mem ---- */
+    case SYS_EXEC: {
+        volatile char *fn = (volatile char *)(sandbox_io + 0x200);
+        char raw[256], path[256];
+        int i = 0;
+        while (fn[i] && i < 255) { raw[i] = fn[i]; i++; }
+        raw[i] = '\0';
+        resolve_path(raw, path, sizeof(path));
+        /* Offset into sandbox_mem where code should be loaded */
+        uint64_t mem_offset = seL4_GetMR(1);
+        volatile uint8_t *code_dst = (volatile uint8_t *)(sandbox_mem + mem_offset);
+        int st = fs_open_sync(path);
+        if (st != 0) { result = -1; break; }
+        uint32_t fd = RD32(fs_data, FS_FD);
+        uint32_t file_size = RD32(fs_data, FS_FILESIZE);
+        uint32_t loaded = 0;
+        while (loaded < file_size) {
+            uint32_t chunk = file_size - loaded;
+            if (chunk > 4096) chunk = 4096;
+            int r = fs_read_sync(fd, loaded, chunk);
+            if (r != 0) break;
+            uint32_t got = RD32(fs_data, FS_LENGTH);
+            volatile uint8_t *src = (volatile uint8_t *)(fs_data + FS_DATA);
+            for (uint32_t j = 0; j < got; j++) code_dst[loaded + j] = src[j];
+            loaded += got;
+            if (got == 0) break;
+        }
+        fs_close_sync(fd);
+        seL4_SetMR(1, (seL4_Word)loaded);
+        result = (loaded > 0) ? 0 : -1;
+        break;
+    }
+
+    /* ---- Time ---- */
+    case SYS_TIME: {
+        uint64_t ts = arch_timestamp();
+        uint64_t freq = arch_timer_freq();
+        uint64_t secs = ts / freq;
+        seL4_SetMR(1, (seL4_Word)secs);
+        seL4_SetMR(2, (seL4_Word)freq);
+        result = 0;
+        break;
+    }
+
+    /* ---- Identity (stub -- sandbox kernel tracks real uid per process) ---- */
+    case SYS_GETUID:  result = current_uid; break;
+    case SYS_GETGID:  result = current_gid; break;
+    case SYS_GETEUID: result = current_uid; break;
+    case SYS_GETEGID: result = current_gid; break;
+
+    default:
+        ser_puts("ORCH: unknown syscall ");
+        ser_put_dec((unsigned int)syscall_nr);
+        ser_puts("\n");
+        ser_flush();
+        result = -1;
+        break;
+    }
+
+    seL4_SetMR(0, (seL4_Word)result);
+    return microkit_msginfo_new(0, 4);
+}
+
+/* ---- Init ---- */
+void init(void) {
+    ser_puts("\n============ Open Aries ================\n");
+    ser_puts("  " AIOS_VERSION_FULL "\n");
+    ser_puts("  Kernel:  seL4 14.0.0 (Microkit 2.1.0)\n");
+    ser_puts("  CPUs:    ");
+    ser_put_dec(CONFIG_MAX_NUM_NODES);
+    ser_puts(" cores (SMP)\n");
+    ser_puts("  Sandbox: 1 PD (128 MB user-space kernel)\n");
+    const char *fsname = fs_fsinfo_sync();
+    ser_puts("  FS:      ");
+    ser_puts(fsname);
     ser_puts("\n");
+    ser_puts("  Drivers: PL011 UART, virtio-blk, virtio-net\n");
+    ser_puts("============ Open Aries ================\n\n");
+    ser_flush();
 }
 
-/* ── Command: ps ─────────────────────────────────────── */
-static void cmd_ps(void) {
-    ser_puts("  SLOT  PID  NAME\n");
-    int any = 0;
-    for (int i = 0; i < NUM_SANDBOXES; i++) {
-        if (slot_in_use(i)) {
-            ser_puts("  ");
-            ser_put_dec((unsigned int)i);
-            ser_puts("     ");
-            ser_put_dec(slot_proc(i)->pid);
-            ser_puts("  ");
-            ser_puts(slot_proc(i)->name);
-            if (slot_proc(i)->foreground) ser_puts(" (fg)");
-            else ser_puts(" (bg)");
-            ser_puts("\n");
-            any = 1;
-        }
-    }
-    if (!any) ser_puts("  (no running processes)\n");
+/* ---- Notification handler ---- */
+void notified(microkit_channel ch) {
+    (void)ch;
+    /* Serial and sandbox notifications -- no action needed,
+     * sandbox uses PPC for all communication */
 }
 
-/* ── Command: help ───────────────────────────────────── */
-
-
-#include "orch/orch_auth_cmd.inc"
-#include "orch/orch_fs_cmd.inc"
-#include "orch/orch_exec.inc"
-#include "orch/orch_dispatch.inc"
-#include "orch/orch_input.inc"
-#include "orch/orch_syscall.inc"
-
-#include "orch/orch_log.inc"
-#include "orch/orch_main.inc"
-
-/* ── Queue drain: load next queued process into a freed slot ── */
-static void try_load_queued(int freed_slot) {
-    int next_idx = sched_drain_queue(&sched);
-    if (next_idx < 0) return;  /* Nothing queued or ready */
-
-    sched_proc_t *p = &sched.procs[next_idx];
-
-    uintptr_t cur_sio  = sbx_io[freed_slot];
-    uintptr_t cur_scode = sbx_code[freed_slot];
-
-    if (p->state == PROC_READY) {
-        /* ── Resume from swap ─────────────────────────── */
-
-        uint32_t swap_off = p->swap_offset;
-        volatile uint8_t *swap_base = (volatile uint8_t *)swap_region;
-
-        /* Copy code from swap back to sandbox */
-        volatile uint8_t *dst_code = (volatile uint8_t *)cur_scode;
-        for (uint32_t j = 0; j < p->swap_code_sz; j++)
-            dst_code[j] = swap_base[swap_off + j];
-
-        /* Copy heap from swap back to sandbox */
-        volatile uint8_t *dst_heap = (volatile uint8_t *)sbx_heap[freed_slot];
-        uint32_t heap_swap_off = swap_off + p->swap_code_sz;
-        for (uint32_t j = 0; j < p->swap_heap_sz; j++)
-            dst_heap[j] = swap_base[heap_swap_off + j];
-
-        /* Free swap space */
-        sched_swap_free(&sched, next_idx);
-
-        /* Assign slot and tell sandbox to resume */
-        sched_assign_slot(&sched, next_idx, freed_slot);
-        WR32(cur_sio, SBX_CODE_SIZE, p->loaded_bytes);
-        WR32(cur_sio, SBX_CMD, SBX_CMD_RESUME);
-
-        /* Restart the sandbox PD (it may be in a halted/exited state) */
-        microkit_pd_stop(freed_slot);
-        microkit_pd_restart(freed_slot, SBX_ENTRY_POINT);
-
-        /* After restart, sandbox runs init() then waits for notification */
-        microkit_notify(sbx_channel[freed_slot]);
-        return;
-    }
-
-    /* ── Load from disk (PROC_QUEUED) ─────────────── */
-    int st = fs_open_sync(p->filename);
-    if (st < 0) {
-        /* Try /bin/ prefix */
-        char bin_path[128];
-        bin_path[0]='/'; bin_path[1]='b'; bin_path[2]='i';
-        bin_path[3]='n'; bin_path[4]='/';
-        int j = 5;
-        for (int k = 0; p->filename[k] && j < 120; k++) bin_path[j++] = p->filename[k];
-        bin_path[j] = '\0';
-        st = fs_open_sync(bin_path);
-    }
-    if (st < 0) {
-        ser_puts("SCHED: failed to load queued process: ");
-        ser_puts(p->filename);
-        ser_puts("\n");
-        p->state = PROC_FREE;
-        return;
-    }
-
-    int fd = st;
-    volatile uint8_t *code_dst = (volatile uint8_t *)cur_scode;
-
-    uint32_t offset = 0;
-    while (1) {
-        uint32_t chunk = 0x400000 - offset;
-        if (chunk > 65024) chunk = 65024;
-        st = fs_read_sync(fd, offset, chunk);
-        if (st < 0) break;
-        uint32_t got = RD32(fs_data, 0);
-        if (got == 0) break;
-        volatile uint8_t *src = (volatile uint8_t *)(fs_data + 4);
-        for (uint32_t j = 0; j < got; j++) code_dst[offset + j] = src[j];
-        offset += got;
-        if (got < chunk) break;
-    }
-    fs_close_sync(fd);
-
-    if (offset == 0) {
-        ser_puts("SCHED: empty binary: ");
-        ser_puts(p->filename);
-        ser_puts("\n");
-        p->state = PROC_FREE;
-        return;
-    }
-
-    p->loaded_bytes = offset;
-    sched_assign_slot(&sched, next_idx, freed_slot);
-
-    WR32(cur_sio, SBX_CODE_SIZE, offset);
-    WR32(cur_sio, SBX_CMD, SBX_CMD_RUN);
-    microkit_notify(sbx_channel[freed_slot]);
+/* ---- Fault handler (sandbox crash) ---- */
+seL4_Bool fault(microkit_child child, microkit_msginfo msginfo, microkit_msginfo *reply_msginfo) {
+    (void)reply_msginfo;
+    uint64_t fault_ip   = seL4_GetMR(0);
+    uint64_t fault_addr = seL4_GetMR(1);
+    ser_puts("\nFAULT: sandbox crash at pc=");
+    ser_put_hex64(fault_ip);
+    ser_puts(" addr=");
+    ser_put_hex64(fault_addr);
+    ser_puts("\n");
+    ser_flush();
+    (void)msginfo;
+    microkit_pd_restart(child, 0x200000);
+    return seL4_True;
 }
-
-
