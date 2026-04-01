@@ -9,7 +9,12 @@
 
 #include <stdint.h>
 
-/* Process context — callee-saved registers per AAPCS64 */
+/* Process context -- full integer + FP/SIMD context
+ *
+ * See setjmp.S for authoritative layout.
+ * Thread ctx buffer: 96 x uint64_t = 768 bytes.
+ *
+ * Original Process context — callee-saved registers per AAPCS64 */
 typedef struct {
     uint64_t x19;
     uint64_t x20;

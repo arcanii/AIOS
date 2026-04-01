@@ -68,10 +68,12 @@ typedef struct {
     int tid;          /* thread id within process */
     uintptr_t stack_base;
     uint32_t stack_size;
-    uint64_t ctx[24]; /* setjmp buffer: callee-saved regs */
+    uint64_t ctx[96]; /* setjmp buffer: integer + FP/SIMD + FPCR/FPSR */
     void *retval;
     int join_waiting; /* thread waiting on join, -1 if none */
     int fresh;        /* 1 = never run, needs direct jump */
+    int priority;     /* scheduling priority (higher = more important, default 0) */
+    int wait_channel; /* -1 = not waiting, >= 0 = blocked on resource ID */
 } thread_t;
 
 #define TH_FREE     0
@@ -716,10 +718,12 @@ static int ks_pthread_create(unsigned long *thread_out, const void *attr,
     th->retval = (void *)0;
     th->join_waiting = -1;
     th->fresh = 1;
+    th->priority = 0;
+    th->wait_channel = -1;
 
     /* Setup context: x19 = arg, x20 = start_routine */
     /* _thread_start trampoline moves x19->x0 then blr x20 */
-    for (int k = 0; k < 24; k++) th->ctx[k] = 0;
+    for (int k = 0; k < 96; k++) th->ctx[k] = 0;
     uintptr_t sp_top = (stack + DEFAULT_STACK_SZ) & ~15UL;
     th->ctx[12] = sp_top;                        /* sp */
     th->ctx[11] = (uint64_t)_pthread_start;      /* x30/lr = pthread trampoline */
@@ -1147,7 +1151,7 @@ static int load_program(const char *path, int parent_pid) {
     /* Entry point: int _start(aios_syscalls_t *sys) */
     /* x30 (lr) = entry point, sp = top of stack, x19 = arg (sys ptr) */
     /* TRAMPOLINE_FIXED */
-    for (int k = 0; k < 24; k++) th->ctx[k] = 0;
+    for (int k = 0; k < 96; k++) th->ctx[k] = 0;
     uintptr_t entry = code_base;
     uintptr_t sp_top = (stack_base + DEFAULT_STACK_SZ) & ~15UL;
     th->ctx[12] = sp_top;                        /* sp */
@@ -1183,7 +1187,7 @@ void init(void) {
     for (int i = 0; i < MAX_THREADS; i++) {
         threads[i].state = TH_FREE;
         threads[i].fresh = 0;
-        for (int k = 0; k < 24; k++) threads[i].ctx[k] = 0;
+        for (int k = 0; k < 96; k++) threads[i].ctx[k] = 0;
     }
     current_thread = -1;
     next_pid = 1;
