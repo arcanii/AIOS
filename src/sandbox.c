@@ -81,6 +81,8 @@ typedef struct {
 #define TH_RUNNING  2
 #define TH_BLOCKED  3
 #define TH_FINISHED 4
+#define TH_BLOCKED_MTX 5   /* blocked waiting for mutex */
+#define TH_BLOCKED_COND 6  /* blocked waiting for condvar */
 
 /* ---- Process state ---- */
 #define MAX_FDS 16
@@ -170,11 +172,23 @@ static void sched_yield(void) {
         }
     }
 
-    /* Round-robin: find next READY thread */
+    /* Priority-aware round-robin: pick highest priority READY thread
+     * On tie, round-robin among same priority (fairness) */
+    int best_idx = -1;
+    int best_priority = -1;
     int start = (current_thread + 1) % MAX_THREADS;
     for (int i = 0; i < MAX_THREADS; i++) {
         int idx = (start + i) % MAX_THREADS;
         if (threads[idx].state == TH_READY) {
+            if (threads[idx].priority > best_priority) {
+                best_priority = threads[idx].priority;
+                best_idx = idx;
+            }
+        }
+    }
+    if (best_idx >= 0) {
+        {
+            int idx = best_idx;
             current_thread = idx;
             threads[idx].state = TH_RUNNING;
                 if (threads[idx].fresh) {
@@ -792,13 +806,19 @@ static int ks_pthread_mutex_init(void *mutex, const void *attr) {
 static int ks_pthread_mutex_lock(void *mutex) {
     if (!mutex) return 22;
     int *m = (int *)mutex;
-    /* Yield-spin until we acquire */
     while (1) {
         if (m[0] == MTX_UNLOCKED) {
             m[0] = current_thread;
             return 0;
         }
-        /* Owned by someone else -- yield and retry */
+        /* Block this thread on the mutex instead of spinning */
+        if (current_thread >= 0) {
+            threads[current_thread].state = TH_BLOCKED_MTX;
+            threads[current_thread].wait_channel = (int)(uintptr_t)mutex;
+            sched_yield();
+            /* Resumed -- re-check lock */
+            continue;
+        }
         sched_yield();
     }
 }
@@ -808,6 +828,22 @@ static int ks_pthread_mutex_unlock(void *mutex) {
     int *m = (int *)mutex;
     if (m[0] != current_thread) return 1; /* EPERM - not owner */
     m[0] = MTX_UNLOCKED;
+    /* Wake highest-priority thread blocked on this mutex */
+    int wake_idx = -1;
+    int wake_pri = -1;
+    int chan = (int)(uintptr_t)mutex;
+    for (int i = 0; i < MAX_THREADS; i++) {
+        if (threads[i].state == TH_BLOCKED_MTX &&
+            threads[i].wait_channel == chan &&
+            threads[i].priority > wake_pri) {
+            wake_pri = threads[i].priority;
+            wake_idx = i;
+        }
+    }
+    if (wake_idx >= 0) {
+        threads[wake_idx].state = TH_READY;
+        threads[wake_idx].wait_channel = -1;
+    }
     return 0;
 }
 
@@ -837,10 +873,14 @@ static int ks_pthread_cond_wait(void *cond, void *mutex) {
     int *c = (int *)cond;
     int snapshot = c[0];
 
-    /* Release mutex, wait for signal, re-acquire */
+    /* Release mutex, block on condvar, re-acquire when signaled */
     ks_pthread_mutex_unlock(mutex);
 
     while (c[0] == snapshot) {
+        if (current_thread >= 0) {
+            threads[current_thread].state = TH_BLOCKED_COND;
+            threads[current_thread].wait_channel = (int)(uintptr_t)cond;
+        }
         sched_yield();
     }
 
@@ -851,14 +891,39 @@ static int ks_pthread_cond_wait(void *cond, void *mutex) {
 static int ks_pthread_cond_signal(void *cond) {
     if (!cond) return 22;
     int *c = (int *)cond;
-    c[0]++; /* wake one waiter (yield-spin will notice) */
+    c[0]++;
+    /* Wake one highest-priority thread blocked on this condvar */
+    int wake_idx = -1;
+    int wake_pri = -1;
+    int chan = (int)(uintptr_t)cond;
+    for (int i = 0; i < MAX_THREADS; i++) {
+        if (threads[i].state == TH_BLOCKED_COND &&
+            threads[i].wait_channel == chan &&
+            threads[i].priority > wake_pri) {
+            wake_pri = threads[i].priority;
+            wake_idx = i;
+        }
+    }
+    if (wake_idx >= 0) {
+        threads[wake_idx].state = TH_READY;
+        threads[wake_idx].wait_channel = -1;
+    }
     return 0;
 }
 
 static int ks_pthread_cond_broadcast(void *cond) {
     if (!cond) return 22;
     int *c = (int *)cond;
-    c[0]++; /* wake all waiters */
+    c[0]++;
+    /* Wake ALL threads blocked on this condvar */
+    int chan = (int)(uintptr_t)cond;
+    for (int i = 0; i < MAX_THREADS; i++) {
+        if (threads[i].state == TH_BLOCKED_COND &&
+            threads[i].wait_channel == chan) {
+            threads[i].state = TH_READY;
+            threads[i].wait_channel = -1;
+        }
+    }
     return 0;
 }
 
@@ -879,7 +944,11 @@ static int ks_pthread_rwlock_init(void *rwlock, const void *attr) {
 static int ks_pthread_rwlock_rdlock(void *rwlock) {
     if (!rwlock) return 22;
     int *rw = (int *)rwlock;
-    while (rw[1] >= 0) { /* writer active, wait */
+    while (rw[1] >= 0) {
+        if (current_thread >= 0) {
+            threads[current_thread].state = TH_BLOCKED_MTX;
+            threads[current_thread].wait_channel = (int)(uintptr_t)rwlock;
+        }
         sched_yield();
     }
     rw[0]++;
@@ -889,7 +958,11 @@ static int ks_pthread_rwlock_rdlock(void *rwlock) {
 static int ks_pthread_rwlock_wrlock(void *rwlock) {
     if (!rwlock) return 22;
     int *rw = (int *)rwlock;
-    while (rw[1] >= 0 || rw[0] > 0) { /* writer or readers active */
+    while (rw[1] >= 0 || rw[0] > 0) {
+        if (current_thread >= 0) {
+            threads[current_thread].state = TH_BLOCKED_MTX;
+            threads[current_thread].wait_channel = (int)(uintptr_t)rwlock;
+        }
         sched_yield();
     }
     rw[1] = current_thread;
@@ -900,9 +973,18 @@ static int ks_pthread_rwlock_unlock(void *rwlock) {
     if (!rwlock) return 22;
     int *rw = (int *)rwlock;
     if (rw[1] == current_thread) {
-        rw[1] = -1; /* release write lock */
+        rw[1] = -1;
     } else if (rw[0] > 0) {
-        rw[0]--; /* release read lock */
+        rw[0]--;
+    }
+    /* Wake all threads blocked on this rwlock */
+    int chan = (int)(uintptr_t)rwlock;
+    for (int i = 0; i < MAX_THREADS; i++) {
+        if (threads[i].state == TH_BLOCKED_MTX &&
+            threads[i].wait_channel == chan) {
+            threads[i].state = TH_READY;
+            threads[i].wait_channel = -1;
+        }
     }
     return 0;
 }
@@ -1298,14 +1380,20 @@ void notified(microkit_channel ch) {
         if (setjmp(threads[current_thread].ctx) != 0) {
             return;  /* resumed */
         }
-        /* Pick next ready thread */
+        /* Pick highest priority ready thread */
+        int best = -1;
+        int bpri = -1;
         for (int i = 0; i < MAX_THREADS; i++) {
             int idx = (start + i) % MAX_THREADS;
-            if (threads[idx].state == TH_READY) {
-                current_thread = idx;
-                threads[idx].state = TH_RUNNING;
-                longjmp(threads[idx].ctx, 1);
+            if (threads[idx].state == TH_READY && threads[idx].priority > bpri) {
+                bpri = threads[idx].priority;
+                best = idx;
             }
+        }
+        if (best >= 0) {
+            current_thread = best;
+            threads[best].state = TH_RUNNING;
+            longjmp(threads[best].ctx, 1);
         }
         /* Shouldn't reach here, but restore current if so */
         threads[current_thread].state = TH_RUNNING;
