@@ -79,20 +79,47 @@ static int internal_spawn(const char *filename, const char *args,
             fs_close_sync(fd);
             return -1;  /* Swap full */
         }
+        /* Set suspend flag — victim on another core may see it before we stop */
+        WR32(sbx_io[victim_slot], SBX_SUSPEND_FLAG, 1);
+        /* Brief yield to let victim on other core respond */
+        for (volatile int d = 0; d < 1000; d++) {}
         microkit_pd_stop(victim_slot);
-        volatile uint8_t *swap = (volatile uint8_t *)swap_region;
-        volatile uint8_t *vc = (volatile uint8_t *)sbx_code[victim_slot];
-        for (uint32_t j = 0; j < code_sz; j++) swap[vp->swap_offset + j] = vc[j];
-        volatile uint8_t *vh = (volatile uint8_t *)sbx_heap[victim_slot];
-        uint32_t ho = vp->swap_offset + code_sz;
-        for (uint32_t j = 0; j < heap_sz; j++) swap[ho + j] = vh[j];
-        vp->state = PROC_READY;
+        /* Check if victim has valid saved state */
+        {
+            volatile uint32_t *ps_magic = (volatile uint32_t *)sbx_heap[victim_slot];
+            if (*ps_magic == 0x50524F43U) {  /* PROC_STATE_MAGIC */
+                /* Valid state — save to swap for later resume */
+                volatile uint8_t *swap = (volatile uint8_t *)swap_region;
+                volatile uint8_t *vc = (volatile uint8_t *)sbx_code[victim_slot];
+                for (uint32_t j = 0; j < code_sz; j++) swap[vp->swap_offset + j] = vc[j];
+                volatile uint32_t *ps_hu = (volatile uint32_t *)(sbx_heap[victim_slot] + 8);
+                uint32_t real_heap = *ps_hu + 4096;
+                if (real_heap > heap_sz) heap_sz = real_heap;
+                if (heap_sz > SCHED_HEAP_SIZE) heap_sz = SCHED_HEAP_SIZE;
+                volatile uint8_t *vh = (volatile uint8_t *)sbx_heap[victim_slot];
+                uint32_t ho = vp->swap_offset + code_sz;
+                for (uint32_t j = 0; j < heap_sz; j++) swap[ho + j] = vh[j];
+                vp->swap_code_sz = code_sz;
+                vp->swap_heap_sz = heap_sz;
+                vp->state = PROC_READY;
+            } else {
+                /* No valid state — requeue for restart from disk */
+                int vi = sched.slot_to_proc[victim_slot];
+                if (vi >= 0) sched_swap_free(&sched, vi);
+                vp->state = PROC_QUEUED;
+            }
+        }
         vp->slot = -1;
         sched.slot_to_proc[victim_slot] = -1;
-        microkit_pd_restart(victim_slot, SBX_ENTRY_POINT);
+        microkit_pd_stop(victim_slot);  /* stop old PD; restart after code loaded */
+        /* Clear stale proc_state magic so fresh program sees clean heap */
+        WR32(sbx_heap[slot], 0, 0);  /* zero magic field */
         slot = victim_slot;
     }
 
+    /* Clear stale state before loading new program */
+    WR32(sbx_heap[slot], 0, 0);  /* clear proc_state magic */
+    WR32(sbx_io[slot], SBX_SUSPEND_FLAG, 0);  /* clear suspend flag */
     uintptr_t cur_sio = sbx_io[slot];
     uintptr_t cur_scode = sbx_code[slot];
     volatile uint8_t *code_dst = (volatile uint8_t *)cur_scode;
@@ -275,17 +302,41 @@ static void cmd_exec(const char *filename) {
             fs_close_sync(fd);
             return;
         }
+        /* Set suspend flag — victim on another core may see it before we stop */
+        WR32(sbx_io[victim_slot], SBX_SUSPEND_FLAG, 1);
+        /* Brief yield to let victim on other core respond */
+        for (volatile int d = 0; d < 1000; d++) {}
         microkit_pd_stop(victim_slot);
-        volatile uint8_t *swap = (volatile uint8_t *)swap_region;
-        volatile uint8_t *vc = (volatile uint8_t *)sbx_code[victim_slot];
-        for (uint32_t j = 0; j < code_sz; j++) swap[vp->swap_offset + j] = vc[j];
-        volatile uint8_t *vh = (volatile uint8_t *)sbx_heap[victim_slot];
-        uint32_t ho = vp->swap_offset + code_sz;
-        for (uint32_t j = 0; j < heap_sz; j++) swap[ho + j] = vh[j];
-        vp->state = PROC_READY;
+        /* Check if victim has valid saved state */
+        {
+            volatile uint32_t *ps_magic = (volatile uint32_t *)sbx_heap[victim_slot];
+            if (*ps_magic == 0x50524F43U) {  /* PROC_STATE_MAGIC */
+                /* Valid state — save to swap for later resume */
+                volatile uint8_t *swap = (volatile uint8_t *)swap_region;
+                volatile uint8_t *vc = (volatile uint8_t *)sbx_code[victim_slot];
+                for (uint32_t j = 0; j < code_sz; j++) swap[vp->swap_offset + j] = vc[j];
+                volatile uint32_t *ps_hu = (volatile uint32_t *)(sbx_heap[victim_slot] + 8);
+                uint32_t real_heap = *ps_hu + 4096;
+                if (real_heap > heap_sz) heap_sz = real_heap;
+                if (heap_sz > SCHED_HEAP_SIZE) heap_sz = SCHED_HEAP_SIZE;
+                volatile uint8_t *vh = (volatile uint8_t *)sbx_heap[victim_slot];
+                uint32_t ho = vp->swap_offset + code_sz;
+                for (uint32_t j = 0; j < heap_sz; j++) swap[ho + j] = vh[j];
+                vp->swap_code_sz = code_sz;
+                vp->swap_heap_sz = heap_sz;
+                vp->state = PROC_READY;
+            } else {
+                /* No valid state — requeue for restart from disk */
+                int vi = sched.slot_to_proc[victim_slot];
+                if (vi >= 0) sched_swap_free(&sched, vi);
+                vp->state = PROC_QUEUED;
+            }
+        }
         vp->slot = -1;
         sched.slot_to_proc[victim_slot] = -1;
-        microkit_pd_restart(victim_slot, SBX_ENTRY_POINT);
+        microkit_pd_stop(victim_slot);  /* stop old PD; restart after code loaded */
+        /* Clear stale proc_state magic so fresh program sees clean heap */
+        WR32(sbx_heap[slot], 0, 0);  /* zero magic field */
         slot = victim_slot;
         ser_puts("  Preempted PID ");
         ser_put_dec((unsigned int)vp->pid);
@@ -293,6 +344,9 @@ static void cmd_exec(const char *filename) {
         ser_put_dec((unsigned int)victim_slot);
         ser_puts("\n");
     }
+    /* Clear stale state before loading new program */
+    WR32(sbx_heap[slot], 0, 0);  /* clear proc_state magic */
+    WR32(sbx_io[slot], SBX_SUSPEND_FLAG, 0);  /* clear suspend flag */
     uintptr_t cur_sio = sbx_io[slot];
     uintptr_t cur_scode = sbx_code[slot];
     volatile uint8_t *code_dst = (volatile uint8_t *)cur_scode;

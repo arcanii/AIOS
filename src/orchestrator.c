@@ -10,6 +10,12 @@
 #define SBX_ENTRY_POINT 0x200000  /* sandbox.elf entry point */
 #include "sys/syscall.h"
 #include "aios/version.h"
+#include "aios/util.h"
+
+/* str_starts_with mapped to aios_str_starts_with */
+#ifndef str_starts_with
+#define str_starts_with aios_str_starts_with
+#endif
 #include <kernel/gen_config.h>
 #include "aios/ring.h"
 #include "arch/aarch64/timer.h"
@@ -98,32 +104,7 @@ static int ch_to_slot(microkit_channel ch) {
     return -1;
 }
 
-/* ── Memory helpers ──────────────────────────────────── */
 
-/* ── Memory helpers ── */
-static __attribute__((unused)) void my_memcpy(void *dst, const void *src, unsigned long n) {
-    char *d = dst; const char *s = src;
-    while (n--) *d++ = *s++;
-}
-static __attribute__((unused)) void my_memset(void *dst, int c, unsigned long n) {
-
-/* Provide memset for microkit_pd_restart (seL4_UserContext = {0}) */
-
-    char *d = dst;
-    while (n--) *d++ = (char)c;
-}
-static int my_strlen(const char *s) {
-    int n = 0; while (*s++) n++;
-    return n;
-}
-static int my_strcmp(const char *a, const char *b) {
-    while (*a && *a == *b) { a++; b++; }
-    return (unsigned char)*a - (unsigned char)*b;
-}
-static int str_starts_with(const char *s, const char *prefix) {
-    while (*prefix) { if (*s++ != *prefix++) return 0; }
-    return 1;
-}
 
 
 #include "orch/orch_serial.inc"

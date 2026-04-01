@@ -48,23 +48,160 @@ static uintptr_t stack_top = 0;  /* SP at run_program entry */
 static uint32_t fd_pos[MAX_FDS];
 static uint32_t fd_size[MAX_FDS];
 
-static void *sbx_malloc(unsigned long size) {
-    /* Simple bump allocator — no free */
-    size = (size + 15) & ~15UL;  /* align to 16 */
-    if (heap_used + size > HEAP_SIZE) return (void *)0;
-    void *ptr = (void *)(sandbox_heap + heap_used);
-    heap_used += size;
-    return ptr;
+/* ---- Free-list allocator ---------------------------------------- */
+#define ALLOC_ALIGN      16
+#define ALLOC_HDR_SIZE   16
+#define FREE_BLOCK_MAGIC 0x46524545U
+#define USED_BLOCK_MAGIC 0x55534544U
+
+/* Persist free_head in heap so it survives suspend/resume */
+/* Stored at a fixed offset inside PROC_STATE_RESERVE area */
+#define ALLOC_PERSIST_OFF  (PROC_STATE_RESERVE - 16)
+#define ALLOC_PERSIST_MAGIC 0x414C4F43U  /* ALOC */
+
+typedef struct alloc_hdr {
+    uint32_t magic;
+    uint32_t size;
+    uint32_t next_off;
+    uint32_t _pad;
+} alloc_hdr_t;
+
+static uint32_t free_head = 0;
+static int alloc_initialized = 0;
+
+static void alloc_init(void) {
+    uint32_t start = (PROC_STATE_RESERVE + ALLOC_ALIGN - 1) & ~(ALLOC_ALIGN - 1);
+    uint32_t usable = HEAP_SIZE - start - ALLOC_HDR_SIZE;
+    alloc_hdr_t *h = (alloc_hdr_t *)(sandbox_heap + start);
+    h->magic = FREE_BLOCK_MAGIC;
+    h->size = usable;
+    h->next_off = 0;
+    h->_pad = 0;
+    free_head = start;
+    heap_used = start;
+    alloc_initialized = 1;
+    /* Persist free_head to heap for suspend/resume */
+    *(volatile uint32_t *)(sandbox_heap + ALLOC_PERSIST_OFF) = ALLOC_PERSIST_MAGIC;
+    *(volatile uint32_t *)(sandbox_heap + ALLOC_PERSIST_OFF + 4) = free_head;
 }
+
+static void *sbx_malloc(unsigned long req_size) {
+    if (!alloc_initialized) alloc_init();
+    if (req_size == 0) return (void *)0;
+    uint32_t size = (uint32_t)((req_size + ALLOC_ALIGN - 1) & ~(ALLOC_ALIGN - 1));
+    if (size < ALLOC_HDR_SIZE) size = ALLOC_HDR_SIZE;
+
+    uint32_t prev_off = 0;
+    uint32_t cur_off = free_head;
+    int is_first = 1;
+
+    while (cur_off != 0) {
+        alloc_hdr_t *cur = (alloc_hdr_t *)(sandbox_heap + cur_off);
+        if (cur->magic != FREE_BLOCK_MAGIC) break;
+
+        if (cur->size >= size) {
+            uint32_t remainder = cur->size - size;
+            if (remainder > ALLOC_HDR_SIZE + ALLOC_ALIGN) {
+                uint32_t new_off = cur_off + ALLOC_HDR_SIZE + size;
+                alloc_hdr_t *nf = (alloc_hdr_t *)(sandbox_heap + new_off);
+                nf->magic = FREE_BLOCK_MAGIC;
+                nf->size = remainder - ALLOC_HDR_SIZE;
+                nf->next_off = cur->next_off;
+                nf->_pad = 0;
+                cur->size = size;
+                if (is_first) { free_head = new_off;
+                    *(volatile uint32_t *)(sandbox_heap + ALLOC_PERSIST_OFF + 4) = free_head; }
+                else {
+                    alloc_hdr_t *prev = (alloc_hdr_t *)(sandbox_heap + prev_off);
+                    prev->next_off = new_off;
+                }
+            } else {
+                if (is_first) { free_head = cur->next_off;
+                    *(volatile uint32_t *)(sandbox_heap + ALLOC_PERSIST_OFF + 4) = free_head; }
+                else {
+                    alloc_hdr_t *prev = (alloc_hdr_t *)(sandbox_heap + prev_off);
+                    prev->next_off = cur->next_off;
+                }
+            }
+            cur->magic = USED_BLOCK_MAGIC;
+            cur->next_off = 0;
+            uint32_t end = cur_off + ALLOC_HDR_SIZE + cur->size;
+            if (end > heap_used) heap_used = end;
+            return (void *)(sandbox_heap + cur_off + ALLOC_HDR_SIZE);
+        }
+        prev_off = cur_off;
+        cur_off = cur->next_off;
+        is_first = 0;
+    }
+    return (void *)0;
+}
+
 
 static void sbx_free(void *ptr) {
-    /* Bump allocator: free is a no-op */
-    (void)ptr;
+    if (!ptr) return;
+    uintptr_t addr = (uintptr_t)ptr;
+    if (addr < sandbox_heap + ALLOC_HDR_SIZE) return;
+    if (addr >= sandbox_heap + HEAP_SIZE) return;
+
+    uint32_t blk_off = (uint32_t)(addr - sandbox_heap) - ALLOC_HDR_SIZE;
+    alloc_hdr_t *blk = (alloc_hdr_t *)(sandbox_heap + blk_off);
+    if (blk->magic != USED_BLOCK_MAGIC) return;
+    blk->magic = FREE_BLOCK_MAGIC;
+
+    if (free_head == 0 || blk_off < free_head) {
+        blk->next_off = free_head;
+        free_head = blk_off;
+            *(volatile uint32_t *)(sandbox_heap + ALLOC_PERSIST_OFF + 4) = free_head;
+    } else {
+        uint32_t p = free_head;
+        while (1) {
+            alloc_hdr_t *ph = (alloc_hdr_t *)(sandbox_heap + p);
+            if (ph->next_off == 0 || ph->next_off > blk_off) {
+                blk->next_off = ph->next_off;
+                ph->next_off = blk_off;
+                break;
+            }
+            p = ph->next_off;
+        }
+    }
+
+    alloc_hdr_t *cur = (alloc_hdr_t *)(sandbox_heap + blk_off);
+    uint32_t next_expected = blk_off + ALLOC_HDR_SIZE + cur->size;
+    if (cur->next_off == next_expected) {
+        alloc_hdr_t *nxt = (alloc_hdr_t *)(sandbox_heap + cur->next_off);
+        if (nxt->magic == FREE_BLOCK_MAGIC) {
+            cur->size += ALLOC_HDR_SIZE + nxt->size;
+            cur->next_off = nxt->next_off;
+            nxt->magic = 0;
+        }
+    }
+
+    if (free_head != blk_off) {
+        uint32_t p = free_head;
+        while (p != 0) {
+            alloc_hdr_t *ph = (alloc_hdr_t *)(sandbox_heap + p);
+            if (ph->next_off == blk_off) {
+                uint32_t prev_end = p + ALLOC_HDR_SIZE + ph->size;
+                if (prev_end == blk_off && blk->magic == FREE_BLOCK_MAGIC) {
+                    ph->size += ALLOC_HDR_SIZE + blk->size;
+                    ph->next_off = blk->next_off;
+                    blk->magic = 0;
+                }
+                break;
+            }
+            p = ph->next_off;
+        }
+    }
 }
 
+
 static void sbx_heap_reset(void) {
-    heap_used = PROC_STATE_RESERVE;  /* Reserve space for proc_state_t + stack snapshot */
+    alloc_initialized = 0;
+    free_head = 0;
+    heap_used = PROC_STATE_RESERVE;
+    alloc_init();
 }
+
 
 static void *sbx_memcpy(void *dst, const void *src, unsigned long n) {
     unsigned char *d = (unsigned char *)dst;
@@ -181,6 +318,12 @@ unsigned long _log_get_time(void) {
 /* ── File I/O syscalls (PPC to orchestrator) ─────────── */
 
 static int sbx_open_flags(const char *path, int flags) {
+    /* Suspend checkpoint */
+    if (suspend_pending || RD32(sandbox_io, SBX_SUSPEND_FLAG)) {
+        suspend_pending = 0;
+        WR32(sandbox_io, SBX_SUSPEND_FLAG, 0);
+        save_and_yield(0);
+    }
     volatile char *dst = (volatile char *)(sandbox_io + SBX_PATH_BUF);
     int i = 0;
     while (path[i] && i < 255) { dst[i] = path[i]; i++; }
@@ -222,6 +365,12 @@ static int sbx_read(int fd, void *buf, unsigned long len) {
 }
 
 static int sbx_write_file(int fd, const void *buf, unsigned long len) {
+    /* Suspend checkpoint */
+    if (suspend_pending || RD32(sandbox_io, SBX_SUSPEND_FLAG)) {
+        suspend_pending = 0;
+        WR32(sandbox_io, SBX_SUSPEND_FLAG, 0);
+        save_and_yield(0);
+    }
     const uint8_t *s = (const uint8_t *)buf;
     volatile uint8_t *dst = (volatile uint8_t *)(sandbox_io + SBX_DATA_BUF);
     for (unsigned long i = 0; i < len && i < 4096; i++) dst[i] = s[i];
@@ -385,11 +534,22 @@ static int sbx_getc(void) {
         int result = (int)seL4_GetMR(0);
         if (result != -2) return result;  /* got a char or EOF */
         /* EAGAIN: yield and retry */
+        if (suspend_pending || RD32(sandbox_io, SBX_SUSPEND_FLAG)) {
+            suspend_pending = 0;
+            WR32(sandbox_io, SBX_SUSPEND_FLAG, 0);
+            save_and_yield(-2);
+        }
         seL4_Yield();
     }
 }
 
 static void sbx_puts_direct(const char *s) {
+    /* Suspend checkpoint (safe: save_and_yield uses putc_direct, not puts_direct) */
+    if (suspend_pending || RD32(sandbox_io, SBX_SUSPEND_FLAG)) {
+        suspend_pending = 0;
+        WR32(sandbox_io, SBX_SUSPEND_FLAG, 0);
+        save_and_yield(0);
+    }
     volatile char *dst = (volatile char *)(sandbox_io + SBX_PATH_BUF);
     int i = 0;
     while (s[i] && i < 255) { dst[i] = s[i]; i++; }
@@ -456,6 +616,11 @@ static void __attribute__((unused)) restore_process_state(void) {
 
     /* Restore sandbox globals */
     heap_used = ps->heap_used;
+    /* Restore free-list allocator state from persisted heap data */
+    if (*(volatile uint32_t *)(sandbox_heap + ALLOC_PERSIST_OFF) == ALLOC_PERSIST_MAGIC) {
+        free_head = *(volatile uint32_t *)(sandbox_heap + ALLOC_PERSIST_OFF + 4);
+        alloc_initialized = 1;
+    }
     out_len = ps->out_len;
     puts_count = ps->puts_count;
     stack_top = ps->stack_top;
@@ -465,7 +630,9 @@ static void __attribute__((unused)) restore_process_state(void) {
     }
 
     /* Restore stack snapshot */
-    if (ps->saved_stack_size > 0 && ps->saved_sp != 0) {
+    if (ps->saved_stack_size > 0 && ps->saved_sp != 0 &&
+            ps->saved_sp >= (stack_top - (uint32_t)PROC_STACK_MAX - 4096) &&
+            ps->saved_sp <= stack_top) {
         uint8_t *src = (uint8_t *)ps + sizeof(proc_state_t);
         uint8_t *dst = (uint8_t *)ps->saved_sp;
         for (uint32_t i = 0; i < ps->saved_stack_size; i++)
@@ -487,6 +654,11 @@ static int save_and_yield(int syscall_result) {
          * Restore globals only. */
         proc_state_t *rps = (proc_state_t *)sandbox_heap;
         heap_used    = rps->heap_used;
+        /* Restore allocator state */
+        if (*(volatile uint32_t *)(sandbox_heap + ALLOC_PERSIST_OFF) == ALLOC_PERSIST_MAGIC) {
+            free_head = *(volatile uint32_t *)(sandbox_heap + ALLOC_PERSIST_OFF + 4);
+            alloc_initialized = 1;
+        }
         out_len      = rps->out_len;
         puts_count   = rps->puts_count;
         stack_top    = rps->stack_top;
@@ -509,6 +681,18 @@ static int save_and_yield(int syscall_result) {
     ps->saved_sp = ctx->sp;
     save_stack_snapshot(ps);
     ps->suspended = 1;
+
+    /* Flush proc_state from cache to main memory so orchestrator can see it.
+     * Both sides map sandbox_heap as cached="true"; without this flush,
+     * the orchestrator on another core reads stale zeroes from its own cache. */
+    {
+        uintptr_t ps_start = sandbox_heap & ~63UL;
+        uintptr_t ps_end = sandbox_heap + sizeof(proc_state_t) + ps->saved_stack_size + 64;
+        for (uintptr_t a = ps_start; a < ps_end; a += 64) {
+            __asm__ volatile("dc cvac, %0" :: "r"(a) : "memory");
+        }
+        __asm__ volatile("dsb ish" ::: "memory");
+    }
 
     /* Flush any buffered output before suspending */
     if (out_len > 0) {
@@ -597,6 +781,11 @@ static int sbx_fork(void) {
     if (resumed) {
         proc_state_t *rps = (proc_state_t *)sandbox_heap;
         heap_used    = rps->heap_used;
+        /* Restore allocator state */
+        if (*(volatile uint32_t *)(sandbox_heap + ALLOC_PERSIST_OFF) == ALLOC_PERSIST_MAGIC) {
+            free_head = *(volatile uint32_t *)(sandbox_heap + ALLOC_PERSIST_OFF + 4);
+            alloc_initialized = 1;
+        }
         out_len      = rps->out_len;
         puts_count   = rps->puts_count;
         stack_top    = rps->stack_top;
@@ -618,6 +807,16 @@ static int sbx_fork(void) {
     ps->saved_sp = ctx->sp;
     save_stack_snapshot(ps);
     ps->suspended = 0;  /* This is a fork, not a suspend */
+
+    /* Flush proc_state from cache so orchestrator sees valid magic */
+    {
+        uintptr_t ps_start = sandbox_heap & ~63UL;
+        uintptr_t ps_end = sandbox_heap + sizeof(proc_state_t) + ps->saved_stack_size + 64;
+        for (uintptr_t a = ps_start; a < ps_end; a += 64) {
+            __asm__ volatile("dc cvac, %0" :: "r"(a) : "memory");
+        }
+        __asm__ volatile("dsb ish" ::: "memory");
+    }
 
     /* PPC to orchestrator — it will:
      * 1. Copy our heap (including proc_state) to swap
@@ -915,6 +1114,12 @@ static int sbx_exec(const char *path, const char *args) {
 static int sbx_sleep(unsigned int seconds) {
     /* Send sleep request; orchestrator returns target timestamp in MR1/MR2 */
     if (seconds == 0) return 0;
+    /* Suspend checkpoint before sleeping */
+    if (suspend_pending || RD32(sandbox_io, SBX_SUSPEND_FLAG)) {
+        suspend_pending = 0;
+        WR32(sandbox_io, SBX_SUSPEND_FLAG, 0);
+        save_and_yield(0);
+    }
     seL4_SetMR(0, SYS_SLEEP);
     seL4_SetMR(1, (seL4_Word)seconds);
     microkit_ppcall(my_channel, microkit_msginfo_new(0, 2));
@@ -926,6 +1131,14 @@ static int sbx_sleep(unsigned int seconds) {
     uint64_t now;
     __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
     while (now < target) {
+        /* Check for preemptive suspend during sleep */
+        if (suspend_pending || RD32(sandbox_io, SBX_SUSPEND_FLAG)) {
+            suspend_pending = 0;
+            WR32(sandbox_io, SBX_SUSPEND_FLAG, 0);
+            save_and_yield(0);
+            /* Resumed — sleep time has passed */
+            return 0;
+        }
         seL4_Yield();
         __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
     }

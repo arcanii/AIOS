@@ -10,6 +10,7 @@
 #include "aios/channels.h"
 #include "aios/ipc.h"
 #include "virtio.h"
+#include "aios/util.h"
 
 #define LOG_MODULE "NET"
 #define LOG_LEVEL  LOG_LEVEL_INFO
@@ -86,13 +87,6 @@ static uint16_t tx_last_used __attribute__((unused)) = 0;
 
 static uint8_t mac_addr[6];
 
-/* ── Helpers ─────────────────────────────────────────── */
-static void my_memset(void *dst, int c, unsigned long n) {
-    uint8_t *d = dst; while (n--) *d++ = c;
-}
-static void my_memcpy(void *dst, const void *src, unsigned long n) {
-    uint8_t *d = dst; const uint8_t *s = src; while (n--) *d++ = *s++;
-}
 
 /* ── Setup RX virtqueue ──────────────────────────────── */
 static void rx_replenish(void) {

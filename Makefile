@@ -91,6 +91,12 @@ $(BUILD)/memset.o: src/memset.c | $(BUILD)
 $(BUILD)/util.o: src/util.c | $(BUILD)
 	$(CC) $(CFLAGS) $< -o $@
 
+$(BUILD)/net_server.elf: $(BUILD)/net_server.o $(BUILD)/util.o
+	$(LD) $^ $(LDFLAGS) -o $@
+
+$(BUILD)/net_driver.elf: $(BUILD)/net_driver.o $(BUILD)/util.o
+	$(LD) $^ $(LDFLAGS) -o $@
+
 $(BUILD)/%.elf: $(BUILD)/%.o
 	$(LD) $< $(LDFLAGS) -o $@
 

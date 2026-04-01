@@ -14,6 +14,7 @@
 #include "aios/channels.h"
 #include "aios/ipc.h"
 #include "aios/version.h"
+#include "aios/util.h"
 
 /* ── Logging backend ─────────────────────────────── */
 #define LOG_MODULE "NET_SRV"
@@ -61,18 +62,6 @@ static __attribute__((unused)) const uint8_t *next_hop(const uint8_t dst[4]) {
 }
 
 
-/* ── Helpers ─────────────────────────────────────────── */
-static void my_memcpy(void *d, const void *s, uint32_t n) {
-    uint8_t *dd = d; const uint8_t *ss = s; while (n--) *dd++ = *ss++;
-}
-static __attribute__((unused)) void my_memset(void *d, int c, uint32_t n) {
-    uint8_t *dd = d; while (n--) *dd++ = c;
-}
-static int my_memcmp(const void *a, const void *b, uint32_t n) {
-    const uint8_t *aa = a, *bb = b;
-    while (n--) { if (*aa != *bb) return *aa - *bb; aa++; bb++; }
-    return 0;
-}
 
 static uint16_t htons(uint16_t x) { return (x >> 8) | (x << 8); }
 static uint16_t ntohs(uint16_t x) { return htons(x); }

@@ -12,6 +12,7 @@
 #include "aios/channels.h"
 #include "aios/ipc.h"
 #include "aios/vfs.h"
+#include "aios/util.h"
 
 /* ── Memory regions ────────────────────────────────────── */
 uintptr_t blk_data;
@@ -35,16 +36,6 @@ static open_file_t open_files[MAX_OPEN_FILES];
 /* ── Active filesystem ─────────────────────────────────── */
 static const aios_fs_ops_t *active_fs;
 
-/* ── Helpers ───────────────────────────────────────────── */
-static void my_memcpy(void *dst, const void *src, int n) {
-    uint8_t *d = (uint8_t *)dst;
-    const uint8_t *s = (const uint8_t *)src;
-    for (int i = 0; i < n; i++) d[i] = s[i];
-}
-static void my_memset(void *dst, int c, int n) {
-    uint8_t *d = (uint8_t *)dst;
-    for (int i = 0; i < n; i++) d[i] = (uint8_t)c;
-}
 
 /* ── Block I/O via PPC to blk_driver ───────────────────── */
 static void vfs_read_sector(uint32_t sector, uint8_t *buf) {

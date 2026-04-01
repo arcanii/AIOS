@@ -36,7 +36,8 @@
 enum proc_state {
     PROC_FREE = 0,
     PROC_QUEUED,    /* Binary path known, not yet loaded */
-    PROC_READY,     /* State saved in swap, can be resumed */
+    PROC_READY,
+    PROC_PREEMPTING,  /* suspend flag sent, awaiting response */     /* State saved in swap, can be resumed */
     PROC_RUNNING,   /* Active in a sandbox slot */
     PROC_BLOCKED,   /* In sandbox slot, waiting for I/O */
     PROC_ZOMBIE     /* Exited, awaiting reap */
@@ -61,7 +62,8 @@ typedef struct {
     /* Swap info (for READY state - saved in swap region) */
     uint32_t swap_offset;   /* Offset into swap region */
     uint32_t swap_code_sz;  /* Bytes of code saved */
-    uint32_t swap_heap_sz;  /* Bytes of heap saved (only used portion) */
+    uint32_t swap_heap_sz;
+    uint32_t preempt_tick;    /* tick when PREEMPTING started */  /* Bytes of heap saved (only used portion) */
 
     /* Scheduling stats */
     uint32_t time_slices;   /* Number of times scheduled */
@@ -251,6 +253,7 @@ static inline int sched_pick_victim(scheduler_t *s) {
         sched_proc_t *p = &s->procs[idx];
         if (p->foreground) continue;  /* Don't preempt foreground */
         if (p->state == PROC_BLOCKED) continue;  /* Don't preempt blocked */
+        if (p->state == PROC_PREEMPTING) continue;  /* Already being preempted */
 
         uint32_t run_time = s->tick_count - p->last_scheduled;
         if (p->priority > worst_prio ||

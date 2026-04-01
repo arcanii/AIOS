@@ -151,7 +151,7 @@
                  setvar_vaddr="sandbox_code" />
         </protection_domain>
 
-        <protection_domain name="sbx1" priority="150" id="1" budget="5000" period="10000" cpu="0">
+        <protection_domain name="sbx1" priority="150" id="1" budget="5000" period="10000" cpu="1">
             <program_image path="sandbox.elf" />
             <map mr="sbx1_io" vaddr="0x20000000" perms="rw" cached="false"
                  setvar_vaddr="sandbox_io" />
@@ -161,7 +161,7 @@
                  setvar_vaddr="sandbox_code" />
         </protection_domain>
 
-        <protection_domain name="sbx2" priority="150" id="2" budget="5000" period="10000" cpu="0">
+        <protection_domain name="sbx2" priority="150" id="2" budget="5000" period="10000" cpu="2">
             <program_image path="sandbox.elf" />
             <map mr="sbx2_io" vaddr="0x20000000" perms="rw" cached="false"
                  setvar_vaddr="sandbox_io" />
@@ -171,7 +171,7 @@
                  setvar_vaddr="sandbox_code" />
         </protection_domain>
 
-        <protection_domain name="sbx3" priority="150" id="3" budget="5000" period="10000" cpu="0">
+        <protection_domain name="sbx3" priority="150" id="3" budget="5000" period="10000" cpu="3">
             <program_image path="sandbox.elf" />
             <map mr="sbx3_io" vaddr="0x20000000" perms="rw" cached="false"
                  setvar_vaddr="sandbox_io" />
@@ -191,7 +191,7 @@
                  setvar_vaddr="sandbox_code" />
         </protection_domain>
 
-        <protection_domain name="sbx5" priority="150" id="5" budget="5000" period="10000" cpu="0">
+        <protection_domain name="sbx5" priority="150" id="5" budget="5000" period="10000" cpu="1">
             <program_image path="sandbox.elf" />
             <map mr="sbx5_io" vaddr="0x20000000" perms="rw" cached="false"
                  setvar_vaddr="sandbox_io" />
@@ -201,7 +201,7 @@
                  setvar_vaddr="sandbox_code" />
         </protection_domain>
 
-        <protection_domain name="sbx6" priority="150" id="6" budget="5000" period="10000" cpu="0">
+        <protection_domain name="sbx6" priority="150" id="6" budget="5000" period="10000" cpu="2">
             <program_image path="sandbox.elf" />
             <map mr="sbx6_io" vaddr="0x20000000" perms="rw" cached="false"
                  setvar_vaddr="sandbox_io" />
@@ -211,7 +211,7 @@
                  setvar_vaddr="sandbox_code" />
         </protection_domain>
 
-        <protection_domain name="sbx7" priority="150" id="7" budget="5000" period="10000" cpu="0">
+        <protection_domain name="sbx7" priority="150" id="7" budget="5000" period="10000" cpu="3">
             <program_image path="sandbox.elf" />
             <map mr="sbx7_io" vaddr="0x20000000" perms="rw" cached="false"
                  setvar_vaddr="sandbox_io" />

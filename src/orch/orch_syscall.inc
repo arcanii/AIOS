@@ -81,26 +81,14 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
                         sched_proc_t *vp = &sched.procs[victim_idx];
                         uint32_t code_sz = vp->loaded_bytes + 64*1024;
                         if (code_sz > SCHED_CODE_SIZE) code_sz = SCHED_CODE_SIZE;
-                        uint32_t heap_sz = 256*1024; /* save first 256K of heap */
-                        if (sched_swap_alloc(&sched, victim_idx, code_sz, heap_sz) == 0) {
-                            /* Stop the victim PD */
-                            microkit_pd_stop(victim_slot);
-                            /* Copy code to swap */
-                            volatile uint8_t *swap = (volatile uint8_t *)swap_region;
-                            volatile uint8_t *vc = (volatile uint8_t *)sbx_code[victim_slot];
-                            for (uint32_t j = 0; j < code_sz; j++) swap[vp->swap_offset + j] = vc[j];
-                            /* Copy heap to swap */
-                            volatile uint8_t *vh = (volatile uint8_t *)sbx_heap[victim_slot];
-                            uint32_t ho = vp->swap_offset + code_sz;
-                            for (uint32_t j = 0; j < heap_sz; j++) swap[ho + j] = vh[j];
-                            /* Mark victim as READY (suspended) */
-                            vp->state = PROC_READY;
-                            vp->slot = -1;
-                            sched.slot_to_proc[victim_slot] = -1;
-                            /* Restart the PD so it's clean for next use */
-                            microkit_pd_restart(victim_slot, SBX_ENTRY_POINT);
-                            /* Now load the waiting process into freed slot */
-                            try_load_queued(victim_slot);
+                        if (vp->state != PROC_PREEMPTING) {
+                            /* Phase 1: ask victim to self-suspend */
+                            sched_swap_free(&sched, victim_idx);
+                            vp->state = PROC_PREEMPTING;
+                            vp->preempt_tick = sched.tick_count;
+                            WR32(sbx_io[victim_slot], SBX_SUSPEND_FLAG, 1);
+                            WR32(sbx_io[victim_slot], SBX_CMD, SBX_CMD_SUSPEND);
+                            microkit_notify(sbx_channel[victim_slot]);
                         }
                     }
                 }
@@ -110,6 +98,62 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
             else {
                 try_load_queued(free_slot);
             }
+        }
+    }
+
+    
+
+    /* Phase 2: forcibly kill PREEMPTING processes that timed out */
+    #define PREEMPT_TIMEOUT 128  /* ticks before forcible kill */
+    for (int pi = 0; pi < SCHED_MAX_PROCS; pi++) {
+        if (sched.procs[pi].state == PROC_PREEMPTING &&
+            sched.procs[pi].slot >= 0 &&
+            (sched.tick_count - sched.procs[pi].preempt_tick) > PREEMPT_TIMEOUT) {
+            int vs = sched.procs[pi].slot;
+            microkit_pd_stop(vs);
+            
+            /* Check if victim already self-suspended (PPC couldn't be delivered) */
+            uint32_t victim_status = RD32(sbx_io[vs], SBX_STATUS);
+            volatile uint32_t *ps_magic = (volatile uint32_t *)sbx_heap[vs];
+            if (victim_status == SBX_ST_SUSPENDED && *ps_magic == 0x50524F43U) {
+                /* Victim self-suspended! Save to swap instead of killing */
+                uint32_t code_sz = sched.procs[pi].loaded_bytes + 64*1024;
+                if (code_sz > SCHED_CODE_SIZE) code_sz = SCHED_CODE_SIZE;
+                volatile uint32_t *ps_hu = (volatile uint32_t *)(sbx_heap[vs] + 8);
+                uint32_t heap_sz = *ps_hu + 4096;
+                if (heap_sz < (8 * 1024) + 4096) heap_sz = (8 * 1024) + 4096;
+                if (heap_sz > SCHED_HEAP_SIZE) heap_sz = SCHED_HEAP_SIZE;
+                if (sched_swap_alloc(&sched, pi, code_sz, heap_sz) == 0) {
+                    volatile uint8_t *swap = (volatile uint8_t *)swap_region;
+                    volatile uint8_t *vc = (volatile uint8_t *)sbx_code[vs];
+                    for (uint32_t j = 0; j < code_sz; j++) swap[sched.procs[pi].swap_offset + j] = vc[j];
+                    volatile uint8_t *vh = (volatile uint8_t *)sbx_heap[vs];
+                    uint32_t ho = sched.procs[pi].swap_offset + code_sz;
+                    for (uint32_t j = 0; j < heap_sz; j++) swap[ho + j] = vh[j];
+                    sched.procs[pi].swap_code_sz = code_sz;
+                    sched.procs[pi].swap_heap_sz = heap_sz;
+                    sched.procs[pi].state = PROC_READY;
+                    ser_puts("PREEMPT: saved PID ");
+                    ser_put_dec(sched.procs[pi].pid);
+                    ser_puts(" to swap (self-suspended)\n");
+                } else {
+                    sched.procs[pi].state = PROC_QUEUED;
+                    ser_puts("PREEMPT: swap full, PID ");
+                    ser_put_dec(sched.procs[pi].pid);
+                    ser_puts(" requeued\n");
+                }
+            } else {
+                /* Truly runaway — no valid state, restart from disk */
+                sched.procs[pi].state = PROC_QUEUED;
+                ser_puts("PREEMPT: killed PID ");
+                ser_put_dec(sched.procs[pi].pid);
+                ser_puts(" (no saved state)\n");
+            }
+            sched.procs[pi].slot = -1;
+            sched.slot_to_proc[vs] = -1;
+            WR32(sbx_io[vs], SBX_SUSPEND_FLAG, 0);
+            ser_flush();
+            try_load_queued(vs);
         }
     }
 
@@ -321,7 +365,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
                 for (int s = 0; s < NUM_SANDBOXES; s++) {
                     if (slot_in_use(s) && slot_proc(s)->foreground) {
                         microkit_pd_stop(s);
-                        microkit_pd_restart(s, SBX_ENTRY_POINT);
+                        /* pd_restart removed: done in try_load_queued after code loaded */
                         ser_puts("^C\n");
                         sched_exit(&sched, s, -2);
                         try_load_queued(s);
@@ -901,7 +945,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
                     break;
                 }
                 microkit_pd_stop(s);
-                microkit_pd_restart(s, SBX_ENTRY_POINT);
+                /* pd_restart removed: done in try_load_queued after code loaded */
                 /* Record exit for waitpid */
                 for (int ei = 0; ei < MAX_EXIT_QUEUE; ei++) {
                     if (!exit_queue[ei].active) {
@@ -1025,7 +1069,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
                     found = 1;
                 } else {
                     microkit_pd_stop(s);
-                    microkit_pd_restart(s, SBX_ENTRY_POINT);
+                    /* pd_restart removed: done in try_load_queued after code loaded */
                     for (int ei = 0; ei < MAX_EXIT_QUEUE; ei++) {
                         if (!exit_queue[ei].active) {
                             exit_queue[ei].active = 1;
@@ -1278,65 +1322,47 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo) {
     }
 
     case SYS_SUSPENDED: {
-        /*
-         * Sandbox has saved its process state to heap[0] and is yielding the slot.
-         * Copy heap+code to swap, mark process READY, free the slot.
-         */
-        sched_proc_t *proc = slot_proc(slot);
-        if (!proc) {
-            result = -1;
-            break;
+        /* Process self-suspended: proc_state at heap[0] is valid.
+         * Copy code+heap to swap, free slot, load next. */
+        sched_proc_t *sp = slot_proc(slot);
+        if (sp) {
+            uint32_t code_sz = sp->loaded_bytes + 64*1024;
+            if (code_sz > SCHED_CODE_SIZE) code_sz = SCHED_CODE_SIZE;
+
+            volatile uint32_t *ps_hu = (volatile uint32_t *)(sbx_heap[slot] + 8);
+            uint32_t heap_used_val = *ps_hu;
+            uint32_t heap_sz = heap_used_val + 4096;
+            if (heap_sz < (8 * 1024) + 4096) heap_sz = (8 * 1024) + 4096;  /* PROC_STATE_RESERVE = 8KB */
+            if (heap_sz > SCHED_HEAP_SIZE) heap_sz = SCHED_HEAP_SIZE;
+
+            int pidx = -1;
+            for (int pi = 0; pi < SCHED_MAX_PROCS; pi++) {
+                if (&sched.procs[pi] == sp) { pidx = pi; break; }
+            }
+            if (pidx >= 0 && sched_swap_alloc(&sched, pidx, code_sz, heap_sz) == 0) {
+                volatile uint8_t *swap = (volatile uint8_t *)swap_region;
+                volatile uint8_t *vc = (volatile uint8_t *)sbx_code[slot];
+                for (uint32_t j = 0; j < code_sz; j++) swap[sp->swap_offset + j] = vc[j];
+                volatile uint8_t *vh = (volatile uint8_t *)sbx_heap[slot];
+                uint32_t ho = sp->swap_offset + code_sz;
+                for (uint32_t j = 0; j < heap_sz; j++) swap[ho + j] = vh[j];
+
+                sp->swap_code_sz = code_sz;
+                sp->swap_heap_sz = heap_sz;
+                sp->state = PROC_READY;
+                sp->slot = -1;
+                sched.slot_to_proc[slot] = -1;
+
+                microkit_pd_stop(slot);
+                                /* Clear stale proc_state so next occupant doesn't see it */
+                WR32(sbx_heap[slot], 0, 0);  /* zero magic field */
+/* pd_restart removed: done in try_load_queued after code loaded */
+                try_load_queued(slot);
+            }
         }
-
-        int proc_idx = -1;
-        for (int pi = 0; pi < SCHED_MAX_PROCS; pi++) {
-            if (&sched.procs[pi] == proc) { proc_idx = pi; break; }
-        }
-
-        uint32_t parent_code = RD32(sio, SBX_CODE_SIZE);
-        uint32_t bss_extra = 64 * 1024;
-        uint32_t code_copy = parent_code + bss_extra;
-        if (code_copy > 0x400000) code_copy = 0x400000;
-
-        /* Read heap usage from proc_state at heap[0] */
-        volatile uint32_t *ps_heap_used = (volatile uint32_t *)(sbx_heap[slot] + 8);
-        uint32_t heap_used_val = *ps_heap_used;
-        uint32_t heap_copy = heap_used_val + 4096;
-        if (heap_copy > SCHED_HEAP_SIZE) heap_copy = SCHED_HEAP_SIZE;
-
-        if (proc_idx >= 0 && sched_swap_alloc(&sched, proc_idx, code_copy, heap_copy) == 0) {
-            uint32_t swap_off = proc->swap_offset;
-            volatile uint8_t *swap_base = (volatile uint8_t *)swap_region;
-
-            /* Copy code to swap */
-            volatile uint8_t *src_code = (volatile uint8_t *)scode;
-            for (uint32_t j = 0; j < code_copy; j++)
-                swap_base[swap_off + j] = src_code[j];
-
-            /* Copy heap to swap */
-            volatile uint8_t *src_heap = (volatile uint8_t *)sbx_heap[slot];
-            uint32_t heap_swap_off = swap_off + code_copy;
-            for (uint32_t j = 0; j < heap_copy; j++)
-                swap_base[heap_swap_off + j] = src_heap[j];
-
-            proc->state = PROC_READY;
-            proc->slot = -1;
-            proc->swap_code_sz = code_copy;
-            proc->swap_heap_sz = heap_copy;
-            sched_release_slot(&sched, slot);
-
-            LOG_INFO_V("suspend: PID ", (unsigned long)proc->pid);
-            LOG_INFO_V("suspend: saved to swap, code=", (unsigned long)code_copy);
-            LOG_INFO_V("suspend: heap=", (unsigned long)heap_copy);
-
-            /* Try to load next queued/ready process into freed slot */
-            try_load_queued(slot);
-        }
-
         result = 0;
         break;
     }
-
     default:
         result = -1;
         break;
