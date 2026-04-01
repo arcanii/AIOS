@@ -19,6 +19,11 @@
       "phys_addr": "0x0a003000"
     },
     {
+      "name": "net_mmio",
+      "size": "0x1000",
+      "phys_addr": "0x0a003e00"
+    },
+    {
       "name": "blk_dma",
       "size": "0x10000",
       "phys_addr": "0xB0000000"
@@ -256,7 +261,7 @@
       "program_image": "net_driver.elf",
       "maps": [
         {
-          "mr": "blk_mmio",
+          "mr": "net_mmio",
           "vaddr": "0x5200000",
           "perms": "rw",
           "cached": "false",

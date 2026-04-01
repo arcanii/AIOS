@@ -40,7 +40,7 @@ SRC      := src
 DISK_IMG := disk_ext2.img
 
 # ── Protection domains ──────────────────────────────────
-PDS := serial_driver blk_driver fs_server orchestrator llm_server echo_server sandbox net_driver net_server auth_server
+PDS := serial_driver blk_driver fs_server orchestrator sandbox net_driver net_server auth_server
 
 OBJS := $(patsubst %,$(BUILD)/%.o,$(PDS))
 ELFS := $(patsubst %,$(BUILD)/%.elf,$(PDS))
@@ -244,6 +244,10 @@ ext2-disk: ext2-create ext2-inject
 #   make bump-patch   — increment Z in X.Y.Z (edit version.h)
 #   make bump-minor   — increment Y, reset Z to 0
 #   make version      — print current version and build number
+.PHONY: system-check
+system-check:
+	python3 tools/system_validate.py
+
 .PHONY: bump-patch bump-minor version
 
 version:
@@ -265,3 +269,9 @@ bump-minor:
 	sed -i '' "s/AIOS_VERSION_PATCH  *[0-9]*/AIOS_VERSION_PATCH  0/" include/aios/version.h; \
 	MAJ=$$(grep AIOS_VERSION_MAJOR include/aios/version.h | head -1 | awk '{print $$3}'); \
 	echo "Version bumped to $$MAJ.$$NEW.0"
+
+
+# Run POSIX compliance audit and update docs/POSIX_COMPLIANCE.md
+.PHONY: posix-audit
+posix-audit:
+	python3 tools/posix_audit.py
