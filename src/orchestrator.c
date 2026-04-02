@@ -413,6 +413,36 @@ seL4_MessageInfo_t protected(microkit_channel ch, seL4_MessageInfo_t msginfo) {
     case SYS_GETEUID: result = current_uid; break;
     case SYS_GETEGID: result = current_gid; break;
 
+    /* ---- System control ---- */
+    case SYS_SYNC: {
+        /* Flush filesystem caches to disk */
+        WR32(vfs_data, FS_CMD, FS_CMD_SYNC);
+        microkit_ppcall(CH_VFS, microkit_msginfo_new(0, 0));
+        result = (int64_t)RD32(vfs_data, FS_STATUS);
+        break;
+    }
+    case SYS_SHUTDOWN: {
+        uint32_t flags = (uint32_t)seL4_GetMR(1);
+        (void)flags;
+        ser_puts("\n[orchestrator] SHUTDOWN: syncing filesystems...\n");
+        ser_flush();
+
+        /* Sync filesystem */
+        WR32(vfs_data, FS_CMD, FS_CMD_SYNC);
+        microkit_ppcall(CH_VFS, microkit_msginfo_new(0, 0));
+
+        ser_puts("[orchestrator] SHUTDOWN: filesystems synced\n");
+        ser_puts("[orchestrator] SHUTDOWN: halting system\n");
+        ser_puts("\nSystem halted. It is safe to power off.\n\n");
+        ser_flush();
+
+        /* Halt: loop with WFI (wait for interrupt)
+         * On QEMU, the user can exit with Ctrl-A X.
+         * PSCI via HVC/SMC is trapped by seL4, so we just halt cleanly. */
+        for (;;) { __asm__ volatile("wfi"); }
+        break;
+    }
+
     default:
         ser_puts("ORCH: unknown syscall ");
         ser_put_dec((unsigned int)syscall_nr);

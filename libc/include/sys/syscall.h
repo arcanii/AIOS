@@ -88,3 +88,5 @@
 /* Auth syscalls */
 #define SYS_LOGIN      90
 #define SYS_LOGOUT     91
+#define SYS_SHUTDOWN   92   /* shutdown(flags): root-only, sync FS + halt */
+#define SYS_SYNC       93   /* sync(): flush all FS caches to disk */

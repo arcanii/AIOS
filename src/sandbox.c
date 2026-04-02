@@ -1020,6 +1020,42 @@ static void ks_sched_yield_user(void) {
 
 /* ================================================================ */
 
+/* ---- Shutdown (root-only) ---- */
+static int ks_shutdown(int flags) {
+    /* Only uid 0 (root) can shutdown */
+    if (current_thread >= 0) {
+        int pi = threads[current_thread].proc_idx;
+        if (procs[pi].uid != 0 && current_uid != 0) {
+            kputs("sbxk: shutdown denied (not root)\n");
+            return -1;  /* EPERM */
+        }
+    }
+    kputs("sbxk: system shutdown requested\n");
+
+    /* Terminate all running threads */
+    for (int i = 0; i < MAX_THREADS; i++) {
+        if (threads[i].state != TH_FREE && threads[i].state != TH_FINISHED) {
+            threads[i].state = TH_FINISHED;
+        }
+    }
+
+    /* Forward to orchestrator for FS sync + halt */
+    seL4_SetMR(0, SYS_SHUTDOWN);
+    seL4_SetMR(1, (seL4_Word)flags);
+    microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 2));
+
+    /* Should not return, but if it does: */
+    kputs("sbxk: halt\n");
+    for (;;) { __asm__ volatile("wfi"); }
+    return 0;
+}
+
+static int ks_sync(void) {
+    seL4_SetMR(0, SYS_SYNC);
+    microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 1));
+    return (int)(int64_t)seL4_GetMR(0);
+}
+
 static void init_syscall_table(void) {
     /* Console I/O */
     kern_syscalls.puts = ks_puts;
@@ -1095,6 +1131,10 @@ static void init_syscall_table(void) {
     kern_syscalls.accept = ks_accept;
     kern_syscalls.send = ks_send;
     kern_syscalls.recv = ks_recv;
+
+    /* Privileged operations */
+    kern_syscalls.shutdown = ks_shutdown;
+    kern_syscalls.sync = ks_sync;
 
     /* POSIX Threads */
     kern_syscalls.pthread_create = ks_pthread_create;

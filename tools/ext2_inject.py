@@ -296,6 +296,7 @@ def inject(img_path, files):
 
     # Create standard directories
     bin_ino  = create_dir(ROOT_INO, "bin")
+    sbin_ino = create_dir(ROOT_INO, "sbin")
     tests_ino = create_dir(bin_ino, "tests")
     etc_ino  = create_dir(ROOT_INO, "etc")
     home_ino = create_dir(ROOT_INO, "home")
@@ -313,6 +314,10 @@ def inject(img_path, files):
         if '/tests/' in source_path or '\\tests\\' in source_path:
             if tests_ino:
                 return (tests_ino, f"/bin/tests/{disk_name}")
+        if '/sbin/' in source_path:
+            if sbin_ino:
+                return (sbin_ino, f"/sbin/{disk_name}")
+            return (root_ino, f"/{disk_name}")
         if '/bin/' in source_path or '\\bin\\' in source_path:
             if bin_ino:
                 return (bin_ino, f"/bin/{disk_name}")

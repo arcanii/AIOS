@@ -99,6 +99,10 @@ typedef struct {
     int   (*pthread_setspecific)(unsigned int key, const void *value);
     void *(*pthread_getspecific)(unsigned int key);
     void  (*sched_yield)(void);
+
+    /* Privileged operations */
+    int   (*shutdown)(int flags);
+    int   (*sync)(void);
 } aios_syscalls_t;
 
 #endif /* AIOS_SYSCALLS_T_H */

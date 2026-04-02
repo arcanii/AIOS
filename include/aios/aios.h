@@ -124,6 +124,10 @@ typedef struct {
 
     /* Yield */
     void  (*sched_yield)(void);
+
+    /* Privileged operations */
+    int   (*shutdown)(int flags);
+    int   (*sync)(void);
 } aios_syscalls_t;
 
 /* Global syscall pointer — set by _start */
@@ -241,5 +245,9 @@ typedef struct {
 #define aios_cond_signal(c)            sys->pthread_cond_signal(c)
 #define aios_cond_broadcast(c)         sys->pthread_cond_broadcast(c)
 #define aios_sched_yield()             sys->sched_yield()
+
+/* ---- System control ---- */
+#define aios_shutdown(f)  sys->shutdown(f)
+#define aios_sync()       sys->sync()
 
 #endif /* AIOS_H */

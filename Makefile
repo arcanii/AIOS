@@ -188,17 +188,36 @@ clean:
 
 
 # ── Sandbox programs ────────────────────────────────────
+# All intermediates go in $(BUILD)/prg/ to keep source tree clean.
+
+PRG_CFLAGS := -c -mcpu=cortex-a53 -ffreestanding -nostdlib -O2 -ffunction-sections -Iprograms -Iinclude
+
 PROGS_SRC := $(wildcard programs/*.c)
 PROGS_BIN := $(patsubst programs/%.c,programs/%.bin,$(PROGS_SRC))
 
-programs/%.bin: programs/%.c
-	$(CC) -c -mcpu=cortex-a53 -ffreestanding -nostdlib -O2 -ffunction-sections -Iprograms -Iinclude $< -o /tmp/$*.o
-	$(LD) -T programs/link.ld /tmp/$*.o -o /tmp/$*.elf
-	aarch64-linux-gnu-objcopy -O binary /tmp/$*.elf $@
+SBIN_SRC  := $(wildcard programs/sbin/*.c)
+SBIN_BIN  := $(patsubst programs/sbin/%.c,programs/sbin/%.bin,$(SBIN_SRC))
+
+.PHONY: programs
+programs: $(PROGS_BIN) $(SBIN_BIN)
+	@echo "Built $(words $(PROGS_BIN)) programs + $(words $(SBIN_BIN)) sbin"
+
+$(BUILD)/prg:
+	mkdir -p $(BUILD)/prg
+
+programs/sbin/%.bin: programs/sbin/%.c | $(BUILD)/prg
+	@mkdir -p $(BUILD)/prg/sbin
+	$(CC) $(PRG_CFLAGS) $< -o $(BUILD)/prg/sbin/$*.o
+	$(LD) -T programs/link.ld $(BUILD)/prg/sbin/$*.o -o $(BUILD)/prg/sbin/$*.elf
+	aarch64-linux-gnu-objcopy -O binary $(BUILD)/prg/sbin/$*.elf $@
 	@echo "  $@: $$(wc -c < $@) bytes"
 
-programs: $(PROGS_BIN)
-	@echo "Built $(words $(PROGS_BIN)) sandbox programs"
+programs/%.bin: programs/%.c | $(BUILD)/prg
+	$(CC) $(PRG_CFLAGS) $< -o $(BUILD)/prg/$*.o
+	$(LD) -T programs/link.ld $(BUILD)/prg/$*.o -o $(BUILD)/prg/$*.elf
+	aarch64-linux-gnu-objcopy -O binary $(BUILD)/prg/$*.elf $@
+	@echo "  $@: $$(wc -c < $@) bytes"
+
 
 # Inject all .bin programs onto disk image
 inject: $(PROGS_BIN) $(DISK_IMG)
@@ -226,6 +245,10 @@ ext2-create:
 ext2-inject: $(DISK_IMG)
 	@echo "Injecting programs into ext2 image..."
 	python3 tools/ext2_inject.py $(DISK_IMG) programs/*.bin
+	@if ls programs/sbin/*.bin 1>/dev/null 2>&1; then \
+		echo "Injecting sbin programs..."; \
+		python3 tools/ext2_inject.py $(DISK_IMG) programs/sbin/*.bin; \
+	fi
 	@echo "Injecting config files..."
 	@if [ -d disk/etc ]; then \
 		for f in disk/etc/*; do \

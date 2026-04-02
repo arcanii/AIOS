@@ -1291,7 +1291,23 @@ static void dispatch(void) {
             ebp[bi] = '\0';
             rc = aios_exec(ebp, eargs);
         }
+        /* Try /sbin/ for exec */
+        if (rc < 0) {
+            char esbp[272];
+            int si = 0;
+            esbp[si++] = '/'; esbp[si++] = 's'; esbp[si++] = 'b';
+            esbp[si++] = 'i'; esbp[si++] = 'n'; esbp[si++] = '/';
+            for (int k = 0; ep[k] && si < 259; k++) esbp[si++] = ep[k];
+            esbp[si] = '\0';
+            rc = aios_exec(esbp, eargs);
+            if (rc < 0) {
+                esbp[si++] = '.'; esbp[si++] = 'b'; esbp[si++] = 'i';
+                esbp[si++] = 'n'; esbp[si] = '\0';
+                rc = aios_exec(esbp, eargs);
+            }
+        }
         if (rc < 0) { print("exec "); print(ep); print(": command not found\n"); }
+
     }
     else {
         /* Check for background & */
@@ -1366,56 +1382,70 @@ static void dispatch(void) {
             /* Fall through to not-found */
             rc = -1;
         } else {
-            /* Foreground: try as-is first */
+            /* Foreground execution with POSIX PATH search */
             rc = aios_exec(cmd, args);
-        }
-        /* -2 means script file (shebang detected) — run as source */
-        if (rc == -2) { cmd_source(cmd); return; }
-        /* Try with .bin extension */
-        if (rc < 0) {
-            char bin[72];
-            int bi = 0;
-            for (int k = 0; cmd[k] && bi < 63; k++) bin[bi++] = cmd[k];
-            bin[bi++] = '.'; bin[bi++] = 'b'; bin[bi++] = 'i'; bin[bi++] = 'n'; bin[bi] = '\0';
-            rc = aios_exec(bin, args);
-        }
-        /* Try /bin/<cmd> */
-        if (rc < 0) {
-            char bp[272];
-            int bi = 0;
-            bp[bi++] = '/'; bp[bi++] = 'b'; bp[bi++] = 'i'; bp[bi++] = 'n'; bp[bi++] = '/';
-            for (int k = 0; cmd[k] && bi < 263; k++) bp[bi++] = cmd[k];
-            bp[bi] = '\0';
-            rc = aios_exec(bp, args);
-        }
-        /* Try /bin/<cmd>.bin */
-        if (rc < 0) {
-            char bp[272];
-            int bi = 0;
-            bp[bi++] = '/'; bp[bi++] = 'b'; bp[bi++] = 'i'; bp[bi++] = 'n'; bp[bi++] = '/';
-            for (int k = 0; cmd[k] && bi < 259; k++) bp[bi++] = cmd[k];
-            bp[bi++] = '.'; bp[bi++] = 'b'; bp[bi++] = 'i'; bp[bi++] = 'n'; bp[bi] = '\0';
-            rc = aios_exec(bp, args);
-        }
-        /* Try as shell script */
-        if (rc < 0) {
-            /* Try cmd.sh */
-            char sh[72];
-            int si = 0;
-            for (int k = 0; cmd[k] && si < 63; k++) sh[si++] = cmd[k];
-            /* Check if it already ends with .sh */
-            int has_sh = (si > 3 && sh[si-3] == '.' && sh[si-2] == 's' && sh[si-1] == 'h');
-            if (!has_sh) { sh[si++] = '.'; sh[si++] = 's'; sh[si++] = 'h'; }
-            sh[si] = '\0';
-            int sfd = open(sh, O_RDONLY);
-            if (sfd < 0) sfd = open(cmd, O_RDONLY); /* try original name */
-            if (sfd >= 0) {
-                close(sfd);
-                cmd_source(has_sh ? cmd : sh);
-                rc = 0;
+            /* -2 = script file (shebang detected) */
+            if (rc == -2) { cmd_source(cmd); return; }
+
+            /* If cmd contains /, it is a path -- do not search PATH */
+            int is_path = 0;
+            for (int k = 0; cmd[k]; k++) { if (cmd[k] == '/') { is_path = 1; break; } }
+
+            if (rc < 0 && !is_path) {
+                /* Walk $PATH: try each dir/cmd and dir/cmd.bin */
+                char *path_env = getenv("PATH");
+                if (!path_env) path_env = "/bin";
+                const char *p = path_env;
+                while (*p && rc < 0) {
+                    char trypath[272];
+                    int ti = 0;
+                    /* Copy next PATH component (up to : or end) */
+                    while (*p && *p != ':' && ti < 255)
+                        trypath[ti++] = *p++;
+                    if (*p == ':') p++;
+                    if (ti == 0) continue;
+                    if (trypath[ti-1] != '/') trypath[ti++] = '/';
+                    int dir_end = ti;
+                    /* Append cmd */
+                    for (int k = 0; cmd[k] && ti < 268; k++)
+                        trypath[ti++] = cmd[k];
+                    trypath[ti] = '\0';
+                    rc = aios_exec(trypath, args);
+                    if (rc == -2) { cmd_source(trypath); return; }
+                    /* Try with .bin extension */
+                    if (rc < 0) {
+                        trypath[ti++] = '.'; trypath[ti++] = 'b';
+                        trypath[ti++] = 'i'; trypath[ti++] = 'n';
+                        trypath[ti] = '\0';
+                        rc = aios_exec(trypath, args);
+                    }
+                }
+            }
+
+            /* Try as shell script in CWD */
+            if (rc < 0 && !is_path) {
+                char sh[72];
+                int si = 0;
+                for (int k = 0; cmd[k] && si < 63; k++) sh[si++] = cmd[k];
+                int has_sh = (si > 3 && sh[si-3] == '.' && sh[si-2] == 's' && sh[si-1] == 'h');
+                if (!has_sh) { sh[si++] = '.'; sh[si++] = 's'; sh[si++] = 'h'; }
+                sh[si] = '\0';
+                int sfd = open(sh, O_RDONLY);
+                if (sfd < 0) sfd = open(cmd, O_RDONLY);
+                if (sfd >= 0) {
+                    close(sfd);
+                    cmd_source(has_sh ? cmd : sh);
+                    rc = 0;
+                }
+            }
+
+            /* Nothing found */
+            if (rc < 0) {
+                print(cmd);
+                print(": command not found\n");
             }
         }
-        if (rc < 0) { print(line); print(": command not found\n"); }
+
     }
 }
 
