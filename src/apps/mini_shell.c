@@ -186,6 +186,13 @@ int main(int argc, char *argv[]) {
     if (fs_ep) ser_puts("  Filesystem: ext2\n");
     ser_puts("============================================\n\n");
 
+    /* Display motd */
+    if (fs_ep) {
+        char motd_buf[512];
+        int n = fs_read("/etc/motd", motd_buf, sizeof(motd_buf));
+        if (n > 0) { ser_putc('\n'); ser_puts(motd_buf); ser_putc('\n'); }
+    }
+
     while (1) {
         ser_puts(cwd);
         ser_puts(" $ ");
