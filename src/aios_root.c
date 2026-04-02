@@ -1,6 +1,6 @@
 /*
- * AIOS 0.4.x Root Task — Phase 3c
- * Polls UART, forwards keyboard to serial_server via dedicated EP
+ * AIOS 0.4.x Root Task — Phase 4
+ * Multi-threading: multiple TCBs in one VSpace
  */
 #include <stdio.h>
 #include <stdint.h>
@@ -12,6 +12,7 @@
 #include <sel4utils/vspace.h>
 #include <sel4utils/process.h>
 #include <sel4utils/process_config.h>
+#include <sel4utils/thread.h>
 #include <simple/simple.h>
 #include <simple-default/simple-default.h>
 #include <utils/util.h>
@@ -26,12 +27,15 @@ static vka_t vka;
 static vspace_t vspace;
 static allocman_t *allocman;
 
+/* PL011 UART */
 #define UART0_PADDR 0x9000000UL
 #define UART_DR   0x000
 #define UART_FR   0x018
 #define FR_RXFE   (1 << 4)
-
+#define SER_PUTC     1
+#define SER_GETC     2
 #define SER_KEY_PUSH 4
+static volatile uint32_t *uart;
 
 static int spawn_with_args(const char *name, uint8_t prio,
                            sel4utils_process_t *proc,
@@ -50,7 +54,6 @@ static int spawn_with_args(const char *name, uint8_t prio,
     error = sel4utils_configure_process_custom(proc, &vka, &vspace, config);
     if (error) return error;
 
-    /* Copy all endpoint caps and build argv */
     char argv_bufs[4][16];
     char *child_argv[4];
     for (int i = 0; i < ep_count && i < 4; i++) {
@@ -63,13 +66,27 @@ static int spawn_with_args(const char *name, uint8_t prio,
                                       ep_count, child_argv, 1);
 }
 
+/* ========= Phase 4: Worker thread function ========= */
+static void worker_thread(void *arg0, void *arg1, void *ipc_buf) {
+    int id = (int)(uintptr_t)arg0;
+    volatile int *counter = (volatile int *)arg1;
+
+    printf("[worker %d] Started! Incrementing counter...\n", id);
+    /* Atomic-ish increment (single core, so safe) */
+    (*counter)++;
+    printf("[worker %d] Done. Counter now = %d\n", id, *counter);
+
+    /* Done — just spin. Root will continue after yields. */
+    while (1) seL4_Yield();
+}
+
 int main(int argc, char *argv[]) {
     int error;
 
     printf("\n");
     printf("============================================\n");
-    printf("  AIOS 0.4.x Root Task — Phase 3c\n");
-    printf("  Interactive Shell + UART Keyboard\n");
+    printf("  AIOS 0.4.x Root Task — Phase 4\n");
+    printf("  Multi-threading + Interactive Shell\n");
     printf("============================================\n\n");
 
     seL4_BootInfo *info = platsupport_get_bootinfo();
@@ -85,61 +102,101 @@ int main(int argc, char *argv[]) {
     if (error) { printf("FATAL: vspace: %d\n", error); return -1; }
     printf("[boot] All subsystems OK\n");
 
-    /* Map UART into root VSpace for keyboard polling */
-    printf("[dev] Mapping UART at 0x%lx...\n", UART0_PADDR);
-    volatile uint32_t *uart = NULL;
-    {
-        vka_object_t frame_obj;
-        error = sel4platsupport_alloc_frame_at(&vka, UART0_PADDR,
-                                                seL4_PageBits, &frame_obj);
-        if (error) {
-            printf("[dev] alloc_frame_at failed: %d\n", error);
-        } else {
-            /* Map device frame into our VSpace */
-            void *vaddr = vspace_map_pages(&vspace,
-                &frame_obj.cptr, NULL,
-                seL4_AllRights, 1, seL4_PageBits, 0);
-            if (vaddr) {
-                uart = (volatile uint32_t *)vaddr;
-                printf("[dev] UART mapped at %p\n", vaddr);
-            } else {
-                printf("[dev] vspace_map_pages failed\n");
+    /* Map UART */
+    uart = NULL;
+    for (seL4_Word i = info->untyped.start; i < info->untyped.end; i++) {
+        seL4_UntypedDesc *ut = &info->untypedList[i - info->untyped.start];
+        if (ut->isDevice && ut->paddr == UART0_PADDR) {
+            vka_object_t frame;
+            error = sel4platsupport_alloc_frame_at(&vka, UART0_PADDR,
+                                                    seL4_PageBits, &frame);
+            if (!error) {
+                void *v = vspace_map_pages(&vspace, &frame.cptr, NULL,
+                    seL4_AllRights, 1, seL4_PageBits, 0);
+                if (v) uart = (volatile uint32_t *)v;
             }
+            break;
         }
     }
-    if (!uart) printf("[dev] WARNING: No keyboard (UART not mapped)\n");
+    printf("[dev] UART: %s\n", uart ? "OK" : "not mapped");
 
-    /* Allocate endpoints */
+    /* Endpoints */
     vka_object_t fault_ep, serial_ep;
     vka_alloc_endpoint(&vka, &fault_ep);
     vka_alloc_endpoint(&vka, &serial_ep);
 
-    /* Lower root priority */
+    /* ========= Phase 4: Thread Test ========= */
+    printf("\n[phase4] === Multi-threading test ===\n\n");
+
+    /* Create 4 worker threads in root task's VSpace */
+    volatile int shared_counter = 0;
+    #define NUM_WORKERS 4
+    sel4utils_thread_t workers[NUM_WORKERS];
+
+    for (int i = 0; i < NUM_WORKERS; i++) {
+        error = sel4utils_configure_thread(
+            &vka, &vspace, &vspace,
+            0,  /* no fault endpoint */
+            simple_get_cnode(&simple),
+            seL4_NilData,
+            &workers[i]);
+        if (error) {
+            printf("[phase4] Thread %d configure failed: %d\n", i, error);
+            continue;
+        }
+
+        error = seL4_TCB_SetPriority(workers[i].tcb.cptr,
+                                      simple_get_tcb(&simple), 200);
+        if (error) {
+            printf("[phase4] Thread %d set priority failed: %d\n", i, error);
+            continue;
+        }
+
+        error = sel4utils_start_thread(
+            &workers[i],
+            (sel4utils_thread_entry_fn)worker_thread,
+            (void *)(uintptr_t)i,
+            (void *)&shared_counter,
+            1 /* resume */);
+        if (error) {
+            printf("[phase4] Thread %d start failed: %d\n", i, error);
+            continue;
+        }
+        printf("[phase4] Thread %d created (TCB=%lu)\n",
+               i, (unsigned long)workers[i].tcb.cptr);
+    }
+
+    /* Let workers run */
+    printf("[phase4] Yielding to let workers run...\n");
     seL4_TCB_SetPriority(seL4_CapInitThreadTCB,
                          seL4_CapInitThreadTCB, 200);
+    for (int i = 0; i < 100; i++) seL4_Yield();
 
-    /* Spawn serial_server (gets serial_ep) */
-    printf("[proc] Spawning serial_server...\n");
-    sel4utils_process_t serial_proc;
-    seL4_CPtr ser_caps[1]; seL4_CPtr ser_slots[1];
-    ser_caps[0] = serial_ep.cptr;
+    printf("[phase4] shared_counter = %d\n", (int)shared_counter);
+    if (shared_counter == NUM_WORKERS) {
+        printf("[phase4] SUCCESS: %d threads ran with real TCBs!\n\n", NUM_WORKERS);
+    } else {
+        printf("[phase4] PARTIAL: %d/%d threads completed\n\n",
+               (int)shared_counter, NUM_WORKERS);
+    }
+
+    /* ========= Interactive Shell ========= */
+    printf("[proc] Spawning serial_server + mini_shell...\n");
+
+    sel4utils_process_t serial_proc, shell_proc;
+    seL4_CPtr caps[1], slots[1];
+    caps[0] = serial_ep.cptr;
+
     error = spawn_with_args("serial_server", 200, &serial_proc,
-                            &fault_ep, 1, ser_caps, ser_slots);
+                            &fault_ep, 1, caps, slots);
     if (error) { printf("[proc] serial FAILED: %d\n", error); goto idle; }
-    printf("[proc] serial_server OK\n");
 
-    /* Spawn mini_shell (gets serial_ep) */
-    printf("[proc] Spawning mini_shell...\n");
-    sel4utils_process_t shell_proc;
-    seL4_CPtr sh_caps[1]; seL4_CPtr sh_slots[1];
-    sh_caps[0] = serial_ep.cptr;
     error = spawn_with_args("mini_shell", 200, &shell_proc,
-                            &fault_ep, 1, sh_caps, sh_slots);
+                            &fault_ep, 1, caps, slots);
     if (error) { printf("[proc] shell FAILED: %d\n", error); goto idle; }
-    printf("[proc] mini_shell OK\n");
-    printf("\n[root] System ready. Type commands.\n\n");
+    printf("[proc] All up. Type commands.\n\n");
 
-    /* Poll UART, push keyboard chars to serial_server */
+    /* Keyboard polling loop */
     while (1) {
         if (uart && !(uart[UART_FR / 4] & FR_RXFE)) {
             char c = (char)(uart[UART_DR / 4] & 0xFF);
