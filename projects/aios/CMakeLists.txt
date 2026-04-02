@@ -24,7 +24,7 @@ MakeCPIO(apps_cpio.o
     "$<TARGET_FILE:hello_child>;$<TARGET_FILE:echo_server>;$<TARGET_FILE:serial_server>;$<TARGET_FILE:mini_shell>;$<TARGET_FILE:crash_test>;$<TARGET_FILE:blk_test>"
 )
 
-add_executable(aios_root ${AIOS_ROOT}/src/aios_root.c apps_cpio.o)
+add_executable(aios_root ${AIOS_ROOT}/src/aios_root.c ${AIOS_ROOT}/src/ext2.c apps_cpio.o)
 target_link_libraries(aios_root
     sel4runtime sel4
     sel4allocman sel4vka sel4utils

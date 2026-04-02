@@ -19,6 +19,7 @@
 #include <utils/util.h>
 #include <vka/capops.h>
 #include "virtio.h"
+#include "ext2.h"
 
 #define ALLOCATOR_STATIC_POOL_SIZE (BIT(seL4_PageBits) * 400)
 static char allocator_mem_pool[ALLOCATOR_STATIC_POOL_SIZE];
@@ -35,6 +36,16 @@ static allocman_t *allocman;
 #define FR_RXFE   (1 << 4)
 #define SER_KEY_PUSH 4
 static volatile uint32_t *uart;
+
+/* Filesystem state (shared with fs thread) */
+static ext2_ctx_t ext2;
+static volatile uint32_t *blk_vio;
+static uint8_t *blk_dma;
+static uint64_t blk_dma_pa;
+static seL4_CPtr fs_ep_cap;
+
+static int blk_read_sector(uint64_t sector, void *buf);
+static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf);
 
 /* Spawn a process with endpoint caps passed via argv */
 static int spawn_with_args(const char *name, uint8_t prio,
@@ -99,6 +110,119 @@ static void worker_thread(void *arg0, void *arg1, void *ipc_buf) {
     core_seen[id] = 1;
     printf("[worker %d] counter=%d (pinned to core %d)\n", id, *ctr, id);
     while (1) seL4_Yield();
+}
+
+/* Read a 512-byte sector via virtio-blk */
+static int blk_read_sector(uint64_t sector, void *buf) {
+    struct virtq_desc  *desc  = (struct virtq_desc *)(blk_dma);
+    struct virtq_avail *avail = (struct virtq_avail *)(blk_dma + 0x100);
+    struct virtq_used  *used  = (struct virtq_used  *)(blk_dma + 0x1000);
+    struct virtio_blk_req *req = (struct virtio_blk_req *)(blk_dma + 0x2000);
+    uint64_t req_pa = blk_dma_pa + 0x2000;
+
+    req->type = VIRTIO_BLK_T_IN;
+    req->reserved = 0;
+    req->sector = sector;
+    req->status = 0xFF;
+
+    desc[0].addr = req_pa; desc[0].len = 16;
+    desc[0].flags = VIRTQ_DESC_F_NEXT; desc[0].next = 1;
+    desc[1].addr = req_pa + 16; desc[1].len = 512;
+    desc[1].flags = VIRTQ_DESC_F_WRITE | VIRTQ_DESC_F_NEXT; desc[1].next = 2;
+    desc[2].addr = req_pa + 16 + 512; desc[2].len = 1;
+    desc[2].flags = VIRTQ_DESC_F_WRITE; desc[2].next = 0;
+
+    __asm__ volatile("dmb sy" ::: "memory");
+    avail->ring[avail->idx % 16] = 0;
+    __asm__ volatile("dmb sy" ::: "memory");
+    avail->idx += 1;
+    __asm__ volatile("dmb sy" ::: "memory");
+    blk_vio[VIRTIO_MMIO_QUEUE_NOTIFY / 4] = 0;
+
+    uint16_t last = used->idx;
+    for (int t = 0; t < 10000000; t++) {
+        __asm__ volatile("dmb sy" ::: "memory");
+        if (used->idx != last) break;
+    }
+    blk_vio[VIRTIO_MMIO_INTERRUPT_ACK / 4] = blk_vio[VIRTIO_MMIO_INTERRUPT_STATUS / 4];
+
+    if (used->idx == last || req->status != 0) return -1;
+    uint8_t *src = req->data;
+    uint8_t *dst = (uint8_t *)buf;
+    for (int i = 0; i < 512; i++) dst[i] = src[i];
+    return 0;
+}
+
+/* Filesystem IPC thread — runs in root task VSpace */
+static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
+    seL4_CPtr ep = (seL4_CPtr)(uintptr_t)arg0;
+    static char fs_buf[4096];
+
+    printf("[fs] Thread started on EP %lu\n", (unsigned long)ep);
+
+    while (1) {
+        seL4_Word badge;
+        seL4_MessageInfo_t msg = seL4_Recv(ep, &badge);
+        seL4_Word label = seL4_MessageInfo_get_label(msg);
+
+        switch (label) {
+        case FS_LS: {
+            /* MR0 = inode (0 = root) */
+            uint32_t ino = (uint32_t)seL4_GetMR(0);
+            if (ino == 0) ino = EXT2_ROOT_INO;
+            int len = ext2_list_dir(&ext2, ino, fs_buf, sizeof(fs_buf));
+            if (len < 0) len = 0;
+            /* Return dir listing in MRs (pack 8 chars per MR) */
+            int mrs = (len + 7) / 8;
+            if (mrs > (int)seL4_MsgMaxLength - 1) mrs = seL4_MsgMaxLength - 1;
+            seL4_SetMR(0, (seL4_Word)len);
+            for (int i = 0; i < mrs; i++) {
+                seL4_Word w = 0;
+                for (int j = 0; j < 8 && i*8+j < len; j++)
+                    w |= ((seL4_Word)(uint8_t)fs_buf[i*8+j]) << (j*8);
+                seL4_SetMR(i + 1, w);
+            }
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, mrs + 1));
+            break;
+        }
+        case FS_CAT: {
+            /* MR0..MRn = path string packed in MRs */
+            seL4_Word path_len = seL4_GetMR(0);
+            char path[128];
+            int pl = (path_len > 127) ? 127 : (int)path_len;
+            int mr_idx = 1;
+            for (int i = 0; i < pl; i++) {
+                if (i % 8 == 0 && i > 0) mr_idx++;
+                path[i] = (char)((seL4_GetMR(mr_idx) >> ((i % 8) * 8)) & 0xFF);
+            }
+            path[pl] = '\0';
+
+            uint32_t ino;
+            int ret = ext2_resolve_path(&ext2, path, &ino);
+            if (ret != 0) {
+                seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            int len = ext2_read_file(&ext2, ino, fs_buf, sizeof(fs_buf));
+            if (len < 0) len = 0;
+            int mrs = (len + 7) / 8;
+            if (mrs > (int)seL4_MsgMaxLength - 1) mrs = seL4_MsgMaxLength - 1;
+            seL4_SetMR(0, (seL4_Word)len);
+            for (int i = 0; i < mrs; i++) {
+                seL4_Word w = 0;
+                for (int j = 0; j < 8 && i*8+j < len; j++)
+                    w |= ((seL4_Word)(uint8_t)fs_buf[i*8+j]) << (j*8);
+                seL4_SetMR(i + 1, w);
+            }
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, mrs + 1));
+            break;
+        }
+        default:
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
+            break;
+        }
+    }
 }
 
 int main(int argc, char *argv[]) {
@@ -479,6 +603,19 @@ test3:
         if (ext2_magic == 0xEF53) {
             printf("[test6] PASS: ext2 superblock found!\n");
             tests_passed++;
+
+            /* Save virtio state for fs thread */
+            blk_vio = vio;
+            blk_dma = dma;
+            blk_dma_pa = dma_pa;
+
+            /* Init ext2 */
+            int fs_err = ext2_init(&ext2, blk_read_sector);
+            if (fs_err == 0) {
+                printf("[test6] ext2 filesystem mounted\n");
+            } else {
+                printf("[test6] ext2 init failed: %d\n", fs_err);
+            }
         } else {
             printf("[test6] ext2 not found (got 0x%04x)\n", ext2_magic);
         }
@@ -487,6 +624,23 @@ skip_blk:
 
 
     /* ========= Interactive Shell ========= */
+    /* Create filesystem endpoint + thread */
+    vka_object_t fs_ep_obj;
+    vka_alloc_endpoint(&vka, &fs_ep_obj);
+    fs_ep_cap = fs_ep_obj.cptr;
+    {
+        sel4utils_thread_t fs_thread;
+        error = sel4utils_configure_thread(&vka, &vspace, &vspace, 0,
+            simple_get_cnode(&simple), seL4_NilData, &fs_thread);
+        if (!error) {
+            seL4_TCB_SetPriority(fs_thread.tcb.cptr, simple_get_tcb(&simple), 200);
+            sel4utils_start_thread(&fs_thread,
+                (sel4utils_thread_entry_fn)fs_thread_fn,
+                (void *)(uintptr_t)fs_ep_cap, NULL, 1);
+            printf("[fs] Filesystem thread started\n");
+        }
+    }
+
     printf("[proc] Starting interactive shell...\n");
     {
         sel4utils_process_t serial_proc, shell_proc;
@@ -497,8 +651,10 @@ skip_blk:
                                 &fault_ep, 1, caps, slots);
         if (error) { printf("[proc] serial FAILED\n"); goto idle; }
 
+        seL4_CPtr sh_caps[2] = { serial_ep.cptr, fs_ep_cap };
+        seL4_CPtr sh_slots[2];
         error = spawn_with_args("mini_shell", 200, &shell_proc,
-                                &fault_ep, 1, caps, slots);
+                                &fault_ep, 2, sh_caps, sh_slots);
         if (error) { printf("[proc] shell FAILED\n"); goto idle; }
         printf("[proc] Shell ready.\n\n");
     }
