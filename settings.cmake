@@ -20,7 +20,7 @@ set(KernelDebugBuild ON CACHE BOOL "" FORCE)
 set(KernelPrinting ON CACHE BOOL "" FORCE)
 
 # MCS scheduler
-set(KernelIsMCS ON CACHE BOOL "" FORCE)
+set(KernelIsMCS OFF CACHE BOOL "" FORCE)
 
 # GCC 15 workaround: musl weak_alias generates protected visibility symbols
 # which the linker cannot copy-relocate. Force default visibility.

@@ -17,75 +17,69 @@
 /* System Calls */
 #define SYSCALL_CALL (-1)
 #define SYSCALL_REPLY_RECV (-2)
-#define SYSCALL_NB_SEND_RECV (-3)
-#define SYSCALL_NB_SEND_WAIT (-4)
-#define SYSCALL_SEND (-5)
-#define SYSCALL_NB_SEND (-6)
-#define SYSCALL_RECV (-7)
+#define SYSCALL_SEND (-3)
+#define SYSCALL_NB_SEND (-4)
+#define SYSCALL_RECV (-5)
+#define SYSCALL_REPLY (-6)
+#define SYSCALL_YIELD (-7)
 #define SYSCALL_NB_RECV (-8)
-#define SYSCALL_WAIT (-9)
-#define SYSCALL_NB_WAIT (-10)
-#define SYSCALL_YIELD (-11)
 
 #endif /* __ASSEMBLER__ */
 
 #define SYSCALL_MAX (-1)
-#define SYSCALL_MIN (-11)
+#define SYSCALL_MIN (-8)
 
 #ifndef __ASSEMBLER__
 
 enum syscall {
     SysCall = -1,
     SysReplyRecv = -2,
-    SysNBSendRecv = -3,
-    SysNBSendWait = -4,
-    SysSend = -5,
-    SysNBSend = -6,
-    SysRecv = -7,
+    SysSend = -3,
+    SysNBSend = -4,
+    SysRecv = -5,
+    SysReply = -6,
+    SysYield = -7,
     SysNBRecv = -8,
-    SysWait = -9,
-    SysNBWait = -10,
-    SysYield = -11,
 #if defined(CONFIG_PRINTING)
-    SysDebugPutChar = -12,
-    SysDebugDumpScheduler = -13,
+    SysDebugPutChar = -9,
+    SysDebugDumpScheduler = -10,
 #endif /* defined(CONFIG_PRINTING) */
 #if defined(CONFIG_DEBUG_BUILD)
-    SysDebugHalt = -14,
-    SysDebugCapIdentify = -15,
-    SysDebugSnapshot = -16,
-    SysDebugNameThread = -17,
+    SysDebugHalt = -11,
+    SysDebugCapIdentify = -12,
+    SysDebugSnapshot = -13,
+    SysDebugNameThread = -14,
 #endif /* defined(CONFIG_DEBUG_BUILD) */
 #if defined(CONFIG_DEBUG_BUILD)
-    SysDebugSendIPI = -18,
+    SysDebugSendIPI = -15,
 #endif /* defined(CONFIG_DEBUG_BUILD) */
 #if defined(CONFIG_DANGEROUS_CODE_INJECTION)
-    SysDebugRun = -19,
+    SysDebugRun = -16,
 #endif /* defined(CONFIG_DANGEROUS_CODE_INJECTION) */
 #if defined(CONFIG_ENABLE_BENCHMARKS)
-    SysBenchmarkFlushCaches = -20,
-    SysBenchmarkResetLog = -21,
-    SysBenchmarkFinalizeLog = -22,
-    SysBenchmarkSetLogBuffer = -23,
-    SysBenchmarkNullSyscall = -24,
+    SysBenchmarkFlushCaches = -17,
+    SysBenchmarkResetLog = -18,
+    SysBenchmarkFinalizeLog = -19,
+    SysBenchmarkSetLogBuffer = -20,
+    SysBenchmarkNullSyscall = -21,
 #endif /* defined(CONFIG_ENABLE_BENCHMARKS) */
 #if defined(CONFIG_BENCHMARK_TRACK_UTILISATION)
-    SysBenchmarkGetThreadUtilisation = -25,
-    SysBenchmarkResetThreadUtilisation = -26,
+    SysBenchmarkGetThreadUtilisation = -22,
+    SysBenchmarkResetThreadUtilisation = -23,
 #endif /* defined(CONFIG_BENCHMARK_TRACK_UTILISATION) */
 #if (defined(CONFIG_DEBUG_BUILD) && defined(CONFIG_BENCHMARK_TRACK_UTILISATION))
-    SysBenchmarkDumpAllThreadsUtilisation = -27,
-    SysBenchmarkResetAllThreadsUtilisation = -28,
+    SysBenchmarkDumpAllThreadsUtilisation = -24,
+    SysBenchmarkResetAllThreadsUtilisation = -25,
 #endif /* (defined(CONFIG_DEBUG_BUILD) && defined(CONFIG_BENCHMARK_TRACK_UTILISATION)) */
 #if defined(CONFIG_KERNEL_X86_DANGEROUS_MSR)
-    SysX86DangerousWRMSR = -29,
-    SysX86DangerousRDMSR = -30,
+    SysX86DangerousWRMSR = -26,
+    SysX86DangerousRDMSR = -27,
 #endif /* defined(CONFIG_KERNEL_X86_DANGEROUS_MSR) */
 #if defined(CONFIG_VTX)
-    SysVMEnter = -31,
+    SysVMEnter = -28,
 #endif /* defined(CONFIG_VTX) */
 #if defined(CONFIG_SET_TLS_BASE_SELF)
-    SysSetTLSBase = -32,
+    SysSetTLSBase = -29,
 #endif /* defined(CONFIG_SET_TLS_BASE_SELF) */
 };
 typedef word_t syscall_t;
@@ -95,15 +89,12 @@ typedef word_t syscall_t;
 static char *syscall_names[] UNUSED = {
          [1] = "Call",
          [2] = "ReplyRecv",
-         [3] = "NBSendRecv",
-         [4] = "NBSendWait",
-         [5] = "Send",
-         [6] = "NBSend",
-         [7] = "Recv",
+         [3] = "Send",
+         [4] = "NBSend",
+         [5] = "Recv",
+         [6] = "Reply",
+         [7] = "Yield",
          [8] = "NBRecv",
-         [9] = "Wait",
-         [10] = "NBWait",
-         [11] = "Yield",
 };
 #endif /* CONFIG_DEBUG_BUILD */
 #endif /* !__ASSEMBLER__ */

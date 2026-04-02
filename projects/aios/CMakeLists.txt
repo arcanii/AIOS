@@ -1,25 +1,38 @@
 #
-# AIOS root task project
+# AIOS root task + child apps
 #
 cmake_minimum_required(VERSION 3.16.0)
 project(aios-rootserver C ASM)
 
-# Our root task source
-add_executable(aios_root ${CMAKE_CURRENT_LIST_DIR}/../../src/aios_root.c)
+set(AIOS_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
 
+# Build the child app (regular process, NOT root task)
+add_executable(hello_child ${AIOS_ROOT}/src/apps/hello_child.c)
+target_link_libraries(hello_child
+    sel4runtime sel4
+    sel4muslcsys muslc
+    sel4platsupport
+    sel4utils sel4simple sel4simple-default
+    sel4vka sel4allocman
+)
+target_include_directories(hello_child PRIVATE ${AIOS_ROOT}/include)
+# Do NOT use SetSeL4Start — that's for root task only
+# sel4runtime provides the regular _start entry point
+
+# Embed child ELF into CPIO archive
+MakeCPIO(apps_cpio.o "$<TARGET_FILE:hello_child>")
+
+# Root task
+add_executable(aios_root ${AIOS_ROOT}/src/aios_root.c apps_cpio.o)
 target_link_libraries(aios_root
     sel4runtime sel4
     sel4allocman sel4vka sel4utils
     sel4simple sel4simple-default
     sel4platsupport
     sel4muslcsys muslc
+    cpio elf
 )
-
-target_include_directories(aios_root PRIVATE
-    ${CMAKE_CURRENT_LIST_DIR}/../../include
-)
-
-# GCC 15 workaround: musllibc protected symbols
+target_include_directories(aios_root PRIVATE ${AIOS_ROOT}/include)
 target_link_options(aios_root PRIVATE -Wl,--no-copy-dt-needed-entries)
 
 DeclareRootserver(aios_root)

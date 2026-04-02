@@ -424,9 +424,6 @@ KernelArmTLSReg:STRING=tpidru
 // each thread's utilisation time.
 KernelBenchmarks:STRING=none
 
-//Number of milliseconds until the boot thread is preempted.
-KernelBootThreadTimeSlice:STRING=5
-
 //Define a __clzsi2 function to count leading zeros for uint32_t
 // arguments.                         Only needed on platforms
 // which lack a builtin instruction.
@@ -508,7 +505,7 @@ KernelIRQReporting:BOOL=ON
 KernelInvocationReportErrorIPC:BOOL=OFF
 
 //Use the MCS kernel configuration, which is not verified.
-KernelIsMCS:BOOL=ON
+KernelIsMCS:BOOL=OFF
 
 //Max number of bootinfo untyped caps
 KernelMaxNumBootinfoUntypedCaps:STRING=230
@@ -561,17 +558,16 @@ KernelRootCNodeSizeBits:STRING=12
 
 KernelSel4Arch:STRING=aarch64
 
-//Enable notification signal fastpath
-KernelSignalFastpath:BOOL=OFF
-
 //This describes the log2 size of the kernel stack. Great care
 // should be taken as    there is no guard below the stack so setting
 // this too small will cause random    memory corruption
 KernelStackBits:STRING=12
 
-//Specifies a static maximum to which scheduling context can have
-//     either its period or budget configured.
-KernelStaticMaxPeriodUs:STRING=0
+//Number of timer ticks until a thread is preempted.
+KernelTimeSlice:STRING=5
+
+//Timer tick period in milliseconds
+KernelTimerTickMS:STRING=2
 
 //On a double fault the kernel can try and print out the users
 // stack to aid     debugging. This option determines how many
@@ -583,14 +579,6 @@ KernelUserStackTraceLength:STRING=16
 // story of the kernel. Enabling this option does NOT    imply
 // you are using a verified kernel.
 KernelVerificationBuild:BOOL=OFF
-
-//Multiplier to scale kernel WCET estimate by: the kernel WCET
-// estimate       is used to ensure a thread has enough budget
-// to get in and out of the       kernel. When running in a simulator
-// the WCET estimate, which is tuned       for hardware, may not
-// be sufficient. This option provides a hacky knob      that can
-// be fiddled with when running inside a simulator.
-KernelWcetScale:STRING=1
 
 //This flag causes CMake to add lots of source files to its dependency
 // lists
@@ -1515,8 +1503,7 @@ KernelBenchmarks_all_strings:INTERNAL=none;generic;track_kernel_entries;tracepoi
 // kernel.
 KernelBinaryVerificationBuild:INTERNAL=OFF
 KernelBinaryVerificationBuild_DISABLED:INTERNAL=TRUE
-//ADVANCED property for variable: KernelBootThreadTimeSlice
-KernelBootThreadTimeSlice-ADVANCED:INTERNAL=1
+KernelBootThreadTimeSlice_UNAVAILABLE:INTERNAL=ON
 //ADVANCED property for variable: KernelClz32
 KernelClz32-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: KernelClz64
@@ -1645,14 +1632,16 @@ KernelSel4ArchRiscV64:INTERNAL=OFF
 KernelSel4ArchX86_64:INTERNAL=OFF
 KernelSel4Arch_all_strings:INTERNAL=aarch32;aarch64;arm_hyp;riscv32;riscv64;x86_64;ia32
 KernelSetTLSBaseSelf:INTERNAL=OFF
-//ADVANCED property for variable: KernelSignalFastpath
-KernelSignalFastpath-ADVANCED:INTERNAL=1
+//Enable notification signal fastpath
+KernelSignalFastpath:INTERNAL=OFF
+KernelSignalFastpath_DISABLED:INTERNAL=TRUE
 //ADVANCED property for variable: KernelStackBits
 KernelStackBits-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: KernelStaticMaxPeriodUs
-KernelStaticMaxPeriodUs-ADVANCED:INTERNAL=1
-KernelTimeSlice_UNAVAILABLE:INTERNAL=ON
-KernelTimerTickMS_UNAVAILABLE:INTERNAL=ON
+KernelStaticMaxPeriodUs_UNAVAILABLE:INTERNAL=ON
+//ADVANCED property for variable: KernelTimeSlice
+KernelTimeSlice-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: KernelTimerTickMS
+KernelTimerTickMS-ADVANCED:INTERNAL=1
 //Enable SystemMMU for the Tegra TK1 SoC
 KernelTk1SMMU:INTERNAL=OFF
 //Enable SMMU interrupts.     SMMU interrupts currently only serve
@@ -1669,8 +1658,7 @@ KernelUserStackTraceLength-ADVANCED:INTERNAL=1
 KernelUserTop_UNAVAILABLE:INTERNAL=ON
 //ADVANCED property for variable: KernelVerificationBuild
 KernelVerificationBuild-ADVANCED:INTERNAL=1
-//ADVANCED property for variable: KernelWcetScale
-KernelWcetScale-ADVANCED:INTERNAL=1
+KernelWcetScale_UNAVAILABLE:INTERNAL=ON
 KernelWordSize:INTERNAL=64
 //ADVANCED property for variable: LIB_MUSLC_GLOB_SOURCES
 LIB_MUSLC_GLOB_SOURCES-ADVANCED:INTERNAL=1

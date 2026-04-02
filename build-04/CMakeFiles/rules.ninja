@@ -169,6 +169,25 @@ rule C_STATIC_LIBRARY_LINKER__sel4_
 #############################################
 # Rule for compiling C files.
 
+rule C_COMPILER__hello_child_unscanned_
+  depfile = $DEP_FILE
+  deps = gcc
+  command = /opt/homebrew/bin/ccache ${LAUNCHER}${CODE_CHECK}/opt/homebrew/bin/aarch64-linux-gnu-gcc --sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04 $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  description = Building C object $out
+
+
+#############################################
+# Rule for linking C executable.
+
+rule C_EXECUTABLE_LINKER__hello_child_
+  command = $PRE_LINK && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-gcc --sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04  $FLAGS $LINK_FLAGS /Users/bryan/Desktop/github_repos/AIOS/build-04/lib/crt0.o /Users/bryan/Desktop/github_repos/AIOS/build-04/lib/crti.o /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/crtbegin.o $in -Wl,--start-group         -lgcc -lgcc_eh $LINK_PATH $LINK_LIBRARIES -Wl,--end-group /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/crtend.o /Users/bryan/Desktop/github_repos/AIOS/build-04/lib/crtn.o -o $TARGET_FILE && $POST_BUILD
+  description = Linking C executable $TARGET_FILE
+  restat = $RESTAT
+
+
+#############################################
+# Rule for compiling C files.
+
 rule C_COMPILER__aios_root_unscanned_
   depfile = $DEP_FILE
   deps = gcc
