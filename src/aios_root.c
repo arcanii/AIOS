@@ -3,6 +3,7 @@
  * Tests: multi-threading, process isolation, interactive shell
  */
 #include <stdio.h>
+#include "aios/version.h"
 #include <stdint.h>
 #include <sel4/sel4.h>
 #include <sel4platsupport/bootinfo.h>
@@ -17,6 +18,7 @@
 #include <simple-default/simple-default.h>
 #include <utils/util.h>
 #include <vka/capops.h>
+#include "virtio.h"
 
 #define ALLOCATOR_STATIC_POOL_SIZE (BIT(seL4_PageBits) * 400)
 static char allocator_mem_pool[ALLOCATOR_STATIC_POOL_SIZE];
@@ -105,7 +107,7 @@ int main(int argc, char *argv[]) {
 
     printf("\n");
     printf("============================================\n");
-    printf("  AIOS 0.4.x Root Task — Phase 5\n");
+    printf("  " AIOS_VERSION_FULL "\n");
     printf("  Full test suite + interactive shell\n");
     printf("============================================\n\n");
 
@@ -306,6 +308,183 @@ test3:
     printf("\n============================================\n");
     printf("  Test Results: %d/%d passed\n", tests_passed, tests_total);
     printf("============================================\n\n");
+
+    /* ========= TEST 6: Block device (inline) ========= */
+    printf("\n--- Test 6: Block device (virtio-blk) ---\n");
+    tests_total++;
+    {
+        #define VIRTIO_BASE_ADDR 0xa000000UL
+        #define VIRTIO_SLOT_SIZE 0x200
+        #define VIRTIO_NUM_SLOTS 32
+
+        /* Map 4 pages of virtio MMIO */
+        vka_object_t vio_frames[4];
+        seL4_CPtr vio_caps[4];
+        int vio_ok = 1;
+        for (int p = 0; p < 4; p++) {
+            error = sel4platsupport_alloc_frame_at(&vka,
+                VIRTIO_BASE_ADDR + p * 0x1000, seL4_PageBits, &vio_frames[p]);
+            if (error) { vio_ok = 0; break; }
+            vio_caps[p] = vio_frames[p].cptr;
+        }
+        if (!vio_ok) {
+            printf("[test6] Failed to alloc virtio frames\n");
+            goto skip_blk;
+        }
+        void *vio_vaddr = vspace_map_pages(&vspace, vio_caps, NULL,
+            seL4_AllRights, 4, seL4_PageBits, 0);
+        if (!vio_vaddr) {
+            printf("[test6] Failed to map virtio\n");
+            goto skip_blk;
+        }
+
+        /* Find block device */
+        int blk_slot = -1;
+        for (int i = 0; i < VIRTIO_NUM_SLOTS; i++) {
+            volatile uint32_t *slot = (volatile uint32_t *)((uintptr_t)vio_vaddr + i * VIRTIO_SLOT_SIZE);
+            if (slot[0] == VIRTIO_MAGIC && slot[VIRTIO_MMIO_DEVICE_ID/4] == VIRTIO_BLK_DEVICE_ID) {
+                blk_slot = i;
+                break;
+            }
+        }
+        if (blk_slot < 0) {
+            printf("[test6] No block device (add -drive to QEMU)\n");
+            goto skip_blk;
+        }
+        volatile uint32_t *vio = (volatile uint32_t *)((uintptr_t)vio_vaddr + blk_slot * VIRTIO_SLOT_SIZE);
+        printf("[test6] Block device at slot %d\n", blk_slot);
+
+        /* Allocate DMA pages via vka */
+        vka_object_t dma_frames[4];
+        seL4_CPtr dma_caps[4];
+        uint64_t dma_paddrs[4];
+        int dma_ok = 1;
+        for (int i = 0; i < 4; i++) {
+            error = vka_alloc_frame(&vka, seL4_PageBits, &dma_frames[i]);
+            if (error) {
+                printf("[test6] DMA frame %d alloc failed: %d\n", i, error);
+                dma_ok = 0; break;
+            }
+            dma_caps[i] = dma_frames[i].cptr;
+            seL4_ARM_Page_GetAddress_t ga = seL4_ARM_Page_GetAddress(dma_caps[i]);
+            if (ga.error) {
+                printf("[test6] GetAddress %d failed\n", i);
+                dma_ok = 0; break;
+            }
+            dma_paddrs[i] = ga.paddr;
+        }
+        if (!dma_ok) goto skip_blk;
+        printf("[test6] DMA pages: 0x%lx 0x%lx 0x%lx 0x%lx\n",
+               (unsigned long)dma_paddrs[0], (unsigned long)dma_paddrs[1],
+               (unsigned long)dma_paddrs[2], (unsigned long)dma_paddrs[3]);
+
+        /* Check contiguity — virtio legacy needs contiguous phys for virtqueue */
+        int contig = 1;
+        for (int i = 1; i < 4; i++) {
+            if (dma_paddrs[i] != dma_paddrs[0] + i * 0x1000) { contig = 0; break; }
+        }
+        if (!contig) {
+            printf("[test6] WARNING: DMA pages not contiguous, using page 0 only\n");
+        }
+
+        void *dma_vaddr = vspace_map_pages(&vspace, dma_caps, NULL,
+            seL4_AllRights, 4, seL4_PageBits, 0);
+        if (!dma_vaddr) {
+            printf("[test6] DMA map failed\n");
+            goto skip_blk;
+        }
+        uint64_t dma_pa = dma_paddrs[0];
+        printf("[test6] DMA at va=%p pa=0x%lx\n", dma_vaddr, (unsigned long)dma_pa);
+
+        /* Zero DMA region */
+        uint8_t *dma = (uint8_t *)dma_vaddr;
+        for (int i = 0; i < 16384; i++) dma[i] = 0;
+
+        /* Legacy virtio init */
+        #define VIO_R(off) vio[(off)/4]
+        #define VIO_W(off, val) vio[(off)/4] = (val)
+
+        VIO_W(VIRTIO_MMIO_STATUS, 0);
+        VIO_W(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACK);
+        VIO_W(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER);
+        VIO_W(VIRTIO_MMIO_GUEST_PAGE_SIZE, 4096);
+        VIO_W(VIRTIO_MMIO_DRV_FEATURES, 0);
+        VIO_W(VIRTIO_MMIO_QUEUE_SEL, 0);
+        uint32_t qmax = VIO_R(VIRTIO_MMIO_QUEUE_NUM_MAX);
+        uint32_t qsz = qmax < 16 ? qmax : 16;
+        VIO_W(VIRTIO_MMIO_QUEUE_NUM, qsz);
+        VIO_W(VIRTIO_MMIO_QUEUE_PFN, (uint32_t)(dma_pa / 4096));
+        VIO_W(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK);
+        printf("[test6] virtio init OK (qsz=%u)\n", (unsigned)qsz);
+
+        /* Layout: desc at 0, avail at 0x100, used at 0x1000, req at 0x2000 */
+        struct virtq_desc  *desc  = (struct virtq_desc *)(dma);
+        struct virtq_avail *avail = (struct virtq_avail *)(dma + 0x100);
+        struct virtq_used  *used  = (struct virtq_used  *)(dma + 0x1000);
+        struct virtio_blk_req *req = (struct virtio_blk_req *)(dma + 0x2000);
+        uint64_t req_pa = dma_pa + 0x2000;
+
+        /* Read sector 2 (ext2 superblock) */
+        req->type = VIRTIO_BLK_T_IN;
+        req->reserved = 0;
+        req->sector = 2;
+        req->status = 0xFF;
+
+        desc[0].addr  = req_pa;
+        desc[0].len   = 16;
+        desc[0].flags = VIRTQ_DESC_F_NEXT;
+        desc[0].next  = 1;
+
+        desc[1].addr  = req_pa + 16;
+        desc[1].len   = 512;
+        desc[1].flags = VIRTQ_DESC_F_WRITE | VIRTQ_DESC_F_NEXT;
+        desc[1].next  = 2;
+
+        desc[2].addr  = req_pa + 16 + 512;
+        desc[2].len   = 1;
+        desc[2].flags = VIRTQ_DESC_F_WRITE;
+        desc[2].next  = 0;
+
+        __asm__ volatile("dmb sy" ::: "memory");
+        avail->ring[avail->idx % qsz] = 0;
+        __asm__ volatile("dmb sy" ::: "memory");
+        avail->idx += 1;
+        __asm__ volatile("dmb sy" ::: "memory");
+
+        VIO_W(VIRTIO_MMIO_QUEUE_NOTIFY, 0);
+
+        /* Poll for completion */
+        uint16_t last_used = 0;
+        int done = 0;
+        for (int t = 0; t < 10000000; t++) {
+            __asm__ volatile("dmb sy" ::: "memory");
+            if (used->idx != last_used) { done = 1; break; }
+        }
+
+        VIO_R(VIRTIO_MMIO_INTERRUPT_STATUS);
+        VIO_W(VIRTIO_MMIO_INTERRUPT_ACK, 1);
+
+        if (!done) {
+            printf("[test6] Read timeout\n");
+            goto skip_blk;
+        }
+        if (req->status != 0) {
+            printf("[test6] Read error status=%u\n", req->status);
+            goto skip_blk;
+        }
+
+        /* Check ext2 magic at offset 0x38 in superblock */
+        uint16_t ext2_magic = req->data[0x38] | (req->data[0x39] << 8);
+        printf("[test6] ext2 magic: 0x%04x\n", ext2_magic);
+        if (ext2_magic == 0xEF53) {
+            printf("[test6] PASS: ext2 superblock found!\n");
+            tests_passed++;
+        } else {
+            printf("[test6] ext2 not found (got 0x%04x)\n", ext2_magic);
+        }
+    }
+skip_blk:
+
 
     /* ========= Interactive Shell ========= */
     printf("[proc] Starting interactive shell...\n");
