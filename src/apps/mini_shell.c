@@ -1,7 +1,6 @@
 /*
- * AIOS 0.4.x — Mini Shell
- * Uses IPC to serial_server for I/O.
- * Demonstrates: user process -> service process -> hardware
+ * AIOS 0.4.x — Interactive Mini Shell
+ * All I/O via IPC to serial_server
  */
 #include <stdio.h>
 #include <sel4/sel4.h>
@@ -19,9 +18,8 @@ static void ser_putc(char c) {
 
 static void ser_puts(const char *s) {
     while (*s) {
-        /* Pack up to 4 chars per IPC message */
         int n = 0;
-        while (s[n] && n < seL4_MsgMaxLength) {
+        while (s[n] && n < 4) {
             seL4_SetMR(n, (seL4_Word)s[n]);
             n++;
         }
@@ -30,16 +28,55 @@ static void ser_puts(const char *s) {
     }
 }
 
+static int ser_getc(void) {
+    seL4_MessageInfo_t reply = seL4_Call(
+        serial_ep, seL4_MessageInfo_new(SER_GETC, 0, 0, 0));
+    return (int)(long)seL4_GetMR(0);
+}
+
 static void ser_put_dec(unsigned long v) {
-    char buf[20];
-    int i = 0;
+    char buf[20]; int i = 0;
     if (v == 0) { ser_putc('0'); return; }
     while (v) { buf[i++] = '0' + (v % 10); v /= 10; }
     while (i--) ser_putc(buf[i]);
 }
 
+static int str_eq(const char *a, const char *b) {
+    while (*a && *b && *a == *b) { a++; b++; }
+    return *a == *b;
+}
+
+#define LINE_MAX 128
+static char line[LINE_MAX];
+
+static void read_line(int *len) {
+    *len = 0;
+    while (*len < LINE_MAX - 1) {
+        int c = ser_getc();
+        if (c < 0) {
+            /* No input — yield and retry */
+            seL4_Yield();
+            continue;
+        }
+        if (c == '\r' || c == '\n') {
+            ser_putc('\n');
+            break;
+        }
+        if ((c == 0x7f || c == '\b') && *len > 0) {
+            (*len)--;
+            ser_puts("\b \b");
+            continue;
+        }
+        if (c >= 0x20 && c < 127) {
+            line[*len] = (char)c;
+            (*len)++;
+            ser_putc((char)c);
+        }
+    }
+    line[*len] = '\0';
+}
+
 int main(int argc, char *argv[]) {
-    /* EP slot passed as argv[0] */
     serial_ep = 8;
     if (argc > 0 && argv[0]) {
         serial_ep = 0;
@@ -49,23 +86,31 @@ int main(int argc, char *argv[]) {
 
     ser_puts("\n");
     ser_puts("============================================\n");
-    ser_puts("  AIOS 0.4.x Mini Shell\n");
+    ser_puts("  AIOS 0.4.x Interactive Shell\n");
     ser_puts("  I/O via IPC to serial_server\n");
     ser_puts("============================================\n\n");
 
-    /* Demonstrate IPC-based I/O */
-    ser_puts("[shell] My PID: ");
-    /* We don't have getpid yet, just show we're alive */
-    ser_puts("running in isolated VSpace\n");
+    while (1) {
+        ser_puts("$ ");
+        int len;
+        read_line(&len);
+        if (len == 0) continue;
 
-    for (int i = 1; i <= 5; i++) {
-        ser_puts("[shell] tick ");
-        ser_put_dec(i);
-        ser_puts("\n");
-        /* Small delay via yields */
-        for (int j = 0; j < 100; j++) seL4_Yield();
+        if (str_eq(line, "help")) {
+            ser_puts("Commands: help, echo, hello, exit\n");
+        } else if (str_eq(line, "hello")) {
+            ser_puts("Hello from AIOS 0.4.x!\n");
+        } else if (str_eq(line, "exit")) {
+            ser_puts("Goodbye.\n");
+            return 0;
+        } else if (line[0] == 'e' && line[1] == 'c' && line[2] == 'h' &&
+                   line[3] == 'o' && line[4] == ' ') {
+            ser_puts(line + 5);
+            ser_putc('\n');
+        } else {
+            ser_puts(line);
+            ser_puts(": command not found\n");
+        }
     }
-
-    ser_puts("[shell] Done. Exiting.\n\n");
     return 0;
 }
