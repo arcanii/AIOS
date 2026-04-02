@@ -321,11 +321,21 @@ def inject(img_path, files):
         if '/bin/' in source_path or '\\bin\\' in source_path:
             if bin_ino:
                 return (bin_ino, f"/bin/{disk_name}")
-        if lower.startswith('test_') and (lower.endswith('.bin') or lower.endswith('.sh')):
+        if lower.startswith('test_'):
             if tests_ino:
                 return (tests_ino, f"/bin/tests/{disk_name}")
-        if lower.endswith('.bin') or lower.endswith('.sh'):
+        if lower.endswith('.sh'):
             if bin_ino:
+                return (bin_ino, f"/bin/{disk_name}")
+        # Programs from programs/ directory go to /bin/
+        if '/programs/' in source_path or source_path.startswith('programs/'):
+            if '/sbin/' in source_path:
+                if sbin_ino:
+                    return (sbin_ino, f"/sbin/{disk_name}")
+            elif lower.startswith('test_'):
+                if tests_ino:
+                    return (tests_ino, f"/bin/tests/{disk_name}")
+            elif bin_ino:
                 return (bin_ino, f"/bin/{disk_name}")
         if lower in ('passwd', 'group', 'shadow', 'hostname',
                      'motd', 'hosts', 'fstab', 'inittab',
@@ -338,12 +348,15 @@ def inject(img_path, files):
     for filepath in files:
         file_data = open(filepath, 'rb').read()
         basename = os.path.basename(filepath)
-        # Convert .bin -> .BIN with uppercase name
+        # Strip .bin extension for POSIX-clean names on disk
+        # e.g. shell.bin -> shell, shutdown.bin -> shutdown
         name_parts = basename.rsplit('.', 1)
-        if len(name_parts) == 2:
+        if len(name_parts) == 2 and name_parts[1].lower() == 'bin':
+            disk_name = name_parts[0].lower()
+        elif len(name_parts) == 2:
             disk_name = name_parts[0].lower() + '.' + name_parts[1].lower()
         else:
-            disk_name = basename  # preserve original case
+            disk_name = basename
 
         size = len(file_data)
         num_blocks = (size + block_size - 1) // block_size
@@ -363,16 +376,17 @@ def inject(img_path, files):
             chunk = file_data[start:end]
             data[block_off(blk):block_off(blk) + len(chunk)] = chunk
 
-        # Write inode — executables get 0755, others 0644
-        lower = disk_name.lower()
-        if lower.endswith('.bin') or lower.endswith('.sh'):
+        # Determine target directory first (needed for permission decision)
+        target_ino, target_path = get_target_dir(disk_name, filepath)
+
+        # Write inode — programs in /bin/ and /sbin/ get 0755, others 0644
+        if target_ino in (bin_ino, sbin_ino, tests_ino) or disk_name.endswith('.sh'):
             file_mode = 0o100755  # executable
         else:
             file_mode = 0o100644  # regular file
         write_inode(ino, file_mode, size, blocks)
 
         # Add directory entry (file_type=1 for regular file)
-        target_ino, target_path = get_target_dir(disk_name, filepath)
         if add_dir_entry(target_ino, disk_name, ino, 1):
             print(f"  {target_path}: inode {ino}, {size} bytes, {num_blocks} blocks")
         else:

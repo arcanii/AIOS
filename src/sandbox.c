@@ -9,6 +9,7 @@
 #include "aios/channels.h"
 #include "sys/syscall.h"
 #include "arch/aarch64/timer.h"
+#include "aios/async_ipc.h"
 
 /* ---- Memory regions (set by Microkit loader) ---- */
 uintptr_t sandbox_io;    /* 4 KB shared with orchestrator */
@@ -157,7 +158,40 @@ static uint64_t __attribute__((unused)) sched_ctx[24];  /* kernel scheduler cont
 static uint64_t slice_start = 0;  /* when current thread started running */
 static uint64_t slice_ticks = 0;  /* ticks per time slice */
 
+/* Reap finished detached threads: reclaim their stack memory.
+ * Called periodically from the scheduler to prevent resource leaks.
+ * Note: bump allocator cannot truly free, but we can reuse slots.
+ * Future: slab allocator would allow real stack reclamation. */
+static void reap_finished(void) {
+    for (int i = 0; i < MAX_THREADS; i++) {
+        if (threads[i].state == TH_FINISHED && threads[i].join_waiting == -2) {
+            /* Detached and finished -- free the slot */
+            threads[i].state = TH_FREE;
+            threads[i].join_waiting = -1;
+            threads[i].wait_channel = -1;
+            /* Check if owning process has no more threads */
+            int pi = threads[i].proc_idx;
+            if (pi >= 0 && pi < MAX_PROCS && procs[pi].state == PROC_ZOMBIE) {
+                int has_threads = 0;
+                for (int j = 0; j < MAX_THREADS; j++) {
+                    if (j != i && threads[j].state != TH_FREE &&
+                        threads[j].proc_idx == pi) {
+                        has_threads = 1;
+                        break;
+                    }
+                }
+                if (!has_threads) {
+                    procs[pi].state = PROC_FREE;
+                }
+            }
+        }
+    }
+}
+
 static void sched_yield(void) {
+    /* Reap detached threads that have finished */
+    reap_finished();
+
     /* Save current thread, pick next ready thread */
     if (current_thread >= 0) {
         thread_t *cur = &threads[current_thread];
@@ -429,16 +463,50 @@ static unsigned long long ks_timer_freq(void) {
 static int __attribute__((unused)) ks_stub_int(void) { return -1; }
 static int __attribute__((unused)) ks_stub_int1(int a) { (void)a; return -1; }
 static int __attribute__((unused)) ks_stub_int2(int a, int b) { (void)a; (void)b; return -1; }
+/* Heap lock: simple flag + yield spin. Safe because:
+ * - Single core (no true parallel access)
+ * - Preemption via setjmp/longjmp preserves lock state
+ * - Yield gives other threads a chance if contended */
+static volatile int heap_lock = 0;
+
+static void heap_acquire(void) {
+    while (heap_lock) {
+        if (current_thread >= 0) {
+            threads[current_thread].state = TH_BLOCKED_MTX;
+            threads[current_thread].wait_channel = (int)(uintptr_t)&heap_lock;
+        }
+        sched_yield();
+    }
+    heap_lock = 1;
+}
+
+static void heap_release(void) {
+    heap_lock = 0;
+    /* Wake one thread blocked on heap lock */
+    int chan = (int)(uintptr_t)&heap_lock;
+    for (int i = 0; i < MAX_THREADS; i++) {
+        if (threads[i].state == TH_BLOCKED_MTX &&
+            threads[i].wait_channel == chan) {
+            threads[i].state = TH_READY;
+            threads[i].wait_channel = -1;
+            break;
+        }
+    }
+}
+
 static void *ks_malloc(unsigned long n) {
     if (current_thread < 0) return (void *)0;
+    heap_acquire();
     int pi = threads[current_thread].proc_idx;
     proc_t *p = &procs[pi];
     /* Align to 16 bytes */
     uint32_t alloc = (p->heap_used + 15) & ~15U;
     uint32_t end = alloc + (uint32_t)n;
-    if (end > p->heap_size) return (void *)0;
+    if (end > p->heap_size) { heap_release(); return (void *)0; }
     p->heap_used = end;
-    return (void *)(p->heap_base + alloc);
+    void *ptr = (void *)(p->heap_base + alloc);
+    heap_release();
+    return ptr;
 }
 static void ks_free(void *ptr) { (void)ptr; /* bump allocator: no-op */ }
 
@@ -779,11 +847,7 @@ static void ks_pthread_exit(void *retval) {
     thread_t *th = &threads[current_thread];
     th->retval = retval;
     th->state = TH_FINISHED;
-
-    /* If detached, auto-free */
-    if (th->join_waiting == -2) {
-        th->state = TH_FREE;
-    }
+    /* Detached threads will be reaped by reap_finished() in scheduler */
 
     sched_yield();
     for (;;) ; /* should never return */
@@ -1054,6 +1118,74 @@ static int ks_sync(void) {
     seL4_SetMR(0, SYS_SYNC);
     microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 1));
     return (int)(int64_t)seL4_GetMR(0);
+}
+
+
+#define TH_BLOCKED_IO_VAL 7  /* matches TH_BLOCKED_IO in async_ipc.h */
+
+static volatile uint32_t async_next_id = 1;
+
+/* Issue an async syscall: write request to sandbox_io, notify orchestrator,
+ * block calling thread until orchestrator responds.
+ * Other threads continue running while this thread waits. */
+static int64_t __attribute__((unused)) async_syscall(uint32_t syscall_nr, uint64_t arg1, uint64_t arg2, uint64_t arg3) {
+    if (current_thread < 0) {
+        /* No thread context -- fall back to sync PPC */
+        seL4_SetMR(0, syscall_nr);
+        seL4_SetMR(1, (seL4_Word)arg1);
+        seL4_SetMR(2, (seL4_Word)arg2);
+        seL4_SetMR(3, (seL4_Word)arg3);
+        microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 4));
+        return (int64_t)seL4_GetMR(0);
+    }
+
+    /* Write request to async slot in sandbox_io */
+    uint32_t req_id = async_next_id++;
+    volatile uint8_t *io = (volatile uint8_t *)sandbox_io;
+    WR32((uintptr_t)io, ASYNC_REQ_ID, req_id);
+    WR32((uintptr_t)io, ASYNC_SYSCALL, syscall_nr);
+    WR32((uintptr_t)io, ASYNC_THREAD_ID, (uint32_t)current_thread);
+    /* Store 64-bit args as pairs of 32-bit writes */
+    WR32((uintptr_t)io, ASYNC_ARG1, (uint32_t)arg1);
+    WR32((uintptr_t)io, ASYNC_ARG1 + 4, (uint32_t)(arg1 >> 32));
+    WR32((uintptr_t)io, ASYNC_ARG2, (uint32_t)arg2);
+    WR32((uintptr_t)io, ASYNC_ARG2 + 4, (uint32_t)(arg2 >> 32));
+    WR32((uintptr_t)io, ASYNC_ARG3, (uint32_t)arg3);
+    WR32((uintptr_t)io, ASYNC_ARG3 + 4, (uint32_t)(arg3 >> 32));
+    /* Mark pending and notify orchestrator */
+    WR32((uintptr_t)io, ASYNC_STATE, ASYNC_PENDING);
+    microkit_notify(CH_ORCH);
+
+    /* Block this thread until response arrives */
+    threads[current_thread].state = TH_BLOCKED_IO_VAL;
+    threads[current_thread].wait_channel = (int)req_id;
+    sched_yield();
+
+    /* Resumed by notified() when orchestrator completes the request */
+    int64_t result = (int64_t)(int32_t)RD32((uintptr_t)io, ASYNC_RESULT);
+    return result;
+}
+
+/* Check for async completion in notified() */
+static void async_check_completion(void) {
+    volatile uint8_t *io = (volatile uint8_t *)sandbox_io;
+    uint32_t state = RD32((uintptr_t)io, ASYNC_STATE);
+    if (state != ASYNC_COMPLETE) return;
+
+    uint32_t req_id = RD32((uintptr_t)io, ASYNC_REQ_ID);
+
+    /* Find and wake the blocked thread */
+    for (int i = 0; i < MAX_THREADS; i++) {
+        if (threads[i].state == TH_BLOCKED_IO_VAL &&
+            threads[i].wait_channel == (int)req_id) {
+            threads[i].state = TH_READY;
+            threads[i].wait_channel = -1;
+            break;
+        }
+    }
+
+    /* Mark slot empty for next request */
+    WR32((uintptr_t)io, ASYNC_STATE, ASYNC_EMPTY);
 }
 
 static void init_syscall_table(void) {
@@ -1384,7 +1516,7 @@ void init(void) {
         }
     }
 
-    int pid = load_program("/bin/shell.bin", 0);
+    int pid = load_program("/bin/shell", 0);
     if (pid > 0) {
         /* Init preemptive time slicing */
         {
@@ -1404,6 +1536,8 @@ void init(void) {
 
 void notified(microkit_channel ch) {
     (void)ch;
+    /* Check for async IPC completion */
+    async_check_completion();
     /* Preemption tick from orchestrator */
     if (current_thread >= 0 && threads[current_thread].state == TH_RUNNING) {
         /* Check if there are other ready threads */

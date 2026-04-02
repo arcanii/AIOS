@@ -13,6 +13,7 @@
 #include "sys/syscall.h"
 #include <kernel/gen_config.h>
 #include "arch/aarch64/timer.h"
+#include "aios/async_ipc.h"
 
 #define TIMER_IRQ_CH    14      /* channel id for timer IRQ */
 #define PREEMPT_MS      10      /* tick interval in ms */
@@ -480,12 +481,65 @@ void init(void) {
 }
 
 /* ---- Notification handler ---- */
+/* Process an async request from sandbox kernel */
+static void handle_async_request(void) {
+    volatile uint8_t *io = (volatile uint8_t *)sandbox_io;
+    uint32_t state = RD32((uintptr_t)io, ASYNC_STATE);
+    if (state != ASYNC_PENDING) return;
+
+    uint32_t syscall_nr = RD32((uintptr_t)io, ASYNC_SYSCALL);
+    int64_t result = -1;
+
+    /* Process the syscall (reuse existing switch logic) */
+    /* For now, handle the most common async-friendly calls */
+    switch (syscall_nr) {
+    case SYS_PUTC: {
+        char c = (char)RD32((uintptr_t)io, ASYNC_ARG1);
+        ser_putc(c);
+        ser_flush();
+        result = 0;
+        break;
+    }
+    case SYS_GETC: {
+        ring_buf_t *rx = (ring_buf_t *)rx_buf;
+        char c;
+        if (ring_get(rx, &c)) {
+            result = (int64_t)(unsigned char)c;
+        } else {
+            result = -2;
+        }
+        break;
+    }
+    case SYS_SYNC: {
+        WR32(vfs_data, FS_CMD, FS_CMD_SYNC);
+        microkit_ppcall(CH_VFS, microkit_msginfo_new(0, 0));
+        result = (int64_t)RD32(vfs_data, FS_STATUS);
+        break;
+    }
+    default:
+        /* Unknown async syscall -- return error */
+        result = -1;
+        break;
+    }
+
+    /* Write result and mark complete */
+    WR32((uintptr_t)io, ASYNC_RESULT, (uint32_t)(int32_t)result);
+    WR32((uintptr_t)io, ASYNC_STATE, ASYNC_COMPLETE);
+
+    /* Notify sandbox to wake blocked thread */
+    microkit_notify(CH_SANDBOX);
+}
+
 void notified(microkit_channel ch) {
     if (ch == TIMER_IRQ_CH) {
-        /* Timer tick — notify sandbox for preemption */
+        /* Timer tick -- notify sandbox for preemption */
         microkit_irq_ack(ch);
         microkit_notify(CH_SANDBOX);
         arm_preempt_timer();
+    }
+    if (ch == CH_SANDBOX) {
+        /* Async request from sandbox kernel */
+        handle_async_request();
     }
 }
 

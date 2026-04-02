@@ -1382,48 +1382,49 @@ static void dispatch(void) {
             /* Fall through to not-found */
             rc = -1;
         } else {
-            /* Foreground execution with POSIX PATH search */
-            rc = aios_exec(cmd, args);
-            /* -2 = script file (shebang detected) */
-            if (rc == -2) { cmd_source(cmd); return; }
-
-            /* If cmd contains /, it is a path -- do not search PATH */
+            /* POSIX command resolution:
+             * 1. If cmd contains / -> execute as path directly
+             * 2. Otherwise -> search each $PATH directory
+             * No extension appending. CWD not searched unless . is in PATH.
+             */
             int is_path = 0;
-            for (int k = 0; cmd[k]; k++) { if (cmd[k] == '/') { is_path = 1; break; } }
+            for (int k = 0; cmd[k]; k++) {
+                if (cmd[k] == '/') { is_path = 1; break; }
+            }
 
-            if (rc < 0 && !is_path) {
-                /* Walk $PATH: try each dir/cmd and dir/cmd.bin */
+            if (is_path) {
+                /* Direct path: ./cmd, ../cmd, /path/to/cmd */
+                rc = aios_exec(cmd, args);
+                if (rc == -2) { cmd_source(cmd); return; }
+            } else {
+                /* Walk $PATH */
                 char *path_env = getenv("PATH");
                 if (!path_env) path_env = "/bin";
                 const char *p = path_env;
+                rc = -1;
                 while (*p && rc < 0) {
                     char trypath[272];
                     int ti = 0;
-                    /* Copy next PATH component (up to : or end) */
+                    /* Copy next PATH component */
                     while (*p && *p != ':' && ti < 255)
                         trypath[ti++] = *p++;
                     if (*p == ':') p++;
-                    if (ti == 0) continue;
+                    if (ti == 0) {
+                        /* Empty component = CWD (POSIX) */
+                        trypath[ti++] = '.';
+                    }
                     if (trypath[ti-1] != '/') trypath[ti++] = '/';
-                    int dir_end = ti;
-                    /* Append cmd */
+                    /* Append cmd name */
                     for (int k = 0; cmd[k] && ti < 268; k++)
                         trypath[ti++] = cmd[k];
                     trypath[ti] = '\0';
                     rc = aios_exec(trypath, args);
                     if (rc == -2) { cmd_source(trypath); return; }
-                    /* Try with .bin extension */
-                    if (rc < 0) {
-                        trypath[ti++] = '.'; trypath[ti++] = 'b';
-                        trypath[ti++] = 'i'; trypath[ti++] = 'n';
-                        trypath[ti] = '\0';
-                        rc = aios_exec(trypath, args);
-                    }
                 }
             }
 
-            /* Try as shell script in CWD */
-            if (rc < 0 && !is_path) {
+            /* Try as shell script */
+            if (rc < 0) {
                 char sh[72];
                 int si = 0;
                 for (int k = 0; cmd[k] && si < 63; k++) sh[si++] = cmd[k];
