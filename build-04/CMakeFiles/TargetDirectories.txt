@@ -55,6 +55,7 @@
 /Users/bryan/Desktop/github_repos/AIOS/build-04/libsel4/CMakeFiles/edit_cache.dir
 /Users/bryan/Desktop/github_repos/AIOS/build-04/libsel4/CMakeFiles/rebuild_cache.dir
 /Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/hello_child.dir
+/Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/echo_server.dir
 /Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/aios_root.dir
 /Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/rootserver_image.dir
 /Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/edit_cache.dir

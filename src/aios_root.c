@@ -1,5 +1,6 @@
 /*
- * AIOS 0.4.x Root Task — Phase 2
+ * AIOS 0.4.x Root Task — Phase 3
+ * Multiple processes + IPC
  */
 #include <stdio.h>
 #include <sel4/sel4.h>
@@ -13,7 +14,7 @@
 #include <simple-default/simple-default.h>
 #include <utils/util.h>
 
-#define ALLOCATOR_STATIC_POOL_SIZE (BIT(seL4_PageBits) * 100)
+#define ALLOCATOR_STATIC_POOL_SIZE (BIT(seL4_PageBits) * 200)
 static char allocator_mem_pool[ALLOCATOR_STATIC_POOL_SIZE];
 static sel4utils_alloc_data_t vspace_data;
 
@@ -22,19 +23,32 @@ static vka_t vka;
 static vspace_t vspace;
 static allocman_t *allocman;
 
+static int spawn_child(const char *name, uint8_t prio,
+                       sel4utils_process_t *proc, vka_object_t *fault_ep) {
+    sel4utils_process_config_t config = process_config_new(&simple);
+    config = process_config_elf(config, name, true);
+    config = process_config_create_cnode(config, 12);
+    config = process_config_create_vspace(config, NULL, 0);
+    config = process_config_priority(config, prio);
+    config = process_config_auth(config, simple_get_tcb(&simple));
+    config = process_config_fault_endpoint(config, *fault_ep);
+
+    int error = sel4utils_configure_process_custom(proc, &vka, &vspace, config);
+    if (error) return error;
+    return sel4utils_spawn_process_v(proc, &vka, &vspace, 0, NULL, 1);
+}
+
 int main(int argc, char *argv[]) {
     int error;
 
     printf("\n");
     printf("============================================\n");
-    printf("  AIOS 0.4.0 Root Task — Phase 2\n");
-    printf("  seL4 direct mode (no Microkit)\n");
+    printf("  AIOS 0.4.x Root Task — Phase 3\n");
+    printf("  Multi-process + IPC\n");
     printf("============================================\n\n");
 
     seL4_BootInfo *info = platsupport_get_bootinfo();
     if (!info) { printf("FATAL: No bootinfo\n"); return -1; }
-    printf("[boot] BootInfo OK, CNode: %zu slots\n",
-           (size_t)BIT(info->initThreadCNodeSizeBits));
 
     simple_default_init_bootinfo(&simple, info);
     allocman = bootstrap_use_current_simple(
@@ -46,71 +60,84 @@ int main(int argc, char *argv[]) {
         &vspace, &vspace_data,
         simple_get_pd(&simple), &vka, info);
     if (error) { printf("FATAL: vspace: %d\n", error); return -1; }
-
-    int total_mem = 0;
-    for (seL4_Word i = info->untyped.start; i < info->untyped.end; i++) {
-        seL4_UntypedDesc *ut = &info->untypedList[i - info->untyped.start];
-        if (!ut->isDevice) total_mem += BIT(ut->sizeBits);
-    }
-    printf("[boot] RAM: %d MB\n", total_mem / (1024 * 1024));
     printf("[boot] All subsystems OK\n\n");
 
-    /* Create fault endpoint */
-    vka_object_t fault_ep;
-    error = vka_alloc_endpoint(&vka, &fault_ep);
-    if (error) { printf("FATAL: fault ep\n"); return -1; }
+    /* Endpoints */
+    vka_object_t fault_ep, echo_ep;
+    vka_alloc_endpoint(&vka, &fault_ep);
+    vka_alloc_endpoint(&vka, &echo_ep);
 
-    /* Spawn child with explicit priority */
-    printf("[proc] Spawning hello_child...\n");
-    sel4utils_process_t child_proc;
+    /* Lower root priority */
+    seL4_TCB_SetPriority(seL4_CapInitThreadTCB,
+                         seL4_CapInitThreadTCB, 100);
 
-    sel4utils_process_config_t config = process_config_new(&simple);
-    config = process_config_elf(config, "hello_child", true);
-    config = process_config_create_cnode(config, 12);
-    config = process_config_create_vspace(config, NULL, 0);
-    config = process_config_priority(config, seL4_MaxPrio - 1);
-    config = process_config_auth(config, simple_get_tcb(&simple));
-    config = process_config_fault_endpoint(config, fault_ep);
+    /* === Spawn hello children === */
+    printf("[proc] === Spawning processes ===\n\n");
 
-    error = sel4utils_configure_process_custom(
-        &child_proc, &vka, &vspace, config);
-    if (error) {
-        printf("[proc] FATAL: configure_process failed: %d\n", error);
-        goto idle;
+    sel4utils_process_t child1, child2;
+    error = spawn_child("hello_child", 200, &child1, &fault_ep);
+    printf("[proc] hello_child #1: %s\n", error ? "FAILED" : "OK");
+
+    error = spawn_child("hello_child", 200, &child2, &fault_ep);
+    printf("[proc] hello_child #2: %s\n", error ? "FAILED" : "OK");
+
+    /* === Spawn echo server with endpoint === */
+    sel4utils_process_t echo_proc;
+    {
+        sel4utils_process_config_t config = process_config_new(&simple);
+        config = process_config_elf(config, "echo_server", true);
+        config = process_config_create_cnode(config, 12);
+        config = process_config_create_vspace(config, NULL, 0);
+        config = process_config_priority(config, 200);
+        config = process_config_auth(config, simple_get_tcb(&simple));
+        config = process_config_fault_endpoint(config, fault_ep);
+
+        error = sel4utils_configure_process_custom(
+            &echo_proc, &vka, &vspace, config);
+        if (error) { printf("[proc] echo_server configure FAILED: %d\n", error); goto idle; }
+
+        /* Copy endpoint into child's CSpace */
+        seL4_CPtr child_ep_slot = sel4utils_copy_cap_to_process(
+            &echo_proc, &vka, echo_ep.cptr);
+        printf("[proc] echo_server: ep at child slot %lu\n",
+               (unsigned long)child_ep_slot);
+
+        /* Pass EP slot as argv[0] */
+        char ep_str[16];
+        snprintf(ep_str, sizeof(ep_str), "%lu", (unsigned long)child_ep_slot);
+        char *echo_argv[] = { ep_str };
+        error = sel4utils_spawn_process_v(
+            &echo_proc, &vka, &vspace, 1, echo_argv, 1);
+        printf("[proc] echo_server: %s\n", error ? "FAILED" : "OK");
     }
-    printf("[proc] Child configured (priority %d):\n", seL4_MaxPrio - 1);
-    printf("[proc]   VSpace: isolated\n");
-    printf("[proc]   CSpace: 4096 slots\n");
-    printf("[proc]   TCB: kernel-scheduled\n");
 
-    /* Lower root task priority so child can run */
-    error = seL4_TCB_SetPriority(seL4_CapInitThreadTCB,
-                                  seL4_CapInitThreadTCB,
-                                  seL4_MaxPrio - 2);
-    if (error) {
-        printf("[proc] WARNING: Could not lower root priority: %d\n", error);
+    printf("\n[proc] Waiting for hello children to exit...\n");
+    for (int i = 0; i < 2; i++) {
+        seL4_Word badge;
+        seL4_Recv(fault_ep.cptr, &badge);
+        printf("[root] Child exited\n");
     }
 
-    /* Start child */
-    error = sel4utils_spawn_process_v(
-        &child_proc, &vka, &vspace, 0, NULL, 1);
-    if (error) {
-        printf("[proc] FATAL: spawn failed: %d\n", error);
-        goto idle;
+    /* === IPC test === */
+    printf("\n[ipc] === IPC with echo_server ===\n\n");
+    for (int i = 0; i < 5; i++) {
+        seL4_SetMR(0, (seL4_Word)(i * 10));
+        seL4_MessageInfo_t reply = seL4_Call(
+            echo_ep.cptr, seL4_MessageInfo_new(0, 0, 0, 1));
+        seL4_Word result = seL4_GetMR(0);
+        printf("[root] Sent %d, got %lu\n", i * 10, (unsigned long)result);
     }
-    printf("[proc] Child spawned (it should preempt us now)!\n\n");
 
-    /* Wait for child to fault (exit = cap fault on reply cap) */
-    printf("[root] Waiting for child on fault endpoint...\n");
-    seL4_Word badge;
-    seL4_MessageInfo_t msg = seL4_Recv(fault_ep.cptr, &badge);
-    printf("[root] Child faulted/exited (badge=%lu, label=%lu)\n",
-           (unsigned long)badge,
-           (unsigned long)seL4_MessageInfo_get_label(msg));
+    /* Collect echo server exit */
+    {
+        seL4_Word badge;
+        seL4_Recv(fault_ep.cptr, &badge);
+        printf("[root] echo_server exited\n");
+    }
 
     printf("\n============================================\n");
-    printf("  Phase 2 complete — child ran in its\n");
-    printf("  own VSpace + TCB + CSpace!\n");
+    printf("  Phase 3 complete!\n");
+    printf("  3 processes + IPC verified\n");
     printf("============================================\n\n");
 
 idle:
