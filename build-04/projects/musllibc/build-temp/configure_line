@@ -1,0 +1,1 @@
+--srcdir=/Users/bryan/Desktop/github_repos/AIOS/projects/musllibc --prefix=/Users/bryan/Desktop/github_repos/AIOS/build-04/projects/musllibc/build-temp/stage  --target=aarch64 --enable-warnings --disable-shared --enable-static

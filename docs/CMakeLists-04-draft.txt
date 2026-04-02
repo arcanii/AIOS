@@ -1,0 +1,55 @@
+# AIOS 0.4.x — seL4 root task build (no Microkit)
+cmake_minimum_required(VERSION 3.16.0)
+
+# Point to seL4 ecosystem
+set(KERNEL_PATH "${CMAKE_CURRENT_SOURCE_DIR}/deps/kernel" CACHE STRING "")
+set(SEL4_TOOLS_PATH "${CMAKE_CURRENT_SOURCE_DIR}/deps/seL4_tools" CACHE STRING "")
+
+# Include seL4 cmake infrastructure
+include(${SEL4_TOOLS_PATH}/cmake-tool/helpers/application_settings.cmake)
+
+# Platform settings
+set(KernelPlatform "qemu-arm-virt" CACHE STRING "" FORCE)
+set(KernelSel4Arch "aarch64" CACHE STRING "" FORCE)
+set(KernelArmCPU "cortex-a53" CACHE STRING "" FORCE)
+set(KernelMaxNumNodes 4 CACHE STRING "" FORCE)
+set(KernelVerificationBuild OFF CACHE BOOL "" FORCE)
+set(KernelDebugBuild ON CACHE BOOL "" FORCE)
+set(KernelPrinting ON CACHE BOOL "" FORCE)
+
+project(aios C ASM)
+
+# Find seL4 packages
+find_package(seL4 REQUIRED)
+find_package(elfloader-tool REQUIRED)
+find_package(sel4runtime REQUIRED)
+
+# seL4_libs components we need
+set(SEL4_LIBS_PATH "${CMAKE_CURRENT_SOURCE_DIR}/deps/seL4_libs")
+set(UTIL_LIBS_PATH "${CMAKE_CURRENT_SOURCE_DIR}/deps/util_libs")
+
+add_subdirectory(${UTIL_LIBS_PATH} util_libs)
+add_subdirectory(${SEL4_LIBS_PATH} seL4_libs)
+
+# Our root task
+add_executable(aios_root src/aios_root.c)
+
+target_link_libraries(aios_root
+    sel4runtime
+    sel4
+    sel4allocman
+    sel4vka
+    sel4utils
+    sel4simple
+    sel4simple-default
+    sel4platsupport
+    sel4muslcsys
+    muslc
+)
+
+target_include_directories(aios_root PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+# Tell elfloader about our root task
+DeclareRootserver(aios_root)

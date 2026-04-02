@@ -35,3 +35,6 @@ programs/*.BIN
 # Keep dead code archive for history
 !ref/dead_code/
 !ref/dead_code/**
+
+# seL4 ecosystem dependencies (cloned separately)
+deps/
