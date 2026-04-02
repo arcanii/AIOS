@@ -1,10 +1,12 @@
 /*
  * AIOS 0.4.x Root Task — Phase 3c
- * Interactive shell via serial server with UART
+ * Polls UART, forwards keyboard to serial_server via dedicated EP
  */
 #include <stdio.h>
+#include <stdint.h>
 #include <sel4/sel4.h>
 #include <sel4platsupport/bootinfo.h>
+#include <sel4platsupport/device.h>
 #include <allocman/bootstrap.h>
 #include <allocman/vka.h>
 #include <sel4utils/vspace.h>
@@ -24,8 +26,42 @@ static vka_t vka;
 static vspace_t vspace;
 static allocman_t *allocman;
 
-#define UART0_PADDR 0x9000000
-#define UART0_IRQ   33
+#define UART0_PADDR 0x9000000UL
+#define UART_DR   0x000
+#define UART_FR   0x018
+#define FR_RXFE   (1 << 4)
+
+#define SER_KEY_PUSH 4
+
+static int spawn_with_args(const char *name, uint8_t prio,
+                           sel4utils_process_t *proc,
+                           vka_object_t *fault_ep,
+                           int ep_count, seL4_CPtr *eps,
+                           seL4_CPtr *child_slots) {
+    int error;
+    sel4utils_process_config_t config = process_config_new(&simple);
+    config = process_config_elf(config, name, true);
+    config = process_config_create_cnode(config, 12);
+    config = process_config_create_vspace(config, NULL, 0);
+    config = process_config_priority(config, prio);
+    config = process_config_auth(config, simple_get_tcb(&simple));
+    config = process_config_fault_endpoint(config, *fault_ep);
+
+    error = sel4utils_configure_process_custom(proc, &vka, &vspace, config);
+    if (error) return error;
+
+    /* Copy all endpoint caps and build argv */
+    char argv_bufs[4][16];
+    char *child_argv[4];
+    for (int i = 0; i < ep_count && i < 4; i++) {
+        child_slots[i] = sel4utils_copy_cap_to_process(proc, &vka, eps[i]);
+        snprintf(argv_bufs[i], 16, "%lu", (unsigned long)child_slots[i]);
+        child_argv[i] = argv_bufs[i];
+    }
+
+    return sel4utils_spawn_process_v(proc, &vka, &vspace,
+                                      ep_count, child_argv, 1);
+}
 
 int main(int argc, char *argv[]) {
     int error;
@@ -33,7 +69,7 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("============================================\n");
     printf("  AIOS 0.4.x Root Task — Phase 3c\n");
-    printf("  Interactive Shell + UART Serial Server\n");
+    printf("  Interactive Shell + UART Keyboard\n");
     printf("============================================\n\n");
 
     seL4_BootInfo *info = platsupport_get_bootinfo();
@@ -47,140 +83,72 @@ int main(int argc, char *argv[]) {
         &vspace, &vspace_data,
         simple_get_pd(&simple), &vka, info);
     if (error) { printf("FATAL: vspace: %d\n", error); return -1; }
-    printf("[boot] All subsystems OK\n\n");
+    printf("[boot] All subsystems OK\n");
 
-    /* Endpoints */
+    /* Map UART into root VSpace for keyboard polling */
+    printf("[dev] Mapping UART at 0x%lx...\n", UART0_PADDR);
+    volatile uint32_t *uart = NULL;
+    {
+        vka_object_t frame_obj;
+        error = sel4platsupport_alloc_frame_at(&vka, UART0_PADDR,
+                                                seL4_PageBits, &frame_obj);
+        if (error) {
+            printf("[dev] alloc_frame_at failed: %d\n", error);
+        } else {
+            /* Map device frame into our VSpace */
+            void *vaddr = vspace_map_pages(&vspace,
+                &frame_obj.cptr, NULL,
+                seL4_AllRights, 1, seL4_PageBits, 0);
+            if (vaddr) {
+                uart = (volatile uint32_t *)vaddr;
+                printf("[dev] UART mapped at %p\n", vaddr);
+            } else {
+                printf("[dev] vspace_map_pages failed\n");
+            }
+        }
+    }
+    if (!uart) printf("[dev] WARNING: No keyboard (UART not mapped)\n");
+
+    /* Allocate endpoints */
     vka_object_t fault_ep, serial_ep;
     vka_alloc_endpoint(&vka, &fault_ep);
     vka_alloc_endpoint(&vka, &serial_ep);
 
-    /* Get UART device frame cap */
-    printf("[dev] Getting UART frame cap (0x%x)...\n", UART0_PADDR);
-    vka_object_t uart_frame;
-    error = vka_alloc_frame_at(&vka, seL4_PageBits, UART0_PADDR, &uart_frame);
-    if (error) {
-        printf("[dev] WARNING: vka_alloc_frame_at failed: %d\n", error);
-        printf("[dev] Trying simple_get_frame_cap...\n");
-        cspacepath_t frame_path;
-        vka_cspace_alloc_path(&vka, &frame_path);
-        error = simple_get_frame_cap(&simple, (void *)UART0_PADDR,
-                                      seL4_PageBits, &frame_path);
-        if (error) {
-            printf("[dev] WARNING: UART frame not available, using DebugPutChar\n");
-            uart_frame.cptr = 0;
-        } else {
-            uart_frame.cptr = frame_path.capPtr;
-            printf("[dev] UART frame cap via simple: %lu\n",
-                   (unsigned long)uart_frame.cptr);
-        }
-    } else {
-        printf("[dev] UART frame cap: %lu\n", (unsigned long)uart_frame.cptr);
-    }
-
-    /* Get UART IRQ handler cap */
-    printf("[dev] Getting IRQ handler for IRQ %d...\n", UART0_IRQ);
-    cspacepath_t irq_path;
-    vka_cspace_alloc_path(&vka, &irq_path);
-    error = simple_get_IRQ_handler(&simple, UART0_IRQ, irq_path);
-    seL4_CPtr irq_cap = 0;
-    if (error) {
-        printf("[dev] WARNING: IRQ handler failed: %d (continuing without)\n", error);
-    } else {
-        irq_cap = irq_path.capPtr;
-        printf("[dev] IRQ handler cap: %lu\n", (unsigned long)irq_cap);
-    }
-
     /* Lower root priority */
     seL4_TCB_SetPriority(seL4_CapInitThreadTCB,
-                         seL4_CapInitThreadTCB, 50);
+                         seL4_CapInitThreadTCB, 200);
 
-    /* Spawn serial server with device caps */
-    printf("\n[proc] Spawning serial_server...\n");
+    /* Spawn serial_server (gets serial_ep) */
+    printf("[proc] Spawning serial_server...\n");
     sel4utils_process_t serial_proc;
-    {
-        sel4utils_process_config_t config = process_config_new(&simple);
-        config = process_config_elf(config, "serial_server", true);
-        config = process_config_create_cnode(config, 12);
-        config = process_config_create_vspace(config, NULL, 0);
-        config = process_config_priority(config, 200);
-        config = process_config_auth(config, simple_get_tcb(&simple));
-        config = process_config_fault_endpoint(config, fault_ep);
+    seL4_CPtr ser_caps[1]; seL4_CPtr ser_slots[1];
+    ser_caps[0] = serial_ep.cptr;
+    error = spawn_with_args("serial_server", 200, &serial_proc,
+                            &fault_ep, 1, ser_caps, ser_slots);
+    if (error) { printf("[proc] serial FAILED: %d\n", error); goto idle; }
+    printf("[proc] serial_server OK\n");
 
-        error = sel4utils_configure_process_custom(
-            &serial_proc, &vka, &vspace, config);
-        if (error) { printf("[proc] serial configure FAILED: %d\n", error); goto idle; }
-
-        /* Copy caps into child's CSpace */
-        seL4_CPtr child_ep = sel4utils_copy_cap_to_process(
-            &serial_proc, &vka, serial_ep.cptr);
-        seL4_CPtr child_uart = 0;
-        if (uart_frame.cptr) {
-            child_uart = sel4utils_copy_cap_to_process(
-                &serial_proc, &vka, uart_frame.cptr);
-        }
-        seL4_CPtr child_irq = 0;
-        if (irq_cap) {
-            child_irq = sel4utils_copy_cap_to_process(
-                &serial_proc, &vka, irq_cap);
-        }
-
-        printf("[proc] serial caps: ep=%lu uart=%lu irq=%lu\n",
-               (unsigned long)child_ep,
-               (unsigned long)child_uart,
-               (unsigned long)child_irq);
-
-        /* Pass slots as argv */
-        char s_ep[16], s_uart[16], s_irq[16];
-        snprintf(s_ep, 16, "%lu", (unsigned long)child_ep);
-        snprintf(s_uart, 16, "%lu", (unsigned long)child_uart);
-        snprintf(s_irq, 16, "%lu", (unsigned long)child_irq);
-        char *ser_argv[] = { s_ep, s_uart, s_irq };
-        error = sel4utils_spawn_process_v(
-            &serial_proc, &vka, &vspace, 3, ser_argv, 1);
-        if (error) { printf("[proc] serial spawn FAILED: %d\n", error); goto idle; }
-        printf("[proc] serial_server OK\n");
-    }
-
-    /* Spawn mini shell — give it serial endpoint */
+    /* Spawn mini_shell (gets serial_ep) */
     printf("[proc] Spawning mini_shell...\n");
     sel4utils_process_t shell_proc;
-    {
-        sel4utils_process_config_t config = process_config_new(&simple);
-        config = process_config_elf(config, "mini_shell", true);
-        config = process_config_create_cnode(config, 12);
-        config = process_config_create_vspace(config, NULL, 0);
-        config = process_config_priority(config, 150);
-        config = process_config_auth(config, simple_get_tcb(&simple));
-        config = process_config_fault_endpoint(config, fault_ep);
+    seL4_CPtr sh_caps[1]; seL4_CPtr sh_slots[1];
+    sh_caps[0] = serial_ep.cptr;
+    error = spawn_with_args("mini_shell", 200, &shell_proc,
+                            &fault_ep, 1, sh_caps, sh_slots);
+    if (error) { printf("[proc] shell FAILED: %d\n", error); goto idle; }
+    printf("[proc] mini_shell OK\n");
+    printf("\n[root] System ready. Type commands.\n\n");
 
-        error = sel4utils_configure_process_custom(
-            &shell_proc, &vka, &vspace, config);
-        if (error) { printf("[proc] shell configure FAILED: %d\n", error); goto idle; }
-
-        seL4_CPtr child_ep = sel4utils_copy_cap_to_process(
-            &shell_proc, &vka, serial_ep.cptr);
-
-        char s_ep[16];
-        snprintf(s_ep, 16, "%lu", (unsigned long)child_ep);
-        char *shell_argv[] = { s_ep };
-        error = sel4utils_spawn_process_v(
-            &shell_proc, &vka, &vspace, 1, shell_argv, 1);
-        if (error) { printf("[proc] shell spawn FAILED: %d\n", error); goto idle; }
-        printf("[proc] mini_shell OK\n");
+    /* Poll UART, push keyboard chars to serial_server */
+    while (1) {
+        if (uart && !(uart[UART_FR / 4] & FR_RXFE)) {
+            char c = (char)(uart[UART_DR / 4] & 0xFF);
+            seL4_SetMR(0, (seL4_Word)c);
+            seL4_Call(serial_ep.cptr,
+                      seL4_MessageInfo_new(SER_KEY_PUSH, 0, 0, 1));
+        }
+        seL4_Yield();
     }
-
-    printf("\n[root] All processes up. Waiting for shell exit...\n\n");
-
-    /* Wait for shell to exit */
-    {
-        seL4_Word badge;
-        seL4_Recv(fault_ep.cptr, &badge);
-        printf("\n[root] Shell exited.\n");
-    }
-
-    printf("\n============================================\n");
-    printf("  Phase 3c complete!\n");
-    printf("============================================\n\n");
 
 idle:
     printf("[root] Idle\n");
