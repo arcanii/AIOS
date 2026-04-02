@@ -1,6 +1,6 @@
 /*
- * AIOS 0.4.x — Interactive Mini Shell with filesystem
- * argv[0] = serial endpoint, argv[1] = fs endpoint
+ * AIOS 0.4.x — Interactive Shell with filesystem
+ * argv[0] = serial ep, argv[1] = fs ep
  */
 #include <stdint.h>
 #include <sel4/sel4.h>
@@ -24,6 +24,12 @@ static int ser_getc(void) {
     return (int)(long)seL4_GetMR(0);
 }
 
+static long parse_num(const char *s) {
+    long v = 0;
+    while (*s >= '0' && *s <= '9') { v = v * 10 + (*s - '0'); s++; }
+    return v;
+}
+
 static int str_eq(const char *a, const char *b) {
     while (*a && *b && *a == *b) { a++; b++; }
     return *a == *b;
@@ -32,11 +38,118 @@ static int str_prefix(const char *s, const char *p) {
     while (*p && *s == *p) { s++; p++; }
     return *p == '\0';
 }
+static int str_len(const char *s) { int n = 0; while (s[n]) n++; return n; }
+static void str_cpy(char *d, const char *s) { while ((*d++ = *s++)); }
 
-static long parse_num(const char *s) {
-    long v = 0;
-    while (*s >= '0' && *s <= '9') { v = v * 10 + (*s - '0'); s++; }
-    return v;
+/* Current working directory */
+static char cwd[256] = "/";
+
+/* Build absolute path from cwd + relative */
+static void resolve(const char *arg, char *out, int outsz) {
+    if (!arg || !arg[0]) {
+        str_cpy(out, cwd);
+        return;
+    }
+    if (arg[0] == '/') {
+        /* Absolute */
+        int i = 0;
+        while (arg[i] && i < outsz - 1) { out[i] = arg[i]; i++; }
+        out[i] = '\0';
+        return;
+    }
+    /* Relative: cwd + "/" + arg */
+    int ci = 0;
+    while (cwd[ci] && ci < outsz - 2) { out[ci] = cwd[ci]; ci++; }
+    if (ci > 1) out[ci++] = '/'; /* add / unless cwd is just "/" */
+    int ai = 0;
+    while (arg[ai] && ci < outsz - 1) { out[ci++] = arg[ai++]; }
+    out[ci] = '\0';
+}
+
+/* Pack a path string into seL4 message registers for FS IPC */
+static int pack_path(const char *path) {
+    int pl = str_len(path);
+    seL4_SetMR(0, (seL4_Word)pl);
+    int mr_idx = 1;
+    seL4_Word w = 0;
+    for (int i = 0; i < pl; i++) {
+        w |= ((seL4_Word)(uint8_t)path[i]) << ((i % 8) * 8);
+        if (i % 8 == 7 || i == pl - 1) {
+            seL4_SetMR(mr_idx++, w);
+            w = 0;
+        }
+    }
+    return mr_idx;
+}
+
+/* Unpack reply data from MRs as chars */
+static void unpack_reply(seL4_MessageInfo_t reply) {
+    seL4_Word total = seL4_GetMR(0);
+    if (total == 0) return;
+    int mrs = (int)seL4_MessageInfo_get_length(reply) - 1;
+    for (int i = 0; i < mrs; i++) {
+        seL4_Word rw = seL4_GetMR(i + 1);
+        for (int j = 0; j < 8 && (int)(i * 8 + j) < (int)total; j++) {
+            ser_putc((char)((rw >> (j * 8)) & 0xFF));
+        }
+    }
+}
+
+static void cmd_ls(const char *arg) {
+    if (!fs_ep) { ser_puts("No filesystem\n"); return; }
+    char path[256];
+    resolve(arg, path, sizeof(path));
+    int mrs = pack_path(path);
+    seL4_MessageInfo_t reply = seL4_Call(fs_ep, seL4_MessageInfo_new(FS_LS, 0, 0, mrs));
+    seL4_Word total = seL4_GetMR(0);
+    if (total == 0) {
+        ser_puts("ls: cannot access '");
+        ser_puts(path);
+        ser_puts("'\n");
+        return;
+    }
+    unpack_reply(reply);
+}
+
+static void cmd_cat(const char *arg) {
+    if (!fs_ep) { ser_puts("No filesystem\n"); return; }
+    char path[256];
+    resolve(arg, path, sizeof(path));
+    int mrs = pack_path(path);
+    seL4_MessageInfo_t reply = seL4_Call(fs_ep, seL4_MessageInfo_new(FS_CAT, 0, 0, mrs));
+    seL4_Word total = seL4_GetMR(0);
+    if (total == 0) {
+        ser_puts("cat: ");
+        ser_puts(path);
+        ser_puts(": No such file\n");
+        return;
+    }
+    unpack_reply(reply);
+}
+
+static void cmd_cd(const char *arg) {
+    if (!arg || !arg[0]) {
+        str_cpy(cwd, "/");
+        return;
+    }
+    char path[256];
+    resolve(arg, path, sizeof(path));
+
+    /* Verify it's a directory by trying ls */
+    if (fs_ep) {
+        int mrs = pack_path(path);
+        seL4_MessageInfo_t reply = seL4_Call(fs_ep, seL4_MessageInfo_new(FS_LS, 0, 0, mrs));
+        if (seL4_GetMR(0) == 0) {
+            ser_puts("cd: ");
+            ser_puts(path);
+            ser_puts(": Not a directory\n");
+            return;
+        }
+    }
+    str_cpy(cwd, path);
+    /* Normalize trailing slash */
+    int len = str_len(cwd);
+    if (len > 1 && cwd[len - 1] == '/') cwd[len - 1] = '\0';
 }
 
 #define LINE_MAX 128
@@ -62,60 +175,6 @@ static void read_line(int *len) {
     line[*len] = '\0';
 }
 
-static void cmd_ls(const char *path) {
-    if (!fs_ep) { ser_puts("No filesystem\n"); return; }
-
-    /* Send LS with inode 0 (= root) or resolve path */
-    uint32_t ino = 0; /* root */
-    seL4_SetMR(0, (seL4_Word)ino);
-    seL4_MessageInfo_t reply = seL4_Call(fs_ep, seL4_MessageInfo_new(FS_LS, 0, 0, 1));
-
-    seL4_Word total_len = seL4_GetMR(0);
-    if (total_len == 0) { ser_puts("(empty)\n"); return; }
-
-    /* Unpack chars from MRs */
-    int mrs = (int)seL4_MessageInfo_get_length(reply) - 1;
-    for (int i = 0; i < mrs; i++) {
-        seL4_Word w = seL4_GetMR(i + 1);
-        for (int j = 0; j < 8 && (int)(i*8+j) < (int)total_len; j++) {
-            ser_putc((char)((w >> (j*8)) & 0xFF));
-        }
-    }
-}
-
-static void cmd_cat(const char *path) {
-    if (!fs_ep) { ser_puts("No filesystem\n"); return; }
-
-    /* Pack path into MRs */
-    int pl = 0;
-    while (path[pl]) pl++;
-
-    seL4_SetMR(0, (seL4_Word)pl);
-    int mr_idx = 1;
-    seL4_Word w = 0;
-    for (int i = 0; i < pl; i++) {
-        w |= ((seL4_Word)(uint8_t)path[i]) << ((i % 8) * 8);
-        if (i % 8 == 7 || i == pl - 1) {
-            seL4_SetMR(mr_idx++, w);
-            w = 0;
-        }
-    }
-
-    seL4_MessageInfo_t reply = seL4_Call(fs_ep,
-        seL4_MessageInfo_new(FS_CAT, 0, 0, mr_idx));
-
-    seL4_Word total_len = seL4_GetMR(0);
-    if (total_len == 0) { ser_puts("File not found\n"); return; }
-
-    int mrs = (int)seL4_MessageInfo_get_length(reply) - 1;
-    for (int i = 0; i < mrs; i++) {
-        seL4_Word rw = seL4_GetMR(i + 1);
-        for (int j = 0; j < 8 && (int)(i*8+j) < (int)total_len; j++) {
-            ser_putc((char)((rw >> (j*8)) & 0xFF));
-        }
-    }
-}
-
 int main(int argc, char *argv[]) {
     serial_ep = 0; fs_ep = 0;
     if (argc > 0) serial_ep = (seL4_CPtr)parse_num(argv[0]);
@@ -123,32 +182,50 @@ int main(int argc, char *argv[]) {
 
     ser_puts("\n");
     ser_puts("============================================\n");
-    ser_puts("  AIOS 0.4.x Interactive Shell\n");
-    if (fs_ep) ser_puts("  Filesystem: ext2 (mounted)\n");
+    ser_puts("  AIOS 0.4.x Shell\n");
+    if (fs_ep) ser_puts("  Filesystem: ext2\n");
     ser_puts("============================================\n\n");
 
     while (1) {
-        ser_puts("$ ");
+        ser_puts(cwd);
+        ser_puts(" $ ");
         int len;
         read_line(&len);
         if (len == 0) continue;
 
+        /* Parse command + arg */
+        char *arg = 0;
+        for (int i = 0; i < len; i++) {
+            if (line[i] == ' ') {
+                line[i] = '\0';
+                arg = line + i + 1;
+                break;
+            }
+        }
+
         if (str_eq(line, "help")) {
-            ser_puts("Commands: help, hello, uname, ls, cat <file>, exit\n");
+            ser_puts("Commands: help, ls [path], cat <file>, cd <dir>, pwd,\n");
+            ser_puts("          echo, hello, uname, exit\n");
+        } else if (str_eq(line, "ls")) {
+            cmd_ls(arg);
+        } else if (str_eq(line, "cat")) {
+            if (!arg) ser_puts("Usage: cat <file>\n");
+            else cmd_cat(arg);
+        } else if (str_eq(line, "cd")) {
+            cmd_cd(arg);
+        } else if (str_eq(line, "pwd")) {
+            ser_puts(cwd);
+            ser_putc('\n');
         } else if (str_eq(line, "hello")) {
             ser_puts("Hello from AIOS 0.4.x!\n");
         } else if (str_eq(line, "uname")) {
-            ser_puts("AIOS 0.4.x aarch64 seL4/bare\n");
-        } else if (str_eq(line, "ls")) {
-            cmd_ls("/");
-        } else if (str_prefix(line, "cat ")) {
-            cmd_cat(line + 4);
+            ser_puts("AIOS 0.4.x aarch64 seL4/bare 4-core SMP\n");
+        } else if (str_eq(line, "echo")) {
+            if (arg) { ser_puts(arg); ser_putc('\n'); }
+            else ser_putc('\n');
         } else if (str_eq(line, "exit")) {
             ser_puts("Goodbye.\n");
             return 0;
-        } else if (str_prefix(line, "echo ")) {
-            ser_puts(line + 5);
-            ser_putc('\n');
         } else {
             ser_puts(line);
             ser_puts(": command not found\n");

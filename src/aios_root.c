@@ -167,10 +167,24 @@ static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
 
         switch (label) {
         case FS_LS: {
-            /* MR0 = inode (0 = root) */
-            uint32_t ino = (uint32_t)seL4_GetMR(0);
-            if (ino == 0) ino = EXT2_ROOT_INO;
-            int len = ext2_list_dir(&ext2, ino, fs_buf, sizeof(fs_buf));
+            /* MR0 = path length, MR1.. = path string (like CAT) */
+            seL4_Word path_len = seL4_GetMR(0);
+            char ls_path[128];
+            int lpl = (path_len > 127) ? 127 : (int)path_len;
+            int ls_mr = 1;
+            for (int i = 0; i < lpl; i++) {
+                if (i % 8 == 0 && i > 0) ls_mr++;
+                ls_path[i] = (char)((seL4_GetMR(ls_mr) >> ((i % 8) * 8)) & 0xFF);
+            }
+            ls_path[lpl] = '\0';
+
+            uint32_t ino = EXT2_ROOT_INO;
+            if (lpl > 0 && !(lpl == 1 && ls_path[0] == '/')) {
+                if (ext2_resolve_path(&ext2, ls_path, &ino) != 0) {
+                    ino = 0; /* will return empty */
+                }
+            }
+            int len = (ino > 0) ? ext2_list_dir(&ext2, ino, fs_buf, sizeof(fs_buf)) : 0;
             if (len < 0) len = 0;
             /* Return dir listing in MRs (pack 8 chars per MR) */
             int mrs = (len + 7) / 8;
