@@ -104,6 +104,10 @@ typedef struct {
     int foreground;
     char name[PROC_NAME_MAX];
     sbx_fd_t fds[MAX_FDS];
+
+    /* Signal handling */
+    uint32_t sig_pending;       /* bitmask of pending signals (bit N = signal N) */
+    uintptr_t sig_handlers[32]; /* 0=SIG_DFL, 1=SIG_IGN, else=handler address */
 } proc_t;
 
 #define PROC_FREE   0
@@ -157,6 +161,67 @@ static uint64_t __attribute__((unused)) sched_ctx[24];  /* kernel scheduler cont
 
 static uint64_t slice_start = 0;  /* when current thread started running */
 static uint64_t slice_ticks = 0;  /* ticks per time slice */
+
+/* ---- Signal delivery ---- */
+#define SIG_DFL_ADDR 0
+#define SIG_IGN_ADDR 1
+
+/* Default signal actions: 0=terminate, 1=ignore, 2=stop */
+static int sig_default_action(int sig) {
+    switch (sig) {
+    case 17: return 1; /* SIGCHLD: ignore */
+    case 18: return 1; /* SIGCONT: ignore (resume handled separately) */
+    case 19: return 2; /* SIGSTOP: stop */
+    case 20: return 2; /* SIGTSTP: stop */
+    default: return 0; /* terminate */
+    }
+}
+
+/* Check and deliver pending signals for a process.
+ * Called before resuming any thread in the scheduler.
+ * Returns 1 if the process was terminated. */
+static int deliver_signals(int pi) {
+    proc_t *p = &procs[pi];
+    if (p->state != PROC_ALIVE || p->sig_pending == 0) return 0;
+
+    for (int sig = 1; sig < 32; sig++) {
+        if (!(p->sig_pending & (1U << sig))) continue;
+        /* Clear the pending bit */
+        p->sig_pending &= ~(1U << sig);
+
+        uintptr_t handler = p->sig_handlers[sig];
+
+        if (handler == SIG_IGN_ADDR) {
+            /* Ignored */
+            continue;
+        }
+
+        if (handler == SIG_DFL_ADDR) {
+            /* Default action */
+            int action = sig_default_action(sig);
+            if (action == 0) {
+                /* Terminate process */
+                p->state = PROC_ZOMBIE;
+                p->exit_code = 128 + sig;
+                /* Mark all threads of this process as finished */
+                for (int t = 0; t < MAX_THREADS; t++) {
+                    if (threads[t].proc_idx == pi &&
+                        threads[t].state != TH_FREE &&
+                        threads[t].state != TH_FINISHED) {
+                        threads[t].state = TH_FINISHED;
+                    }
+                }
+                return 1;
+            }
+            /* action == 1: ignore, action == 2: stop (TODO) */
+            continue;
+        }
+
+        /* User handler: TODO — would need to redirect thread to handler
+         * and return. For now, just clear the signal. */
+    }
+    return 0;
+}
 
 /* Reap finished detached threads: reclaim their stack memory.
  * Called periodically from the scheduler to prevent resource leaks.
@@ -221,6 +286,15 @@ static void sched_yield(void) {
         }
     }
     if (best_idx >= 0) {
+        /* Check signals before resuming */
+        {
+            int pi = threads[best_idx].proc_idx;
+            if (deliver_signals(pi)) {
+                /* Process was killed by signal, find another thread */
+                sched_yield();
+                return;
+            }
+        }
         {
             int idx = best_idx;
             current_thread = idx;
@@ -292,12 +366,40 @@ static void check_preempt(void) {
     }
 }
 
+/* Forward declaration for signal delivery */
+static int ks_kill_proc(int pid, int sig);
+
 static int ks_getc(void) {
     for (;;) {
         seL4_SetMR(0, SYS_GETC);
         microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 1));
         int64_t r = (int64_t)seL4_GetMR(0);
-        if (r >= 0) return (int)(unsigned char)r;
+        if (r >= 0) {
+            /* Ctrl-C: send SIGINT to foreground process */
+            if ((unsigned char)r == 0x03) {
+                if (current_thread >= 0) {
+                    int caller_pi = threads[current_thread].proc_idx;
+                    /* Find foreground process (may be child of shell) */
+                    int fg_pid = -1;
+                    for (int i = 0; i < MAX_PROCS; i++) {
+                        if (procs[i].state == PROC_ALIVE && procs[i].foreground &&
+                            procs[i].pid != procs[caller_pi].pid) {
+                            fg_pid = procs[i].pid;
+                            break;
+                        }
+                    }
+                    if (fg_pid > 0) {
+                        ks_kill_proc(fg_pid, 2); /* SIGINT */
+                        kputs("^C\n");
+                        return -1; /* signal sent, return error to break input loop */
+                    }
+                }
+                /* No foreground child -- just echo ^C */
+                kputs("^C\n");
+                return -1;
+            }
+            return (int)(unsigned char)r;
+        }
         if (r == -2) {
             /* EAGAIN -- yield to other threads then retry */
             check_preempt();
@@ -715,7 +817,30 @@ static int ks_chown(const char *path, unsigned int uid, unsigned int gid) {
 static int ks_ftruncate(int fd, unsigned long length) { (void)fd; (void)length; return -1; }
 static void ks_exit_proc(int status) { ks_exit(status); }
 static int ks_fcntl(int fd, int cmd, int arg) { (void)fd; (void)cmd; (void)arg; return -1; }
-static int ks_kill_proc(int pid, int sig) { (void)pid; (void)sig; return -1; }
+static int ks_kill_proc(int pid, int sig) {
+    if (sig < 1 || sig > 31) return -1; /* EINVAL */
+    /* Find process by pid */
+    for (int i = 0; i < MAX_PROCS; i++) {
+        if (procs[i].state == PROC_ALIVE && procs[i].pid == pid) {
+            /* SIGKILL cannot be caught or ignored */
+            if (sig == 9) {
+                procs[i].state = PROC_ZOMBIE;
+                procs[i].exit_code = 128 + sig;
+                for (int t = 0; t < MAX_THREADS; t++) {
+                    if (threads[t].proc_idx == i &&
+                        threads[t].state != TH_FREE) {
+                        threads[t].state = TH_FINISHED;
+                    }
+                }
+                return 0;
+            }
+            /* Set pending signal bit */
+            procs[i].sig_pending |= (1U << sig);
+            return 0;
+        }
+    }
+    return -1; /* ESRCH: no such process */
+}
 static int ks_getprocs(void *buf, int max) {
     proc_info_t *out = (proc_info_t *)buf;
     int count = 0;
@@ -1188,6 +1313,18 @@ static void async_check_completion(void) {
     WR32((uintptr_t)io, ASYNC_STATE, ASYNC_EMPTY);
 }
 
+/* Register a signal handler. Returns previous handler. */
+static uintptr_t ks_signal(int signum, uintptr_t handler) {
+    if (signum < 1 || signum > 31) return (uintptr_t)(-1); /* SIG_ERR */
+    /* SIGKILL and SIGSTOP cannot be caught */
+    if (signum == 9 || signum == 19) return (uintptr_t)(-1);
+    if (current_thread < 0) return (uintptr_t)(-1);
+    int pi = threads[current_thread].proc_idx;
+    uintptr_t old = procs[pi].sig_handlers[signum];
+    procs[pi].sig_handlers[signum] = handler;
+    return old;
+}
+
 static void init_syscall_table(void) {
     /* Console I/O */
     kern_syscalls.puts = ks_puts;
@@ -1253,6 +1390,7 @@ static void init_syscall_table(void) {
     kern_syscalls.exit_proc = ks_exit_proc;
     kern_syscalls.fcntl = ks_fcntl;
     kern_syscalls.kill_proc = ks_kill_proc;
+    kern_syscalls.signal_handler = ks_signal;
     kern_syscalls.getprocs = ks_getprocs;
     kern_syscalls.timer_freq = ks_timer_freq;
     /* Sockets */
@@ -1386,6 +1524,8 @@ static int load_program(const char *path, int parent_pid) {
     p->main_thread = ti;
     p->exit_code = 0;
     p->foreground = 1;
+    p->sig_pending = 0;
+    for (int s = 0; s < 32; s++) p->sig_handlers[s] = 0; /* SIG_DFL */
     /* Copy name */
     int ni = 0;
     while (path[ni] && ni < PROC_NAME_MAX - 1) { p->name[ni] = path[ni]; ni++; }

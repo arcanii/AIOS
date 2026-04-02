@@ -198,12 +198,22 @@ PROGS_BIN := $(patsubst programs/%.c,programs/%.bin,$(PROGS_SRC))
 SBIN_SRC  := $(wildcard programs/sbin/*.c)
 SBIN_BIN  := $(patsubst programs/sbin/%.c,programs/sbin/%.bin,$(SBIN_SRC))
 
+TESTS_SRC := $(wildcard programs/tests/*.c)
+TESTS_BIN := $(patsubst programs/tests/%.c,programs/tests/%.bin,$(TESTS_SRC))
+
 .PHONY: programs
-programs: $(PROGS_BIN) $(SBIN_BIN)
-	@echo "Built $(words $(PROGS_BIN)) programs + $(words $(SBIN_BIN)) sbin"
+programs: $(PROGS_BIN) $(SBIN_BIN) $(TESTS_BIN)
+	@echo "Built $(words $(PROGS_BIN)) programs + $(words $(SBIN_BIN)) sbin + $(words $(TESTS_BIN)) tests"
 
 $(BUILD)/prg:
 	mkdir -p $(BUILD)/prg
+
+programs/tests/%.bin: programs/tests/%.c | $(BUILD)/prg
+	@mkdir -p $(BUILD)/prg/tests
+	$(CC) $(PRG_CFLAGS) $< -o $(BUILD)/prg/tests/$*.o
+	$(LD) -T programs/link.ld $(BUILD)/prg/tests/$*.o -o $(BUILD)/prg/tests/$*.elf
+	aarch64-linux-gnu-objcopy -O binary $(BUILD)/prg/tests/$*.elf $@
+	@echo "  $@: $$(wc -c < $@) bytes"
 
 programs/sbin/%.bin: programs/sbin/%.c | $(BUILD)/prg
 	@mkdir -p $(BUILD)/prg/sbin
@@ -248,6 +258,10 @@ ext2-inject: $(DISK_IMG)
 	@if ls programs/sbin/*.bin 1>/dev/null 2>&1; then \
 		echo "Injecting sbin programs..."; \
 		python3 tools/ext2_inject.py $(DISK_IMG) programs/sbin/*.bin; \
+	fi
+	@if ls programs/tests/*.bin 1>/dev/null 2>&1; then \
+		echo "Injecting test programs..."; \
+		python3 tools/ext2_inject.py $(DISK_IMG) programs/tests/*.bin; \
 	fi
 	@echo "Injecting config files..."
 	@if [ -d disk/etc ]; then \

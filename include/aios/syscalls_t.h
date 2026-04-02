@@ -103,6 +103,7 @@ typedef struct {
     /* Privileged operations */
     int   (*shutdown)(int flags);
     int   (*sync)(void);
+    unsigned long (*signal_handler)(int signum, unsigned long handler);
 } aios_syscalls_t;
 
 #endif /* AIOS_SYSCALLS_T_H */

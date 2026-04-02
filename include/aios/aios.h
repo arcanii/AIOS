@@ -128,6 +128,9 @@ typedef struct {
     /* Privileged operations */
     int   (*shutdown)(int flags);
     int   (*sync)(void);
+
+    /* Signal handling */
+    unsigned long (*signal_handler)(int signum, unsigned long handler);
 } aios_syscalls_t;
 
 /* Global syscall pointer — set by _start */
