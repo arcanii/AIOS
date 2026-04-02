@@ -1,253 +1,212 @@
-# AIOS Architecture — v0.3.x
+# AIOS 0.4.x Architecture
 
 ## Overview
 
-AIOS (Open Aries) is a microkernel operating system built on seL4/Microkit for AArch64 (Cortex-A53, QEMU virt). It implements a POSIX-compatible user-space kernel inside a single seL4 Protection Domain (PD), with separate PDs for device drivers and system services.
+AIOS 0.4.x runs directly on the seL4 15.0.0 microkernel without Microkit or CAmkES. A single root task (`aios_root`) bootstraps the system, spawns isolated processes, manages threads, and provides service dispatch. Every user process gets hardware-enforced memory isolation via separate seL4 VSpaces.
+
+## Kernel Configuration
+
+| Parameter | Value |
+|-----------|-------|
+| Kernel | seL4 15.0.0 |
+| Platform | qemu-arm-virt |
+| Architecture | AArch64 (ARMv8-A) |
+| CPU | Cortex-A53 |
+| Cores | 4 (SMP) |
+| Scheduler | Classic (non-MCS), round-robin at equal priority |
+| Hypervisor | EL2 mode (KernelArmHypervisorSupport=ON) |
+| Memory | 2 GB (505 MB available after kernel reservations) |
+| Debug | KernelDebugBuild=ON, KernelPrinting=ON |
+
+EL2/hypervisor mode is required because QEMU's PSCI implementation uses SMC (not HVC) to boot secondary cores. The elfloader rejects HVC-based PSCI.
+
+## System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        QEMU virt (AArch64)                      │
-│  4 cores, 2GB RAM, virtio-blk, virtio-net, PL011 UART          │
-├─────────────────────────────────────────────────────────────────┤
-│                     seL4 Microkernel (14.0.0)                   │
-│                     Microkit 2.1.0 (SMP)                        │
-├─────────────────────────────────────────────────────────────────┤
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐          │
-│  │ serial   │ │ blk      │ │ net      │ │ net      │          │
-│  │ _driver  │ │ _driver  │ │ _driver  │ │ _server  │          │
-│  │ PL011    │ │ virtio   │ │ virtio   │ │ IP stack │          │
-│  │ pri=254  │ │ pri=250  │ │ pri=230  │ │ pri=210  │          │
-│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘          │
-│       │             │             │             │                │
-│  ┌────┴─────────────┴─────────────┴─────────────┴──────────┐   │
-│  │                    orchestrator (pri=200)                │   │
-│  │  Service router · Timer · Preemption · Shutdown          │   │
-│  │  Async IPC handler · Ctrl-C detection                    │   │
-│  ├──────────────────────────────────────────────────────────┤   │
-│  │  ┌──────────────────────────────────────────────────┐    │   │
-│  │  │              sandbox (pri=150, child PD)         │    │   │
-│  │  │  User-space kernel · Scheduler · Threads         │    │   │
-│  │  │  Processes · Signals · POSIX libc                │    │   │
-│  │  │  128 MB memory pool · Up to 256 processes        │    │   │
-│  │  │  Up to 1024 threads · 16 FDs per process         │    │   │
-│  │  └──────────────────────────────────────────────────┘    │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐                       │
-│  │ vfs      │ │ fs       │ │ auth     │                       │
-│  │ _server  │ │ _server  │ │ _server  │                       │
-│  │ pri=235  │ │ pri=240  │ │ pri=210  │                       │
-│  └──────────┘ └──────────┘ └──────────┘                       │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│              seL4 15.0.0 (4 cores, EL2)                 │
+│                                                         │
+│  Provides: TCBs, VSpaces, CSpaces, Endpoints,          │
+│            Notifications, IRQ handlers, Untypeds        │
+│            Priority scheduling, SMP affinity            │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│  aios_root (root task, priority 200)                    │
+│  ┌────────────────────────────────────────────────────┐ │
+│  │ 1. Receive BootInfo from kernel                    │ │
+│  │ 2. Bootstrap allocman → vka → vspace              │ │
+│  │ 3. Map UART device frame (PL011 at 0x9000000)     │ │
+│  │ 4. Run test suite (5 tests)                       │ │
+│  │ 5. Spawn serial_server + mini_shell               │ │
+│  │ 6. Poll UART RX, forward keys via IPC             │ │
+│  └────────────────────────────────────────────────────┘ │
+│       │                    │                            │
+│  ┌────┴────────┐   ┌──────┴──────┐                     │
+│  │serial_server│   │ mini_shell  │                     │
+│  │ VSpace B    │   │ VSpace C    │                     │
+│  │ CSpace B    │   │ CSpace C    │                     │
+│  │ TCB (p200)  │   │ TCB (p200)  │                     │
+│  │             │   │             │                     │
+│  │ EP: serial  │   │ EP: serial  │                     │
+│  │ PUTC/GETC   │   │ calls ser   │                     │
+│  │ KEY_PUSH    │   │ for all I/O │                     │
+│  └─────────────┘   └─────────────┘                     │
+└─────────────────────────────────────────────────────────┘
 ```
 
-## Protection Domains
+## Process Model
 
-AIOS uses 9 seL4 Protection Domains, each isolated by the microkernel:
+Each process is created via `sel4utils_configure_process_custom()` and receives:
 
-| PD | Priority | Role | Lines |
-|----|----------|------|-------|
-| serial_driver | 254 | PL011 UART RX/TX via ring buffers | 139 |
-| blk_driver | 250 | virtio-blk disk I/O | 237 |
-| fs_server | 240 | ext2/FAT16/FAT32 filesystem implementation | 1539 |
-| vfs_server | 235 | Virtual filesystem layer, routes to fs_server | 129 |
-| net_driver | 230 | virtio-net packet I/O | 286 |
-| auth_server | 210 | Login authentication, /etc/passwd | 917 |
-| net_server | 210 | TCP/IP stack, socket API | 603 |
-| orchestrator | 200 | Service router, timer, preemption, async IPC | 576 |
-| sandbox | 150 | User-space kernel: scheduler, threads, processes, POSIX | 1781 |
+- **VSpace**: Own page table root. MMU enforces isolation — accessing another process's memory causes a VM fault delivered to root task via fault endpoint.
+- **CSpace**: Own capability space (4096 slots, 12-bit). Contains only capabilities explicitly granted by root.
+- **TCB**: Own kernel thread control block. Priority set via `seL4_TCB_SetPriority()`. Core affinity via `seL4_TCB_SetAffinity()`.
+- **Fault endpoint**: Kernel delivers faults (VM fault, cap fault) as IPC messages to root task.
 
-The sandbox is a child PD of the orchestrator, sharing memory regions for IPC.
-
-## IPC Architecture
-
-All inter-PD communication uses Microkit channels (seL4 endpoints):
+### Process Lifecycle
 
 ```
-sandbox ─── PPC CH_SANDBOX(7) ──→ orchestrator
-                                      ├── PPC CH_VFS(5)  ──→ vfs_server ──→ PPC CH_FS(4) ──→ fs_server
-                                      │                                         └── notify(10) ──→ blk_driver
-                                      ├── PPC CH_AUTH(11) ──→ auth_server
-                                      ├── PPC CH_NET_SRV(12) ──→ net_server ←── notify(8) ←── net_driver
-                                      └── notify CH_SERIAL(1) ──→ serial_driver
-
-Timer: IRQ30 → orchestrator notified() → notify(CH_SANDBOX) → sandbox notified() → preempt
+sel4utils_configure_process_custom()  → allocate VSpace + CSpace + TCB
+sel4utils_copy_cap_to_process()       → grant endpoint capabilities
+sel4utils_spawn_process_v()           → set entry point, start TCB
+   ... process runs ...
+seL4_Recv(fault_ep)                   → root catches exit/fault
+sel4utils_destroy_process()           → reclaim all resources
 ```
 
-Two IPC mechanisms are used:
+### spawn_with_args Helper
 
-- **PPC (Protected Procedure Call)**: Synchronous request/response. Caller blocks until callee returns. Used for all syscalls (sandbox → orchestrator → service PDs).
-- **Notifications**: Asynchronous one-way signals. Used for timer interrupts, serial I/O, and Ctrl-C delivery.
+Root task uses a helper function to spawn processes with endpoint capabilities passed via argv:
 
-## Sandbox Kernel
-
-The sandbox PD contains a complete user-space kernel that manages processes and threads within a single 128 MB memory pool. It implements:
-
-### Scheduler
-
-- **Preemptive**: 10ms quantum via ARM generic timer (IRQ 30)
-- **Priority-aware**: Highest-priority READY thread selected first, round-robin on tie
-- **Context switch**: setjmp/longjmp with full FP/SIMD save (x19-x28, x29, x30, sp + q0-q31 + FPCR/FPSR = 768 bytes per thread)
-- **Thread states**: FREE(0), READY(1), RUNNING(2), BLOCKED(3), FINISHED(4), BLOCKED_MTX(5), BLOCKED_COND(6), BLOCKED_IO(7)
-
-### Processes
-
-- Up to 256 concurrent processes (MAX_PROCS)
-- Each process: code loaded from ext2 filesystem, heap (bump allocator), stack, 16 file descriptors
-- Process states: FREE, ALIVE, ZOMBIE
-- Per-process signal table: `sig_pending` bitmap + `sig_handlers[32]`
-- Foreground/background flag for job control
-
-### Threads (POSIX pthreads)
-
-- Up to 1024 concurrent threads (MAX_THREADS)
-- `pthread_create/join/detach/exit` with void* return values
-- Block/wake mutex (not spin): contending threads sleep on wait_channel, unlock wakes highest-priority waiter
-- Block/wake condition variables: wait blocks, signal wakes one, broadcast wakes all
-- Block/wake read-write locks
-- Thread-Local Storage: 64 keys per thread
-- Thread-safe malloc: heap_lock with block/wake
-- Automatic reaping: scheduler frees detached+finished threads and zombie processes
-
-### Signal Infrastructure
-
-- Per-process: `sig_pending` (32-bit bitmap) + `sig_handlers[32]`
-- `deliver_signals()` called by scheduler before thread resume
-- Default actions: SIGINT/SIGTERM/SIGKILL terminate, SIGCHLD ignore
-- SIGKILL/SIGSTOP cannot be caught or ignored
-- Ctrl-C chain: serial_driver → orchestrator peeks RX for 0x03 → sets CTRL_C_FLAG → sandbox delivers SIGINT to foreground process
-
-### Memory Layout
-
-```
-0x20000000  sandbox_io    (4 KB)   Shared memory with orchestrator
-0x20001000  sandbox_mem   (128 MB) Process memory pool
-            ├── Process 0: code + heap + stack
-            ├── Process 1: code + heap + stack
-            └── ...
+```c
+int spawn_with_args(name, priority, proc, fault_ep, ep_count, eps, child_slots)
 ```
 
-All processes share the same flat address space (no MMU-based isolation between processes).
+This configures the process, copies endpoint caps into its CSpace, converts slot numbers to strings, and passes them as argv to the child's main().
 
-## Filesystem
+## Thread Model
 
-### Stack
+Threads are created with `sel4utils_configure_thread()` within an existing VSpace. Each thread gets its own seL4 TCB but shares the VSpace and CSpace of its parent.
 
-```
-Application → sandbox kernel (ks_open/ks_read/...) 
-            → PPC to orchestrator
-            → PPC to vfs_server (VFS layer)
-            → PPC to fs_server (ext2/FAT implementation)
-            → notify to blk_driver (disk I/O)
-```
-
-### ext2 Implementation
-
-- Read/write support for files and directories
-- Inode-based with block groups
-- Directory entries with rec_len chaining
-- File permissions (rwxr-xr-x) respected
-- Custom tools: `mkext2.py` (create image), `ext2_inject.py` (populate image)
-- Programs injected without `.bin` extension (POSIX-clean names)
-
-## Shell
-
-1566-line POSIX-compatible shell (`programs/shell.c`) with:
-
-- **Command resolution**: POSIX PATH walker (`$PATH`, default `/bin:/sbin`). No extension appending. `./cmd` for current directory.
-- **Builtins**: cd, pwd, ls, echo, cat, cp, head, wc, sort, env, export, ps, top, kill, jobs, fg, exit, help, clear, source, uname, date
-- **Job control**: `cmd &` for background, `jobs` to list, `kill pid` to terminate, `fg` to foreground
-- **I/O redirection**: `>` (write), `>>` (append), `<` (input), `|` (pipe)
-- **Variable expansion**: `$VAR` and `$PATH` in commands
-- **Script execution**: `source file.sh` or `sh file.sh`
-- **Login**: username/password authentication via auth_server
-
-## Syscalls
-
-The sandbox kernel implements 63 syscall numbers organized by function:
-
-| Range | Category | Examples |
-|-------|----------|----------|
-| 1-16 | File I/O | open, close, read, write, stat, mkdir, rmdir, getcwd, chdir |
-| 17-19 | File ops | access, umask, dup |
-| 20-29 | Process | exit, getpid, sleep, exec, getuid, getgid, getppid |
-| 30-31 | Terminal | putc, getc |
-| 40-46 | Sockets | socket, bind, listen, accept, connect, send, recv |
-| 50-51 | Memory | brk, mmap |
-| 60-76 | Extended | dup2, truncate, pipe, time, spawn, waitpid, kill, signal, fork |
-| 80-82 | Internal | suspended, getpid_, getprocs |
-| 90-93 | System | login, logout, shutdown, sync |
-
-## Async IPC
-
-Framework for non-blocking syscalls (scaffolding wired, used for getc):
-
-```
-sandbox_io shared memory layout:
-  0x000 - 0x0FF: Control area (SBX_CMD, SBX_STATUS, etc.)
-  0x0F0:         CTRL_C_FLAG (out-of-band Ctrl-C from serial)
-  0x100 - 0x13F: Async request/response header
-  0x200 - 0xFFF: Data area
+```c
+sel4utils_configure_thread(&vka, &vspace, &vspace, fault_ep, cspace, cspace_data, &thread);
+seL4_TCB_SetPriority(thread.tcb.cptr, auth_tcb, priority);
+seL4_TCB_SetAffinity(thread.tcb.cptr, core_id);
+sel4utils_start_thread(&thread, entry_fn, arg0, arg1, 1);
 ```
 
-The getc path uses yield-loop: shell thread stays READY between input checks, yielding timeslices so background threads run. The PPC to orchestrator doubles as a Microkit event loop return point for notification delivery.
+Threads sharing a VSpace can access the same memory (verified: 4 workers increment shared counter to 4). seL4's kernel scheduler handles preemption, priority, and SMP core assignment.
+
+### SMP Verification
+
+Thread affinity test pins each of 4 worker threads to a different core. Interleaved UART output proves true parallel execution — characters from different threads appear mixed in the output stream, which only happens when threads execute simultaneously on separate physical cores.
+
+## IPC Model
+
+All inter-process communication uses seL4 endpoints:
+
+```
+Client                          Server
+  │                               │
+  ├─ seL4_SetMR(0, data)         │
+  ├─ seL4_Call(ep, msg) ──────►  seL4_Recv(ep, &badge)
+  │       (client blocks)         ├─ process message
+  │                               ├─ seL4_SetMR(0, reply_data)
+  ◄────────────────────────────  seL4_Reply(reply_msg)
+  ├─ seL4_GetMR(0)               │
+```
+
+### Serial Server IPC Protocol
+
+| Label | Name | Request | Reply |
+|-------|------|---------|-------|
+| 1 | PUTC | MR0 = char | (empty) |
+| 2 | GETC | (empty) | MR0 = char or -1 |
+| 3 | PUTS | MR0..MRn = chars | (empty) |
+| 4 | KEY_PUSH | MR0 = char (from root) | (empty) |
+
+Output path: shell → PUTC IPC → serial_server → seL4_DebugPutChar → UART TX.
+Input path: UART RX → root polls PL011 → KEY_PUSH IPC → serial_server buffer → shell GETC.
+
+## Device Access
+
+### UART (PL011)
+
+Physical address `0x09000000`, IRQ 33. The root task maps the device frame into its own VSpace using `sel4platsupport_alloc_frame_at()` + `vspace_map_pages()`. It polls the RX register for keyboard input and forwards characters via IPC.
+
+Serial output uses `seL4_DebugPutChar()` to avoid contention with kernel's UART usage.
+
+## Memory Management
+
+### Bootstrap Sequence
+
+```
+seL4_BootInfo
+  → bootstrap_use_current_simple(&simple, pool_size, pool)
+    → allocman (untyped memory allocator)
+      → allocman_make_vka(&vka, allocman)
+        → VKA interface (kernel object allocation)
+          → sel4utils_bootstrap_vspace_with_bootinfo_leaky()
+            → VSpace manager (virtual memory)
+```
+
+Static bootstrap pool: 400 pages (1.6 MB). allocman then manages all remaining untypeds (~505 MB).
+
+### Resource Cleanup
+
+`sel4utils_destroy_process()` reclaims VSpace, CSpace, TCB, and all allocated untypeds. Essential — without cleanup the system exhausts untyped memory after ~5 process spawns.
 
 ## Build System
 
+seL4's standard CMake + Ninja build:
+
 ```
-make              Build kernel image (build/loader.img)
-make programs     Build all user programs (programs/*.bin + sbin + tests)
-make ext2-disk    Create and populate ext2 disk image
-make run          Boot in QEMU (4 cores, 2GB, virtio-blk/net)
-make bump-patch   Increment version patch number
-make clean        Remove build artifacts
+CMakeLists.txt      → includes settings.cmake, then tools/seL4/cmake-tool/all.cmake
+settings.cmake      → platform, arch, SMP, hypervisor, debug flags
+projects/aios/      → AiosChildApp macro, MakeCPIO, DeclareRootserver
 ```
 
-Programs are cross-compiled with `aarch64-linux-gnu-gcc`, linked with a custom `link.ld`, and objcopy'd to flat binaries. Intermediates go in `build/prg/`.
+All child ELFs are embedded into a CPIO archive linked into the root task. The elfloader packages kernel + root task into the final boot image.
 
-## Test Suite
+### Key Build Commands
 
-4 test programs, 42 tests total:
+```bash
+cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=../deps/kernel/gcc.cmake \
+    -DCROSS_COMPILER_PREFIX=aarch64-linux-gnu- ..
+ninja
+```
 
-| Program | Tests | Coverage |
-|---------|-------|----------|
-| test_basic | 12 | syscalls, memory allocation, string operations |
-| test_fileio | 8 | file create/read/write/stat, mkdir/rmdir |
-| test_threads | 13 | pthread create/join, mutex contention, condvar, rwlock, TLS, preemption |
-| test_signals | 9 | kill, signal handler registration, SIG_IGN, SIGKILL/SIGSTOP protection |
+Output: `build-04/images/aios_root-image-arm-qemu-arm-virt`
 
-All 42 tests pass with concurrent background processes running.
+### Boot Command
 
-## User Programs
-
-34 programs in `/bin/`, 1 in `/sbin/`:
-
-**Utilities**: cat, cp, echo, head, ls, mkdir, mv, rm, rmdir, sort, wc, whoami, uname
-**System**: info, fstat, daemon, idle, netstat, wget, shutdown (sbin, root-only)
-**Tests/Benchmarks**: bench, sieve, fib, stress, memtest, ftest, dirtest, forktest, spawn_test, posix_test, posixtest2, slot_test, socktest
-**Shell**: Full POSIX-compatible shell with job control
+```bash
+qemu-system-aarch64 -machine virt,virtualization=on \
+    -cpu cortex-a53 -smp 4 -m 2G -nographic -serial mon:stdio \
+    -kernel build-04/images/aios_root-image-arm-qemu-arm-virt
+```
 
 ## Known Limitations
 
-1. **File I/O blocks all threads**: Sync PPC to orchestrator suspends entire sandbox PD. Window is microseconds per call.
-2. **Single address space**: No memory protection between processes. All share 128 MB pool.
-3. **Single seL4 TCB**: Sandbox is one seL4 schedulable entity. No true SMP parallelism.
-4. **No fork**: `fork()` returns -1. Process duplication requires MMU-based address space copying.
-5. **Ctrl-C via QEMU**: QEMU `-nographic` intercepts Ctrl-C before guest. Chain wired but untestable in current setup.
-6. **Bump allocator**: malloc never frees. Long-running processes eventually exhaust heap.
+- Non-MCS scheduler (MCS sched context setup fails — deferred)
+- No filesystem yet (ext2/virtio-blk port pending from 0.3.x)
+- Shell commands are built-in only (no ELF loading from disk)
+- UART TX via seL4_DebugPutChar (avoids kernel contention)
+- UART RX polling (no interrupt-driven input)
+- No fork() (spawn only)
+- Process priority is static (no runtime nice/renice)
+- Single QEMU platform (no real hardware tested)
 
-## Version History (0.3.x)
+## Comparison with 0.3.x
 
-| Version | Milestone |
-|---------|-----------|
-| 0.3.7 | Build tooling, PD sync, consistency checks |
-| 0.3.8 | VFS server PD, channel cleanup, dead code archive |
-| 0.3.9 | POSIX stubs (272/272 coverage) |
-| 0.3.10 | Verified preemptive pthreads (35/35 tests) |
-| 0.3.11 | Full FP/SIMD context save (q0-q31) |
-| 0.3.12 | Priority scheduler, block/wake mutex/cond/rwlock |
-| 0.3.13 | Shutdown command, POSIX PATH walker |
-| 0.3.14 | Thread-safe malloc, thread reaper, async IPC framework |
-| 0.3.15 | Shell parser fixes, script fallback probe |
-| 0.3.16 | Signal infrastructure, split test suite (42/42) |
-| 0.3.17 | Real background spawn, kill feedback, kernel zombie reaper |
-| 0.3.18 | Async getc, Ctrl-C chain, concurrent background I/O |
+| Feature | 0.3.x (Microkit) | 0.4.x (bare seL4) |
+|---------|-------------------|---------------------|
+| Process isolation | None (shared space) | MMU-enforced VSpaces |
+| Threads | User-space setjmp/longjmp | Real seL4 TCBs |
+| SMP | Single TCB | 4 cores, per-thread affinity |
+| Scheduling | User-space round-robin | Kernel preemptive |
+| Crash containment | Kills sandbox | VM fault caught, system lives |
+| IPC | Microkit PPC (blocks PD) | seL4 endpoints (per-thread) |
+| Shell | Full POSIX (34 commands) | Mini (5 commands) |
+| Filesystem | ext2 read/write | Not yet ported |
+| Test suite | 42/42 | 5/5 (architecture tests) |
