@@ -93,7 +93,7 @@ CMAKE_C_COMPILER_AR:FILEPATH=/opt/homebrew/bin/aarch64-linux-gnu-gcc-ar
 // for the GCC compiler
 CMAKE_C_COMPILER_RANLIB:FILEPATH=/opt/homebrew/bin/aarch64-linux-gnu-gcc-ranlib
 
-CMAKE_C_FLAGS:STRING= -fvisibility=default -fvisibility=default
+CMAKE_C_FLAGS:STRING= -fvisibility=default
 
 //Flags used by the C compiler during DEBUG builds.
 CMAKE_C_FLAGS_DEBUG:STRING=-g
@@ -556,11 +556,7 @@ KernelResetChunkBits:STRING=8
 // invocation.
 KernelRetypeFanOutLimit:STRING=256
 
-//Root CNode Size (2^n slots)     The acceptable range is 8-27
-// and 7-26, for 32-bit and 64-bit respectively.     The root CNode
-// needs at least enough space to contain seL4_NumInitialCaps 
-//    plus enough room for all the Untyped Caps.
-KernelRootCNodeSizeBits:STRING=12
+KernelRootCNodeSizeBits:STRING=16
 
 KernelSel4Arch:STRING=aarch64
 

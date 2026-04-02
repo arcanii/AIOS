@@ -26,3 +26,4 @@ set(KernelIsMCS OFF CACHE BOOL "" FORCE)
 # which the linker cannot copy-relocate. Force default visibility.
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fvisibility=default" CACHE STRING "" FORCE)
 set(KernelArmHypervisorSupport ON CACHE BOOL "" FORCE)
+set(KernelRootCNodeSizeBits 16 CACHE STRING "" FORCE)

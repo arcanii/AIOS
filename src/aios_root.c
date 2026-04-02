@@ -35,6 +35,7 @@ static allocman_t *allocman;
 #define UART_FR   0x018
 #define FR_RXFE   (1 << 4)
 #define SER_KEY_PUSH 4
+#define EXEC_RUN     20
 static volatile uint32_t *uart;
 
 /* Filesystem state (shared with fs thread) */
@@ -110,6 +111,83 @@ static void worker_thread(void *arg0, void *arg1, void *ipc_buf) {
     core_seen[id] = 1;
     printf("[worker %d] counter=%d (pinned to core %d)\n", id, *ctr, id);
     while (1) seL4_Yield();
+}
+
+/* Exec thread — spawns processes on behalf of shell */
+static vka_object_t exec_reply_cap_obj;
+
+static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
+    seL4_CPtr ep = (seL4_CPtr)(uintptr_t)arg0;
+    printf("[exec] Thread started on EP %lu\n", (unsigned long)ep);
+
+    /* Allocate a slot to save reply caps */
+    cspacepath_t reply_path;
+    int err = vka_cspace_alloc_path(&vka, &reply_path);
+    if (err) {
+        printf("[exec] FATAL: cannot alloc reply cslot\n");
+        return;
+    }
+    /* Free the endpoint object but keep the slot for SaveCaller */
+    seL4_CPtr reply_slot = reply_path.capPtr;
+
+    while (1) {
+        seL4_Word badge;
+        seL4_MessageInfo_t msg = seL4_Recv(ep, &badge);
+        seL4_Word label = seL4_MessageInfo_get_label(msg);
+
+        if (label != EXEC_RUN) {
+            seL4_SetMR(0, (seL4_Word)-1);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            continue;
+        }
+
+        /* Unpack program name */
+        seL4_Word name_len = seL4_GetMR(0);
+        char prog_name[64];
+        int nl = (name_len > 63) ? 63 : (int)name_len;
+        int mr_i = 1;
+        for (int i = 0; i < nl; i++) {
+            if (i % 8 == 0 && i > 0) mr_i++;
+            prog_name[i] = (char)((seL4_GetMR(mr_i) >> ((i % 8) * 8)) & 0xFF);
+        }
+        prog_name[nl] = '\0';
+
+        /* Clear slot then save reply cap */
+        seL4_CNode_Delete(seL4_CapInitThreadCNode, reply_slot, seL4_WordBits);
+        seL4_CNode_SaveCaller(seL4_CapInitThreadCNode, reply_slot,
+                               seL4_WordBits);
+
+        printf("[exec] Running: %s\n", prog_name);
+
+        /* Create a local fault ep */
+        vka_object_t child_fault_ep;
+        err = vka_alloc_endpoint(&vka, &child_fault_ep);
+        if (err) {
+            printf("[exec] Failed to alloc fault ep\n");
+            seL4_SetMR(0, (seL4_Word)-1);
+            seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
+            continue;
+        }
+
+        sel4utils_process_t proc;
+        err = spawn_simple(prog_name, 200, &proc, &child_fault_ep);
+        if (err) {
+            printf("[exec] Failed to spawn %s: %d\n", prog_name, err);
+            seL4_SetMR(0, (seL4_Word)-1);
+            seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
+            continue;
+        }
+
+        /* Wait for child to exit */
+        seL4_Word child_badge;
+        seL4_Recv(child_fault_ep.cptr, &child_badge);
+        printf("[exec] %s exited\n", prog_name);
+        sel4utils_destroy_process(&proc, &vka);
+
+        /* Reply to shell via saved cap */
+        seL4_SetMR(0, 0);
+        seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
+    }
 }
 
 /* Read a 512-byte sector via virtio-blk */
@@ -484,6 +562,10 @@ skip_blk:
     vka_object_t fs_ep_obj;
     vka_alloc_endpoint(&vka, &fs_ep_obj);
     fs_ep_cap = fs_ep_obj.cptr;
+
+    vka_object_t exec_ep_obj;
+    vka_alloc_endpoint(&vka, &exec_ep_obj);
+    seL4_CPtr exec_ep_cap = exec_ep_obj.cptr;
     {
         sel4utils_thread_t fs_thread;
         error = sel4utils_configure_thread(&vka, &vspace, &vspace, 0,
@@ -497,6 +579,20 @@ skip_blk:
         }
     }
 
+    /* Start exec thread */
+    {
+        sel4utils_thread_t exec_thread;
+        error = sel4utils_configure_thread(&vka, &vspace, &vspace, 0,
+            simple_get_cnode(&simple), seL4_NilData, &exec_thread);
+        if (!error) {
+            seL4_TCB_SetPriority(exec_thread.tcb.cptr, simple_get_tcb(&simple), 200);
+            sel4utils_start_thread(&exec_thread,
+                (sel4utils_thread_entry_fn)exec_thread_fn,
+                (void *)(uintptr_t)exec_ep_cap, NULL, 1);
+            printf("[exec] Exec thread started\n");
+        }
+    }
+
     printf("[proc] Starting interactive shell...\n");
     {
         sel4utils_process_t serial_proc, shell_proc;
@@ -507,22 +603,24 @@ skip_blk:
                                 &fault_ep, 1, caps, slots);
         if (error) { printf("[proc] serial FAILED\n"); goto idle; }
 
-        seL4_CPtr sh_caps[2] = { serial_ep.cptr, fs_ep_cap };
-        seL4_CPtr sh_slots[2];
+        seL4_CPtr sh_caps[3] = { serial_ep.cptr, fs_ep_cap, exec_ep_cap };
+        seL4_CPtr sh_slots[3];
         error = spawn_with_args("mini_shell", 200, &shell_proc,
-                                &fault_ep, 2, sh_caps, sh_slots);
+                                &fault_ep, 3, sh_caps, sh_slots);
         if (error) { printf("[proc] shell FAILED\n"); goto idle; }
         printf("[proc] Shell ready.\n\n");
     }
 
-    /* Keyboard loop */
+    /* Main loop: keyboard polling + exec requests */
     while (1) {
+        /* Poll UART for keyboard */
         if (uart && !(uart[UART_FR / 4] & FR_RXFE)) {
             char c = (char)(uart[UART_DR / 4] & 0xFF);
             seL4_SetMR(0, (seL4_Word)c);
             seL4_Call(serial_ep.cptr,
                       seL4_MessageInfo_new(SER_KEY_PUSH, 0, 0, 1));
         }
+
         seL4_Yield();
     }
 

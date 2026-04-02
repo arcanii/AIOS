@@ -14673,7 +14673,7 @@ __attribute__((__section__(".boot.text"))) static pptr_t alloc_rootserver_obj(wo
 
 __attribute__((__section__(".boot.text"))) static word_t rootserver_max_size_bits(word_t extra_bi_size_bits)
 {
-    word_t cnode_size_bits = 12 + 5;
+    word_t cnode_size_bits = 16 + 5;
     word_t max = (((cnode_size_bits)>(13))?(cnode_size_bits):(13));
     return (((max)>(extra_bi_size_bits))?(max):(extra_bi_size_bits));
 }
@@ -14681,7 +14681,7 @@ __attribute__((__section__(".boot.text"))) static word_t rootserver_max_size_bit
 __attribute__((__section__(".boot.text"))) static word_t calculate_rootserver_size(v_region_t it_v_reg, word_t extra_bi_size_bits)
 {
     /* work out how much memory we need for root server objects */
-    word_t size = (1ul << (12 + 5));
+    word_t size = (1ul << (16 + 5));
     size += (1ul << (11)); // root thread tcb
     size += (1ul << (12)); // ipc buf
     size += (1ul << (12)); // boot info
@@ -14709,7 +14709,7 @@ __attribute__((__section__(".boot.text"))) static void create_rootserver_objects
                                                 word_t extra_bi_size_bits)
 {
     /* the largest object the PD, the root cnode, or the extra boot info */
-    word_t cnode_size_bits = 12 + 5;
+    word_t cnode_size_bits = 16 + 5;
     word_t max = rootserver_max_size_bits(extra_bi_size_bits);
 
     word_t size = calculate_rootserver_size(it_v_reg, extra_bi_size_bits);
@@ -14776,7 +14776,7 @@ __attribute__((__section__(".boot.text"))) void write_slot(slot_ptr_t slot_ptr, 
 /* Our root CNode needs to be able to fit all the initial caps and not
  * cover all of memory.
  */
-_Static_assert(12 < 32 - 5 && (1ul << (12)) >= seL4_NumInitialCaps && 12 >= (12 - 5), "root_cnode_size_valid");
+_Static_assert(16 < 32 - 5 && (1ul << (16)) >= seL4_NumInitialCaps && 16 >= (12 - 5), "root_cnode_size_valid");
 
 
 
@@ -14785,8 +14785,8 @@ __attribute__((__section__(".boot.text"))) cap_t
 create_root_cnode(void)
 {
     cap_t cap = cap_cnode_cap_new(
-                    12, /* radix */
-                    (1 << 6) - 12, /* guard size */
+                    16, /* radix */
+                    (1 << 6) - 16, /* guard size */
                     0, /* guard */
                     rootserver.cnode); /* pptr */
 
@@ -14869,7 +14869,7 @@ __attribute__((__section__(".boot.text"))) void populate_bi_frame(node_id_t node
     bi->numNodes = num_nodes;
     bi->numIOPTLevels = 0;
     bi->ipcBuffer = (seL4_IPCBuffer *)ipcbuf_vptr;
-    bi->initThreadCNodeSizeBits = 12;
+    bi->initThreadCNodeSizeBits = 16;
     bi->initThreadDomain = 0;
     bi->extraLen = extra_bi_size;
 
@@ -14879,10 +14879,10 @@ __attribute__((__section__(".boot.text"))) void populate_bi_frame(node_id_t node
 
 __attribute__((__section__(".boot.text"))) bool_t provide_cap(cap_t root_cnode_cap, cap_t cap)
 {
-    if (ndks_boot.slot_pos_cur >= (1ul << (12))) {
+    if (ndks_boot.slot_pos_cur >= (1ul << (16))) {
         printf("ERROR: can't add another cap, all %""lu"
                " (=2^CONFIG_ROOT_CNODE_SIZE_BITS) slots used\n",
-               (1ul << (12)));
+               (1ul << (16)));
         return false;
     }
     write_slot((((slot_ptr_t)(((pptr_t)cap_get_capPtr(root_cnode_cap)))) + (ndks_boot.slot_pos_cur)), cap);
@@ -15288,7 +15288,7 @@ __attribute__((__section__(".boot.text"))) void bi_finalise(void)
 
     ndks_boot.bi_frame->empty = (seL4_SlotRegion) {
         .start = ndks_boot.slot_pos_cur,
-        .end = (1ul << (12))
+        .end = (1ul << (16))
     };
 }
 

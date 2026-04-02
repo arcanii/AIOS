@@ -12,6 +12,9 @@
 
 static seL4_CPtr serial_ep;
 static seL4_CPtr fs_ep;
+static seL4_CPtr exec_ep;
+
+#define EXEC_RUN 20
 
 static void ser_putc(char c) {
     seL4_SetMR(0, (seL4_Word)c);
@@ -179,6 +182,8 @@ int main(int argc, char *argv[]) {
     serial_ep = 0; fs_ep = 0;
     if (argc > 0) serial_ep = (seL4_CPtr)parse_num(argv[0]);
     if (argc > 1) fs_ep = (seL4_CPtr)parse_num(argv[1]);
+    if (argc > 2) exec_ep = (seL4_CPtr)parse_num(argv[2]);
+    seL4_DebugPutChar(48 + (char)argc); seL4_DebugPutChar(10);
 
     ser_puts("\n");
     ser_puts("============================================\n");
@@ -186,12 +191,6 @@ int main(int argc, char *argv[]) {
     if (fs_ep) ser_puts("  Filesystem: ext2\n");
     ser_puts("============================================\n\n");
 
-    /* Display motd */
-    if (fs_ep) {
-        char motd_buf[512];
-        int n = fs_read("/etc/motd", motd_buf, sizeof(motd_buf));
-        if (n > 0) { ser_putc('\n'); ser_puts(motd_buf); ser_putc('\n'); }
-    }
 
     while (1) {
         ser_puts(cwd);
@@ -233,6 +232,22 @@ int main(int argc, char *argv[]) {
         } else if (str_eq(line, "exit")) {
             ser_puts("Goodbye.\n");
             return 0;
+        } else if (exec_ep) {
+            int pl = str_len(line);
+            seL4_SetMR(0, (seL4_Word)pl);
+            int mr = 1;
+            seL4_Word w = 0;
+            for (int i = 0; i < pl; i++) {
+                w |= ((seL4_Word)(uint8_t)line[i]) << ((i % 8) * 8);
+                if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
+            }
+            seL4_MessageInfo_t reply = seL4_Call(exec_ep,
+                seL4_MessageInfo_new(EXEC_RUN, 0, 0, mr));
+            int ret = (int)(long)seL4_GetMR(0);
+            if (ret != 0) {
+                ser_puts(line);
+                ser_puts(": command not found\n");
+            }
         } else {
             ser_puts(line);
             ser_puts(": command not found\n");
