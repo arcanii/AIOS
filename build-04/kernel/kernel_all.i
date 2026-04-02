@@ -120,7 +120,7 @@
 /* disabled: CONFIG_DEBUG_DISABLE_L1_ICACHE */
 /* disabled: CONFIG_DEBUG_DISABLE_L1_DCACHE */
 /* disabled: CONFIG_DEBUG_DISABLE_BRANCH_PREDICTION */
-/* disabled: CONFIG_ARM_HYPERVISOR_SUPPORT */
+
 /* disabled: CONFIG_ARM_GIC_V3_SUPPORT */
 /* disabled: CONFIG_AARCH64_VSPACE_S2_START_L1 */
 /* disabled: CONFIG_ARM_HYP_ENABLE_VCPU_CP14_SAVE_AND_RESTORE */
@@ -147,7 +147,7 @@
 /* disabled: CONFIG_SIGNAL_FASTPATH */
 
 
-/* disabled: CONFIG_ENABLE_SMP_SUPPORT */
+
 
 /* disabled: CONFIG_VERIFICATION_BUILD */
 /* disabled: CONFIG_BINARY_VERIFICATION_BUILD */
@@ -927,7 +927,7 @@ typedef enum _object {
 
     seL4_ARM_PageTableObject,
 
-
+    seL4_ARM_VCPUObject,
 
 
 
@@ -1310,8 +1310,8 @@ endpoint_ptr_get_epQueue_tail(endpoint_t *endpoint_ptr) {
     uint64_t ret;
     ret = (endpoint_ptr->words[0] & 0xfffffffffffcull) << 0;
     /* Possibly sign extend */
-    if (__builtin_expect(!!(1 && (ret & (1ull << (47)))), 1)) {
-        ret |= 0xffff000000000000;
+    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
+        ret |= 0x0;
     }
     return ret;
 }
@@ -1319,7 +1319,7 @@ endpoint_ptr_get_epQueue_tail(endpoint_t *endpoint_ptr) {
 static inline void
 endpoint_ptr_set_epQueue_tail(endpoint_t *endpoint_ptr, uint64_t v64) {
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0xfffffffffffcull << 0) | 0xffff000000000000) & v64) == ((1 && (v64 & (1ull << (47)))) ? 0xffff000000000000 : 0))) { _assert_fail("(((~0xfffffffffffcull << 0) | 0xffff000000000000) & v64) == ((1 && (v64 & (1ull << (47)))) ? 0xffff000000000000 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 47, __func__); } } while(0);
+    do { if (!((((~0xfffffffffffcull << 0) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xfffffffffffcull << 0) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 47, __func__); } } while(0);
     endpoint_ptr->words[0] &= ~0xfffffffffffcull;
     endpoint_ptr->words[0] |= (v64 >> 0) & 0xfffffffffffc;
 }
@@ -1353,9 +1353,9 @@ mdb_node_new(uint64_t mdbNext, uint64_t mdbRevocable, uint64_t mdbFirstBadged, u
     mdb_node_t mdb_node;
 
     /* fail if user has passed bits that we will override */
-    do { if (!((mdbNext & ~0xfffffffffffcull) == ((1 && (mdbNext & (1ull << 47))) ? 0xffff000000000000 : 0))) { _assert_fail("(mdbNext & ~0xfffffffffffcull) == ((1 && (mdbNext & (1ull << 47))) ? 0xffff000000000000 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 81, __func__); } } while(0);
-    do { if (!((mdbRevocable & ~0x1ull) == ((1 && (mdbRevocable & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(mdbRevocable & ~0x1ull) == ((1 && (mdbRevocable & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 82, __func__); } } while(0);
-    do { if (!((mdbFirstBadged & ~0x1ull) == ((1 && (mdbFirstBadged & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(mdbFirstBadged & ~0x1ull) == ((1 && (mdbFirstBadged & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 83, __func__); } } while(0);
+    do { if (!((mdbNext & ~0xfffffffffffcull) == ((0 && (mdbNext & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(mdbNext & ~0xfffffffffffcull) == ((0 && (mdbNext & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 81, __func__); } } while(0);
+    do { if (!((mdbRevocable & ~0x1ull) == ((0 && (mdbRevocable & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(mdbRevocable & ~0x1ull) == ((0 && (mdbRevocable & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 82, __func__); } } while(0);
+    do { if (!((mdbFirstBadged & ~0x1ull) == ((0 && (mdbFirstBadged & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(mdbFirstBadged & ~0x1ull) == ((0 && (mdbFirstBadged & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 83, __func__); } } while(0);
 
     mdb_node.words[0] = 0
         | mdbPrev << 0;;
@@ -1372,8 +1372,8 @@ mdb_node_get_mdbNext(mdb_node_t mdb_node) {
     uint64_t ret;
     ret = (mdb_node.words[1] & 0xfffffffffffcull) << 0;
     /* Possibly sign extend */
-    if (__builtin_expect(!!(1 && (ret & (1ull << (47)))), 1)) {
-        ret |= 0xffff000000000000;
+    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
+        ret |= 0x0;
     }
     return ret;
 }
@@ -1381,7 +1381,7 @@ mdb_node_get_mdbNext(mdb_node_t mdb_node) {
 static inline void
 mdb_node_ptr_set_mdbNext(mdb_node_t *mdb_node_ptr, uint64_t v64) {
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0xfffffffffffcull << 0) | 0xffff000000000000) & v64) == ((1 && (v64 & (1ull << (47)))) ? 0xffff000000000000 : 0))) { _assert_fail("(((~0xfffffffffffcull << 0) | 0xffff000000000000) & v64) == ((1 && (v64 & (1ull << (47)))) ? 0xffff000000000000 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 109, __func__); } } while(0);
+    do { if (!((((~0xfffffffffffcull << 0) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xfffffffffffcull << 0) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 109, __func__); } } while(0);
     mdb_node_ptr->words[1] &= ~0xfffffffffffcull;
     mdb_node_ptr->words[1] |= (v64 >> 0) & 0xfffffffffffc;
 }
@@ -1480,8 +1480,8 @@ notification_ptr_get_ntfnBoundTCB(notification_t *notification_ptr) {
     uint64_t ret;
     ret = (notification_ptr->words[3] & 0xffffffffffffull) << 0;
     /* Possibly sign extend */
-    if (__builtin_expect(!!(1 && (ret & (1ull << (47)))), 1)) {
-        ret |= 0xffff000000000000;
+    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
+        ret |= 0x0;
     }
     return ret;
 }
@@ -1489,7 +1489,7 @@ notification_ptr_get_ntfnBoundTCB(notification_t *notification_ptr) {
 static inline void
 notification_ptr_set_ntfnBoundTCB(notification_t *notification_ptr, uint64_t v64) {
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0xffffffffffffull << 0) | 0xffff000000000000) & v64) == ((1 && (v64 & (1ull << (47)))) ? 0xffff000000000000 : 0))) { _assert_fail("(((~0xffffffffffffull << 0) | 0xffff000000000000) & v64) == ((1 && (v64 & (1ull << (47)))) ? 0xffff000000000000 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 217, __func__); } } while(0);
+    do { if (!((((~0xffffffffffffull << 0) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xffffffffffffull << 0) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 217, __func__); } } while(0);
     notification_ptr->words[3] &= ~0xffffffffffffull;
     notification_ptr->words[3] |= (v64 >> 0) & 0xffffffffffff;
 }
@@ -1518,8 +1518,8 @@ notification_ptr_get_ntfnQueue_head(notification_t *notification_ptr) {
     uint64_t ret;
     ret = (notification_ptr->words[1] & 0xffffffffffffull) << 0;
     /* Possibly sign extend */
-    if (__builtin_expect(!!(1 && (ret & (1ull << (47)))), 1)) {
-        ret |= 0xffff000000000000;
+    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
+        ret |= 0x0;
     }
     return ret;
 }
@@ -1527,7 +1527,7 @@ notification_ptr_get_ntfnQueue_head(notification_t *notification_ptr) {
 static inline void
 notification_ptr_set_ntfnQueue_head(notification_t *notification_ptr, uint64_t v64) {
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0xffffffffffffull << 0) | 0xffff000000000000) & v64) == ((1 && (v64 & (1ull << (47)))) ? 0xffff000000000000 : 0))) { _assert_fail("(((~0xffffffffffffull << 0) | 0xffff000000000000) & v64) == ((1 && (v64 & (1ull << (47)))) ? 0xffff000000000000 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 255, __func__); } } while(0);
+    do { if (!((((~0xffffffffffffull << 0) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xffffffffffffull << 0) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 255, __func__); } } while(0);
     notification_ptr->words[1] &= ~0xffffffffffffull;
     notification_ptr->words[1] |= (v64 >> 0) & 0xffffffffffff;
 }
@@ -1537,8 +1537,8 @@ notification_ptr_get_ntfnQueue_tail(notification_t *notification_ptr) {
     uint64_t ret;
     ret = (notification_ptr->words[0] & 0xffffffffffff0000ull) >> 16;
     /* Possibly sign extend */
-    if (__builtin_expect(!!(1 && (ret & (1ull << (47)))), 1)) {
-        ret |= 0xffff000000000000;
+    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
+        ret |= 0x0;
     }
     return ret;
 }
@@ -1546,7 +1546,7 @@ notification_ptr_get_ntfnQueue_tail(notification_t *notification_ptr) {
 static inline void
 notification_ptr_set_ntfnQueue_tail(notification_t *notification_ptr, uint64_t v64) {
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0xffffffffffff0000ull >> 16) | 0xffff000000000000) & v64) == ((1 && (v64 & (1ull << (47)))) ? 0xffff000000000000 : 0))) { _assert_fail("(((~0xffffffffffff0000ull >> 16) | 0xffff000000000000) & v64) == ((1 && (v64 & (1ull << (47)))) ? 0xffff000000000000 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 274, __func__); } } while(0);
+    do { if (!((((~0xffffffffffff0000ull >> 16) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xffffffffffff0000ull >> 16) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 274, __func__); } } while(0);
     notification_ptr->words[0] &= ~0xffffffffffff0000ull;
     notification_ptr->words[0] |= (v64 << 16) & 0xffffffffffff0000;
 }
@@ -1675,8 +1675,8 @@ thread_state_ptr_get_blockingObject(thread_state_t *thread_state_ptr) {
     uint64_t ret;
     ret = (thread_state_ptr->words[0] & 0xfffffffffff0ull) << 0;
     /* Possibly sign extend */
-    if (__builtin_expect(!!(1 && (ret & (1ull << (47)))), 1)) {
-        ret |= 0xffff000000000000;
+    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
+        ret |= 0x0;
     }
     return ret;
 }
@@ -1684,7 +1684,7 @@ thread_state_ptr_get_blockingObject(thread_state_t *thread_state_ptr) {
 static inline void
 thread_state_ptr_set_blockingObject(thread_state_t *thread_state_ptr, uint64_t v64) {
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0xfffffffffff0ull << 0) | 0xffff000000000000) & v64) == ((1 && (v64 & (1ull << (47)))) ? 0xffff000000000000 : 0))) { _assert_fail("(((~0xfffffffffff0ull << 0) | 0xffff000000000000) & v64) == ((1 && (v64 & (1ull << (47)))) ? 0xffff000000000000 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 412, __func__); } } while(0);
+    do { if (!((((~0xfffffffffff0ull << 0) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xfffffffffff0ull << 0) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 412, __func__); } } while(0);
     thread_state_ptr->words[0] &= ~0xfffffffffff0ull;
     thread_state_ptr->words[0] |= (v64 >> 0) & 0xfffffffffff0;
 }
@@ -1749,9 +1749,9 @@ vm_attributes_new(uint64_t armExecuteNever, uint64_t armParityEnabled, uint64_t 
     vm_attributes_t vm_attributes;
 
     /* fail if user has passed bits that we will override */
-    do { if (!((armExecuteNever & ~0x1ull) == ((1 && (armExecuteNever & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(armExecuteNever & ~0x1ull) == ((1 && (armExecuteNever & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 477, __func__); } } while(0);
-    do { if (!((armParityEnabled & ~0x1ull) == ((1 && (armParityEnabled & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(armParityEnabled & ~0x1ull) == ((1 && (armParityEnabled & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 478, __func__); } } while(0);
-    do { if (!((armPageCacheable & ~0x1ull) == ((1 && (armPageCacheable & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(armPageCacheable & ~0x1ull) == ((1 && (armPageCacheable & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 479, __func__); } } while(0);
+    do { if (!((armExecuteNever & ~0x1ull) == ((0 && (armExecuteNever & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(armExecuteNever & ~0x1ull) == ((0 && (armExecuteNever & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 477, __func__); } } while(0);
+    do { if (!((armParityEnabled & ~0x1ull) == ((0 && (armParityEnabled & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(armParityEnabled & ~0x1ull) == ((0 && (armParityEnabled & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 478, __func__); } } while(0);
+    do { if (!((armPageCacheable & ~0x1ull) == ((0 && (armPageCacheable & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(armPageCacheable & ~0x1ull) == ((0 && (armPageCacheable & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 479, __func__); } } while(0);
 
     vm_attributes.words[0] = 0
         | (armExecuteNever & 0x1ull) << 2
@@ -1804,7 +1804,7 @@ asid_map_asid_map_none_new(void) {
     asid_map_t asid_map;
 
     /* fail if user has passed bits that we will override */
-    do { if (!(((uint64_t)asid_map_asid_map_none & ~0x1ull) == ((1 && ((uint64_t)asid_map_asid_map_none & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)asid_map_asid_map_none & ~0x1ull) == ((1 && ((uint64_t)asid_map_asid_map_none & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 532, __func__); } } while(0);
+    do { if (!(((uint64_t)asid_map_asid_map_none & ~0x1ull) == ((0 && ((uint64_t)asid_map_asid_map_none & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)asid_map_asid_map_none & ~0x1ull) == ((0 && ((uint64_t)asid_map_asid_map_none & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 532, __func__); } } while(0);
 
     asid_map.words[0] = 0
         | ((uint64_t)asid_map_asid_map_none & 0x1ull) << 0;
@@ -1813,15 +1813,19 @@ asid_map_asid_map_none_new(void) {
 }
 
 static inline asid_map_t __attribute__((__const__))
-asid_map_asid_map_vspace_new(uint64_t vspace_root) {
+asid_map_asid_map_vspace_new(uint64_t vspace_root, uint64_t stored_hw_vmid, uint64_t stored_vmid_valid) {
     asid_map_t asid_map;
 
     /* fail if user has passed bits that we will override */
-    do { if (!((vspace_root & ~0xfffffffff000ull) == ((1 && (vspace_root & (1ull << 47))) ? 0xffff000000000000 : 0))) { _assert_fail("(vspace_root & ~0xfffffffff000ull) == ((1 && (vspace_root & (1ull << 47))) ? 0xffff000000000000 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 545, __func__); } } while(0);
-    do { if (!(((uint64_t)asid_map_asid_map_vspace & ~0x1ull) == ((1 && ((uint64_t)asid_map_asid_map_vspace & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)asid_map_asid_map_vspace & ~0x1ull) == ((1 && ((uint64_t)asid_map_asid_map_vspace & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 546, __func__); } } while(0);
+    do { if (!((vspace_root & ~0xfffffffff000ull) == ((0 && (vspace_root & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(vspace_root & ~0xfffffffff000ull) == ((0 && (vspace_root & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 545, __func__); } } while(0);
+    do { if (!((stored_hw_vmid & ~0xffull) == ((0 && (stored_hw_vmid & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(stored_hw_vmid & ~0xffull) == ((0 && (stored_hw_vmid & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 546, __func__); } } while(0);
+    do { if (!((stored_vmid_valid & ~0x1ull) == ((0 && (stored_vmid_valid & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(stored_vmid_valid & ~0x1ull) == ((0 && (stored_vmid_valid & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 547, __func__); } } while(0);
+    do { if (!(((uint64_t)asid_map_asid_map_vspace & ~0x1ull) == ((0 && ((uint64_t)asid_map_asid_map_vspace & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)asid_map_asid_map_vspace & ~0x1ull) == ((0 && ((uint64_t)asid_map_asid_map_vspace & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 548, __func__); } } while(0);
 
     asid_map.words[0] = 0
         | (vspace_root & 0xfffffffff000ull) >> 0
+        | (stored_hw_vmid & 0xffull) << 2
+        | (stored_vmid_valid & 0x1ull) << 1
         | ((uint64_t)asid_map_asid_map_vspace & 0x1ull) << 0;
 
     return asid_map;
@@ -1831,14 +1835,66 @@ static inline uint64_t __attribute__((__const__))
 asid_map_asid_map_vspace_get_vspace_root(asid_map_t asid_map) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((asid_map.words[0] >> 0) & 0x1) == asid_map_asid_map_vspace)) { _assert_fail("((asid_map.words[0] >> 0) & 0x1) == asid_map_asid_map_vspace", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 559, __func__); } } while(0);
+    do { if (!(((asid_map.words[0] >> 0) & 0x1) == asid_map_asid_map_vspace)) { _assert_fail("((asid_map.words[0] >> 0) & 0x1) == asid_map_asid_map_vspace", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 563, __func__); } } while(0);
 
     ret = (asid_map.words[0] & 0xfffffffff000ull) << 0;
     /* Possibly sign extend */
-    if (__builtin_expect(!!(1 && (ret & (1ull << (47)))), 1)) {
-        ret |= 0xffff000000000000;
+    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
+        ret |= 0x0;
     }
     return ret;
+}
+
+static inline uint64_t __attribute__((__const__))
+asid_map_asid_map_vspace_get_stored_hw_vmid(asid_map_t asid_map) {
+    uint64_t ret;
+    /* fail if union does not have the expected tag */
+    do { if (!(((asid_map.words[0] >> 0) & 0x1) == asid_map_asid_map_vspace)) { _assert_fail("((asid_map.words[0] >> 0) & 0x1) == asid_map_asid_map_vspace", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 577, __func__); } } while(0);
+
+    ret = (asid_map.words[0] & 0x3fcull) >> 2;
+    /* Possibly sign extend */
+    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
+        ret |= 0x0;
+    }
+    return ret;
+}
+
+static inline asid_map_t __attribute__((__const__))
+asid_map_asid_map_vspace_set_stored_hw_vmid(asid_map_t asid_map, uint64_t v64) {
+    /* fail if union does not have the expected tag */
+    do { if (!(((asid_map.words[0] >> 0) & 0x1) == asid_map_asid_map_vspace)) { _assert_fail("((asid_map.words[0] >> 0) & 0x1) == asid_map_asid_map_vspace", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 590, __func__); } } while(0);
+    /* fail if user has passed bits that we will override */
+    do { if (!((((~0x3fcull >> 2 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x3fcull >> 2 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 592, __func__); } } while(0);
+
+    asid_map.words[0] &= ~0x3fcull;
+    asid_map.words[0] |= (v64 << 2) & 0x3fcull;
+    return asid_map;
+}
+
+static inline uint64_t __attribute__((__const__))
+asid_map_asid_map_vspace_get_stored_vmid_valid(asid_map_t asid_map) {
+    uint64_t ret;
+    /* fail if union does not have the expected tag */
+    do { if (!(((asid_map.words[0] >> 0) & 0x1) == asid_map_asid_map_vspace)) { _assert_fail("((asid_map.words[0] >> 0) & 0x1) == asid_map_asid_map_vspace", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 603, __func__); } } while(0);
+
+    ret = (asid_map.words[0] & 0x2ull) >> 1;
+    /* Possibly sign extend */
+    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
+        ret |= 0x0;
+    }
+    return ret;
+}
+
+static inline asid_map_t __attribute__((__const__))
+asid_map_asid_map_vspace_set_stored_vmid_valid(asid_map_t asid_map, uint64_t v64) {
+    /* fail if union does not have the expected tag */
+    do { if (!(((asid_map.words[0] >> 0) & 0x1) == asid_map_asid_map_vspace)) { _assert_fail("((asid_map.words[0] >> 0) & 0x1) == asid_map_asid_map_vspace", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 616, __func__); } } while(0);
+    /* fail if user has passed bits that we will override */
+    do { if (!((((~0x2ull >> 1 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x2ull >> 1 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 618, __func__); } } while(0);
+
+    asid_map.words[0] &= ~0x2ull;
+    asid_map.words[0] |= (v64 << 1) & 0x2ull;
+    return asid_map;
 }
 
 struct cap {
@@ -1863,7 +1919,7 @@ enum cap_tag {
     cap_vspace_cap = 9,
     cap_asid_control_cap = 11,
     cap_asid_pool_cap = 13,
-    cap_sgi_signal_cap = 27
+    cap_vcpu_cap = 15
 };
 typedef enum cap_tag cap_tag_t;
 
@@ -1882,7 +1938,7 @@ cap_null_cap_new(void) {
     cap_t cap;
 
     /* fail if user has passed bits that we will override */
-    do { if (!(((uint64_t)cap_null_cap & ~0x1full) == ((1 && ((uint64_t)cap_null_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_null_cap & ~0x1full) == ((1 && ((uint64_t)cap_null_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 610, __func__); } } while(0);
+    do { if (!(((uint64_t)cap_null_cap & ~0x1full) == ((0 && ((uint64_t)cap_null_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_null_cap & ~0x1full) == ((0 && ((uint64_t)cap_null_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 666, __func__); } } while(0);
 
     cap.words[0] = 0
         | ((uint64_t)cap_null_cap & 0x1full) << 59;
@@ -1896,11 +1952,11 @@ cap_untyped_cap_new(uint64_t capFreeIndex, uint64_t capIsDevice, uint64_t capBlo
     cap_t cap;
 
     /* fail if user has passed bits that we will override */
-    do { if (!((capFreeIndex & ~0xffffffffffffull) == ((1 && (capFreeIndex & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capFreeIndex & ~0xffffffffffffull) == ((1 && (capFreeIndex & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 624, __func__); } } while(0);
-    do { if (!((capIsDevice & ~0x1ull) == ((1 && (capIsDevice & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capIsDevice & ~0x1ull) == ((1 && (capIsDevice & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 625, __func__); } } while(0);
-    do { if (!((capBlockSize & ~0x3full) == ((1 && (capBlockSize & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capBlockSize & ~0x3full) == ((1 && (capBlockSize & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 626, __func__); } } while(0);
-    do { if (!(((uint64_t)cap_untyped_cap & ~0x1full) == ((1 && ((uint64_t)cap_untyped_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_untyped_cap & ~0x1full) == ((1 && ((uint64_t)cap_untyped_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 627, __func__); } } while(0);
-    do { if (!((capPtr & ~0xffffffffffffull) == ((1 && (capPtr & (1ull << 47))) ? 0xffff000000000000 : 0))) { _assert_fail("(capPtr & ~0xffffffffffffull) == ((1 && (capPtr & (1ull << 47))) ? 0xffff000000000000 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 628, __func__); } } while(0);
+    do { if (!((capFreeIndex & ~0xffffffffffffull) == ((0 && (capFreeIndex & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capFreeIndex & ~0xffffffffffffull) == ((0 && (capFreeIndex & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 680, __func__); } } while(0);
+    do { if (!((capIsDevice & ~0x1ull) == ((0 && (capIsDevice & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capIsDevice & ~0x1ull) == ((0 && (capIsDevice & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 681, __func__); } } while(0);
+    do { if (!((capBlockSize & ~0x3full) == ((0 && (capBlockSize & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capBlockSize & ~0x3full) == ((0 && (capBlockSize & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 682, __func__); } } while(0);
+    do { if (!(((uint64_t)cap_untyped_cap & ~0x1full) == ((0 && ((uint64_t)cap_untyped_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_untyped_cap & ~0x1full) == ((0 && ((uint64_t)cap_untyped_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 683, __func__); } } while(0);
+    do { if (!((capPtr & ~0xffffffffffffull) == ((0 && (capPtr & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capPtr & ~0xffffffffffffull) == ((0 && (capPtr & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 684, __func__); } } while(0);
 
     cap.words[0] = 0
         | ((uint64_t)cap_untyped_cap & 0x1full) << 59
@@ -1917,7 +1973,7 @@ static inline uint64_t __attribute__((__const__))
 cap_untyped_cap_get_capFreeIndex(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_untyped_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_untyped_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 645, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_untyped_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_untyped_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 701, __func__); } } while(0);
 
     ret = (cap.words[1] & 0xffffffffffff0000ull) >> 16;
     /* Possibly sign extend */
@@ -1930,9 +1986,9 @@ cap_untyped_cap_get_capFreeIndex(cap_t cap) {
 static inline cap_t __attribute__((__const__))
 cap_untyped_cap_set_capFreeIndex(cap_t cap, uint64_t v64) {
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_untyped_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_untyped_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 658, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_untyped_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_untyped_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 714, __func__); } } while(0);
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0xffffffffffff0000ull >> 16 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xffffffffffff0000ull >> 16 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 660, __func__); } } while(0);
+    do { if (!((((~0xffffffffffff0000ull >> 16 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xffffffffffff0000ull >> 16 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 716, __func__); } } while(0);
 
     cap.words[1] &= ~0xffffffffffff0000ull;
     cap.words[1] |= (v64 << 16) & 0xffffffffffff0000ull;
@@ -1942,10 +1998,10 @@ cap_untyped_cap_set_capFreeIndex(cap_t cap, uint64_t v64) {
 static inline void
 cap_untyped_cap_ptr_set_capFreeIndex(cap_t *cap_ptr, uint64_t v64) {
     /* fail if union does not have the expected tag */
-    do { if (!(((cap_ptr->words[0] >> 59) & 0x1f) == cap_untyped_cap)) { _assert_fail("((cap_ptr->words[0] >> 59) & 0x1f) == cap_untyped_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 670, __func__); } } while(0);
+    do { if (!(((cap_ptr->words[0] >> 59) & 0x1f) == cap_untyped_cap)) { _assert_fail("((cap_ptr->words[0] >> 59) & 0x1f) == cap_untyped_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 726, __func__); } } while(0);
 
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0xffffffffffff0000ull >> 16) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xffffffffffff0000ull >> 16) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 673, __func__); } } while(0);
+    do { if (!((((~0xffffffffffff0000ull >> 16) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xffffffffffff0000ull >> 16) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 729, __func__); } } while(0);
 
     cap_ptr->words[1] &= ~0xffffffffffff0000ull;
     cap_ptr->words[1] |= (v64 << 16) & 0xffffffffffff0000ull;
@@ -1955,7 +2011,7 @@ static inline uint64_t __attribute__((__const__))
 cap_untyped_cap_get_capIsDevice(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_untyped_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_untyped_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 683, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_untyped_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_untyped_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 739, __func__); } } while(0);
 
     ret = (cap.words[1] & 0x40ull) >> 6;
     /* Possibly sign extend */
@@ -1969,7 +2025,7 @@ static inline uint64_t __attribute__((__const__))
 cap_untyped_cap_get_capBlockSize(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_untyped_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_untyped_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 697, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_untyped_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_untyped_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 753, __func__); } } while(0);
 
     ret = (cap.words[1] & 0x3full) >> 0;
     /* Possibly sign extend */
@@ -1983,12 +2039,12 @@ static inline uint64_t __attribute__((__const__))
 cap_untyped_cap_get_capPtr(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_untyped_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_untyped_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 711, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_untyped_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_untyped_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 767, __func__); } } while(0);
 
     ret = (cap.words[0] & 0xffffffffffffull) << 0;
     /* Possibly sign extend */
-    if (__builtin_expect(!!(1 && (ret & (1ull << (47)))), 1)) {
-        ret |= 0xffff000000000000;
+    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
+        ret |= 0x0;
     }
     return ret;
 }
@@ -1998,12 +2054,12 @@ cap_endpoint_cap_new(uint64_t capEPBadge, uint64_t capCanGrantReply, uint64_t ca
     cap_t cap;
 
     /* fail if user has passed bits that we will override */
-    do { if (!((capCanGrantReply & ~0x1ull) == ((1 && (capCanGrantReply & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capCanGrantReply & ~0x1ull) == ((1 && (capCanGrantReply & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 726, __func__); } } while(0);
-    do { if (!((capCanGrant & ~0x1ull) == ((1 && (capCanGrant & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capCanGrant & ~0x1ull) == ((1 && (capCanGrant & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 727, __func__); } } while(0);
-    do { if (!((capCanSend & ~0x1ull) == ((1 && (capCanSend & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capCanSend & ~0x1ull) == ((1 && (capCanSend & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 728, __func__); } } while(0);
-    do { if (!((capCanReceive & ~0x1ull) == ((1 && (capCanReceive & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capCanReceive & ~0x1ull) == ((1 && (capCanReceive & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 729, __func__); } } while(0);
-    do { if (!((capEPPtr & ~0xffffffffffffull) == ((1 && (capEPPtr & (1ull << 47))) ? 0xffff000000000000 : 0))) { _assert_fail("(capEPPtr & ~0xffffffffffffull) == ((1 && (capEPPtr & (1ull << 47))) ? 0xffff000000000000 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 730, __func__); } } while(0);
-    do { if (!(((uint64_t)cap_endpoint_cap & ~0x1full) == ((1 && ((uint64_t)cap_endpoint_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_endpoint_cap & ~0x1full) == ((1 && ((uint64_t)cap_endpoint_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 731, __func__); } } while(0);
+    do { if (!((capCanGrantReply & ~0x1ull) == ((0 && (capCanGrantReply & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capCanGrantReply & ~0x1ull) == ((0 && (capCanGrantReply & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 782, __func__); } } while(0);
+    do { if (!((capCanGrant & ~0x1ull) == ((0 && (capCanGrant & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capCanGrant & ~0x1ull) == ((0 && (capCanGrant & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 783, __func__); } } while(0);
+    do { if (!((capCanSend & ~0x1ull) == ((0 && (capCanSend & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capCanSend & ~0x1ull) == ((0 && (capCanSend & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 784, __func__); } } while(0);
+    do { if (!((capCanReceive & ~0x1ull) == ((0 && (capCanReceive & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capCanReceive & ~0x1ull) == ((0 && (capCanReceive & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 785, __func__); } } while(0);
+    do { if (!((capEPPtr & ~0xffffffffffffull) == ((0 && (capEPPtr & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capEPPtr & ~0xffffffffffffull) == ((0 && (capEPPtr & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 786, __func__); } } while(0);
+    do { if (!(((uint64_t)cap_endpoint_cap & ~0x1full) == ((0 && ((uint64_t)cap_endpoint_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_endpoint_cap & ~0x1full) == ((0 && ((uint64_t)cap_endpoint_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 787, __func__); } } while(0);
 
     cap.words[0] = 0
         | (capCanGrantReply & 0x1ull) << 58
@@ -2022,7 +2078,7 @@ static inline uint64_t __attribute__((__const__))
 cap_endpoint_cap_get_capEPBadge(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 750, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 806, __func__); } } while(0);
 
     ret = (cap.words[1] & 0xffffffffffffffffull) >> 0;
     /* Possibly sign extend */
@@ -2035,9 +2091,9 @@ cap_endpoint_cap_get_capEPBadge(cap_t cap) {
 static inline cap_t __attribute__((__const__))
 cap_endpoint_cap_set_capEPBadge(cap_t cap, uint64_t v64) {
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 763, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 819, __func__); } } while(0);
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0xffffffffffffffffull >> 0 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xffffffffffffffffull >> 0 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 765, __func__); } } while(0);
+    do { if (!((((~0xffffffffffffffffull >> 0 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xffffffffffffffffull >> 0 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 821, __func__); } } while(0);
 
     cap.words[1] &= ~0xffffffffffffffffull;
     cap.words[1] |= (v64 << 0) & 0xffffffffffffffffull;
@@ -2048,7 +2104,7 @@ static inline uint64_t __attribute__((__const__))
 cap_endpoint_cap_get_capCanGrantReply(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 776, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 832, __func__); } } while(0);
 
     ret = (cap.words[0] & 0x400000000000000ull) >> 58;
     /* Possibly sign extend */
@@ -2061,9 +2117,9 @@ cap_endpoint_cap_get_capCanGrantReply(cap_t cap) {
 static inline cap_t __attribute__((__const__))
 cap_endpoint_cap_set_capCanGrantReply(cap_t cap, uint64_t v64) {
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 789, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 845, __func__); } } while(0);
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0x400000000000000ull >> 58 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x400000000000000ull >> 58 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 791, __func__); } } while(0);
+    do { if (!((((~0x400000000000000ull >> 58 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x400000000000000ull >> 58 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 847, __func__); } } while(0);
 
     cap.words[0] &= ~0x400000000000000ull;
     cap.words[0] |= (v64 << 58) & 0x400000000000000ull;
@@ -2074,7 +2130,7 @@ static inline uint64_t __attribute__((__const__))
 cap_endpoint_cap_get_capCanGrant(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 802, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 858, __func__); } } while(0);
 
     ret = (cap.words[0] & 0x200000000000000ull) >> 57;
     /* Possibly sign extend */
@@ -2087,9 +2143,9 @@ cap_endpoint_cap_get_capCanGrant(cap_t cap) {
 static inline cap_t __attribute__((__const__))
 cap_endpoint_cap_set_capCanGrant(cap_t cap, uint64_t v64) {
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 815, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 871, __func__); } } while(0);
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0x200000000000000ull >> 57 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x200000000000000ull >> 57 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 817, __func__); } } while(0);
+    do { if (!((((~0x200000000000000ull >> 57 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x200000000000000ull >> 57 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 873, __func__); } } while(0);
 
     cap.words[0] &= ~0x200000000000000ull;
     cap.words[0] |= (v64 << 57) & 0x200000000000000ull;
@@ -2100,7 +2156,7 @@ static inline uint64_t __attribute__((__const__))
 cap_endpoint_cap_get_capCanReceive(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 828, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 884, __func__); } } while(0);
 
     ret = (cap.words[0] & 0x100000000000000ull) >> 56;
     /* Possibly sign extend */
@@ -2113,9 +2169,9 @@ cap_endpoint_cap_get_capCanReceive(cap_t cap) {
 static inline cap_t __attribute__((__const__))
 cap_endpoint_cap_set_capCanReceive(cap_t cap, uint64_t v64) {
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 841, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 897, __func__); } } while(0);
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0x100000000000000ull >> 56 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x100000000000000ull >> 56 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 843, __func__); } } while(0);
+    do { if (!((((~0x100000000000000ull >> 56 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x100000000000000ull >> 56 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 899, __func__); } } while(0);
 
     cap.words[0] &= ~0x100000000000000ull;
     cap.words[0] |= (v64 << 56) & 0x100000000000000ull;
@@ -2126,7 +2182,7 @@ static inline uint64_t __attribute__((__const__))
 cap_endpoint_cap_get_capCanSend(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 854, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 910, __func__); } } while(0);
 
     ret = (cap.words[0] & 0x80000000000000ull) >> 55;
     /* Possibly sign extend */
@@ -2139,9 +2195,9 @@ cap_endpoint_cap_get_capCanSend(cap_t cap) {
 static inline cap_t __attribute__((__const__))
 cap_endpoint_cap_set_capCanSend(cap_t cap, uint64_t v64) {
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 867, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 923, __func__); } } while(0);
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0x80000000000000ull >> 55 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x80000000000000ull >> 55 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 869, __func__); } } while(0);
+    do { if (!((((~0x80000000000000ull >> 55 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x80000000000000ull >> 55 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 925, __func__); } } while(0);
 
     cap.words[0] &= ~0x80000000000000ull;
     cap.words[0] |= (v64 << 55) & 0x80000000000000ull;
@@ -2152,12 +2208,12 @@ static inline uint64_t __attribute__((__const__))
 cap_endpoint_cap_get_capEPPtr(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 880, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_endpoint_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 936, __func__); } } while(0);
 
     ret = (cap.words[0] & 0xffffffffffffull) << 0;
     /* Possibly sign extend */
-    if (__builtin_expect(!!(1 && (ret & (1ull << (47)))), 1)) {
-        ret |= 0xffff000000000000;
+    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
+        ret |= 0x0;
     }
     return ret;
 }
@@ -2167,10 +2223,10 @@ cap_notification_cap_new(uint64_t capNtfnBadge, uint64_t capNtfnCanReceive, uint
     cap_t cap;
 
     /* fail if user has passed bits that we will override */
-    do { if (!(((uint64_t)cap_notification_cap & ~0x1full) == ((1 && ((uint64_t)cap_notification_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_notification_cap & ~0x1full) == ((1 && ((uint64_t)cap_notification_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 895, __func__); } } while(0);
-    do { if (!((capNtfnCanReceive & ~0x1ull) == ((1 && (capNtfnCanReceive & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capNtfnCanReceive & ~0x1ull) == ((1 && (capNtfnCanReceive & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 896, __func__); } } while(0);
-    do { if (!((capNtfnCanSend & ~0x1ull) == ((1 && (capNtfnCanSend & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capNtfnCanSend & ~0x1ull) == ((1 && (capNtfnCanSend & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 897, __func__); } } while(0);
-    do { if (!((capNtfnPtr & ~0xffffffffffffull) == ((1 && (capNtfnPtr & (1ull << 47))) ? 0xffff000000000000 : 0))) { _assert_fail("(capNtfnPtr & ~0xffffffffffffull) == ((1 && (capNtfnPtr & (1ull << 47))) ? 0xffff000000000000 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 898, __func__); } } while(0);
+    do { if (!(((uint64_t)cap_notification_cap & ~0x1full) == ((0 && ((uint64_t)cap_notification_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_notification_cap & ~0x1full) == ((0 && ((uint64_t)cap_notification_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 951, __func__); } } while(0);
+    do { if (!((capNtfnCanReceive & ~0x1ull) == ((0 && (capNtfnCanReceive & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capNtfnCanReceive & ~0x1ull) == ((0 && (capNtfnCanReceive & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 952, __func__); } } while(0);
+    do { if (!((capNtfnCanSend & ~0x1ull) == ((0 && (capNtfnCanSend & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capNtfnCanSend & ~0x1ull) == ((0 && (capNtfnCanSend & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 953, __func__); } } while(0);
+    do { if (!((capNtfnPtr & ~0xffffffffffffull) == ((0 && (capNtfnPtr & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capNtfnPtr & ~0xffffffffffffull) == ((0 && (capNtfnPtr & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 954, __func__); } } while(0);
 
     cap.words[0] = 0
         | ((uint64_t)cap_notification_cap & 0x1full) << 59
@@ -2187,7 +2243,7 @@ static inline uint64_t __attribute__((__const__))
 cap_notification_cap_get_capNtfnBadge(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_notification_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_notification_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 915, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_notification_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_notification_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 971, __func__); } } while(0);
 
     ret = (cap.words[1] & 0xffffffffffffffffull) >> 0;
     /* Possibly sign extend */
@@ -2200,9 +2256,9 @@ cap_notification_cap_get_capNtfnBadge(cap_t cap) {
 static inline cap_t __attribute__((__const__))
 cap_notification_cap_set_capNtfnBadge(cap_t cap, uint64_t v64) {
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_notification_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_notification_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 928, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_notification_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_notification_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 984, __func__); } } while(0);
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0xffffffffffffffffull >> 0 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xffffffffffffffffull >> 0 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 930, __func__); } } while(0);
+    do { if (!((((~0xffffffffffffffffull >> 0 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xffffffffffffffffull >> 0 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 986, __func__); } } while(0);
 
     cap.words[1] &= ~0xffffffffffffffffull;
     cap.words[1] |= (v64 << 0) & 0xffffffffffffffffull;
@@ -2213,7 +2269,7 @@ static inline uint64_t __attribute__((__const__))
 cap_notification_cap_get_capNtfnCanReceive(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_notification_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_notification_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 941, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_notification_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_notification_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 997, __func__); } } while(0);
 
     ret = (cap.words[0] & 0x400000000000000ull) >> 58;
     /* Possibly sign extend */
@@ -2226,9 +2282,9 @@ cap_notification_cap_get_capNtfnCanReceive(cap_t cap) {
 static inline cap_t __attribute__((__const__))
 cap_notification_cap_set_capNtfnCanReceive(cap_t cap, uint64_t v64) {
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_notification_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_notification_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 954, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_notification_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_notification_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1010, __func__); } } while(0);
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0x400000000000000ull >> 58 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x400000000000000ull >> 58 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 956, __func__); } } while(0);
+    do { if (!((((~0x400000000000000ull >> 58 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x400000000000000ull >> 58 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1012, __func__); } } while(0);
 
     cap.words[0] &= ~0x400000000000000ull;
     cap.words[0] |= (v64 << 58) & 0x400000000000000ull;
@@ -2239,7 +2295,7 @@ static inline uint64_t __attribute__((__const__))
 cap_notification_cap_get_capNtfnCanSend(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_notification_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_notification_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 967, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_notification_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_notification_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1023, __func__); } } while(0);
 
     ret = (cap.words[0] & 0x200000000000000ull) >> 57;
     /* Possibly sign extend */
@@ -2252,9 +2308,9 @@ cap_notification_cap_get_capNtfnCanSend(cap_t cap) {
 static inline cap_t __attribute__((__const__))
 cap_notification_cap_set_capNtfnCanSend(cap_t cap, uint64_t v64) {
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_notification_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_notification_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 980, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_notification_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_notification_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1036, __func__); } } while(0);
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0x200000000000000ull >> 57 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x200000000000000ull >> 57 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 982, __func__); } } while(0);
+    do { if (!((((~0x200000000000000ull >> 57 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x200000000000000ull >> 57 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1038, __func__); } } while(0);
 
     cap.words[0] &= ~0x200000000000000ull;
     cap.words[0] |= (v64 << 57) & 0x200000000000000ull;
@@ -2265,12 +2321,12 @@ static inline uint64_t __attribute__((__const__))
 cap_notification_cap_get_capNtfnPtr(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_notification_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_notification_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 993, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_notification_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_notification_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1049, __func__); } } while(0);
 
     ret = (cap.words[0] & 0xffffffffffffull) << 0;
     /* Possibly sign extend */
-    if (__builtin_expect(!!(1 && (ret & (1ull << (47)))), 1)) {
-        ret |= 0xffff000000000000;
+    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
+        ret |= 0x0;
     }
     return ret;
 }
@@ -2280,9 +2336,9 @@ cap_reply_cap_new(uint64_t capReplyCanGrant, uint64_t capReplyMaster, uint64_t c
     cap_t cap;
 
     /* fail if user has passed bits that we will override */
-    do { if (!((capReplyCanGrant & ~0x1ull) == ((1 && (capReplyCanGrant & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capReplyCanGrant & ~0x1ull) == ((1 && (capReplyCanGrant & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1008, __func__); } } while(0);
-    do { if (!((capReplyMaster & ~0x1ull) == ((1 && (capReplyMaster & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capReplyMaster & ~0x1ull) == ((1 && (capReplyMaster & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1009, __func__); } } while(0);
-    do { if (!(((uint64_t)cap_reply_cap & ~0x1full) == ((1 && ((uint64_t)cap_reply_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_reply_cap & ~0x1full) == ((1 && ((uint64_t)cap_reply_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1010, __func__); } } while(0);
+    do { if (!((capReplyCanGrant & ~0x1ull) == ((0 && (capReplyCanGrant & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capReplyCanGrant & ~0x1ull) == ((0 && (capReplyCanGrant & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1064, __func__); } } while(0);
+    do { if (!((capReplyMaster & ~0x1ull) == ((0 && (capReplyMaster & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capReplyMaster & ~0x1ull) == ((0 && (capReplyMaster & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1065, __func__); } } while(0);
+    do { if (!(((uint64_t)cap_reply_cap & ~0x1full) == ((0 && ((uint64_t)cap_reply_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_reply_cap & ~0x1full) == ((0 && ((uint64_t)cap_reply_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1066, __func__); } } while(0);
 
     cap.words[0] = 0
         | (capReplyCanGrant & 0x1ull) << 1
@@ -2298,7 +2354,7 @@ static inline uint64_t __attribute__((__const__))
 cap_reply_cap_get_capTCBPtr(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_reply_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_reply_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1026, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_reply_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_reply_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1082, __func__); } } while(0);
 
     ret = (cap.words[1] & 0xffffffffffffffffull) >> 0;
     /* Possibly sign extend */
@@ -2312,7 +2368,7 @@ static inline uint64_t __attribute__((__const__))
 cap_reply_cap_get_capReplyCanGrant(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_reply_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_reply_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1040, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_reply_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_reply_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1096, __func__); } } while(0);
 
     ret = (cap.words[0] & 0x2ull) >> 1;
     /* Possibly sign extend */
@@ -2325,9 +2381,9 @@ cap_reply_cap_get_capReplyCanGrant(cap_t cap) {
 static inline cap_t __attribute__((__const__))
 cap_reply_cap_set_capReplyCanGrant(cap_t cap, uint64_t v64) {
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_reply_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_reply_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1053, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_reply_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_reply_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1109, __func__); } } while(0);
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0x2ull >> 1 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x2ull >> 1 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1055, __func__); } } while(0);
+    do { if (!((((~0x2ull >> 1 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x2ull >> 1 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1111, __func__); } } while(0);
 
     cap.words[0] &= ~0x2ull;
     cap.words[0] |= (v64 << 1) & 0x2ull;
@@ -2338,7 +2394,7 @@ static inline uint64_t __attribute__((__const__))
 cap_reply_cap_get_capReplyMaster(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_reply_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_reply_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1066, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_reply_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_reply_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1122, __func__); } } while(0);
 
     ret = (cap.words[0] & 0x1ull) >> 0;
     /* Possibly sign extend */
@@ -2353,10 +2409,10 @@ cap_cnode_cap_new(uint64_t capCNodeRadix, uint64_t capCNodeGuardSize, uint64_t c
     cap_t cap;
 
     /* fail if user has passed bits that we will override */
-    do { if (!((capCNodeRadix & ~0x3full) == ((1 && (capCNodeRadix & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capCNodeRadix & ~0x3full) == ((1 && (capCNodeRadix & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1081, __func__); } } while(0);
-    do { if (!((capCNodeGuardSize & ~0x3full) == ((1 && (capCNodeGuardSize & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capCNodeGuardSize & ~0x3full) == ((1 && (capCNodeGuardSize & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1082, __func__); } } while(0);
-    do { if (!((capCNodePtr & ~0xfffffffffffeull) == ((1 && (capCNodePtr & (1ull << 47))) ? 0xffff000000000000 : 0))) { _assert_fail("(capCNodePtr & ~0xfffffffffffeull) == ((1 && (capCNodePtr & (1ull << 47))) ? 0xffff000000000000 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1083, __func__); } } while(0);
-    do { if (!(((uint64_t)cap_cnode_cap & ~0x1full) == ((1 && ((uint64_t)cap_cnode_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_cnode_cap & ~0x1full) == ((1 && ((uint64_t)cap_cnode_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1084, __func__); } } while(0);
+    do { if (!((capCNodeRadix & ~0x3full) == ((0 && (capCNodeRadix & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capCNodeRadix & ~0x3full) == ((0 && (capCNodeRadix & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1137, __func__); } } while(0);
+    do { if (!((capCNodeGuardSize & ~0x3full) == ((0 && (capCNodeGuardSize & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capCNodeGuardSize & ~0x3full) == ((0 && (capCNodeGuardSize & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1138, __func__); } } while(0);
+    do { if (!((capCNodePtr & ~0xfffffffffffeull) == ((0 && (capCNodePtr & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capCNodePtr & ~0xfffffffffffeull) == ((0 && (capCNodePtr & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1139, __func__); } } while(0);
+    do { if (!(((uint64_t)cap_cnode_cap & ~0x1full) == ((0 && ((uint64_t)cap_cnode_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_cnode_cap & ~0x1full) == ((0 && ((uint64_t)cap_cnode_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1140, __func__); } } while(0);
 
     cap.words[0] = 0
         | (capCNodeRadix & 0x3full) << 47
@@ -2373,7 +2429,7 @@ static inline uint64_t __attribute__((__const__))
 cap_cnode_cap_get_capCNodeGuard(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1101, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1157, __func__); } } while(0);
 
     ret = (cap.words[1] & 0xffffffffffffffffull) >> 0;
     /* Possibly sign extend */
@@ -2386,9 +2442,9 @@ cap_cnode_cap_get_capCNodeGuard(cap_t cap) {
 static inline cap_t __attribute__((__const__))
 cap_cnode_cap_set_capCNodeGuard(cap_t cap, uint64_t v64) {
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1114, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1170, __func__); } } while(0);
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0xffffffffffffffffull >> 0 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xffffffffffffffffull >> 0 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1116, __func__); } } while(0);
+    do { if (!((((~0xffffffffffffffffull >> 0 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xffffffffffffffffull >> 0 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1172, __func__); } } while(0);
 
     cap.words[1] &= ~0xffffffffffffffffull;
     cap.words[1] |= (v64 << 0) & 0xffffffffffffffffull;
@@ -2399,7 +2455,7 @@ static inline uint64_t __attribute__((__const__))
 cap_cnode_cap_get_capCNodeGuardSize(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1127, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1183, __func__); } } while(0);
 
     ret = (cap.words[0] & 0x7e0000000000000ull) >> 53;
     /* Possibly sign extend */
@@ -2412,9 +2468,9 @@ cap_cnode_cap_get_capCNodeGuardSize(cap_t cap) {
 static inline cap_t __attribute__((__const__))
 cap_cnode_cap_set_capCNodeGuardSize(cap_t cap, uint64_t v64) {
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1140, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1196, __func__); } } while(0);
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0x7e0000000000000ull >> 53 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x7e0000000000000ull >> 53 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1142, __func__); } } while(0);
+    do { if (!((((~0x7e0000000000000ull >> 53 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x7e0000000000000ull >> 53 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1198, __func__); } } while(0);
 
     cap.words[0] &= ~0x7e0000000000000ull;
     cap.words[0] |= (v64 << 53) & 0x7e0000000000000ull;
@@ -2425,7 +2481,7 @@ static inline uint64_t __attribute__((__const__))
 cap_cnode_cap_get_capCNodeRadix(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1153, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1209, __func__); } } while(0);
 
     ret = (cap.words[0] & 0x1f800000000000ull) >> 47;
     /* Possibly sign extend */
@@ -2439,12 +2495,12 @@ static inline uint64_t __attribute__((__const__))
 cap_cnode_cap_get_capCNodePtr(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1167, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_cnode_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1223, __func__); } } while(0);
 
     ret = (cap.words[0] & 0x7fffffffffffull) << 1;
     /* Possibly sign extend */
-    if (__builtin_expect(!!(1 && (ret & (1ull << (47)))), 1)) {
-        ret |= 0xffff000000000000;
+    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
+        ret |= 0x0;
     }
     return ret;
 }
@@ -2454,8 +2510,8 @@ cap_thread_cap_new(uint64_t capTCBPtr) {
     cap_t cap;
 
     /* fail if user has passed bits that we will override */
-    do { if (!(((uint64_t)cap_thread_cap & ~0x1full) == ((1 && ((uint64_t)cap_thread_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_thread_cap & ~0x1full) == ((1 && ((uint64_t)cap_thread_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1182, __func__); } } while(0);
-    do { if (!((capTCBPtr & ~0xffffffffffffull) == ((1 && (capTCBPtr & (1ull << 47))) ? 0xffff000000000000 : 0))) { _assert_fail("(capTCBPtr & ~0xffffffffffffull) == ((1 && (capTCBPtr & (1ull << 47))) ? 0xffff000000000000 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1183, __func__); } } while(0);
+    do { if (!(((uint64_t)cap_thread_cap & ~0x1full) == ((0 && ((uint64_t)cap_thread_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_thread_cap & ~0x1full) == ((0 && ((uint64_t)cap_thread_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1238, __func__); } } while(0);
+    do { if (!((capTCBPtr & ~0xffffffffffffull) == ((0 && (capTCBPtr & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capTCBPtr & ~0xffffffffffffull) == ((0 && (capTCBPtr & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1239, __func__); } } while(0);
 
     cap.words[0] = 0
         | ((uint64_t)cap_thread_cap & 0x1full) << 59
@@ -2469,12 +2525,12 @@ static inline uint64_t __attribute__((__const__))
 cap_thread_cap_get_capTCBPtr(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_thread_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_thread_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1197, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_thread_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_thread_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1253, __func__); } } while(0);
 
     ret = (cap.words[0] & 0xffffffffffffull) << 0;
     /* Possibly sign extend */
-    if (__builtin_expect(!!(1 && (ret & (1ull << (47)))), 1)) {
-        ret |= 0xffff000000000000;
+    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
+        ret |= 0x0;
     }
     return ret;
 }
@@ -2484,7 +2540,7 @@ cap_irq_control_cap_new(void) {
     cap_t cap;
 
     /* fail if user has passed bits that we will override */
-    do { if (!(((uint64_t)cap_irq_control_cap & ~0x1full) == ((1 && ((uint64_t)cap_irq_control_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_irq_control_cap & ~0x1full) == ((1 && ((uint64_t)cap_irq_control_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1212, __func__); } } while(0);
+    do { if (!(((uint64_t)cap_irq_control_cap & ~0x1full) == ((0 && ((uint64_t)cap_irq_control_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_irq_control_cap & ~0x1full) == ((0 && ((uint64_t)cap_irq_control_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1268, __func__); } } while(0);
 
     cap.words[0] = 0
         | ((uint64_t)cap_irq_control_cap & 0x1full) << 59;
@@ -2498,13 +2554,12 @@ cap_irq_handler_cap_new(uint64_t capIRQ) {
     cap_t cap;
 
     /* fail if user has passed bits that we will override */
-    do { if (!((capIRQ & ~0xfffull) == ((1 && (capIRQ & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capIRQ & ~0xfffull) == ((1 && (capIRQ & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1226, __func__); } } while(0);
-    do { if (!(((uint64_t)cap_irq_handler_cap & ~0x1full) == ((1 && ((uint64_t)cap_irq_handler_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_irq_handler_cap & ~0x1full) == ((1 && ((uint64_t)cap_irq_handler_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1227, __func__); } } while(0);
+    do { if (!(((uint64_t)cap_irq_handler_cap & ~0x1full) == ((0 && ((uint64_t)cap_irq_handler_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_irq_handler_cap & ~0x1full) == ((0 && ((uint64_t)cap_irq_handler_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1282, __func__); } } while(0);
 
     cap.words[0] = 0
         | ((uint64_t)cap_irq_handler_cap & 0x1full) << 59;
     cap.words[1] = 0
-        | (capIRQ & 0xfffull) << 0;
+        | capIRQ << 0;
 
     return cap;
 }
@@ -2513,9 +2568,9 @@ static inline uint64_t __attribute__((__const__))
 cap_irq_handler_cap_get_capIRQ(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_irq_handler_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_irq_handler_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1241, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_irq_handler_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_irq_handler_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1296, __func__); } } while(0);
 
-    ret = (cap.words[1] & 0xfffull) >> 0;
+    ret = (cap.words[1] & 0xffffffffffffffffull) >> 0;
     /* Possibly sign extend */
     if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
         ret |= 0x0;
@@ -2528,8 +2583,8 @@ cap_zombie_cap_new(uint64_t capZombieID, uint64_t capZombieType) {
     cap_t cap;
 
     /* fail if user has passed bits that we will override */
-    do { if (!(((uint64_t)cap_zombie_cap & ~0x1full) == ((1 && ((uint64_t)cap_zombie_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_zombie_cap & ~0x1full) == ((1 && ((uint64_t)cap_zombie_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1256, __func__); } } while(0);
-    do { if (!((capZombieType & ~0x7full) == ((1 && (capZombieType & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capZombieType & ~0x7full) == ((1 && (capZombieType & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1257, __func__); } } while(0);
+    do { if (!(((uint64_t)cap_zombie_cap & ~0x1full) == ((0 && ((uint64_t)cap_zombie_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_zombie_cap & ~0x1full) == ((0 && ((uint64_t)cap_zombie_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1311, __func__); } } while(0);
+    do { if (!((capZombieType & ~0x7full) == ((0 && (capZombieType & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capZombieType & ~0x7full) == ((0 && (capZombieType & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1312, __func__); } } while(0);
 
     cap.words[0] = 0
         | ((uint64_t)cap_zombie_cap & 0x1full) << 59
@@ -2544,7 +2599,7 @@ static inline uint64_t __attribute__((__const__))
 cap_zombie_cap_get_capZombieID(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_zombie_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_zombie_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1272, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_zombie_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_zombie_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1327, __func__); } } while(0);
 
     ret = (cap.words[1] & 0xffffffffffffffffull) >> 0;
     /* Possibly sign extend */
@@ -2557,9 +2612,9 @@ cap_zombie_cap_get_capZombieID(cap_t cap) {
 static inline cap_t __attribute__((__const__))
 cap_zombie_cap_set_capZombieID(cap_t cap, uint64_t v64) {
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_zombie_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_zombie_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1285, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_zombie_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_zombie_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1340, __func__); } } while(0);
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0xffffffffffffffffull >> 0 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xffffffffffffffffull >> 0 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1287, __func__); } } while(0);
+    do { if (!((((~0xffffffffffffffffull >> 0 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xffffffffffffffffull >> 0 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1342, __func__); } } while(0);
 
     cap.words[1] &= ~0xffffffffffffffffull;
     cap.words[1] |= (v64 << 0) & 0xffffffffffffffffull;
@@ -2570,7 +2625,7 @@ static inline uint64_t __attribute__((__const__))
 cap_zombie_cap_get_capZombieType(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_zombie_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_zombie_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1298, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_zombie_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_zombie_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1353, __func__); } } while(0);
 
     ret = (cap.words[0] & 0x7full) >> 0;
     /* Possibly sign extend */
@@ -2585,7 +2640,7 @@ cap_domain_cap_new(void) {
     cap_t cap;
 
     /* fail if user has passed bits that we will override */
-    do { if (!(((uint64_t)cap_domain_cap & ~0x1full) == ((1 && ((uint64_t)cap_domain_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_domain_cap & ~0x1full) == ((1 && ((uint64_t)cap_domain_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1313, __func__); } } while(0);
+    do { if (!(((uint64_t)cap_domain_cap & ~0x1full) == ((0 && ((uint64_t)cap_domain_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_domain_cap & ~0x1full) == ((0 && ((uint64_t)cap_domain_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1368, __func__); } } while(0);
 
     cap.words[0] = 0
         | ((uint64_t)cap_domain_cap & 0x1full) << 59;
@@ -2599,13 +2654,13 @@ cap_frame_cap_new(uint64_t capFMappedASID, uint64_t capFBasePtr, uint64_t capFSi
     cap_t cap;
 
     /* fail if user has passed bits that we will override */
-    do { if (!((capFMappedASID & ~0xffffull) == ((1 && (capFMappedASID & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capFMappedASID & ~0xffffull) == ((1 && (capFMappedASID & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1327, __func__); } } while(0);
-    do { if (!((capFBasePtr & ~0xffffffffffffull) == ((1 && (capFBasePtr & (1ull << 47))) ? 0xffff000000000000 : 0))) { _assert_fail("(capFBasePtr & ~0xffffffffffffull) == ((1 && (capFBasePtr & (1ull << 47))) ? 0xffff000000000000 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1328, __func__); } } while(0);
-    do { if (!(((uint64_t)cap_frame_cap & ~0x1full) == ((1 && ((uint64_t)cap_frame_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_frame_cap & ~0x1full) == ((1 && ((uint64_t)cap_frame_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1329, __func__); } } while(0);
-    do { if (!((capFSize & ~0x3ull) == ((1 && (capFSize & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capFSize & ~0x3ull) == ((1 && (capFSize & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1330, __func__); } } while(0);
-    do { if (!((capFMappedAddress & ~0xffffffffffffull) == ((1 && (capFMappedAddress & (1ull << 47))) ? 0xffff000000000000 : 0))) { _assert_fail("(capFMappedAddress & ~0xffffffffffffull) == ((1 && (capFMappedAddress & (1ull << 47))) ? 0xffff000000000000 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1331, __func__); } } while(0);
-    do { if (!((capFVMRights & ~0x3ull) == ((1 && (capFVMRights & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capFVMRights & ~0x3ull) == ((1 && (capFVMRights & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1332, __func__); } } while(0);
-    do { if (!((capFIsDevice & ~0x1ull) == ((1 && (capFIsDevice & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capFIsDevice & ~0x1ull) == ((1 && (capFIsDevice & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1333, __func__); } } while(0);
+    do { if (!((capFMappedASID & ~0xffffull) == ((0 && (capFMappedASID & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capFMappedASID & ~0xffffull) == ((0 && (capFMappedASID & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1382, __func__); } } while(0);
+    do { if (!((capFBasePtr & ~0xffffffffffffull) == ((0 && (capFBasePtr & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capFBasePtr & ~0xffffffffffffull) == ((0 && (capFBasePtr & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1383, __func__); } } while(0);
+    do { if (!(((uint64_t)cap_frame_cap & ~0x1full) == ((0 && ((uint64_t)cap_frame_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_frame_cap & ~0x1full) == ((0 && ((uint64_t)cap_frame_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1384, __func__); } } while(0);
+    do { if (!((capFSize & ~0x3ull) == ((0 && (capFSize & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capFSize & ~0x3ull) == ((0 && (capFSize & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1385, __func__); } } while(0);
+    do { if (!((capFMappedAddress & ~0xffffffffffffull) == ((0 && (capFMappedAddress & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capFMappedAddress & ~0xffffffffffffull) == ((0 && (capFMappedAddress & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1386, __func__); } } while(0);
+    do { if (!((capFVMRights & ~0x3ull) == ((0 && (capFVMRights & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capFVMRights & ~0x3ull) == ((0 && (capFVMRights & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1387, __func__); } } while(0);
+    do { if (!((capFIsDevice & ~0x1ull) == ((0 && (capFIsDevice & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capFIsDevice & ~0x1ull) == ((0 && (capFIsDevice & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1388, __func__); } } while(0);
 
     cap.words[0] = 0
         | ((uint64_t)cap_frame_cap & 0x1full) << 59
@@ -2624,7 +2679,7 @@ static inline uint64_t __attribute__((__const__))
 cap_frame_cap_get_capFMappedASID(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_frame_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_frame_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1352, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_frame_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_frame_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1407, __func__); } } while(0);
 
     ret = (cap.words[1] & 0xffff000000000000ull) >> 48;
     /* Possibly sign extend */
@@ -2637,9 +2692,9 @@ cap_frame_cap_get_capFMappedASID(cap_t cap) {
 static inline cap_t __attribute__((__const__))
 cap_frame_cap_set_capFMappedASID(cap_t cap, uint64_t v64) {
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_frame_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_frame_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1365, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_frame_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_frame_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1420, __func__); } } while(0);
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0xffff000000000000ull >> 48 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xffff000000000000ull >> 48 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1367, __func__); } } while(0);
+    do { if (!((((~0xffff000000000000ull >> 48 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xffff000000000000ull >> 48 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1422, __func__); } } while(0);
 
     cap.words[1] &= ~0xffff000000000000ull;
     cap.words[1] |= (v64 << 48) & 0xffff000000000000ull;
@@ -2650,12 +2705,12 @@ static inline uint64_t __attribute__((__const__))
 cap_frame_cap_get_capFBasePtr(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_frame_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_frame_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1378, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_frame_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_frame_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1433, __func__); } } while(0);
 
     ret = (cap.words[1] & 0xffffffffffffull) << 0;
     /* Possibly sign extend */
-    if (__builtin_expect(!!(1 && (ret & (1ull << (47)))), 1)) {
-        ret |= 0xffff000000000000;
+    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
+        ret |= 0x0;
     }
     return ret;
 }
@@ -2664,7 +2719,7 @@ static inline uint64_t __attribute__((__const__))
 cap_frame_cap_get_capFSize(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_frame_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_frame_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1392, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_frame_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_frame_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1447, __func__); } } while(0);
 
     ret = (cap.words[0] & 0x600000000000000ull) >> 57;
     /* Possibly sign extend */
@@ -2678,12 +2733,12 @@ static inline uint64_t __attribute__((__const__))
 cap_frame_cap_get_capFMappedAddress(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_frame_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_frame_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1406, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_frame_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_frame_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1461, __func__); } } while(0);
 
     ret = (cap.words[0] & 0x1fffffffffffe00ull) >> 9;
     /* Possibly sign extend */
-    if (__builtin_expect(!!(1 && (ret & (1ull << (47)))), 1)) {
-        ret |= 0xffff000000000000;
+    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
+        ret |= 0x0;
     }
     return ret;
 }
@@ -2691,9 +2746,9 @@ cap_frame_cap_get_capFMappedAddress(cap_t cap) {
 static inline cap_t __attribute__((__const__))
 cap_frame_cap_set_capFMappedAddress(cap_t cap, uint64_t v64) {
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_frame_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_frame_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1419, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_frame_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_frame_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1474, __func__); } } while(0);
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0x1fffffffffffe00ull >> 9 ) | 0xffff000000000000) & v64) == ((1 && (v64 & (1ull << (47)))) ? 0xffff000000000000 : 0))) { _assert_fail("(((~0x1fffffffffffe00ull >> 9 ) | 0xffff000000000000) & v64) == ((1 && (v64 & (1ull << (47)))) ? 0xffff000000000000 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1421, __func__); } } while(0);
+    do { if (!((((~0x1fffffffffffe00ull >> 9 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x1fffffffffffe00ull >> 9 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1476, __func__); } } while(0);
 
     cap.words[0] &= ~0x1fffffffffffe00ull;
     cap.words[0] |= (v64 << 9) & 0x1fffffffffffe00ull;
@@ -2704,7 +2759,7 @@ static inline uint64_t __attribute__((__const__))
 cap_frame_cap_get_capFVMRights(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_frame_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_frame_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1432, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_frame_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_frame_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1487, __func__); } } while(0);
 
     ret = (cap.words[0] & 0x180ull) >> 7;
     /* Possibly sign extend */
@@ -2717,9 +2772,9 @@ cap_frame_cap_get_capFVMRights(cap_t cap) {
 static inline cap_t __attribute__((__const__))
 cap_frame_cap_set_capFVMRights(cap_t cap, uint64_t v64) {
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_frame_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_frame_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1445, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_frame_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_frame_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1500, __func__); } } while(0);
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0x180ull >> 7 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x180ull >> 7 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1447, __func__); } } while(0);
+    do { if (!((((~0x180ull >> 7 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x180ull >> 7 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1502, __func__); } } while(0);
 
     cap.words[0] &= ~0x180ull;
     cap.words[0] |= (v64 << 7) & 0x180ull;
@@ -2730,7 +2785,7 @@ static inline uint64_t __attribute__((__const__))
 cap_frame_cap_get_capFIsDevice(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_frame_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_frame_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1458, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_frame_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_frame_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1513, __func__); } } while(0);
 
     ret = (cap.words[0] & 0x40ull) >> 6;
     /* Possibly sign extend */
@@ -2745,11 +2800,11 @@ cap_page_table_cap_new(uint64_t capPTMappedASID, uint64_t capPTBasePtr, uint64_t
     cap_t cap;
 
     /* fail if user has passed bits that we will override */
-    do { if (!((capPTMappedASID & ~0xffffull) == ((1 && (capPTMappedASID & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capPTMappedASID & ~0xffffull) == ((1 && (capPTMappedASID & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1473, __func__); } } while(0);
-    do { if (!((capPTBasePtr & ~0xffffffffffffull) == ((1 && (capPTBasePtr & (1ull << 47))) ? 0xffff000000000000 : 0))) { _assert_fail("(capPTBasePtr & ~0xffffffffffffull) == ((1 && (capPTBasePtr & (1ull << 47))) ? 0xffff000000000000 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1474, __func__); } } while(0);
-    do { if (!(((uint64_t)cap_page_table_cap & ~0x1full) == ((1 && ((uint64_t)cap_page_table_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_page_table_cap & ~0x1full) == ((1 && ((uint64_t)cap_page_table_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1475, __func__); } } while(0);
-    do { if (!((capPTIsMapped & ~0x1ull) == ((1 && (capPTIsMapped & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capPTIsMapped & ~0x1ull) == ((1 && (capPTIsMapped & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1476, __func__); } } while(0);
-    do { if (!((capPTMappedAddress & ~0xfffffff00000ull) == ((1 && (capPTMappedAddress & (1ull << 47))) ? 0xffff000000000000 : 0))) { _assert_fail("(capPTMappedAddress & ~0xfffffff00000ull) == ((1 && (capPTMappedAddress & (1ull << 47))) ? 0xffff000000000000 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1477, __func__); } } while(0);
+    do { if (!((capPTMappedASID & ~0xffffull) == ((0 && (capPTMappedASID & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capPTMappedASID & ~0xffffull) == ((0 && (capPTMappedASID & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1528, __func__); } } while(0);
+    do { if (!((capPTBasePtr & ~0xffffffffffffull) == ((0 && (capPTBasePtr & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capPTBasePtr & ~0xffffffffffffull) == ((0 && (capPTBasePtr & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1529, __func__); } } while(0);
+    do { if (!(((uint64_t)cap_page_table_cap & ~0x1full) == ((0 && ((uint64_t)cap_page_table_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_page_table_cap & ~0x1full) == ((0 && ((uint64_t)cap_page_table_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1530, __func__); } } while(0);
+    do { if (!((capPTIsMapped & ~0x1ull) == ((0 && (capPTIsMapped & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capPTIsMapped & ~0x1ull) == ((0 && (capPTIsMapped & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1531, __func__); } } while(0);
+    do { if (!((capPTMappedAddress & ~0xfffffff00000ull) == ((0 && (capPTMappedAddress & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capPTMappedAddress & ~0xfffffff00000ull) == ((0 && (capPTMappedAddress & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1532, __func__); } } while(0);
 
     cap.words[0] = 0
         | ((uint64_t)cap_page_table_cap & 0x1full) << 59
@@ -2766,7 +2821,7 @@ static inline uint64_t __attribute__((__const__))
 cap_page_table_cap_get_capPTMappedASID(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1494, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1549, __func__); } } while(0);
 
     ret = (cap.words[1] & 0xffff000000000000ull) >> 48;
     /* Possibly sign extend */
@@ -2779,9 +2834,9 @@ cap_page_table_cap_get_capPTMappedASID(cap_t cap) {
 static inline cap_t __attribute__((__const__))
 cap_page_table_cap_set_capPTMappedASID(cap_t cap, uint64_t v64) {
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1507, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1562, __func__); } } while(0);
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0xffff000000000000ull >> 48 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xffff000000000000ull >> 48 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1509, __func__); } } while(0);
+    do { if (!((((~0xffff000000000000ull >> 48 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xffff000000000000ull >> 48 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1564, __func__); } } while(0);
 
     cap.words[1] &= ~0xffff000000000000ull;
     cap.words[1] |= (v64 << 48) & 0xffff000000000000ull;
@@ -2792,12 +2847,12 @@ static inline uint64_t __attribute__((__const__))
 cap_page_table_cap_get_capPTBasePtr(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1520, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1575, __func__); } } while(0);
 
     ret = (cap.words[1] & 0xffffffffffffull) << 0;
     /* Possibly sign extend */
-    if (__builtin_expect(!!(1 && (ret & (1ull << (47)))), 1)) {
-        ret |= 0xffff000000000000;
+    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
+        ret |= 0x0;
     }
     return ret;
 }
@@ -2806,7 +2861,7 @@ static inline uint64_t __attribute__((__const__))
 cap_page_table_cap_get_capPTIsMapped(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1534, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1589, __func__); } } while(0);
 
     ret = (cap.words[0] & 0x1000000000000ull) >> 48;
     /* Possibly sign extend */
@@ -2819,9 +2874,9 @@ cap_page_table_cap_get_capPTIsMapped(cap_t cap) {
 static inline cap_t __attribute__((__const__))
 cap_page_table_cap_set_capPTIsMapped(cap_t cap, uint64_t v64) {
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1547, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1602, __func__); } } while(0);
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0x1000000000000ull >> 48 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x1000000000000ull >> 48 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1549, __func__); } } while(0);
+    do { if (!((((~0x1000000000000ull >> 48 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x1000000000000ull >> 48 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1604, __func__); } } while(0);
 
     cap.words[0] &= ~0x1000000000000ull;
     cap.words[0] |= (v64 << 48) & 0x1000000000000ull;
@@ -2831,10 +2886,10 @@ cap_page_table_cap_set_capPTIsMapped(cap_t cap, uint64_t v64) {
 static inline void
 cap_page_table_cap_ptr_set_capPTIsMapped(cap_t *cap_ptr, uint64_t v64) {
     /* fail if union does not have the expected tag */
-    do { if (!(((cap_ptr->words[0] >> 59) & 0x1f) == cap_page_table_cap)) { _assert_fail("((cap_ptr->words[0] >> 59) & 0x1f) == cap_page_table_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1559, __func__); } } while(0);
+    do { if (!(((cap_ptr->words[0] >> 59) & 0x1f) == cap_page_table_cap)) { _assert_fail("((cap_ptr->words[0] >> 59) & 0x1f) == cap_page_table_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1614, __func__); } } while(0);
 
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0x1000000000000ull >> 48) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x1000000000000ull >> 48) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1562, __func__); } } while(0);
+    do { if (!((((~0x1000000000000ull >> 48) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x1000000000000ull >> 48) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1617, __func__); } } while(0);
 
     cap_ptr->words[0] &= ~0x1000000000000ull;
     cap_ptr->words[0] |= (v64 << 48) & 0x1000000000000ull;
@@ -2844,12 +2899,12 @@ static inline uint64_t __attribute__((__const__))
 cap_page_table_cap_get_capPTMappedAddress(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1572, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1627, __func__); } } while(0);
 
     ret = (cap.words[0] & 0xfffffff00000ull) << 0;
     /* Possibly sign extend */
-    if (__builtin_expect(!!(1 && (ret & (1ull << (47)))), 1)) {
-        ret |= 0xffff000000000000;
+    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
+        ret |= 0x0;
     }
     return ret;
 }
@@ -2857,9 +2912,9 @@ cap_page_table_cap_get_capPTMappedAddress(cap_t cap) {
 static inline cap_t __attribute__((__const__))
 cap_page_table_cap_set_capPTMappedAddress(cap_t cap, uint64_t v64) {
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1585, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_page_table_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1640, __func__); } } while(0);
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0xfffffff00000ull << 0 ) | 0xffff000000000000) & v64) == ((1 && (v64 & (1ull << (47)))) ? 0xffff000000000000 : 0))) { _assert_fail("(((~0xfffffff00000ull << 0 ) | 0xffff000000000000) & v64) == ((1 && (v64 & (1ull << (47)))) ? 0xffff000000000000 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1587, __func__); } } while(0);
+    do { if (!((((~0xfffffff00000ull << 0 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xfffffff00000ull << 0 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1642, __func__); } } while(0);
 
     cap.words[0] &= ~0xfffffff00000ull;
     cap.words[0] |= (v64 >> 0) & 0xfffffff00000ull;
@@ -2871,10 +2926,10 @@ cap_vspace_cap_new(uint64_t capVSMappedASID, uint64_t capVSBasePtr, uint64_t cap
     cap_t cap;
 
     /* fail if user has passed bits that we will override */
-    do { if (!((capVSMappedASID & ~0xffffull) == ((1 && (capVSMappedASID & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capVSMappedASID & ~0xffffull) == ((1 && (capVSMappedASID & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1599, __func__); } } while(0);
-    do { if (!((capVSBasePtr & ~0xffffffffffffull) == ((1 && (capVSBasePtr & (1ull << 47))) ? 0xffff000000000000 : 0))) { _assert_fail("(capVSBasePtr & ~0xffffffffffffull) == ((1 && (capVSBasePtr & (1ull << 47))) ? 0xffff000000000000 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1600, __func__); } } while(0);
-    do { if (!(((uint64_t)cap_vspace_cap & ~0x1full) == ((1 && ((uint64_t)cap_vspace_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_vspace_cap & ~0x1full) == ((1 && ((uint64_t)cap_vspace_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1601, __func__); } } while(0);
-    do { if (!((capVSIsMapped & ~0x1ull) == ((1 && (capVSIsMapped & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capVSIsMapped & ~0x1ull) == ((1 && (capVSIsMapped & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1602, __func__); } } while(0);
+    do { if (!((capVSMappedASID & ~0xffffull) == ((0 && (capVSMappedASID & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capVSMappedASID & ~0xffffull) == ((0 && (capVSMappedASID & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1654, __func__); } } while(0);
+    do { if (!((capVSBasePtr & ~0xffffffffffffull) == ((0 && (capVSBasePtr & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capVSBasePtr & ~0xffffffffffffull) == ((0 && (capVSBasePtr & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1655, __func__); } } while(0);
+    do { if (!(((uint64_t)cap_vspace_cap & ~0x1full) == ((0 && ((uint64_t)cap_vspace_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_vspace_cap & ~0x1full) == ((0 && ((uint64_t)cap_vspace_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1656, __func__); } } while(0);
+    do { if (!((capVSIsMapped & ~0x1ull) == ((0 && (capVSIsMapped & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capVSIsMapped & ~0x1ull) == ((0 && (capVSIsMapped & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1657, __func__); } } while(0);
 
     cap.words[0] = 0
         | ((uint64_t)cap_vspace_cap & 0x1full) << 59
@@ -2890,7 +2945,7 @@ static inline uint64_t __attribute__((__const__))
 cap_vspace_cap_get_capVSMappedASID(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_vspace_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_vspace_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1618, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_vspace_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_vspace_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1673, __func__); } } while(0);
 
     ret = (cap.words[1] & 0xffff000000000000ull) >> 48;
     /* Possibly sign extend */
@@ -2903,9 +2958,9 @@ cap_vspace_cap_get_capVSMappedASID(cap_t cap) {
 static inline cap_t __attribute__((__const__))
 cap_vspace_cap_set_capVSMappedASID(cap_t cap, uint64_t v64) {
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_vspace_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_vspace_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1631, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_vspace_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_vspace_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1686, __func__); } } while(0);
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0xffff000000000000ull >> 48 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xffff000000000000ull >> 48 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1633, __func__); } } while(0);
+    do { if (!((((~0xffff000000000000ull >> 48 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0xffff000000000000ull >> 48 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1688, __func__); } } while(0);
 
     cap.words[1] &= ~0xffff000000000000ull;
     cap.words[1] |= (v64 << 48) & 0xffff000000000000ull;
@@ -2916,12 +2971,12 @@ static inline uint64_t __attribute__((__const__))
 cap_vspace_cap_get_capVSBasePtr(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_vspace_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_vspace_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1644, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_vspace_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_vspace_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1699, __func__); } } while(0);
 
     ret = (cap.words[1] & 0xffffffffffffull) << 0;
     /* Possibly sign extend */
-    if (__builtin_expect(!!(1 && (ret & (1ull << (47)))), 1)) {
-        ret |= 0xffff000000000000;
+    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
+        ret |= 0x0;
     }
     return ret;
 }
@@ -2930,7 +2985,7 @@ static inline uint64_t __attribute__((__const__))
 cap_vspace_cap_get_capVSIsMapped(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_vspace_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_vspace_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1658, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_vspace_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_vspace_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1713, __func__); } } while(0);
 
     ret = (cap.words[0] & 0x400000000000000ull) >> 58;
     /* Possibly sign extend */
@@ -2943,9 +2998,9 @@ cap_vspace_cap_get_capVSIsMapped(cap_t cap) {
 static inline cap_t __attribute__((__const__))
 cap_vspace_cap_set_capVSIsMapped(cap_t cap, uint64_t v64) {
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_vspace_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_vspace_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1671, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_vspace_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_vspace_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1726, __func__); } } while(0);
     /* fail if user has passed bits that we will override */
-    do { if (!((((~0x400000000000000ull >> 58 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x400000000000000ull >> 58 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1673, __func__); } } while(0);
+    do { if (!((((~0x400000000000000ull >> 58 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x400000000000000ull >> 58 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1728, __func__); } } while(0);
 
     cap.words[0] &= ~0x400000000000000ull;
     cap.words[0] |= (v64 << 58) & 0x400000000000000ull;
@@ -2957,7 +3012,7 @@ cap_asid_control_cap_new(void) {
     cap_t cap;
 
     /* fail if user has passed bits that we will override */
-    do { if (!(((uint64_t)cap_asid_control_cap & ~0x1full) == ((1 && ((uint64_t)cap_asid_control_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_asid_control_cap & ~0x1full) == ((1 && ((uint64_t)cap_asid_control_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1685, __func__); } } while(0);
+    do { if (!(((uint64_t)cap_asid_control_cap & ~0x1full) == ((0 && ((uint64_t)cap_asid_control_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_asid_control_cap & ~0x1full) == ((0 && ((uint64_t)cap_asid_control_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1740, __func__); } } while(0);
 
     cap.words[0] = 0
         | ((uint64_t)cap_asid_control_cap & 0x1full) << 59;
@@ -2971,9 +3026,9 @@ cap_asid_pool_cap_new(uint64_t capASIDBase, uint64_t capASIDPool) {
     cap_t cap;
 
     /* fail if user has passed bits that we will override */
-    do { if (!(((uint64_t)cap_asid_pool_cap & ~0x1full) == ((1 && ((uint64_t)cap_asid_pool_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_asid_pool_cap & ~0x1full) == ((1 && ((uint64_t)cap_asid_pool_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1699, __func__); } } while(0);
-    do { if (!((capASIDBase & ~0xffffull) == ((1 && (capASIDBase & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capASIDBase & ~0xffffull) == ((1 && (capASIDBase & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1700, __func__); } } while(0);
-    do { if (!((capASIDPool & ~0xfffffffff800ull) == ((1 && (capASIDPool & (1ull << 47))) ? 0xffff000000000000 : 0))) { _assert_fail("(capASIDPool & ~0xfffffffff800ull) == ((1 && (capASIDPool & (1ull << 47))) ? 0xffff000000000000 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1701, __func__); } } while(0);
+    do { if (!(((uint64_t)cap_asid_pool_cap & ~0x1full) == ((0 && ((uint64_t)cap_asid_pool_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_asid_pool_cap & ~0x1full) == ((0 && ((uint64_t)cap_asid_pool_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1754, __func__); } } while(0);
+    do { if (!((capASIDBase & ~0xffffull) == ((0 && (capASIDBase & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capASIDBase & ~0xffffull) == ((0 && (capASIDBase & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1755, __func__); } } while(0);
+    do { if (!((capASIDPool & ~0xfffffffff800ull) == ((0 && (capASIDPool & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capASIDPool & ~0xfffffffff800ull) == ((0 && (capASIDPool & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1756, __func__); } } while(0);
 
     cap.words[0] = 0
         | ((uint64_t)cap_asid_pool_cap & 0x1full) << 59
@@ -2988,7 +3043,7 @@ static inline uint64_t __attribute__((__const__))
 cap_asid_pool_cap_get_capASIDBase(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_asid_pool_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_asid_pool_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1716, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_asid_pool_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_asid_pool_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1771, __func__); } } while(0);
 
     ret = (cap.words[0] & 0x7fff80000000000ull) >> 43;
     /* Possibly sign extend */
@@ -3002,41 +3057,9 @@ static inline uint64_t __attribute__((__const__))
 cap_asid_pool_cap_get_capASIDPool(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_asid_pool_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_asid_pool_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1730, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_asid_pool_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_asid_pool_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1785, __func__); } } while(0);
 
     ret = (cap.words[0] & 0x1fffffffffull) << 11;
-    /* Possibly sign extend */
-    if (__builtin_expect(!!(1 && (ret & (1ull << (47)))), 1)) {
-        ret |= 0xffff000000000000;
-    }
-    return ret;
-}
-
-static inline cap_t __attribute__((__const__))
-cap_sgi_signal_cap_new(uint64_t capSGITarget, uint64_t capSGIIRQ) {
-    cap_t cap;
-
-    /* fail if user has passed bits that we will override */
-    do { if (!((capSGITarget & ~0xffffffffull) == ((1 && (capSGITarget & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capSGITarget & ~0xffffffffull) == ((1 && (capSGITarget & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1745, __func__); } } while(0);
-    do { if (!(((uint64_t)cap_sgi_signal_cap & ~0x1full) == ((1 && ((uint64_t)cap_sgi_signal_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_sgi_signal_cap & ~0x1full) == ((1 && ((uint64_t)cap_sgi_signal_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1746, __func__); } } while(0);
-    do { if (!((capSGIIRQ & ~0xfull) == ((1 && (capSGIIRQ & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capSGIIRQ & ~0xfull) == ((1 && (capSGIIRQ & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1747, __func__); } } while(0);
-
-    cap.words[0] = 0
-        | ((uint64_t)cap_sgi_signal_cap & 0x1full) << 59
-        | (capSGIIRQ & 0xfull) << 55;
-    cap.words[1] = 0
-        | (capSGITarget & 0xffffffffull) << 0;
-
-    return cap;
-}
-
-static inline uint64_t __attribute__((__const__))
-cap_sgi_signal_cap_get_capSGITarget(cap_t cap) {
-    uint64_t ret;
-    /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_sgi_signal_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_sgi_signal_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1762, __func__); } } while(0);
-
-    ret = (cap.words[1] & 0xffffffffull) >> 0;
     /* Possibly sign extend */
     if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
         ret |= 0x0;
@@ -3044,13 +3067,29 @@ cap_sgi_signal_cap_get_capSGITarget(cap_t cap) {
     return ret;
 }
 
+static inline cap_t __attribute__((__const__))
+cap_vcpu_cap_new(uint64_t capVCPUPtr) {
+    cap_t cap;
+
+    /* fail if user has passed bits that we will override */
+    do { if (!(((uint64_t)cap_vcpu_cap & ~0x1full) == ((0 && ((uint64_t)cap_vcpu_cap & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)cap_vcpu_cap & ~0x1full) == ((0 && ((uint64_t)cap_vcpu_cap & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1800, __func__); } } while(0);
+    do { if (!((capVCPUPtr & ~0xffffffffffffull) == ((0 && (capVCPUPtr & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(capVCPUPtr & ~0xffffffffffffull) == ((0 && (capVCPUPtr & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1801, __func__); } } while(0);
+
+    cap.words[0] = 0
+        | ((uint64_t)cap_vcpu_cap & 0x1full) << 59
+        | (capVCPUPtr & 0xffffffffffffull) << 11;
+    cap.words[1] = 0;
+
+    return cap;
+}
+
 static inline uint64_t __attribute__((__const__))
-cap_sgi_signal_cap_get_capSGIIRQ(cap_t cap) {
+cap_vcpu_cap_get_capVCPUPtr(cap_t cap) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_sgi_signal_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_sgi_signal_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1776, __func__); } } while(0);
+    do { if (!(((cap.words[0] >> 59) & 0x1f) == cap_vcpu_cap)) { _assert_fail("((cap.words[0] >> 59) & 0x1f) == cap_vcpu_cap", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1815, __func__); } } while(0);
 
-    ret = (cap.words[0] & 0x780000000000000ull) >> 55;
+    ret = (cap.words[0] & 0x7fffffffffff800ull) >> 11;
     /* Possibly sign extend */
     if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
         ret |= 0x0;
@@ -3081,7 +3120,7 @@ lookup_fault_invalid_root_new(void) {
     lookup_fault_t lookup_fault;
 
     /* fail if user has passed bits that we will override */
-    do { if (!(((uint64_t)lookup_fault_invalid_root & ~0x3ull) == ((1 && ((uint64_t)lookup_fault_invalid_root & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)lookup_fault_invalid_root & ~0x3ull) == ((1 && ((uint64_t)lookup_fault_invalid_root & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1809, __func__); } } while(0);
+    do { if (!(((uint64_t)lookup_fault_invalid_root & ~0x3ull) == ((0 && ((uint64_t)lookup_fault_invalid_root & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)lookup_fault_invalid_root & ~0x3ull) == ((0 && ((uint64_t)lookup_fault_invalid_root & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1848, __func__); } } while(0);
 
     lookup_fault.words[0] = 0
         | ((uint64_t)lookup_fault_invalid_root & 0x3ull) << 0;
@@ -3095,8 +3134,8 @@ lookup_fault_missing_capability_new(uint64_t bitsLeft) {
     lookup_fault_t lookup_fault;
 
     /* fail if user has passed bits that we will override */
-    do { if (!((bitsLeft & ~0x7full) == ((1 && (bitsLeft & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(bitsLeft & ~0x7full) == ((1 && (bitsLeft & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1823, __func__); } } while(0);
-    do { if (!(((uint64_t)lookup_fault_missing_capability & ~0x3ull) == ((1 && ((uint64_t)lookup_fault_missing_capability & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)lookup_fault_missing_capability & ~0x3ull) == ((1 && ((uint64_t)lookup_fault_missing_capability & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1824, __func__); } } while(0);
+    do { if (!((bitsLeft & ~0x7full) == ((0 && (bitsLeft & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(bitsLeft & ~0x7full) == ((0 && (bitsLeft & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1862, __func__); } } while(0);
+    do { if (!(((uint64_t)lookup_fault_missing_capability & ~0x3ull) == ((0 && ((uint64_t)lookup_fault_missing_capability & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)lookup_fault_missing_capability & ~0x3ull) == ((0 && ((uint64_t)lookup_fault_missing_capability & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1863, __func__); } } while(0);
 
     lookup_fault.words[0] = 0
         | (bitsLeft & 0x7full) << 2
@@ -3110,7 +3149,7 @@ static inline uint64_t __attribute__((__const__))
 lookup_fault_missing_capability_get_bitsLeft(lookup_fault_t lookup_fault) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_missing_capability)) { _assert_fail("((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_missing_capability", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1838, __func__); } } while(0);
+    do { if (!(((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_missing_capability)) { _assert_fail("((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_missing_capability", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1877, __func__); } } while(0);
 
     ret = (lookup_fault.words[0] & 0x1fcull) >> 2;
     /* Possibly sign extend */
@@ -3125,9 +3164,9 @@ lookup_fault_depth_mismatch_new(uint64_t bitsFound, uint64_t bitsLeft) {
     lookup_fault_t lookup_fault;
 
     /* fail if user has passed bits that we will override */
-    do { if (!((bitsFound & ~0x7full) == ((1 && (bitsFound & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(bitsFound & ~0x7full) == ((1 && (bitsFound & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1853, __func__); } } while(0);
-    do { if (!((bitsLeft & ~0x7full) == ((1 && (bitsLeft & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(bitsLeft & ~0x7full) == ((1 && (bitsLeft & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1854, __func__); } } while(0);
-    do { if (!(((uint64_t)lookup_fault_depth_mismatch & ~0x3ull) == ((1 && ((uint64_t)lookup_fault_depth_mismatch & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)lookup_fault_depth_mismatch & ~0x3ull) == ((1 && ((uint64_t)lookup_fault_depth_mismatch & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1855, __func__); } } while(0);
+    do { if (!((bitsFound & ~0x7full) == ((0 && (bitsFound & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(bitsFound & ~0x7full) == ((0 && (bitsFound & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1892, __func__); } } while(0);
+    do { if (!((bitsLeft & ~0x7full) == ((0 && (bitsLeft & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(bitsLeft & ~0x7full) == ((0 && (bitsLeft & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1893, __func__); } } while(0);
+    do { if (!(((uint64_t)lookup_fault_depth_mismatch & ~0x3ull) == ((0 && ((uint64_t)lookup_fault_depth_mismatch & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)lookup_fault_depth_mismatch & ~0x3ull) == ((0 && ((uint64_t)lookup_fault_depth_mismatch & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1894, __func__); } } while(0);
 
     lookup_fault.words[0] = 0
         | (bitsFound & 0x7full) << 9
@@ -3142,7 +3181,7 @@ static inline uint64_t __attribute__((__const__))
 lookup_fault_depth_mismatch_get_bitsFound(lookup_fault_t lookup_fault) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_depth_mismatch)) { _assert_fail("((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_depth_mismatch", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1870, __func__); } } while(0);
+    do { if (!(((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_depth_mismatch)) { _assert_fail("((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_depth_mismatch", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1909, __func__); } } while(0);
 
     ret = (lookup_fault.words[0] & 0xfe00ull) >> 9;
     /* Possibly sign extend */
@@ -3156,7 +3195,7 @@ static inline uint64_t __attribute__((__const__))
 lookup_fault_depth_mismatch_get_bitsLeft(lookup_fault_t lookup_fault) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_depth_mismatch)) { _assert_fail("((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_depth_mismatch", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1884, __func__); } } while(0);
+    do { if (!(((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_depth_mismatch)) { _assert_fail("((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_depth_mismatch", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1923, __func__); } } while(0);
 
     ret = (lookup_fault.words[0] & 0x1fcull) >> 2;
     /* Possibly sign extend */
@@ -3171,9 +3210,9 @@ lookup_fault_guard_mismatch_new(uint64_t guardFound, uint64_t bitsLeft, uint64_t
     lookup_fault_t lookup_fault;
 
     /* fail if user has passed bits that we will override */
-    do { if (!((bitsLeft & ~0x7full) == ((1 && (bitsLeft & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(bitsLeft & ~0x7full) == ((1 && (bitsLeft & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1899, __func__); } } while(0);
-    do { if (!((bitsFound & ~0x7full) == ((1 && (bitsFound & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(bitsFound & ~0x7full) == ((1 && (bitsFound & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1900, __func__); } } while(0);
-    do { if (!(((uint64_t)lookup_fault_guard_mismatch & ~0x3ull) == ((1 && ((uint64_t)lookup_fault_guard_mismatch & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)lookup_fault_guard_mismatch & ~0x3ull) == ((1 && ((uint64_t)lookup_fault_guard_mismatch & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1901, __func__); } } while(0);
+    do { if (!((bitsLeft & ~0x7full) == ((0 && (bitsLeft & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(bitsLeft & ~0x7full) == ((0 && (bitsLeft & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1938, __func__); } } while(0);
+    do { if (!((bitsFound & ~0x7full) == ((0 && (bitsFound & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(bitsFound & ~0x7full) == ((0 && (bitsFound & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1939, __func__); } } while(0);
+    do { if (!(((uint64_t)lookup_fault_guard_mismatch & ~0x3ull) == ((0 && ((uint64_t)lookup_fault_guard_mismatch & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)lookup_fault_guard_mismatch & ~0x3ull) == ((0 && ((uint64_t)lookup_fault_guard_mismatch & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1940, __func__); } } while(0);
 
     lookup_fault.words[0] = 0
         | (bitsLeft & 0x7full) << 9
@@ -3189,7 +3228,7 @@ static inline uint64_t __attribute__((__const__))
 lookup_fault_guard_mismatch_get_guardFound(lookup_fault_t lookup_fault) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_guard_mismatch)) { _assert_fail("((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_guard_mismatch", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1917, __func__); } } while(0);
+    do { if (!(((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_guard_mismatch)) { _assert_fail("((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_guard_mismatch", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1956, __func__); } } while(0);
 
     ret = (lookup_fault.words[1] & 0xffffffffffffffffull) >> 0;
     /* Possibly sign extend */
@@ -3203,7 +3242,7 @@ static inline uint64_t __attribute__((__const__))
 lookup_fault_guard_mismatch_get_bitsLeft(lookup_fault_t lookup_fault) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_guard_mismatch)) { _assert_fail("((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_guard_mismatch", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1931, __func__); } } while(0);
+    do { if (!(((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_guard_mismatch)) { _assert_fail("((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_guard_mismatch", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1970, __func__); } } while(0);
 
     ret = (lookup_fault.words[0] & 0xfe00ull) >> 9;
     /* Possibly sign extend */
@@ -3217,7 +3256,7 @@ static inline uint64_t __attribute__((__const__))
 lookup_fault_guard_mismatch_get_bitsFound(lookup_fault_t lookup_fault) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_guard_mismatch)) { _assert_fail("((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_guard_mismatch", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1945, __func__); } } while(0);
+    do { if (!(((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_guard_mismatch)) { _assert_fail("((lookup_fault.words[0] >> 0) & 0x3) == lookup_fault_guard_mismatch", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1984, __func__); } } while(0);
 
     ret = (lookup_fault.words[0] & 0x1fcull) >> 2;
     /* Possibly sign extend */
@@ -3257,7 +3296,7 @@ pte_pte_table_new(uint64_t pt_base_address) {
     pte_t pte;
 
     /* fail if user has passed bits that we will override */
-    do { if (!((pt_base_address & ~0xfffffffff000ull) == ((0 && (pt_base_address & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(pt_base_address & ~0xfffffffff000ull) == ((0 && (pt_base_address & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1985, __func__); } } while(0);
+    do { if (!((pt_base_address & ~0xfffffffff000ull) == ((0 && (pt_base_address & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(pt_base_address & ~0xfffffffff000ull) == ((0 && (pt_base_address & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2024, __func__); } } while(0);
 
     pte.words[0] = 0
         | (pt_base_address & 0xfffffffff000ull) >> 0
@@ -3270,7 +3309,7 @@ static inline uint64_t __attribute__((__pure__))
 pte_pte_table_ptr_get_pt_base_address(pte_t *pte_ptr) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((pte_ptr->words[0] >> 0) & 0x400000000000003) == 0x3ull /* sliced tag pte_pte_table */)) { _assert_fail("((pte_ptr->words[0] >> 0) & 0x400000000000003) == 0x3ull /* sliced tag pte_pte_table */", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 1998, __func__); } } while(0);
+    do { if (!(((pte_ptr->words[0] >> 0) & 0x400000000000003) == 0x3ull /* sliced tag pte_pte_table */)) { _assert_fail("((pte_ptr->words[0] >> 0) & 0x400000000000003) == 0x3ull /* sliced tag pte_pte_table */", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2037, __func__); } } while(0);
 
     ret = (pte_ptr->words[0] & 0xfffffffff000ull) << 0;
     /* Possibly sign extend */
@@ -3285,13 +3324,13 @@ pte_pte_page_new(uint64_t UXN, uint64_t page_base_address, uint64_t nG, uint64_t
     pte_t pte;
 
     /* fail if user has passed bits that we will override */
-    do { if (!((UXN & ~0x1ull) == ((0 && (UXN & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(UXN & ~0x1ull) == ((0 && (UXN & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2013, __func__); } } while(0);
-    do { if (!((page_base_address & ~0xfffffffff000ull) == ((0 && (page_base_address & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(page_base_address & ~0xfffffffff000ull) == ((0 && (page_base_address & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2014, __func__); } } while(0);
-    do { if (!((nG & ~0x1ull) == ((0 && (nG & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(nG & ~0x1ull) == ((0 && (nG & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2015, __func__); } } while(0);
-    do { if (!((AF & ~0x1ull) == ((0 && (AF & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(AF & ~0x1ull) == ((0 && (AF & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2016, __func__); } } while(0);
-    do { if (!((SH & ~0x3ull) == ((0 && (SH & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(SH & ~0x3ull) == ((0 && (SH & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2017, __func__); } } while(0);
-    do { if (!((AP & ~0x3ull) == ((0 && (AP & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(AP & ~0x3ull) == ((0 && (AP & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2018, __func__); } } while(0);
-    do { if (!((AttrIndx & ~0x7ull) == ((0 && (AttrIndx & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(AttrIndx & ~0x7ull) == ((0 && (AttrIndx & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2019, __func__); } } while(0);
+    do { if (!((UXN & ~0x1ull) == ((0 && (UXN & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(UXN & ~0x1ull) == ((0 && (UXN & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2052, __func__); } } while(0);
+    do { if (!((page_base_address & ~0xfffffffff000ull) == ((0 && (page_base_address & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(page_base_address & ~0xfffffffff000ull) == ((0 && (page_base_address & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2053, __func__); } } while(0);
+    do { if (!((nG & ~0x1ull) == ((0 && (nG & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(nG & ~0x1ull) == ((0 && (nG & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2054, __func__); } } while(0);
+    do { if (!((AF & ~0x1ull) == ((0 && (AF & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(AF & ~0x1ull) == ((0 && (AF & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2055, __func__); } } while(0);
+    do { if (!((SH & ~0x3ull) == ((0 && (SH & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(SH & ~0x3ull) == ((0 && (SH & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2056, __func__); } } while(0);
+    do { if (!((AP & ~0x3ull) == ((0 && (AP & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(AP & ~0x3ull) == ((0 && (AP & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2057, __func__); } } while(0);
+    do { if (!((AttrIndx & ~0xfull) == ((0 && (AttrIndx & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(AttrIndx & ~0xfull) == ((0 && (AttrIndx & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2058, __func__); } } while(0);
 
     pte.words[0] = 0
         | (UXN & 0x1ull) << 54
@@ -3300,7 +3339,7 @@ pte_pte_page_new(uint64_t UXN, uint64_t page_base_address, uint64_t nG, uint64_t
         | (AF & 0x1ull) << 10
         | (SH & 0x3ull) << 8
         | (AP & 0x3ull) << 6
-        | (AttrIndx & 0x7ull) << 2
+        | (AttrIndx & 0xfull) << 2
         | 0x1ull << 0;
 
     return pte;
@@ -3310,7 +3349,7 @@ static inline uint64_t __attribute__((__pure__))
 pte_pte_page_ptr_get_UXN(pte_t *pte_ptr) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((pte_ptr->words[0] >> 0) & 0x400000000000003) == 0x1ull /* sliced tag pte_pte_page */)) { _assert_fail("((pte_ptr->words[0] >> 0) & 0x400000000000003) == 0x1ull /* sliced tag pte_pte_page */", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2038, __func__); } } while(0);
+    do { if (!(((pte_ptr->words[0] >> 0) & 0x400000000000003) == 0x1ull /* sliced tag pte_pte_page */)) { _assert_fail("((pte_ptr->words[0] >> 0) & 0x400000000000003) == 0x1ull /* sliced tag pte_pte_page */", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2077, __func__); } } while(0);
 
     ret = (pte_ptr->words[0] & 0x40000000000000ull) >> 54;
     /* Possibly sign extend */
@@ -3324,23 +3363,9 @@ static inline uint64_t __attribute__((__pure__))
 pte_pte_page_ptr_get_SH(pte_t *pte_ptr) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((pte_ptr->words[0] >> 0) & 0x400000000000003) == 0x1ull /* sliced tag pte_pte_page */)) { _assert_fail("((pte_ptr->words[0] >> 0) & 0x400000000000003) == 0x1ull /* sliced tag pte_pte_page */", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2052, __func__); } } while(0);
+    do { if (!(((pte_ptr->words[0] >> 0) & 0x400000000000003) == 0x1ull /* sliced tag pte_pte_page */)) { _assert_fail("((pte_ptr->words[0] >> 0) & 0x400000000000003) == 0x1ull /* sliced tag pte_pte_page */", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2091, __func__); } } while(0);
 
     ret = (pte_ptr->words[0] & 0x300ull) >> 8;
-    /* Possibly sign extend */
-    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
-        ret |= 0x0;
-    }
-    return ret;
-}
-
-static inline uint64_t __attribute__((__const__))
-pte_pte_page_get_AP(pte_t pte) {
-    uint64_t ret;
-    /* fail if union does not have the expected tag */
-    do { if (!(((pte.words[0] >> 0) & 0x400000000000003) == 0x1ull /* sliced tag pte_pte_page */)) { _assert_fail("((pte.words[0] >> 0) & 0x400000000000003) == 0x1ull /* sliced tag pte_pte_page */", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2066, __func__); } } while(0);
-
-    ret = (pte.words[0] & 0xc0ull) >> 6;
     /* Possibly sign extend */
     if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
         ret |= 0x0;
@@ -3352,7 +3377,7 @@ static inline uint64_t __attribute__((__pure__))
 pte_pte_page_ptr_get_AP(pte_t *pte_ptr) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((pte_ptr->words[0] >> 0) & 0x400000000000003) == 0x1ull /* sliced tag pte_pte_page */)) { _assert_fail("((pte_ptr->words[0] >> 0) & 0x400000000000003) == 0x1ull /* sliced tag pte_pte_page */", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2080, __func__); } } while(0);
+    do { if (!(((pte_ptr->words[0] >> 0) & 0x400000000000003) == 0x1ull /* sliced tag pte_pte_page */)) { _assert_fail("((pte_ptr->words[0] >> 0) & 0x400000000000003) == 0x1ull /* sliced tag pte_pte_page */", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2105, __func__); } } while(0);
 
     ret = (pte_ptr->words[0] & 0xc0ull) >> 6;
     /* Possibly sign extend */
@@ -3367,13 +3392,13 @@ pte_pte_4k_page_new(uint64_t UXN, uint64_t page_base_address, uint64_t nG, uint6
     pte_t pte;
 
     /* fail if user has passed bits that we will override */
-    do { if (!((UXN & ~0x1ull) == ((0 && (UXN & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(UXN & ~0x1ull) == ((0 && (UXN & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2095, __func__); } } while(0);
-    do { if (!((page_base_address & ~0xfffffffff000ull) == ((0 && (page_base_address & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(page_base_address & ~0xfffffffff000ull) == ((0 && (page_base_address & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2096, __func__); } } while(0);
-    do { if (!((nG & ~0x1ull) == ((0 && (nG & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(nG & ~0x1ull) == ((0 && (nG & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2097, __func__); } } while(0);
-    do { if (!((AF & ~0x1ull) == ((0 && (AF & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(AF & ~0x1ull) == ((0 && (AF & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2098, __func__); } } while(0);
-    do { if (!((SH & ~0x3ull) == ((0 && (SH & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(SH & ~0x3ull) == ((0 && (SH & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2099, __func__); } } while(0);
-    do { if (!((AP & ~0x3ull) == ((0 && (AP & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(AP & ~0x3ull) == ((0 && (AP & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2100, __func__); } } while(0);
-    do { if (!((AttrIndx & ~0x7ull) == ((0 && (AttrIndx & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(AttrIndx & ~0x7ull) == ((0 && (AttrIndx & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2101, __func__); } } while(0);
+    do { if (!((UXN & ~0x1ull) == ((0 && (UXN & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(UXN & ~0x1ull) == ((0 && (UXN & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2120, __func__); } } while(0);
+    do { if (!((page_base_address & ~0xfffffffff000ull) == ((0 && (page_base_address & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(page_base_address & ~0xfffffffff000ull) == ((0 && (page_base_address & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2121, __func__); } } while(0);
+    do { if (!((nG & ~0x1ull) == ((0 && (nG & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(nG & ~0x1ull) == ((0 && (nG & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2122, __func__); } } while(0);
+    do { if (!((AF & ~0x1ull) == ((0 && (AF & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(AF & ~0x1ull) == ((0 && (AF & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2123, __func__); } } while(0);
+    do { if (!((SH & ~0x3ull) == ((0 && (SH & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(SH & ~0x3ull) == ((0 && (SH & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2124, __func__); } } while(0);
+    do { if (!((AP & ~0x3ull) == ((0 && (AP & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(AP & ~0x3ull) == ((0 && (AP & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2125, __func__); } } while(0);
+    do { if (!((AttrIndx & ~0xfull) == ((0 && (AttrIndx & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(AttrIndx & ~0xfull) == ((0 && (AttrIndx & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2126, __func__); } } while(0);
 
     pte.words[0] = 0
         | (UXN & 0x1ull) << 54
@@ -3382,24 +3407,10 @@ pte_pte_4k_page_new(uint64_t UXN, uint64_t page_base_address, uint64_t nG, uint6
         | (AF & 0x1ull) << 10
         | (SH & 0x3ull) << 8
         | (AP & 0x3ull) << 6
-        | (AttrIndx & 0x7ull) << 2
+        | (AttrIndx & 0xfull) << 2
         | 0x400000000000003ull << 0;
 
     return pte;
-}
-
-static inline uint64_t __attribute__((__const__))
-pte_pte_4k_page_get_AP(pte_t pte) {
-    uint64_t ret;
-    /* fail if union does not have the expected tag */
-    do { if (!(((pte.words[0] >> 0) & 0x400000000000003) == 0x400000000000003ull /* sliced tag pte_pte_4k_page */)) { _assert_fail("((pte.words[0] >> 0) & 0x400000000000003) == 0x400000000000003ull /* sliced tag pte_pte_4k_page */", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2120, __func__); } } while(0);
-
-    ret = (pte.words[0] & 0xc0ull) >> 6;
-    /* Possibly sign extend */
-    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
-        ret |= 0x0;
-    }
-    return ret;
 }
 
 static inline pte_t __attribute__((__const__))
@@ -3424,7 +3435,10 @@ enum seL4_Fault_tag {
     seL4_Fault_CapFault = 1,
     seL4_Fault_UnknownSyscall = 2,
     seL4_Fault_UserException = 3,
-    seL4_Fault_VMFault = 5
+    seL4_Fault_VMFault = 5,
+    seL4_Fault_VGICMaintenance = 6,
+    seL4_Fault_VCPUFault = 7,
+    seL4_Fault_VPPIEvent = 8
 };
 typedef enum seL4_Fault_tag seL4_Fault_tag_t;
 
@@ -3438,7 +3452,7 @@ seL4_Fault_NullFault_new(void) {
     seL4_Fault_t seL4_Fault;
 
     /* fail if user has passed bits that we will override */
-    do { if (!(((uint64_t)seL4_Fault_NullFault & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_NullFault & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)seL4_Fault_NullFault & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_NullFault & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2166, __func__); } } while(0);
+    do { if (!(((uint64_t)seL4_Fault_NullFault & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_NullFault & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)seL4_Fault_NullFault & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_NullFault & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2180, __func__); } } while(0);
 
     seL4_Fault.words[0] = 0
         | ((uint64_t)seL4_Fault_NullFault & 0xfull) << 0;
@@ -3452,8 +3466,8 @@ seL4_Fault_CapFault_new(uint64_t address, uint64_t inReceivePhase) {
     seL4_Fault_t seL4_Fault;
 
     /* fail if user has passed bits that we will override */
-    do { if (!((inReceivePhase & ~0x1ull) == ((0 && (inReceivePhase & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(inReceivePhase & ~0x1ull) == ((0 && (inReceivePhase & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2180, __func__); } } while(0);
-    do { if (!(((uint64_t)seL4_Fault_CapFault & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_CapFault & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)seL4_Fault_CapFault & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_CapFault & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2181, __func__); } } while(0);
+    do { if (!((inReceivePhase & ~0x1ull) == ((0 && (inReceivePhase & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(inReceivePhase & ~0x1ull) == ((0 && (inReceivePhase & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2194, __func__); } } while(0);
+    do { if (!(((uint64_t)seL4_Fault_CapFault & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_CapFault & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)seL4_Fault_CapFault & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_CapFault & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2195, __func__); } } while(0);
 
     seL4_Fault.words[0] = 0
         | (inReceivePhase & 0x1ull) << 63
@@ -3468,7 +3482,7 @@ static inline uint64_t __attribute__((__const__))
 seL4_Fault_CapFault_get_address(seL4_Fault_t seL4_Fault) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_CapFault)) { _assert_fail("((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_CapFault", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2196, __func__); } } while(0);
+    do { if (!(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_CapFault)) { _assert_fail("((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_CapFault", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2210, __func__); } } while(0);
 
     ret = (seL4_Fault.words[1] & 0xffffffffffffffffull) >> 0;
     /* Possibly sign extend */
@@ -3482,7 +3496,7 @@ static inline uint64_t __attribute__((__const__))
 seL4_Fault_CapFault_get_inReceivePhase(seL4_Fault_t seL4_Fault) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_CapFault)) { _assert_fail("((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_CapFault", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2210, __func__); } } while(0);
+    do { if (!(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_CapFault)) { _assert_fail("((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_CapFault", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2224, __func__); } } while(0);
 
     ret = (seL4_Fault.words[0] & 0x8000000000000000ull) >> 63;
     /* Possibly sign extend */
@@ -3497,7 +3511,7 @@ seL4_Fault_UnknownSyscall_new(uint64_t syscallNumber) {
     seL4_Fault_t seL4_Fault;
 
     /* fail if user has passed bits that we will override */
-    do { if (!(((uint64_t)seL4_Fault_UnknownSyscall & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_UnknownSyscall & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)seL4_Fault_UnknownSyscall & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_UnknownSyscall & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2225, __func__); } } while(0);
+    do { if (!(((uint64_t)seL4_Fault_UnknownSyscall & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_UnknownSyscall & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)seL4_Fault_UnknownSyscall & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_UnknownSyscall & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2239, __func__); } } while(0);
 
     seL4_Fault.words[0] = 0
         | ((uint64_t)seL4_Fault_UnknownSyscall & 0xfull) << 0;
@@ -3511,7 +3525,7 @@ static inline uint64_t __attribute__((__const__))
 seL4_Fault_UnknownSyscall_get_syscallNumber(seL4_Fault_t seL4_Fault) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_UnknownSyscall)) { _assert_fail("((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_UnknownSyscall", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2239, __func__); } } while(0);
+    do { if (!(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_UnknownSyscall)) { _assert_fail("((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_UnknownSyscall", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2253, __func__); } } while(0);
 
     ret = (seL4_Fault.words[1] & 0xffffffffffffffffull) >> 0;
     /* Possibly sign extend */
@@ -3526,9 +3540,9 @@ seL4_Fault_UserException_new(uint64_t number, uint64_t code) {
     seL4_Fault_t seL4_Fault;
 
     /* fail if user has passed bits that we will override */
-    do { if (!((number & ~0xffffffffull) == ((0 && (number & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(number & ~0xffffffffull) == ((0 && (number & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2254, __func__); } } while(0);
-    do { if (!((code & ~0xfffffffull) == ((0 && (code & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(code & ~0xfffffffull) == ((0 && (code & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2255, __func__); } } while(0);
-    do { if (!(((uint64_t)seL4_Fault_UserException & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_UserException & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)seL4_Fault_UserException & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_UserException & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2256, __func__); } } while(0);
+    do { if (!((number & ~0xffffffffull) == ((0 && (number & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(number & ~0xffffffffull) == ((0 && (number & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2268, __func__); } } while(0);
+    do { if (!((code & ~0xfffffffull) == ((0 && (code & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(code & ~0xfffffffull) == ((0 && (code & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2269, __func__); } } while(0);
+    do { if (!(((uint64_t)seL4_Fault_UserException & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_UserException & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)seL4_Fault_UserException & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_UserException & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2270, __func__); } } while(0);
 
     seL4_Fault.words[0] = 0
         | (number & 0xffffffffull) << 32
@@ -3543,7 +3557,7 @@ static inline uint64_t __attribute__((__const__))
 seL4_Fault_UserException_get_number(seL4_Fault_t seL4_Fault) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_UserException)) { _assert_fail("((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_UserException", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2271, __func__); } } while(0);
+    do { if (!(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_UserException)) { _assert_fail("((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_UserException", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2285, __func__); } } while(0);
 
     ret = (seL4_Fault.words[0] & 0xffffffff00000000ull) >> 32;
     /* Possibly sign extend */
@@ -3557,7 +3571,7 @@ static inline uint64_t __attribute__((__const__))
 seL4_Fault_UserException_get_code(seL4_Fault_t seL4_Fault) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_UserException)) { _assert_fail("((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_UserException", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2285, __func__); } } while(0);
+    do { if (!(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_UserException)) { _assert_fail("((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_UserException", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2299, __func__); } } while(0);
 
     ret = (seL4_Fault.words[0] & 0xfffffff0ull) >> 4;
     /* Possibly sign extend */
@@ -3572,9 +3586,9 @@ seL4_Fault_VMFault_new(uint64_t address, uint64_t FSR, uint64_t instructionFault
     seL4_Fault_t seL4_Fault;
 
     /* fail if user has passed bits that we will override */
-    do { if (!((FSR & ~0xffffffffull) == ((0 && (FSR & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(FSR & ~0xffffffffull) == ((0 && (FSR & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2300, __func__); } } while(0);
-    do { if (!((instructionFault & ~0x1ull) == ((0 && (instructionFault & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(instructionFault & ~0x1ull) == ((0 && (instructionFault & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2301, __func__); } } while(0);
-    do { if (!(((uint64_t)seL4_Fault_VMFault & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_VMFault & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)seL4_Fault_VMFault & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_VMFault & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2302, __func__); } } while(0);
+    do { if (!((FSR & ~0xffffffffull) == ((0 && (FSR & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(FSR & ~0xffffffffull) == ((0 && (FSR & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2314, __func__); } } while(0);
+    do { if (!((instructionFault & ~0x1ull) == ((0 && (instructionFault & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(instructionFault & ~0x1ull) == ((0 && (instructionFault & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2315, __func__); } } while(0);
+    do { if (!(((uint64_t)seL4_Fault_VMFault & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_VMFault & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)seL4_Fault_VMFault & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_VMFault & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2316, __func__); } } while(0);
 
     seL4_Fault.words[0] = 0
         | (FSR & 0xffffffffull) << 32
@@ -3590,7 +3604,7 @@ static inline uint64_t __attribute__((__const__))
 seL4_Fault_VMFault_get_address(seL4_Fault_t seL4_Fault) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VMFault)) { _assert_fail("((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VMFault", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2318, __func__); } } while(0);
+    do { if (!(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VMFault)) { _assert_fail("((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VMFault", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2332, __func__); } } while(0);
 
     ret = (seL4_Fault.words[1] & 0xffffffffffffffffull) >> 0;
     /* Possibly sign extend */
@@ -3604,7 +3618,7 @@ static inline uint64_t __attribute__((__const__))
 seL4_Fault_VMFault_get_FSR(seL4_Fault_t seL4_Fault) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VMFault)) { _assert_fail("((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VMFault", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2332, __func__); } } while(0);
+    do { if (!(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VMFault)) { _assert_fail("((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VMFault", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2346, __func__); } } while(0);
 
     ret = (seL4_Fault.words[0] & 0xffffffff00000000ull) >> 32;
     /* Possibly sign extend */
@@ -3618,7 +3632,7 @@ static inline uint64_t __attribute__((__const__))
 seL4_Fault_VMFault_get_instructionFault(seL4_Fault_t seL4_Fault) {
     uint64_t ret;
     /* fail if union does not have the expected tag */
-    do { if (!(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VMFault)) { _assert_fail("((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VMFault", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2346, __func__); } } while(0);
+    do { if (!(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VMFault)) { _assert_fail("((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VMFault", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2360, __func__); } } while(0);
 
     ret = (seL4_Fault.words[0] & 0x80000000ull) >> 31;
     /* Possibly sign extend */
@@ -3626,6 +3640,186 @@ seL4_Fault_VMFault_get_instructionFault(seL4_Fault_t seL4_Fault) {
         ret |= 0x0;
     }
     return ret;
+}
+
+static inline seL4_Fault_t __attribute__((__const__))
+seL4_Fault_VGICMaintenance_new(uint64_t idx, uint64_t idxValid) {
+    seL4_Fault_t seL4_Fault;
+
+    /* fail if user has passed bits that we will override */
+    do { if (!((idx & ~0x3full) == ((0 && (idx & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(idx & ~0x3full) == ((0 && (idx & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2375, __func__); } } while(0);
+    do { if (!((idxValid & ~0x1ull) == ((0 && (idxValid & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(idxValid & ~0x1ull) == ((0 && (idxValid & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2376, __func__); } } while(0);
+    do { if (!(((uint64_t)seL4_Fault_VGICMaintenance & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_VGICMaintenance & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)seL4_Fault_VGICMaintenance & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_VGICMaintenance & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2377, __func__); } } while(0);
+
+    seL4_Fault.words[0] = 0
+        | (idx & 0x3full) << 58
+        | (idxValid & 0x1ull) << 57
+        | ((uint64_t)seL4_Fault_VGICMaintenance & 0xfull) << 0;
+    seL4_Fault.words[1] = 0;
+
+    return seL4_Fault;
+}
+
+static inline uint64_t __attribute__((__const__))
+seL4_Fault_VGICMaintenance_get_idx(seL4_Fault_t seL4_Fault) {
+    uint64_t ret;
+    /* fail if union does not have the expected tag */
+    do { if (!(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VGICMaintenance)) { _assert_fail("((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VGICMaintenance", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2392, __func__); } } while(0);
+
+    ret = (seL4_Fault.words[0] & 0xfc00000000000000ull) >> 58;
+    /* Possibly sign extend */
+    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
+        ret |= 0x0;
+    }
+    return ret;
+}
+
+static inline uint64_t __attribute__((__const__))
+seL4_Fault_VGICMaintenance_get_idxValid(seL4_Fault_t seL4_Fault) {
+    uint64_t ret;
+    /* fail if union does not have the expected tag */
+    do { if (!(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VGICMaintenance)) { _assert_fail("((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VGICMaintenance", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2406, __func__); } } while(0);
+
+    ret = (seL4_Fault.words[0] & 0x200000000000000ull) >> 57;
+    /* Possibly sign extend */
+    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
+        ret |= 0x0;
+    }
+    return ret;
+}
+
+static inline seL4_Fault_t __attribute__((__const__))
+seL4_Fault_VCPUFault_new(uint64_t hsr) {
+    seL4_Fault_t seL4_Fault;
+
+    /* fail if user has passed bits that we will override */
+    do { if (!((hsr & ~0xffffffffull) == ((0 && (hsr & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(hsr & ~0xffffffffull) == ((0 && (hsr & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2421, __func__); } } while(0);
+    do { if (!(((uint64_t)seL4_Fault_VCPUFault & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_VCPUFault & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)seL4_Fault_VCPUFault & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_VCPUFault & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2422, __func__); } } while(0);
+
+    seL4_Fault.words[0] = 0
+        | (hsr & 0xffffffffull) << 32
+        | ((uint64_t)seL4_Fault_VCPUFault & 0xfull) << 0;
+    seL4_Fault.words[1] = 0;
+
+    return seL4_Fault;
+}
+
+static inline uint64_t __attribute__((__const__))
+seL4_Fault_VCPUFault_get_hsr(seL4_Fault_t seL4_Fault) {
+    uint64_t ret;
+    /* fail if union does not have the expected tag */
+    do { if (!(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VCPUFault)) { _assert_fail("((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VCPUFault", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2436, __func__); } } while(0);
+
+    ret = (seL4_Fault.words[0] & 0xffffffff00000000ull) >> 32;
+    /* Possibly sign extend */
+    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
+        ret |= 0x0;
+    }
+    return ret;
+}
+
+static inline seL4_Fault_t __attribute__((__const__))
+seL4_Fault_VPPIEvent_new(uint64_t irq_w) {
+    seL4_Fault_t seL4_Fault;
+
+    /* fail if user has passed bits that we will override */
+    do { if (!((irq_w & ~0x1ffull) == ((0 && (irq_w & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(irq_w & ~0x1ffull) == ((0 && (irq_w & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2451, __func__); } } while(0);
+    do { if (!(((uint64_t)seL4_Fault_VPPIEvent & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_VPPIEvent & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)seL4_Fault_VPPIEvent & ~0xfull) == ((0 && ((uint64_t)seL4_Fault_VPPIEvent & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2452, __func__); } } while(0);
+
+    seL4_Fault.words[0] = 0
+        | ((uint64_t)seL4_Fault_VPPIEvent & 0xfull) << 0;
+    seL4_Fault.words[1] = 0
+        | (irq_w & 0x1ffull) << 0;
+
+    return seL4_Fault;
+}
+
+static inline uint64_t __attribute__((__const__))
+seL4_Fault_VPPIEvent_get_irq_w(seL4_Fault_t seL4_Fault) {
+    uint64_t ret;
+    /* fail if union does not have the expected tag */
+    do { if (!(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VPPIEvent)) { _assert_fail("((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VPPIEvent", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2466, __func__); } } while(0);
+
+    ret = (seL4_Fault.words[1] & 0x1ffull) >> 0;
+    /* Possibly sign extend */
+    if (__builtin_expect(!!(0 && (ret & (1ull << (47)))), 0)) {
+        ret |= 0x0;
+    }
+    return ret;
+}
+
+struct virq {
+    uint64_t words[1];
+};
+typedef struct virq virq_t;
+
+enum virq_tag {
+    virq_virq_invalid = 0,
+    virq_virq_pending = 1,
+    virq_virq_active = 2
+};
+typedef enum virq_tag virq_tag_t;
+
+static inline uint64_t __attribute__((__const__))
+virq_get_virqType(virq_t virq) {
+    return (virq.words[0] >> 28) & 0x3ull;
+}
+
+static inline virq_t __attribute__((__const__))
+virq_virq_invalid_set_virqEOIIRQEN(virq_t virq, uint64_t v64) {
+    /* fail if union does not have the expected tag */
+    do { if (!(((virq.words[0] >> 28) & 0x3) == virq_virq_invalid)) { _assert_fail("((virq.words[0] >> 28) & 0x3) == virq_virq_invalid", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2496, __func__); } } while(0);
+    /* fail if user has passed bits that we will override */
+    do { if (!((((~0x80000ull >> 19 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x80000ull >> 19 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2498, __func__); } } while(0);
+
+    virq.words[0] &= ~0x80000ull;
+    virq.words[0] |= (v64 << 19) & 0x80000ull;
+    return virq;
+}
+
+static inline virq_t __attribute__((__const__))
+virq_virq_pending_new(uint64_t virqGroup, uint64_t virqPriority, uint64_t virqEOIIRQEN, uint64_t virqIRQ) {
+    virq_t virq;
+
+    /* fail if user has passed bits that we will override */
+    do { if (!((virqGroup & ~0x1ull) == ((0 && (virqGroup & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(virqGroup & ~0x1ull) == ((0 && (virqGroup & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2510, __func__); } } while(0);
+    do { if (!(((uint64_t)virq_virq_pending & ~0x3ull) == ((0 && ((uint64_t)virq_virq_pending & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("((uint64_t)virq_virq_pending & ~0x3ull) == ((0 && ((uint64_t)virq_virq_pending & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2511, __func__); } } while(0);
+    do { if (!((virqPriority & ~0x1full) == ((0 && (virqPriority & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(virqPriority & ~0x1full) == ((0 && (virqPriority & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2512, __func__); } } while(0);
+    do { if (!((virqEOIIRQEN & ~0x1ull) == ((0 && (virqEOIIRQEN & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(virqEOIIRQEN & ~0x1ull) == ((0 && (virqEOIIRQEN & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2513, __func__); } } while(0);
+    do { if (!((virqIRQ & ~0x3ffull) == ((0 && (virqIRQ & (1ull << 47))) ? 0x0 : 0))) { _assert_fail("(virqIRQ & ~0x3ffull) == ((0 && (virqIRQ & (1ull << 47))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2514, __func__); } } while(0);
+
+    virq.words[0] = 0
+        | (virqGroup & 0x1ull) << 30
+        | ((uint64_t)virq_virq_pending & 0x3ull) << 28
+        | (virqPriority & 0x1full) << 23
+        | (virqEOIIRQEN & 0x1ull) << 19
+        | (virqIRQ & 0x3ffull) << 0;
+
+    return virq;
+}
+
+static inline virq_t __attribute__((__const__))
+virq_virq_pending_set_virqEOIIRQEN(virq_t virq, uint64_t v64) {
+    /* fail if union does not have the expected tag */
+    do { if (!(((virq.words[0] >> 28) & 0x3) == virq_virq_pending)) { _assert_fail("((virq.words[0] >> 28) & 0x3) == virq_virq_pending", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2529, __func__); } } while(0);
+    /* fail if user has passed bits that we will override */
+    do { if (!((((~0x80000ull >> 19 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x80000ull >> 19 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2531, __func__); } } while(0);
+
+    virq.words[0] &= ~0x80000ull;
+    virq.words[0] |= (v64 << 19) & 0x80000ull;
+    return virq;
+}
+
+static inline virq_t __attribute__((__const__))
+virq_virq_active_set_virqEOIIRQEN(virq_t virq, uint64_t v64) {
+    /* fail if union does not have the expected tag */
+    do { if (!(((virq.words[0] >> 28) & 0x3) == virq_virq_active)) { _assert_fail("((virq.words[0] >> 28) & 0x3) == virq_virq_active", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2541, __func__); } } while(0);
+    /* fail if user has passed bits that we will override */
+    do { if (!((((~0x80000ull >> 19 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0))) { _assert_fail("(((~0x80000ull >> 19 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (47)))) ? 0x0 : 0)", "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/generated/arch/object/structures_gen.h", 2543, __func__); } } while(0);
+
+    virq.words[0] &= ~0x80000ull;
+    virq.words[0] |= (v64 << 19) & 0x80000ull;
+    return virq;
 }
 # 13 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/object/structures.h" 2
 
@@ -3757,6 +3951,8 @@ typedef enum {
 } seL4_VCPUReg;
 # 168 "/Users/bryan/Desktop/github_repos/AIOS/kernel/libsel4/sel4_arch_include/aarch64/sel4/sel4_arch/constants.h"
 /* object sizes - 2^n */
+# 200 "/Users/bryan/Desktop/github_repos/AIOS/kernel/libsel4/sel4_arch_include/aarch64/sel4/sel4_arch/constants.h"
+/* for a 3 level translation, we skip the PGD */
 # 214 "/Users/bryan/Desktop/github_repos/AIOS/kernel/libsel4/sel4_arch_include/aarch64/sel4/sel4_arch/constants.h"
 /* word size */
 
@@ -3768,10 +3964,20 @@ typedef enum {
 
 typedef int __assert_failed_seL4_PageTableEntryBits_seL4_PageTableIndexBits_seL4_PageTableBits[((3) + (9) == 12) ? 1 : -1] __attribute__((unused));;
 typedef int __assert_failed_seL4_WordSizeBits_seL4_ASIDPoolIndexBits_seL4_ASIDPoolBits[((3) + (9) == 12) ? 1 : -1] __attribute__((unused));;
-typedef int __assert_failed_seL4_VSpaceEntryBits_seL4_VSpaceIndexBits_seL4_VSpaceBits[((3) + (9) == 12) ? 1 : -1] __attribute__((unused));;
+typedef int __assert_failed_seL4_VSpaceEntryBits_seL4_VSpaceIndexBits_seL4_VSpaceBits[((3) + (10) == 13) ? 1 : -1] __attribute__((unused));;
 # 234 "/Users/bryan/Desktop/github_repos/AIOS/kernel/libsel4/sel4_arch_include/aarch64/sel4/sel4_arch/constants.h"
 /* IPC buffer is 1024 bytes, giving size bits of 10 */
-# 256 "/Users/bryan/Desktop/github_repos/AIOS/kernel/libsel4/sel4_arch_include/aarch64/sel4/sel4_arch/constants.h"
+
+
+
+
+/* The userspace occupies the range 0x0 to 0xfffffffffff.
+ * The stage-1 translation is disabled, and the stage-2
+ * translation input addree size is constrained by the
+ * ID_AA64MMFR0_EL1.PARange which is 44 bits on TX1.
+ * Anything address above the range above triggers an
+ * address size fault.
+ */
 /* First address in the virtual address space that is not accessible to user level */
 # 17 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/object/structures.h" 2
 # 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/benchmark/benchmark_utilisation_.h" 1
@@ -3789,7 +3995,7 @@ enum irq_state {
     IRQSignal = 1,
     IRQTimer = 2,
 
-
+    IRQIPI = 3,
 
     IRQReserved
 };
@@ -4294,7 +4500,7 @@ static inline void Arch_initContext(user_context_t *context)
 typedef struct arch_tcb {
     user_context_t tcbContext;
 
-
+    struct vcpu *tcbVCPU;
 
 } arch_tcb_t;
 
@@ -4304,8 +4510,8 @@ enum vm_rights {
     VMReadOnly = 3
 };
 typedef word_t vm_rights_t;
-# 44 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/64/mode/object/structures.h"
-/* Otherwise we use a 4-level translation */
+# 41 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/64/mode/object/structures.h"
+/* For hyp with 40 bit PA, EL1 and EL0 use a 3 level translation and skips the PGD */
 typedef pte_t vspace_root_t;
 # 57 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/64/mode/object/structures.h"
 /* Generate a vcpu_t pointer from a vcpu block reference */
@@ -4336,7 +4542,7 @@ static inline word_t __attribute__((__const__)) cap_get_archCapSizeBits(cap_t ca
         return 12;
 
     case cap_vspace_cap:
-        return 12;
+        return 13;
 
     case cap_asid_pool_cap:
         return 12;
@@ -4345,12 +4551,12 @@ static inline word_t __attribute__((__const__)) cap_get_archCapSizeBits(cap_t ca
         return 0;
 
 
+    case cap_vcpu_cap:
+        return 12;
 
 
 
 
-    case cap_sgi_signal_cap:
-        return 0;
 
 
     default:
@@ -4383,18 +4589,9 @@ static inline bool_t __attribute__((__const__)) cap_get_archCapIsPhysical(cap_t 
         return false;
 
 
-
-
-
-
-    case cap_sgi_signal_cap:
-        return false;
-
-
-
-
-
-
+    case cap_vcpu_cap:
+        return true;
+# 156 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/64/mode/object/structures.h"
     default:
         /* Unreachable, but GCC can't figure that out */
         return false;
@@ -4424,18 +4621,9 @@ static inline void *__attribute__((__const__)) cap_get_archCapPtr(cap_t cap)
         return ((asid_pool_t*)cap_asid_pool_cap_get_capASIDPool(cap));
 
 
-
-
-
-
-    case cap_sgi_signal_cap:
-        return ((void *)0);
-
-
-
-
-
-
+    case cap_vcpu_cap:
+        return ((struct vcpu *)(cap_vcpu_cap_get_capVCPUPtr(cap)));
+# 197 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/64/mode/object/structures.h"
     default:
         /* Unreachable, but GCC can't figure that out */
         return ((void *)0);
@@ -4487,10 +4675,6 @@ static inline uint64_t pte_page_ptr_get_page_base_address(pte_t *pt)
 static inline bool_t __attribute__((__const__)) Arch_isCapRevocable(cap_t derivedCap, cap_t srcCap)
 {
     switch (cap_get_capType(derivedCap)) {
-
-
-    case cap_sgi_signal_cap:
-        return cap_get_capType(srcCap) == cap_irq_control_cap;
 # 28 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/object/structures.h"
     default:
         return false;
@@ -4572,8 +4756,8 @@ struct tcb {
     word_t tcbIPCBuffer;
 
 
-
-
+    /* cpu ID this thread is running on, 1 word */
+    word_t tcbAffinity;
 
 
     /* Previous and next pointers for scheduler queues , 2 words */
@@ -5008,6 +5192,8 @@ bool_t Arch_handleFaultReply(tcb_t *receiver, tcb_t *sender, word_t faultType);
    asserts check that the kernel config won't lead to UTs being created that aren't
    representable. */
 _Static_assert(1099511627776 <= (1ul << (47)), "ut_max_less_than_canonical");;
+
+_Static_assert((0x0000008000000000ul /* 2^40 - 2^39 */ + 1099511627776) <= (1ul << (48)), "ut_max_is_canonical");;
 # 19 "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/gen_headers/plat/machine/devices_gen.h" 2
 # 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/linker.h" 1
 /*
@@ -5059,10 +5245,12 @@ _Static_assert(1099511627776 <= (1ul << (47)), "ut_max_less_than_canonical");;
  */
 static inline __attribute__((__const__)) word_t physBase(void)
 {
-    return 0x40000000;
+    return 0x60000000;
 }
 
 /* INTERRUPTS */
+/* INTERRUPT_VGIC_MAINTENANCE generated from /intc@8000000 */
+
 /* INTERRUPT_VTIMER_EVENT generated from /timer */
 
 /* KERNEL_TIMER_IRQ generated from /timer */
@@ -5076,12 +5264,13 @@ static inline __attribute__((__const__)) word_t physBase(void)
 
 
 
+
 static const kernel_frame_t __attribute__((__section__(".boot.rodata"))) kernel_device_frames[] = {
 
     /* /pl011@9000000 */
     {
         .paddr = 0x9000000,
-        .pptr = (0xffffffffffe00000ul /* 2^64 - 2^21 */ + 0x0),
+        .pptr = (0x000000ffffe00000ul /* 2^40 - 2^21 */ + 0x0),
         .armExecuteNever = true,
         .userAvailable = true
     },
@@ -5089,17 +5278,26 @@ static const kernel_frame_t __attribute__((__section__(".boot.rodata"))) kernel_
     /* /intc@8000000 */
     {
         .paddr = 0x8000000,
-        .pptr = (0xffffffffffe00000ul /* 2^64 - 2^21 */ + 0x1000),
+        .pptr = (0x000000ffffe00000ul /* 2^40 - 2^21 */ + 0x1000),
         .armExecuteNever = true,
         .userAvailable = false
     },
     /* /intc@8000000 */
     {
         .paddr = 0x8010000,
-        .pptr = (0xffffffffffe00000ul /* 2^64 - 2^21 */ + 0x2000),
+        .pptr = (0x000000ffffe00000ul /* 2^40 - 2^21 */ + 0x2000),
         .armExecuteNever = true,
         .userAvailable = false
     },
+
+    /* /intc@8000000 */
+    {
+        .paddr = 0x8030000,
+        .pptr = (0x000000ffffe00000ul /* 2^40 - 2^21 */ + 0x3000),
+        .armExecuteNever = true,
+        .userAvailable = false
+    },
+
 };
 
 /* Elements in kernel_device_frames may be enabled in specific configurations
@@ -5115,7 +5313,7 @@ static const kernel_frame_t __attribute__((__section__(".boot.rodata"))) kernel_
 static const p_region_t __attribute__((__section__(".boot.rodata"))) avail_p_regs[] = {
     /* /memory@40000000 */
     {
-        .start = 0x40000000,
+        .start = 0x60000000,
         .end = 0x80000000
     },
 };
@@ -5190,8 +5388,27 @@ enum IRQConstants {
  * address of the stack is per-arch-mode aligned. KERNEL_STACK_ALIGNMENT is
  * defined for each arch/mode in <mode/kernel/stack.h>
  */
-extern char kernel_stack_alloc[1][(1ul << (12))];
+extern char kernel_stack_alloc[4][(1ul << (12))];
 # 12 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/64/mode/smp/smp.h" 2
+
+
+
+extern char kernel_stack_alloc[4][(1ul << (12))];
+_Static_assert(4096 == 4096, "kernel_stack_4k_aligned");
+
+
+
+static inline __attribute__((__const__)) cpu_id_t
+getCurrentCPUIndex(void)
+{
+    cpu_id_t id;
+    if (wrap_config_set(1)) {
+        __asm__ volatile("mrs %0, tpidr_el2" : "=r"(id));
+    } else {
+        __asm__ volatile("mrs %0, tpidr_el1" : "=r"(id));
+    }
+    return (id & (4096 - 1));
+}
 # 19 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/machine/gic_v2.h" 2
 # 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/model/statedata.h" 1
 /*
@@ -5456,6 +5673,15 @@ static inline void tcb_queue_insert(tcb_t *tcb, tcb_t *after)
 
 void tcbDebugAppend(tcb_t *tcb);
 void tcbDebugRemove(tcb_t *tcb);
+
+
+
+
+
+
+
+void remoteQueueUpdate(tcb_t *tcb);
+void remoteTCBStall(tcb_t *tcb);
 # 167 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/object/tcb.h"
 tcb_queue_t tcbEPAppend(tcb_t *tcb, tcb_queue_t queue);
 tcb_queue_t tcbEPDequeue(tcb_t *tcb, tcb_queue_t queue);
@@ -5530,25 +5756,23 @@ exception_t __attribute__((__const__)) Arch_performTransfer(word_t arch, tcb_t *
 
 void setThreadName(tcb_t *thread, const char *name);
 # 13 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/model/statedata.h" 2
-# 38 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/model/statedata.h"
-/* UP states are declared as VISIBLE so that they are accessible in assembly */
 # 58 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/model/statedata.h"
-
-extern tcb_queue_t ksReadyQueues[(1 * 256)] __attribute__((externally_visible));
-extern word_t ksReadyQueuesL1Bitmap[1] __attribute__((externally_visible));
-extern word_t ksReadyQueuesL2Bitmap[1][((256 + (1 << 6) - 1) / (1 << 6))] __attribute__((externally_visible));
-extern tcb_t *ksCurThread __attribute__((externally_visible));
-extern tcb_t *ksIdleThread __attribute__((externally_visible));
-extern tcb_t *ksSchedulerAction __attribute__((externally_visible));
+typedef struct nodeState {
+tcb_queue_t ksReadyQueues[(1 * 256)];
+word_t ksReadyQueuesL1Bitmap[1];
+word_t ksReadyQueuesL2Bitmap[1][((256 + (1 << 6) - 1) / (1 << 6))];
+tcb_t *ksCurThread;
+tcb_t *ksIdleThread;
+tcb_t *ksSchedulerAction;
 # 76 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/model/statedata.h"
 /* The thread using the FPU, or NULL if FPU state is invalid */
-extern tcb_t * ksCurFPUOwner __attribute__((externally_visible));
+tcb_t * ksCurFPUOwner;
 
 
 
-extern tcb_t * ksDebugTCBs __attribute__((externally_visible));
+tcb_t * ksDebugTCBs;
 # 92 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/model/statedata.h"
-;
+} nodeState_t;
 
 extern word_t ksNumCPUs;
 
@@ -5566,7 +5790,7 @@ extern dom_t ksCurDomain;
 extern word_t ksDomScheduleStart;
 extern ticks_t ksDomainTime;
 
-extern char ksIdleThreadTCB[1][(1ul << (11))];
+extern char ksIdleThreadTCB[4][(1ul << (11))];
 # 20 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/machine/gic_v2.h" 2
 
 # 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/machine/gic_common.h" 1
@@ -5619,19 +5843,11 @@ extern char ksIdleThreadTCB[1][(1ul << (11))];
  * Currently only Arm SMP configurations use this scheme.
  */
 
-
-
-
-
-
-typedef word_t irq_t;
-
-
-
-
-
-
-
+typedef struct {
+    word_t irq;
+    word_t target_core;
+} irq_t;
+# 52 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/machine/interrupt.h"
 /**
  * Return a currently pending IRQ.
  *
@@ -5734,8 +5950,28 @@ static inline void deactivateInterrupt(irq_t irq) {}
 
 
 /* Shared Peripheral Interrupts */
-# 59 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/machine/gic_common.h"
-static const irq_t irqInvalid = (uint16_t) -1;
+
+
+
+
+
+
+
+/* In this case irq_t is a struct with an hw irq field and target core field.
+ * The following macros convert between (target_core, hw_irq) <-> irq_t <-> cnode index.
+ * IRQ_IS_PPI returns true if hw_irq < 32 which is a property of the GIC.
+ * The layout of IRQs into the CNode are all of PPI's for each core first, followed
+ * by the global interrupts.  Examples:
+ *   core: 0, irq: 12 -> index 12.
+ *   core: 2, irq: 16 -> (2 * 32) + 16
+ *   core: 1, irq: 33, (4 total cores) -> (4 * 32) + (33-32).
+ */
+# 55 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/machine/gic_common.h"
+static const irq_t irqInvalid = ((irq_t){.irq = (-1), .target_core = (-1)});
+
+
+
+
 
 
 /* Setters/getters helpers for hardware irqs */
@@ -5750,7 +5986,7 @@ static const irq_t irqInvalid = (uint16_t) -1;
  * reads will not return the same value For this reason, we have a
  * global variable to store the IRQ number.
  */
-extern word_t active_irq[1];
+extern word_t active_irq[4];
 
 static inline void handleSpuriousIRQ(void)
 {
@@ -5865,12 +6101,12 @@ static inline void dist_enable_set(word_t irq)
 static inline irq_t getActiveIRQ(void)
 {
     irq_t irq;
-    if (!(((active_irq[0lu]) & ((1ul << (10u)) - 1ul)) < 1020u)) {
-        active_irq[0lu] = gic_cpuiface->int_ack;
+    if (!(((active_irq[getCurrentCPUIndex()]) & ((1ul << (10u)) - 1ul)) < 1020u)) {
+        active_irq[getCurrentCPUIndex()] = gic_cpuiface->int_ack;
     }
 
-    if ((((active_irq[0lu]) & ((1ul << (10u)) - 1ul)) < 1020u)) {
-        irq = (active_irq[0lu] & ((1ul << (10u)) - 1ul));
+    if ((((active_irq[getCurrentCPUIndex()]) & ((1ul << (10u)) - 1ul)) < 1020u)) {
+        irq = ((irq_t){.irq = (active_irq[getCurrentCPUIndex()] & ((1ul << (10u)) - 1ul)), .target_core = (getCurrentCPUIndex())});
     } else {
         irq = irqInvalid;
     }
@@ -5891,22 +6127,114 @@ static inline bool_t isIRQPending(void)
 static inline void maskInterrupt(bool_t disable, irq_t irq)
 {
 
-
+    do { if (!(!((((irq.irq) < 32u))) || ((irq.target_core) == getCurrentCPUIndex()))) { _assert_fail("!(IRQ_IS_PPI(irq)) || (IRQT_TO_CORE(irq) == getCurrentCPUIndex())", "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/machine/gic_v2.h", 175, __func__); } } while(0);
 
     if (disable) {
-        dist_enable_clr((irq));
+        dist_enable_clr((irq.irq));
     } else {
-        dist_enable_set((irq));
+        dist_enable_set((irq.irq));
     }
 }
 
 static inline void ackInterrupt(irq_t irq)
 {
-    do { if (!((((active_irq[0lu]) & ((1ul << (10u)) - 1ul)) < 1020u) && (active_irq[0lu] & ((1ul << (10u)) - 1ul)) == (irq))) { _assert_fail("IS_IRQ_VALID(active_irq[CURRENT_CPU_INDEX()]) && (active_irq[CURRENT_CPU_INDEX()] & IRQ_MASK) == IRQT_TO_IRQ(irq)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/machine/gic_v2.h", 186, __func__); } } while(0)
+    do { if (!((((active_irq[getCurrentCPUIndex()]) & ((1ul << (10u)) - 1ul)) < 1020u) && (active_irq[getCurrentCPUIndex()] & ((1ul << (10u)) - 1ul)) == (irq.irq))) { _assert_fail("IS_IRQ_VALID(active_irq[CURRENT_CPU_INDEX()]) && (active_irq[CURRENT_CPU_INDEX()] & IRQ_MASK) == IRQT_TO_IRQ(irq)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/machine/gic_v2.h", 186, __func__); } } while(0)
                                                                                ;
-    gic_cpuiface->eoi = active_irq[0lu];
-    active_irq[0lu] = 1023u;
+    gic_cpuiface->eoi = active_irq[getCurrentCPUIndex()];
+    active_irq[getCurrentCPUIndex()] = 1023u;
 
+}
+
+
+
+
+/* GIC VCPU Control Interface */
+struct gich_vcpu_ctrl_map {
+    uint32_t hcr; /* 0x000 RW 0x00000000 Hypervisor Control Register */
+    uint32_t vtr; /* 0x004 RO IMPLEMENTATION DEFINED VGIC Type Register */
+    /* Save restore on VCPU switch */
+    uint32_t vmcr; /* 0x008 RW IMPLEMENTATION DEFINED Virtual Machine Control Register */
+    uint32_t res1[1];
+    /* IRQ pending flags */
+    uint32_t misr; /* 0x010 RO 0x00000000 Maintenance Interrupt Status Register */
+    uint32_t res2[3];
+    /* Bitfield of list registers that have EOI */
+    uint32_t eisr0; /* 0x020 RO 0x00000000 End of Interrupt Status Registers 0 and 1, see EISRn */
+    uint32_t eisr1; /* 0x024 RO 0x00000000 */
+    uint32_t res3[2];
+    /* Bitfield of list registers that are empty */
+    uint32_t elsr0; /* 0x030 RO IMPLEMENTATION DEFINED a */
+    uint32_t elsr1; /* 0x034 RO IMPLEMENTATION DEFINED a Empty List Register Status Registers 0 and 1, see ELRSRn */
+    uint32_t res4[46];
+    /* Active priority: bitfield of active priorities */
+    uint32_t apr; /* 0x0F0 RW 0x00000000 Active Priorities Register */
+    uint32_t res5[3];
+    uint32_t lr[64]; /* 0x100 RW 0x00000000 List Registers 0-63, see LRn */
+};
+
+extern volatile struct gich_vcpu_ctrl_map *gic_vcpu_ctrl;
+extern word_t gic_vcpu_num_list_regs;
+
+static inline uint32_t get_gic_vcpu_ctrl_hcr(void)
+{
+    return gic_vcpu_ctrl->hcr;
+}
+
+static inline void set_gic_vcpu_ctrl_hcr(uint32_t hcr)
+{
+    gic_vcpu_ctrl->hcr = hcr;
+}
+
+static inline uint32_t get_gic_vcpu_ctrl_vmcr(void)
+{
+    return gic_vcpu_ctrl->vmcr;
+}
+
+static inline void set_gic_vcpu_ctrl_vmcr(uint32_t vmcr)
+{
+    gic_vcpu_ctrl->vmcr = vmcr;
+}
+
+static inline uint32_t get_gic_vcpu_ctrl_apr(void)
+{
+    return gic_vcpu_ctrl->apr;
+}
+
+static inline void set_gic_vcpu_ctrl_apr(uint32_t apr)
+{
+    gic_vcpu_ctrl->apr = apr;
+}
+
+static inline uint32_t get_gic_vcpu_ctrl_vtr(void)
+{
+    return gic_vcpu_ctrl->vtr;
+}
+
+static inline uint32_t get_gic_vcpu_ctrl_eisr0(void)
+{
+    return gic_vcpu_ctrl->eisr0;
+}
+
+static inline uint32_t get_gic_vcpu_ctrl_eisr1(void)
+{
+    return gic_vcpu_ctrl->eisr1;
+}
+
+static inline uint32_t get_gic_vcpu_ctrl_misr(void)
+{
+    return gic_vcpu_ctrl->misr;
+}
+
+static inline virq_t get_gic_vcpu_ctrl_lr(int num)
+{
+    virq_t virq;
+    virq.words[0] = gic_vcpu_ctrl->lr[num];
+    return virq;
+}
+
+static inline void set_gic_vcpu_ctrl_lr(int num, virq_t lr)
+{
+    gic_vcpu_ctrl->lr[num] = lr.words[0];
 }
 # 24 "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/gen_headers/plat/platform_gen.h" 2
 # 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/drivers/timer/arm_generic.h" 1
@@ -6011,21 +6339,203 @@ static inline void isb(void)
  */
 
        
-# 213 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/object/vcpu.h"
-static inline void VGICMaintenance(void) {}
+# 51 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/object/vcpu.h"
+struct gicVCpuIface {
+    uint32_t hcr;
+    uint32_t vmcr;
+    uint32_t apr;
+    /* virq_t[] requires word-size alignment; add extra padding for
+     * 64-bit platforms to make this struct packed. */
+    uint32_t gicVCpuIface_padding;
+    virq_t lr[64];
+};
+
+
+struct vTimer {
+    uint64_t last_pcount;
+};
+
+
+enum VPPIEventIRQ {
+    VPPIEventIRQ_VTimer,
+    n_VPPIEventIRQ,
+    VPPIEventIRQ_invalid = n_VPPIEventIRQ,
+};
+typedef word_t VPPIEventIRQ_t;
+
+struct vcpu {
+    /* TCB associated with this VCPU. */
+    struct tcb *vcpuTCB;
+    struct gicVCpuIface vgic;
+    word_t regs[seL4_VCPUReg_Num];
+    bool_t vppi_masked[n_VPPIEventIRQ];
+
+    /* word_t vcpu_padding; */
+    /* vTimer is 8-bytes wide and has the same 8-byte alignment requirement.
+     * If the sum of n_VPPIEventIRQ and seL4_VCPUReg_Num is odd, we do not need
+     * extra padding. If the sum is even we do. It currently is odd, so the extra
+     * padding above is unnecessary for the struct to remain packed on 32 bit
+     * platforms.
+     */
+    struct vTimer virtTimer;
+
+};
+typedef struct vcpu vcpu_t;
+_Static_assert(sizeof(struct vcpu) <= (1ul << (12)), "vcpu_size_correct");
+
+_Static_assert((seL4_VCPUReg_Num + n_VPPIEventIRQ) % 2 == 1, "vcpu_virt_timer_alignment_valid");
+
+
+
+void VGICMaintenance(void);
+void handleVCPUFault(word_t hsr);
+void VPPIEvent(irq_t irq);
+
+void vcpu_init(vcpu_t *vcpu);
+
+/* Performs one off initialization of VCPU state and structures. Should be
+ * called in boot code before any other VCPU functions */
+__attribute__((__section__(".boot.text"))) void vcpu_boot_init(void);
+
+void vcpu_finalise(vcpu_t *vcpu);
+
+void associateVCPUTCB(vcpu_t *vcpu, tcb_t *tcb);
+
+void dissociateVCPUTCB(vcpu_t *vcpu, tcb_t *tcb);
+
+exception_t decodeARMVCPUInvocation(
+    word_t label,
+    word_t length,
+    cptr_t cptr,
+    cte_t *slot,
+    cap_t cap,
+    bool_t call,
+    word_t *buffer
+);
+
+void vcpu_restore(vcpu_t *cpu);
+void vcpu_switch(vcpu_t *cpu);
+void vcpu_flush(void);
+void vcpu_flush_if_current(tcb_t *tptr);
+
+void handleVCPUInjectInterruptIPI(vcpu_t *vcpu, unsigned long index, virq_t virq);
+
+
+exception_t decodeVCPUWriteReg(cap_t cap, word_t length, word_t *buffer);
+exception_t decodeVCPUReadReg(cap_t cap, word_t length, bool_t call, word_t *buffer);
+exception_t decodeVCPUInjectIRQ(cap_t cap, word_t length, word_t *buffer);
+exception_t decodeVCPUSetTCB(cap_t cap);
+exception_t decodeVCPUAckVPPI(cap_t cap, word_t length, word_t *buffer);
+
+exception_t invokeVCPUWriteReg(vcpu_t *vcpu, word_t field, word_t value);
+exception_t invokeVCPUReadReg(vcpu_t *vcpu, word_t field, bool_t call);
+exception_t invokeVCPUInjectIRQ(vcpu_t *vcpu, unsigned long index, virq_t virq);
+exception_t invokeVCPUSetTCB(vcpu_t *vcpu, tcb_t *tcb);
+exception_t invokeVCPUAckVPPI(vcpu_t *vcpu, VPPIEventIRQ_t vppi);
+static word_t vcpu_hw_read_reg(word_t reg_index);
+static void vcpu_hw_write_reg(word_t reg_index, word_t reg);
+
+static inline void vcpu_save_reg(vcpu_t *vcpu, word_t reg)
+{
+    if (reg >= seL4_VCPUReg_Num || vcpu == ((void *)0)) {
+        _fail("ARM/HYP: Invalid register index or NULL VCPU", "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/object/vcpu.h", 149, __func__);
+        return;
+    }
+    vcpu->regs[reg] = vcpu_hw_read_reg(reg);
+}
+
+static inline void vcpu_save_reg_range(vcpu_t *vcpu, word_t start, word_t end)
+{
+    for (word_t i = start; i <= end; i++) {
+        vcpu_save_reg(vcpu, i);
+    }
+}
+
+static inline void vcpu_restore_reg(vcpu_t *vcpu, word_t reg)
+{
+    if (reg >= seL4_VCPUReg_Num || vcpu == ((void *)0)) {
+        _fail("ARM/HYP: Invalid register index or NULL VCPU", "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/object/vcpu.h", 165, __func__);
+        return;
+    }
+    vcpu_hw_write_reg(reg, vcpu->regs[reg]);
+}
+
+static inline void vcpu_restore_reg_range(vcpu_t *vcpu, word_t start, word_t end)
+{
+    for (word_t i = start; i <= end; i++) {
+        vcpu_restore_reg(vcpu, i);
+    }
+}
+
+static inline word_t vcpu_read_reg(vcpu_t *vcpu, word_t reg)
+{
+    if (reg >= seL4_VCPUReg_Num || vcpu == ((void *)0)) {
+        _fail("ARM/HYP: Invalid register index or NULL VCPU", "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/object/vcpu.h", 181, __func__);
+        return 0;
+    }
+    return vcpu->regs[reg];
+}
+
+static inline void vcpu_write_reg(vcpu_t *vcpu, word_t reg, word_t value)
+{
+    if (reg >= seL4_VCPUReg_Num || vcpu == ((void *)0)) {
+        _fail("ARM/HYP: Invalid register index or NULL VCPU", "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/object/vcpu.h", 190, __func__);
+        return;
+    }
+    vcpu->regs[reg] = value;
+}
+
+static inline VPPIEventIRQ_t irqVPPIEventIndex(irq_t irq)
+{
+    switch ((irq.irq)) {
+    case 27:
+        return VPPIEventIRQ_VTimer;
+
+    default:
+        return VPPIEventIRQ_invalid;
+    }
+}
 # 11 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/model/statedata.h" 2
 
 
 
 
-
+typedef struct archNodeState {
 /* TODO: add ARM-dependent fields here */
 /* Bitmask of all cores should receive the reschedule IPI */
-extern word_t ipiReschedulePending __attribute__((externally_visible));
-# 29 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/model/statedata.h"
-;
+word_t ipiReschedulePending;
+
+vcpu_t *armHSCurVCPU;
+bool_t armHSVCPUActive;
+
+
+
+
+
+
+
+} archNodeState_t;
 # 12 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/model/smp.h" 2
+
+
+
+
+typedef struct smpStatedata {
+    archNodeState_t cpu;
+    nodeState_t system;
+    char padding[(1ul << (6)) - ((sizeof(archNodeState_t) + sizeof(nodeState_t)) % (1ul << (6)))];
+} smpStatedata_t;
+
+extern smpStatedata_t ksSMP[4];
+
+void migrateTCB(tcb_t *tcb, word_t new_core);
 # 12 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/model/smp.h" 2
+
+
+static inline cpu_id_t cpuIndexToID(word_t index)
+{
+    return (1ul << (index));
+}
 # 17 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/64/mode/machine.h" 2
 
 
@@ -6037,22 +6547,35 @@ extern word_t ipiReschedulePending __attribute__((externally_visible));
  */
 
        
-# 25 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/64/mode/machine_pl2.h"
-static inline void writeTPIDR_EL2(word_t reg) {}
-static inline word_t readTPIDR_EL2(void)
+
+
+
+static inline void writeTPIDR_EL2(word_t reg)
 {
-    return 0;
+    do { word_t _v = reg; __asm__ volatile("msr " "tpidr_el2" ",%x0" :: "r" (_v)); }while(0);
 }
 
-
-
+static inline word_t readTPIDR_EL2(void)
+{
+    word_t reg;
+    __asm__ volatile("mrs %x0," "tpidr_el2" : "=r"(reg));
+    return reg;
+}
+# 33 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/64/mode/machine_pl2.h"
 /* used in other files without guards */
 static inline void setCurrentPDPL2(paddr_t pa) {}
 static inline void invalidateHypTLB(void) {}
 static inline void writeContextIDPL2(word_t pd_val) {}
 static inline void writeContextIDAndPD(word_t id, word_t pd_val) {}
 # 20 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/64/mode/machine.h" 2
-# 46 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/64/mode/machine.h"
+# 39 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/64/mode/machine.h"
+/* Use the first two SGI (Software Generated Interrupt) IDs
+ * for seL4 IPI implementation. SGIs are per-core banked.
+ */
+
+
+
+
 word_t __attribute__((__pure__)) getRestartPC(tcb_t *thread);
 void setNextPC(tcb_t *thread, word_t v);
 
@@ -6141,13 +6664,13 @@ static inline bool_t checkTCR_EL2(void)
     word_t tcr_el2 = 0;
     __asm__ volatile("mrs %x0," "tcr_el2" : "=r"(tcr_el2));
 
-    return (tcr_el2 == ((16) | (1ul << (8)) | (1ul << (10)) | (3 << 12) | (0 << 14) | (4 << 16) | ((1ul << (23)) | (1ul << (31)))));
+    return (tcr_el2 == ((16) | (1ul << (8)) | (1ul << (10)) | (3 << 12) | (0 << 14) | (2 << 16) | ((1ul << (23)) | (1ul << (31)))));
 }
 
 static inline void setCurrentKernelVSpaceRoot(ttbr_t ttbr)
 {
     dsb();
-    if (wrap_config_set(0)) {
+    if (wrap_config_set(1)) {
         do { word_t _v = ttbr.words[0]; __asm__ volatile("msr " "ttbr0_el2" ",%x0" :: "r" (_v)); }while(0);
         dsb();
         isb();
@@ -6162,7 +6685,7 @@ static inline void setCurrentKernelVSpaceRoot(ttbr_t ttbr)
 static inline void setCurrentUserVSpaceRoot(ttbr_t ttbr)
 {
     dsb();
-    if (wrap_config_set(0)) {
+    if (wrap_config_set(1)) {
         do { word_t _v = ttbr.words[0]; __asm__ volatile("msr " "vttbr_el2" ",%x0" :: "r" (_v)); }while(0);
     } else {
         do { word_t _v = ttbr.words[0]; __asm__ volatile("msr " "ttbr0_el1" ",%x0" :: "r" (_v)); }while(0);
@@ -6179,7 +6702,7 @@ static inline word_t getVTTBR(void)
 
 static inline void setKernelStack(word_t stack_address)
 {
-    if (wrap_config_set(0)) {
+    if (wrap_config_set(1)) {
         writeTPIDR_EL2(stack_address);
     } else {
         writeTPIDR_EL1(stack_address);
@@ -6189,7 +6712,7 @@ static inline void setKernelStack(word_t stack_address)
 static inline void setVtable(pptr_t addr)
 {
     dsb();
-    if (wrap_config_set(0)) {
+    if (wrap_config_set(1)) {
         do { word_t _v = addr; __asm__ volatile("msr " "vbar_el2" ",%x0" :: "r" (_v)); }while(0);
     } else {
         do { word_t _v = addr; __asm__ volatile("msr " "vbar_el1" ",%x0" :: "r" (_v)); }while(0);
@@ -6210,7 +6733,7 @@ static inline void invalidateLocalTLB_EL1(void)
 static inline void invalidateLocalTLB(void)
 {
     dsb();
-    if (wrap_config_set(0)) {
+    if (wrap_config_set(1)) {
         invalidateLocalTLB_EL2();
         dsb();
         invalidateLocalTLB_EL1();
@@ -6288,9 +6811,9 @@ static inline void invalidateByVA_I(vptr_t vaddr, paddr_t paddr)
 static inline void invalidate_I_PoU(void)
 {
 
+    __asm__ volatile("ic ialluis");
 
 
-    __asm__ volatile("ic iallu");
 
     isb();
 }
@@ -6311,7 +6834,7 @@ static inline void branchFlush(vptr_t vaddr, paddr_t paddr)
 static inline word_t __attribute__((__pure__)) getESR(void)
 {
     word_t ESR;
-    if (wrap_config_set(0)) {
+    if (wrap_config_set(1)) {
         __asm__ volatile("mrs %x0," "esr_el2" : "=r"(ESR));
     } else {
         __asm__ volatile("mrs %x0," "esr_el1" : "=r"(ESR));
@@ -6322,7 +6845,7 @@ static inline word_t __attribute__((__pure__)) getESR(void)
 static inline word_t __attribute__((__pure__)) getFAR(void)
 {
     word_t FAR;
-    if (wrap_config_set(0)) {
+    if (wrap_config_set(1)) {
         __asm__ volatile("mrs %x0," "far_el2" : "=r"(FAR));
     } else {
         __asm__ volatile("mrs %x0," "far_el1" : "=r"(FAR));
@@ -6405,7 +6928,7 @@ void initTimer(void);
 # 42 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/drivers/timer/arm_generic.h" 2
 static inline void resetTimer(void)
 {
-    do { word_t _v = ((62500000llu / 1000llu) * 2); __asm__ volatile("msr " "cntv_tval_el0" ",%x0" :: "r" (_v)); }while(0);
+    do { word_t _v = ((62500000llu / 1000llu) * 2); __asm__ volatile("msr " "cnthp_tval_el2" ",%x0" :: "r" (_v)); }while(0);
     /* Ensure that the timer deasserts the IRQ before GIC EOIR/DIR.
      * This is sufficient to remove the pending state from the GICR
      * and avoid the interrupt happening twice because of the level
@@ -6415,6 +6938,11 @@ static inline void resetTimer(void)
 
 
 __attribute__((__section__(".boot.text"))) void initGenericTimer(void);
+
+
+static uint64_t read_cntpct(void) __attribute__((unused));
+static void save_virt_timer(vcpu_t *vcpu);
+static void restore_virt_timer(vcpu_t *vcpu);
 # 25 "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/gen_headers/plat/platform_gen.h" 2
 
 /* #undef CONFIGURE_SMMU */
@@ -6484,23 +7012,23 @@ extern char ki_end[1];
  * referred to a kernel virtual address. */
 static inline void *__attribute__((__const__)) ptrFromPAddr(paddr_t paddr)
 {
-    return (void *)(paddr + (0xffffff8000000000ul /* 2^64 - 2^39 */ - 0x0ul));
+    return (void *)(paddr + (0x0000008000000000ul /* 2^40 - 2^39 */ - 0x0ul));
 }
 
 /* When obtaining a physical address from a reference to any object in
  * the physical mapping window, this function must be used. */
 static inline paddr_t __attribute__((__const__)) addrFromPPtr(const void *pptr)
 {
-    return (paddr_t)pptr - (0xffffff8000000000ul /* 2^64 - 2^39 */ - 0x0ul);
+    return (paddr_t)pptr - (0x0000008000000000ul /* 2^40 - 2^39 */ - 0x0ul);
 }
 
 /* When obtaining a physical address from a reference to an address from
  * the kernel ELF mapping, this function must be used. */
 static inline paddr_t __attribute__((__const__)) addrFromKPPtr(const void *pptr)
 {
-    do { if (!((paddr_t)pptr >= ((0xffffff8000000000ul /* 2^64 - 2^39 */ - 0x0ul) + physBase()))) { _assert_fail("(paddr_t)pptr >= KERNEL_ELF_BASE", "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/machine.h", 33, __func__); } } while(0);
+    do { if (!((paddr_t)pptr >= ((0x0000008000000000ul /* 2^40 - 2^39 */ - 0x0ul) + physBase()))) { _assert_fail("(paddr_t)pptr >= KERNEL_ELF_BASE", "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/machine.h", 33, __func__); } } while(0);
     do { if (!((paddr_t)pptr <= ((paddr_t)ki_end))) { _assert_fail("(paddr_t)pptr <= KERNEL_ELF_TOP", "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/machine.h", 34, __func__); } } while(0);
-    return (paddr_t)pptr - (((0xffffff8000000000ul /* 2^64 - 2^39 */ - 0x0ul) + physBase()) - physBase());
+    return (paddr_t)pptr - (((0x0000008000000000ul /* 2^40 - 2^39 */ - 0x0ul) + physBase()) - physBase());
 }
 
 
@@ -6567,7 +7095,7 @@ void unmapPage(vm_page_size_t page_size, asid_t asid, vptr_t vptr, pptr_t pptr);
 void deleteASIDPool(asid_t base, asid_pool_t *pool);
 void deleteASID(asid_t asid, vspace_root_t *vspace);
 
-
+hw_asid_t getHWASID(asid_t asid);
 
 
 asid_map_t findMapForASID(asid_t asid);
@@ -6592,8 +7120,8 @@ static inline exception_t performASIDPoolInvocation(asid_t asid, asid_pool_t *po
                               /* vspace_root: reference to vspace root page table object */
                               cap_vspace_cap_get_capVSBasePtr(cap)
 
-
-
+                              /* stored_hw_vmid, stored_vmid_valid: Assigned hardware VMID for TLB. */
+                              , 0, false
 
                           );
     cap = cap_vspace_cap_set_capVSMappedASID(cap, asid);
@@ -6857,7 +7385,7 @@ extern kernel_entry_t ksKernelEntry;
 static inline void benchmark_debug_syscall_start(word_t cptr, word_t msgInfo, word_t syscall)
 {
     seL4_MessageInfo_t info = messageInfoFromWord_raw(msgInfo);
-    lookupCapAndSlot_ret_t lu_ret = lookupCapAndSlot(ksCurThread, cptr);
+    lookupCapAndSlot_ret_t lu_ret = lookupCapAndSlot(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, cptr);
     ksKernelEntry.path = Entry_Syscall;
     ksKernelEntry.syscall_no = -syscall;
     ksKernelEntry.cap_type = cap_get_capType(lu_ret.cap);
@@ -6895,7 +7423,7 @@ void initL2Cache(void);
 void initIRQController(void);
 void cpu_initLocalIRQController(void);
 
-
+void setIRQTarget(irq_t irq, seL4_Word target);
 
 bool_t plat_SGITargetValid(word_t target);
 void plat_sendSGI(word_t irq, word_t target);
@@ -6931,13 +7459,20 @@ static inline void clearMemory_PT(word_t *ptr, word_t bits)
     cleanCacheRange_PoU((word_t)ptr, (word_t)ptr + (1ul << (bits)) - 1,
                         addrFromPPtr(ptr));
 }
-# 67 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/machine.h"
+
+
+static inline void arch_pause(void)
+{
+    /* TODO */
+}
+
+
 /* Update the value of the actual register to hold the expected value */
 static inline exception_t Arch_setTLSRegister(word_t tls_base)
 {
     /* This register is saved and restored on kernel exit and entry so
      * we only update it in the saved context. */
-    setRegister(ksCurThread, TLS_BASE, tls_base);
+    setRegister(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, TLS_BASE, tls_base);
     return EXCEPTION_NONE;
 }
 # 13 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/kernel/thread.h" 2
@@ -6996,18 +7531,18 @@ static inline prio_t getHighestPrio(word_t dom)
     word_t l1index_inverted;
 
     /* it's undefined to call clzl on 0 */
-    do { if (!(ksReadyQueuesL1Bitmap[dom] != 0)) { _assert_fail("NODE_STATE(ksReadyQueuesL1Bitmap)[dom] != 0", "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/kernel/thread.h", 68, __func__); } } while(0);
+    do { if (!(ksSMP[(getCurrentCPUIndex())].system.ksReadyQueuesL1Bitmap[dom] != 0)) { _assert_fail("NODE_STATE(ksReadyQueuesL1Bitmap)[dom] != 0", "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/kernel/thread.h", 68, __func__); } } while(0);
 
-    l1index = (1 << 6) - 1 - clzl(ksReadyQueuesL1Bitmap[dom]);
+    l1index = (1 << 6) - 1 - clzl(ksSMP[(getCurrentCPUIndex())].system.ksReadyQueuesL1Bitmap[dom]);
     l1index_inverted = invert_l1index(l1index);
-    do { if (!(ksReadyQueuesL2Bitmap[dom][l1index_inverted] != 0)) { _assert_fail("NODE_STATE(ksReadyQueuesL2Bitmap)[dom][l1index_inverted] != 0", "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/kernel/thread.h", 72, __func__); } } while(0);
-    l2index = (1 << 6) - 1 - clzl(ksReadyQueuesL2Bitmap[dom][l1index_inverted]);
+    do { if (!(ksSMP[(getCurrentCPUIndex())].system.ksReadyQueuesL2Bitmap[dom][l1index_inverted] != 0)) { _assert_fail("NODE_STATE(ksReadyQueuesL2Bitmap)[dom][l1index_inverted] != 0", "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/kernel/thread.h", 72, __func__); } } while(0);
+    l2index = (1 << 6) - 1 - clzl(ksSMP[(getCurrentCPUIndex())].system.ksReadyQueuesL2Bitmap[dom][l1index_inverted]);
     return (l1index_to_prio(l1index) | l2index);
 }
 
 static inline bool_t isHighestPrio(word_t dom, prio_t prio)
 {
-    return ksReadyQueuesL1Bitmap[dom] == 0 ||
+    return ksSMP[(getCurrentCPUIndex())].system.ksReadyQueuesL1Bitmap[dom] == 0 ||
            prio >= getHighestPrio(dom);
 }
 
@@ -7148,7 +7683,7 @@ static inline void debug_printKernelEntryReason(void)
 /* Prints the user context and stack trace of the current thread */
 static inline void debug_printUserState(void)
 {
-    tcb_t *tptr = ksCurThread;
+    tcb_t *tptr = ksSMP[(getCurrentCPUIndex())].system.ksCurThread;
     printf("Current thread: %s\n", ((debug_tcb_t *)(((cte_t *)((word_t)(tptr)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName);
     printf("Next instruction address: %lx\n", getRestartPC(tptr));
     printf("Stack:\n");
@@ -7193,7 +7728,7 @@ static inline void debug_printTCB(tcb_t *tcb)
         _fail("Unknown thread state", "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/api/debug.h", 113, __func__);
     }
 
-    word_t core = 0;
+    word_t core = tcb->tcbAffinity;
     printf("%15s\t%p\t%20lu\t%lu", state, (void *) getRestartPC(tcb), tcb->tcbPriority, core);
 
 
@@ -7207,7 +7742,7 @@ static inline void debug_dumpScheduler(void)
     printf("Name                                    \tState          \tIP                  \t Prio \t Core%s\n",
            wrap_config_set(0) ? "\t InReleaseQueue" : "");
     printf("--------------------------------------------------------------------------------------\n");
-    for (tcb_t *curr = ksDebugTCBs; curr != ((void *)0); curr = ((debug_tcb_t *)(((cte_t *)((word_t)(curr)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbDebugNext) {
+    for (tcb_t *curr = ksSMP[(getCurrentCPUIndex())].system.ksDebugTCBs; curr != ((void *)0); curr = ((debug_tcb_t *)(((cte_t *)((word_t)(curr)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbDebugNext) {
         debug_printTCB(curr);
     }
 }
@@ -7222,7 +7757,7 @@ exception_t handleVMFaultEvent(vm_fault_type_t vm_faultType);
 static inline word_t __attribute__((__pure__)) getSyscallArg(word_t i, word_t *ipc_buffer)
 {
     if (i < n_msgRegisters) {
-        return getRegister(ksCurThread, msgRegisters[i]);
+        return getRegister(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, msgRegisters[i]);
     }
 
     do { if (!(ipc_buffer != ((void *)0))) { _assert_fail("ipc_buffer != NULL", "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/api/syscall.h", 44, __func__); } } while(0);
@@ -7272,9 +7807,9 @@ static inline word_t __attribute__((__const__)) sanitiseRegister(register_t reg,
 static inline bool_t __attribute__((__const__)) Arch_getSanitiseRegisterInfo(tcb_t *thread)
 {
 
+    return (thread->tcbArch.tcbVCPU != ((void *)0));
 
 
-    return 0;
 
 }
 # 10 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/kernel/thread.h" 2
@@ -7602,9 +8137,9 @@ static inline void Arch_postCapDeletion(cap_t cap)
 static inline __attribute__((__const__)) bool_t Arch_isIRQControlDescendant(cap_t cap)
 {
 
-    return cap_get_capType(cap) == cap_sgi_signal_cap;
 
 
+    return false;
 
 }
 
@@ -7620,10 +8155,6 @@ static inline __attribute__((__const__)) bool_t Arch_isIRQControlDescendant(cap_
 static inline __attribute__((__const__)) bool_t Arch_isMDBParentOf(cap_t cap_a, cap_t cap_b, bool_t firstBadged)
 {
     switch (cap_get_capType(cap_a)) {
-
-    case cap_sgi_signal_cap:
-        return !firstBadged;
-        break;
 # 77 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/object/objecttype.h"
     default:
         return true;
@@ -7672,8 +8203,18 @@ exception_t decodeSGISignalInvocation(word_t invLabel, word_t length,
 /* Handle a platform-reserved IRQ. */
 static inline void handleReservedIRQ(irq_t irq)
 {
+# 33 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/object/interrupt.h"
+    if ((irq.irq) == 25) {
+        VGICMaintenance();
+        return;
+    }
+
+    if (irqVPPIEventIndex(irq) != VPPIEventIRQ_invalid) {
+        VPPIEvent(irq);
+        return;
+    }
 # 52 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/object/interrupt.h"
-    printf("Received unhandled reserved IRQ: 0x%lx\n", (irq));
+    printf("Received unhandled reserved IRQ: 0x%lx\n", (irq.irq));
 
 }
 
@@ -7684,7 +8225,7 @@ static inline exception_t Arch_checkIRQ(word_t irq_w)
         current_syscall_error.type = seL4_RangeError;
         current_syscall_error.rangeErrorMin = 0;
         current_syscall_error.rangeErrorMax = maxIRQ;
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Rejecting request for IRQ %u. IRQ is out of range [0..%u]." ">>" "\033[0m" "\n", 0lu, __func__, 63, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), (int)irq_w, maxIRQ); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Rejecting request for IRQ %u. IRQ is out of range [0..%u]." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 63, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), (int)irq_w, maxIRQ); } while (0);
         return EXCEPTION_SYSCALL_ERROR;
     }
     return EXCEPTION_NONE;
@@ -7739,7 +8280,7 @@ word_t getObjectSize(word_t t, word_t userObjSize);
 static inline void postCapDeletion(cap_t cap)
 {
     if (cap_get_capType(cap) == cap_irq_handler_cap) {
-        irq_t irq = (cap_irq_handler_cap_get_capIRQ(cap));
+        irq_t irq = (((cap_irq_handler_cap_get_capIRQ(cap)) < 32u*4) ? ((irq_t){.irq = ((cap_irq_handler_cap_get_capIRQ(cap)) - ((cap_irq_handler_cap_get_capIRQ(cap))/32u)*32u), .target_core = ((cap_irq_handler_cap_get_capIRQ(cap)) / 32u)}): ((irq_t){.irq = ((cap_irq_handler_cap_get_capIRQ(cap)) - (4 -1)*32u), .target_core = (0)}));
         deletedIRQHandler(irq);
     } else if (isArchCap(cap)) {
         Arch_postCapDeletion(cap);
@@ -7906,12 +8447,12 @@ word_t strlcat(char *dest, const char *src, word_t size);
 
 static inline void arch_c_entry_hook(void)
 {
-    arm_save_thread_id(ksCurThread);
+    arm_save_thread_id(ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
 }
 
 static inline void arch_c_exit_hook(void)
 {
-    arm_load_thread_id(ksCurThread);
+    arm_load_thread_id(ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
 }
 
 void __attribute__((externally_visible)) __attribute__((__noreturn__)) restore_user_context(void);
@@ -7944,6 +8485,10 @@ void c_handle_data_fault(void)
 __attribute__((externally_visible)) __attribute__((__section__(".vectors.text")));
 
 void c_handle_instruction_fault(void)
+__attribute__((externally_visible)) __attribute__((__section__(".vectors.text")));
+
+
+void c_handle_vcpu_fault(word_t hsr)
 __attribute__((externally_visible)) __attribute__((__section__(".vectors.text")));
 # 12 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/kernel/traps.h" 2
 # 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/smp/lock.h" 1
@@ -7986,8 +8531,249 @@ __attribute__((externally_visible)) __attribute__((__section__(".vectors.text"))
  */
 
        
+
+
+
+
+typedef enum {
+    IpiRemoteCall_Stall,
+    IpiRemoteCall_InvalidateTranslationSingle,
+    IpiRemoteCall_InvalidateTranslationASID,
+    IpiRemoteCall_InvalidateTranslationAll,
+    IpiRemoteCall_switchFpuOwner,
+    IpiRemoteCall_MaskPrivateInterrupt,
+
+
+
+
+    IpiRemoteCall_VCPUInjectInterrupt,
+
+    /* Add relevant calls here upon required */
+    IpiNumArchRemoteCall
+} IpiRemoteCall_t;
 # 13 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/smp/ipi.h" 2
+
+
+
+
+typedef struct {
+    word_t count; /* IPI barrier for remote call synchronization */
+    word_t globalsense;
+    word_t totalCoreBarrier; /* number of cores involved in IPI 'in progress' */
+    IpiRemoteCall_t remoteCall; /* the remote call being requested */
+    word_t args[3 /* Maximum number of parameters to remote function */]; /* data to be passed to the remote call function */
+} ipi_state_t;
+
+void ipi_wait(void);
+
+/* Architecture independent function for sending handling pre-hardware-send IPIs */
+void generic_ipi_send_mask(irq_t ipi, word_t mask, bool_t isBlocking);
+
+/* An architecture/platform should implement this function either as a wrapper to
+ * its own arch_ipi_send_mask() or using the generic_ipi_send_mask() function
+ * provided to be architecture agnostic.
+ */
+void ipi_send_mask(irq_t ipi, word_t mask, bool_t isBlocking);
+
+/* Hardware implementation for sending IPIs */
+void ipi_send_target(irq_t irq, word_t cpuTargetList);
+
+/* An architecture/platform should implement this function */
+void handleRemoteCall(IpiRemoteCall_t call, word_t arg0, word_t arg1, word_t arg2, bool_t irqPath);
+
+/* This function switches the core it is called on to the idle thread,
+ * in order to avoid IPI storms. If the core is waiting on the lock, the actual
+ * switch will not occur until the core attempts to obtain the lock, at which
+ * point the core will capture the pending IPI, which is discarded.
+
+ * The core who triggered the store is responsible for triggering a reschedule,
+ * or this call will idle forever */
+void ipiStallCoreCallback(bool_t irqPath);
+
+/* IPIs could be handled, both using hardware interrupts and software flag
+ * in CLH lock. 'irqPath' is used to differentiate the caller path, i.e.
+ * if it is called while waiting on the lock to handle the IRQ or not. The
+ * remote call handler, would decide if 'handleIPI' should return base
+ * on this value, as IRQs could be re/triggered asynchronous */
+void handleIPI(irq_t irq, bool_t irqPath);
+
+/*
+ * Run a synchronous function on all cores specified by mask. Return when target cores
+ * have all executed the function. Caller must hold the lock.
+ *
+ * @param func the function to run
+ * @param data1 passed to the function as first parameter
+ * @param data2 passed to the function as second parameter
+ * @param mask cores to run function on
+ */
+void doRemoteMaskOp(IpiRemoteCall_t func, word_t data1, word_t data2, word_t data3, word_t mask);
+
+/* Run a synchronous function on a core specified by cpu.
+ *
+ * @param func the function to run
+ * @param data1 passed to the function as first parameter
+ * @param data2 passed to the function as second parameter
+ * @param cpu core to run function on
+ */
+static void inline doRemoteOp(IpiRemoteCall_t func, word_t data1, word_t data2, word_t data3, word_t cpu)
+{
+    doRemoteMaskOp(func, data1, data2, data3, (1ul << (cpu)));
+}
+
+/* List of wrapper functions
+ *
+ * doRemote[Mask]Op0Arg: do remote operation without any argument
+ * doRemote[Mask]Op1Arg: do remote operation with one argument
+ * doRemote[Mask]Op2Arg: do remote operation with two arguments
+ * These should be used in favour of directly calling 'doRemote[Mask]Op'
+ * in case arguments change in future.
+ *
+ * @param func the function to run
+ * @param data passed to the function as parameters
+ * @param cpu[mask] cores to run function on
+ */
+static void inline doRemoteMaskOp0Arg(IpiRemoteCall_t func, word_t mask)
+{
+    doRemoteMaskOp(func, 0, 0, 0, mask);
+}
+
+static void inline doRemoteMaskOp1Arg(IpiRemoteCall_t func, word_t data1, word_t mask)
+{
+    doRemoteMaskOp(func, data1, 0, 0, mask);
+}
+
+static void inline doRemoteMaskOp2Arg(IpiRemoteCall_t func, word_t data1, word_t data2, word_t mask)
+{
+    doRemoteMaskOp(func, data1, data2, 0, mask);
+}
+
+static void inline doRemoteMaskOp3Arg(IpiRemoteCall_t func, word_t data1, word_t data2, word_t data3, word_t mask)
+{
+    doRemoteMaskOp(func, data1, data2, data3, mask);
+}
+
+static void inline doRemoteOp0Arg(IpiRemoteCall_t func, word_t cpu)
+{
+    doRemoteOp(func, 0, 0, 0, cpu);
+}
+
+static void inline doRemoteOp1Arg(IpiRemoteCall_t func, word_t data1, word_t cpu)
+{
+    doRemoteOp(func, data1, 0, 0, cpu);
+}
+
+static void inline doRemoteOp2Arg(IpiRemoteCall_t func, word_t data1, word_t data2, word_t cpu)
+{
+    doRemoteOp(func, data1, data2, 0, cpu);
+}
+
+static void inline doRemoteOp3Arg(IpiRemoteCall_t func, word_t data1, word_t data2, word_t data3, word_t cpu)
+{
+    doRemoteOp(func, data1, data2, data3, cpu);
+}
+
+/* This is asynchronous call and could be called outside the lock.
+ * Returns immediately.
+ *
+ * @param mask cores to request rescheduling
+ */
+void doMaskReschedule(word_t mask);
+
+
+
+exception_t handle_SysDebugSendIPI(void);
 # 15 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/smp/lock.h" 2
+
+
+
+
+/* CLH lock is FIFO lock for machines with coherent caches (coherent-FIFO lock).
+ * See ftp://ftp.cs.washington.edu/tr/1993/02/UW-CSE-93-02-02.pdf */
+
+typedef enum {
+    CLHState_Granted = 0,
+    CLHState_Pending
+} clh_req_state_t;
+
+/* Lock request */
+typedef struct clh_req {
+    clh_req_state_t state;
+} __attribute__((__aligned__((1ul << (6))))) clh_req_t;
+
+/* Our node (called "Process" in the paper) */
+typedef struct clh_node {
+    clh_req_t *watch; // Used by predecessor to grant the lock to us.
+    clh_req_t *myreq; // Used to grant the lock to our successor.
+    /* This is the software blocking IPI flag */
+    word_t ipi;
+} __attribute__((__aligned__((1ul << (6))))) clh_node_t;
+
+typedef struct clh_lock {
+    clh_req_t request[4 + 1];
+    clh_node_t node[4];
+
+    clh_req_t *tail;
+
+    /* Global IPI state */
+    ipi_state_t ipi;
+} __attribute__((__aligned__(2048))) clh_lock_t;
+
+extern clh_lock_t big_kernel_lock;
+__attribute__((__section__(".boot.text"))) void clh_lock_init(void);
+
+static inline bool_t __attribute__((always_inline)) clh_is_ipi_pending(word_t cpu)
+{
+    /* Asssure IPI data is accessed only when this flag is set */
+    return __atomic_load_n(&big_kernel_lock.node[cpu].ipi, 2);
+}
+
+static inline void __attribute__((always_inline)) clh_lock_acquire(bool_t irqPath)
+{
+    word_t cpu = getCurrentCPUIndex();
+    clh_node_t *node = &big_kernel_lock.node[cpu];
+
+    /* Tell successor to wait */
+    node->myreq->state = CLHState_Pending;
+    /* Enqueue our request */
+    node->watch = __atomic_exchange_n(&big_kernel_lock.tail, node->myreq, 4);
+
+    /* Wait until predecessor finishes */
+    while (node->watch->state != CLHState_Granted) {
+        /* As we are in a loop we need to ensure that any loads of future iterations of the
+         * loop are performed after this one */
+        __atomic_thread_fence(2);
+        if (clh_is_ipi_pending(cpu)) {
+            /* we only handle irq_remote_call_ipi here as other type of IPIs
+             * are async and could be delayed. 'handleIPI' may not return
+             * based on value of the 'irqPath'. */
+            handleIPI(((irq_t){.irq = (0), .target_core = (cpu)}), irqPath);
+            /* We do not need to perform a memory release here as we would have only modified
+             * local state that we do not need to make visible */
+        }
+        arch_pause();
+    }
+
+    /* make sure no resource access passes from this point */
+    __atomic_thread_fence(2);
+}
+
+static inline void __attribute__((always_inline)) clh_lock_release(void)
+{
+    clh_node_t *node = &big_kernel_lock.node[getCurrentCPUIndex()];
+
+    /* make sure no resource access passes from this point */
+    __atomic_thread_fence(3);
+
+    /* Pass lock to successor */
+    node->myreq->state = CLHState_Granted;
+    /* Take ownership of watched request, to use next time we take the lock */
+    node->myreq = node->watch;
+}
+
+static inline bool_t __attribute__((always_inline)) clh_is_self_in_queue(void)
+{
+    return big_kernel_lock.node[getCurrentCPUIndex()].myreq->state == CLHState_Pending;
+}
 # 13 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/kernel/traps.h" 2
 
 /* This C function should be the first thing called from C after entry from
@@ -8114,12 +8900,12 @@ static inline void checkInterrupt(bool_t was_interrupt_entry)
     irq_t irq;
 
     irq = getActiveIRQ();
-    if ((irq) != (irqInvalid)) {
+    if ((irq.irq) != (irqInvalid.irq)) {
         handleInterrupt(irq);
     } else {
 
         if (was_interrupt_entry) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Spurious interrupt!" ">>" "\033[0m" "\n", 0lu, __func__, 59, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Spurious interrupt!" ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 59, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         }
 
         handleSpuriousIRQ();
@@ -8161,7 +8947,7 @@ exception_t handleUnknownSyscall(word_t w)
 {
 
     if (w == SysDebugPutChar) {
-        kernel_putchar(getRegister(ksCurThread, capRegister));
+        kernel_putchar(getRegister(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, capRegister));
         return EXCEPTION_NONE;
     }
     if (w == SysDebugDumpScheduler) {
@@ -8173,22 +8959,22 @@ exception_t handleUnknownSyscall(word_t w)
 
 
     if (w == SysDebugHalt) {
-        tcb_t *__attribute__((unused)) tptr = ksCurThread;
+        tcb_t *__attribute__((unused)) tptr = ksSMP[(getCurrentCPUIndex())].system.ksCurThread;
         printf("Debug halt syscall from user thread %p \"%s\"\n", tptr, ((debug_tcb_t *)(((cte_t *)((word_t)(tptr)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName);
         halt();
     }
     if (w == SysDebugSnapshot) {
-        tcb_t *__attribute__((unused)) tptr = ksCurThread;
+        tcb_t *__attribute__((unused)) tptr = ksSMP[(getCurrentCPUIndex())].system.ksCurThread;
         printf("Debug snapshot syscall from user thread %p \"%s\"\n",
                tptr, ((debug_tcb_t *)(((cte_t *)((word_t)(tptr)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName);
         debug_capDL();
         return EXCEPTION_NONE;
     }
     if (w == SysDebugCapIdentify) {
-        word_t cptr = getRegister(ksCurThread, capRegister);
-        lookupCapAndSlot_ret_t lu_ret = lookupCapAndSlot(ksCurThread, cptr);
+        word_t cptr = getRegister(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, capRegister);
+        lookupCapAndSlot_ret_t lu_ret = lookupCapAndSlot(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, cptr);
         word_t cap_type = cap_get_capType(lu_ret.cap);
-        setRegister(ksCurThread, capRegister, cap_type);
+        setRegister(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, capRegister, cap_type);
         return EXCEPTION_NONE;
     }
 
@@ -8197,31 +8983,35 @@ exception_t handleUnknownSyscall(word_t w)
          * then assume the system is completely misconfigured and halt */
         const char *name;
         word_t len;
-        word_t cptr = getRegister(ksCurThread, capRegister);
-        lookupCapAndSlot_ret_t lu_ret = lookupCapAndSlot(ksCurThread, cptr);
+        word_t cptr = getRegister(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, capRegister);
+        lookupCapAndSlot_ret_t lu_ret = lookupCapAndSlot(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, cptr);
         /* ensure we got a TCB cap */
         word_t cap_type = cap_get_capType(lu_ret.cap);
         if (cap_type != cap_thread_cap) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "SysDebugNameThread: cap is not a TCB, halting" ">>" "\033[0m" "\n", 0lu, __func__, 142, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "SysDebugNameThread: cap is not a TCB, halting" ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 142, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             halt();
         }
         /* Add 1 to the IPC buffer to skip the message info word */
-        name = (const char *)(lookupIPCBuffer(true, ksCurThread) + 1);
+        name = (const char *)(lookupIPCBuffer(true, ksSMP[(getCurrentCPUIndex())].system.ksCurThread) + 1);
         if (!name) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "SysDebugNameThread: Failed to lookup IPC buffer, halting" ">>" "\033[0m" "\n", 0lu, __func__, 148, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "SysDebugNameThread: Failed to lookup IPC buffer, halting" ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 148, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             halt();
         }
         /* ensure the name isn't too long */
         len = strnlen(name, seL4_MsgMaxLength * sizeof(word_t));
         if (len == seL4_MsgMaxLength * sizeof(word_t)) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "SysDebugNameThread: Name too long, halting" ">>" "\033[0m" "\n", 0lu, __func__, 154, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "SysDebugNameThread: Name too long, halting" ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 154, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             halt();
         }
         setThreadName(((tcb_t *)(cap_thread_cap_get_capTCBPtr(lu_ret.cap))), name);
         return EXCEPTION_NONE;
     }
+
+    if (w == SysDebugSendIPI) {
+        return handle_SysDebugSendIPI();
+    }
 # 234 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/api/syscall.c"
-    { { current_fault = seL4_Fault_UnknownSyscall_new(w); handleFault(ksCurThread); } }
+    { { current_fault = seL4_Fault_UnknownSyscall_new(w); handleFault(ksSMP[(getCurrentCPUIndex())].system.ksCurThread); } }
 # 251 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/api/syscall.c"
     schedule();
     activateThread();
@@ -8231,7 +9021,7 @@ exception_t handleUnknownSyscall(word_t w)
 
 exception_t handleUserLevelFault(word_t w_a, word_t w_b)
 {
-    { { current_fault = seL4_Fault_UserException_new(w_a, w_b); handleFault(ksCurThread); } }
+    { { current_fault = seL4_Fault_UserException_new(w_a, w_b); handleFault(ksSMP[(getCurrentCPUIndex())].system.ksCurThread); } }
 
 
 
@@ -8243,7 +9033,7 @@ exception_t handleUserLevelFault(word_t w_a, word_t w_b)
 
 exception_t handleVMFaultEvent(vm_fault_type_t vm_faultType)
 {
-    { { exception_t status = handleVMFault(ksCurThread, vm_faultType); if (status != EXCEPTION_NONE) { handleFault(ksCurThread); } } }
+    { { exception_t status = handleVMFault(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, vm_faultType); if (status != EXCEPTION_NONE) { handleFault(ksSMP[(getCurrentCPUIndex())].system.ksCurThread); } } }
 # 280 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/api/syscall.c"
     schedule();
     activateThread();
@@ -8264,7 +9054,7 @@ static exception_t handleInvocation(bool_t isCall, bool_t isBlocking)
     word_t length;
     tcb_t *thread;
 
-    thread = ksCurThread;
+    thread = ksSMP[(getCurrentCPUIndex())].system.ksCurThread;
 
     info = messageInfoFromWord(getRegister(thread, msgInfoRegister));
 
@@ -8275,7 +9065,7 @@ static exception_t handleInvocation(bool_t isCall, bool_t isBlocking)
     lu_ret = lookupCapAndSlot(thread, cptr);
 
     if (__builtin_expect(!!(lu_ret.status != EXCEPTION_NONE), 0)) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Invocation of invalid cap #%lu." ">>" "\033[0m" "\n", 0lu, __func__, 310, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), cptr); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Invocation of invalid cap #%lu." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 310, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), cptr); } while (0);
         current_fault = seL4_Fault_CapFault_new(cptr, false);
 
         if (isBlocking) {
@@ -8290,7 +9080,7 @@ static exception_t handleInvocation(bool_t isCall, bool_t isBlocking)
     status = lookupExtraCaps(thread, buffer, info);
 
     if (__builtin_expect(!!(status != EXCEPTION_NONE), 0)) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Lookup of extra caps failed." ">>" "\033[0m" "\n", 0lu, __func__, 325, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Lookup of extra caps failed." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 325, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         if (isBlocking) {
             handleFault(thread);
         }
@@ -8340,7 +9130,7 @@ static void handleReply(void)
     cte_t *callerSlot;
     cap_t callerCap;
 
-    callerSlot = (((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCaller));
+    callerSlot = (((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCaller));
     callerCap = callerSlot->cap;
 
     switch (cap_get_capType(callerCap)) {
@@ -8353,8 +9143,8 @@ static void handleReply(void)
         caller = ((tcb_t *)(cap_reply_cap_get_capTCBPtr(callerCap)));
         /* Haskell error:
          * "handleReply: caller must not be the current thread" */
-        do { if (!(caller != ksCurThread)) { _assert_fail("caller != NODE_STATE(ksCurThread)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/api/syscall.c", 411, __func__); } } while(0);
-        doReplyTransfer(ksCurThread, caller, callerSlot,
+        do { if (!(caller != ksSMP[(getCurrentCPUIndex())].system.ksCurThread)) { _assert_fail("caller != NODE_STATE(ksCurThread)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/api/syscall.c", 411, __func__); } } while(0);
+        doReplyTransfer(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, caller, callerSlot,
                         cap_reply_cap_get_capReplyCanGrant(callerCap));
         return;
     }
@@ -8380,14 +9170,14 @@ static void handleRecv(bool_t isBlocking)
     word_t epCPtr;
     lookupCap_ret_t lu_ret;
 
-    epCPtr = getRegister(ksCurThread, capRegister);
+    epCPtr = getRegister(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, capRegister);
 
-    lu_ret = lookupCap(ksCurThread, epCPtr);
+    lu_ret = lookupCap(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, epCPtr);
 
     if (__builtin_expect(!!(lu_ret.status != EXCEPTION_NONE), 0)) {
         /* current_lookup_fault has been set by lookupCap */
         current_fault = seL4_Fault_CapFault_new(epCPtr, true);
-        handleFault(ksCurThread);
+        handleFault(ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
         return;
     }
 
@@ -8396,12 +9186,12 @@ static void handleRecv(bool_t isBlocking)
         if (__builtin_expect(!!(!cap_endpoint_cap_get_capCanReceive(lu_ret.cap)), 0)) {
             current_lookup_fault = lookup_fault_missing_capability_new(0);
             current_fault = seL4_Fault_CapFault_new(epCPtr, true);
-            handleFault(ksCurThread);
+            handleFault(ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
             break;
         }
 # 471 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/api/syscall.c"
-        deleteCallerCap(ksCurThread);
-        receiveIPC(ksCurThread, lu_ret.cap, isBlocking);
+        deleteCallerCap(ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
+        receiveIPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, lu_ret.cap, isBlocking);
 
         break;
 
@@ -8410,21 +9200,21 @@ static void handleRecv(bool_t isBlocking)
         tcb_t *boundTCB;
         ntfnPtr = ((notification_t *)(cap_notification_cap_get_capNtfnPtr(lu_ret.cap)));
         boundTCB = (tcb_t *)notification_ptr_get_ntfnBoundTCB(ntfnPtr);
-        if (__builtin_expect(!!(!cap_notification_cap_get_capNtfnCanReceive(lu_ret.cap) || (boundTCB && boundTCB != ksCurThread)), 0)
+        if (__builtin_expect(!!(!cap_notification_cap_get_capNtfnCanReceive(lu_ret.cap) || (boundTCB && boundTCB != ksSMP[(getCurrentCPUIndex())].system.ksCurThread)), 0)
                                                                           ) {
             current_lookup_fault = lookup_fault_missing_capability_new(0);
             current_fault = seL4_Fault_CapFault_new(epCPtr, true);
-            handleFault(ksCurThread);
+            handleFault(ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
             break;
         }
 
-        receiveSignal(ksCurThread, lu_ret.cap, isBlocking);
+        receiveSignal(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, lu_ret.cap, isBlocking);
         break;
     }
     default:
         current_lookup_fault = lookup_fault_missing_capability_new(0);
         current_fault = seL4_Fault_CapFault_new(epCPtr, true);
-        handleFault(ksCurThread);
+        handleFault(ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
         break;
     }
 }
@@ -8432,8 +9222,8 @@ static void handleRecv(bool_t isBlocking)
 static void handleYield(void)
 {
 # 536 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/api/syscall.c"
-    tcbSchedDequeue(ksCurThread);
-    tcbSchedAppend(ksCurThread);
+    tcbSchedDequeue(ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
+    tcbSchedAppend(ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
     rescheduleRequired();
 
 }
@@ -8506,7 +9296,7 @@ static inline void armv_contextSwitch_HWASID(vspace_root_t *vspace, asid_t asid)
 static inline void armv_contextSwitch(vspace_root_t *vspace, asid_t asid)
 {
 
-
+    asid = getHWASID(asid);
 
     setCurrentUserVSpaceRoot(ttbr_new(asid, addrFromPPtr(vspace)));
 }
@@ -8525,12 +9315,17 @@ extern asid_pool_t *armKSASIDTable[(1ul << (asidHighBits))] __attribute__((exter
 
 /* This is the temporary userspace page table in kernel. It is required before running
  * user thread to avoid speculative page table walking with the wrong page table. */
-extern vspace_root_t armKSGlobalUserVSpace[(1ul << (9))] __attribute__((externally_visible));
+extern vspace_root_t armKSGlobalUserVSpace[(1ul << (10))] __attribute__((externally_visible));
 extern pte_t armKSGlobalKernelPGD[(1ul << (9))] __attribute__((externally_visible));
 
 extern pte_t armKSGlobalKernelPUD[(1ul << (9))] __attribute__((externally_visible));
 extern pte_t armKSGlobalKernelPDs[(1ul << (9))][(1ul << (9))] __attribute__((externally_visible));
 extern pte_t armKSGlobalKernelPT[(1ul << (9))] __attribute__((externally_visible));
+
+
+
+extern asid_t armKSHWASIDTable[(1ul << (hwASIDBits))] __attribute__((externally_visible));
+extern hw_asid_t armKSNextASID __attribute__((externally_visible));
 # 16 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/64/mode/fastpath/fastpath.h" 2
 
 # 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/machine/fpu.h" 1
@@ -8672,7 +9467,7 @@ static inline void enableFpuEL01(void)
 /** DONT_TRANSLATE */
 static inline void enableFpu(void)
 {
-    if (wrap_config_set(0)) {
+    if (wrap_config_set(1)) {
         disableTrapFpu();
     } else {
         enableFpuEL01();
@@ -8706,7 +9501,7 @@ static inline void disableFpuEL0(void)
 /* Disable the FPU so that usage of it causes a fault */
 static inline void disableFpu(void)
 {
-    if (wrap_config_set(0)) {
+    if (wrap_config_set(1)) {
         enableTrapFpu();
     } else {
         disableFpuEL0();
@@ -8731,7 +9526,7 @@ void switchFpuOwner(tcb_t *new_owner, word_t cpu);
 /* Returns whether or not the passed thread is using the current active fpu state */
 static inline bool_t nativeThreadUsingFPU(tcb_t *thread)
 {
-    return thread == ksCurFPUOwner;
+    return thread == ksSMP[(thread->tcbAffinity)].system.ksCurFPUOwner;
 }
 
 static inline void __attribute__((always_inline)) lazyFPURestore(tcb_t *thread)
@@ -8762,8 +9557,8 @@ switchToThread_fp(tcb_t *thread, vspace_root_t *vroot, pde_t stored_hw_asid)
 {
     asid_t asid;
 
-    if (wrap_config_set(0)) {
-        do {} while(0);
+    if (wrap_config_set(1)) {
+        vcpu_switch(thread->tcbArch.tcbVCPU);
     }
     asid = (asid_t)(stored_hw_asid.words[0] & 0xffff);
     armv_contextSwitch_HWASID(vroot, asid);
@@ -8776,7 +9571,7 @@ switchToThread_fp(tcb_t *thread, vspace_root_t *vroot, pde_t stored_hw_asid)
     lazyFPURestore(thread);
 
 
-    ksCurThread = thread;
+    ksSMP[(getCurrentCPUIndex())].system.ksCurThread = thread;
 }
 # 89 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/64/mode/fastpath/fastpath.h"
 static inline void mdb_node_ptr_mset_mdbNext_mdbRevocable_mdbFirstBadged(
@@ -8838,7 +9633,7 @@ static inline void __attribute__((__noreturn__)) __attribute__((always_inline)) 
 
 
 
-    do {} while (0);
+    do { clh_lock_release(); } while(0);
 
     register word_t badge_reg __asm__("x0") = badge;
     register word_t msgInfo_reg __asm__("x1") = msgInfo;
@@ -8852,11 +9647,11 @@ static inline void __attribute__((__noreturn__)) __attribute__((always_inline)) 
         "ldr     x23, [sp, %[SPSR_EL1]]     \n"
         "msr     sp_el0, x21                \n"
 
+        "msr     elr_el2, x22               \n"
+        "msr     spsr_el2, x23              \n"
 
 
 
-        "msr     elr_el1, x22               \n"
-        "msr     spsr_el1, x23              \n"
 
 
         /* Restore remaining registers */
@@ -8950,7 +9745,7 @@ void __attribute__((externally_visible)) __attribute__((__noreturn__)) restore_u
 
 
 
-    do {} while (0);
+    do { if(clh_is_self_in_queue()) { do { clh_lock_release(); } while(0); } } while(0);
 
     __asm__ volatile(
         "mov     sp, %0                     \n"
@@ -8960,11 +9755,11 @@ void __attribute__((externally_visible)) __attribute__((__noreturn__)) restore_u
         "ldr     x23, [sp, %[SPSR_EL1]]    \n"
         "msr     sp_el0, x21                \n"
 
+        "msr     elr_el2, x22               \n"
+        "msr     spsr_el2, x23              \n"
 
 
 
-        "msr     elr_el1, x22               \n"
-        "msr     spsr_el1, x23              \n"
 
         /* Restore remaining registers */
         "ldp     x0,  x1,  [sp, #16 * 0]    \n"
@@ -8985,7 +9780,7 @@ void __attribute__((externally_visible)) __attribute__((__noreturn__)) restore_u
         "ldr     x30, [sp, %[LR]]          \n"
         "eret"
         :
-        : "r"(ksCurThread->tcbArch.tcbContext.registers),
+        : "r"(ksSMP[(getCurrentCPUIndex())].system.ksCurThread->tcbArch.tcbContext.registers),
         [SP_EL0] "i"((31 * 8)), [SPSR_EL1] "i"((33 * 8)), [LR] "i"((30 * 8))
         : "memory"
     );
@@ -9026,22 +9821,22 @@ void __attribute__((__noreturn__)) __attribute__((noinline)) __attribute__((exte
 # 14 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/thread.c"
 void Arch_switchToThread(tcb_t *tcb)
 {
-    if (wrap_config_set(0)) {
-        do {} while(0);
+    if (wrap_config_set(1)) {
+        vcpu_switch(tcb->tcbArch.tcbVCPU);
     }
     setVMRoot(tcb);
 }
 
 __attribute__((__section__(".boot.text"))) void Arch_configureIdleThread(tcb_t *tcb)
 {
-    setRegister(tcb, SPSR_EL1, ((1 << 6) | 5 | 0));
+    setRegister(tcb, SPSR_EL1, ((1 << 6) | 9 | 0));
     setRegister(tcb, ELR_EL1, (word_t)&idle_thread);
 }
 
 void Arch_switchToIdleThread(void)
 {
-    if (wrap_config_set(0)) {
-        do {} while(0);
+    if (wrap_config_set(1)) {
+        vcpu_switch(((void *)0));
     }
     setCurrentUserVSpaceRoot(ttbr_new(0, addrFromKPPtr(armKSGlobalUserVSpace)));
 }
@@ -9450,6 +10245,8 @@ enum invocation_label {
     TCBResume,
     TCBBindNotification,
     TCBUnbindNotification,
+
+    TCBSetAffinity,
 # 63 "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/gen_headers/api/invocation.h"
     TCBSetTLSBase,
     TCBSetFlags,
@@ -9507,13 +10304,24 @@ enum arch_invocation_label {
     ARMPageGetAddress,
     ARMASIDControlMakePool,
     ARMASIDPoolAssign,
-# 51 "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/gen_headers/arch/api/invocation.h"
+
+    ARMVCPUSetTCB,
+
+
+    ARMVCPUInjectIRQ,
+
+
+    ARMVCPUReadReg,
+
+
+    ARMVCPUWriteReg,
+
+
+    ARMVCPUAckVPPI,
+
     ARMIRQIssueIRQHandlerTrigger,
 
-
-
-
-    ARMIRQIssueSGISignal,
+    ARMIRQIssueIRQHandlerTriggerCore,
 # 94 "/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/gen_headers/arch/api/invocation.h"
     nArchInvocationLabels
 };
@@ -9590,26 +10398,114 @@ static inline void clearIOPageDirectory(cap_t cap)
  */
 
        
+
+
+
+
+
+static inline void doRemoteStall(word_t cpu)
+{
+    doRemoteOp0Arg(IpiRemoteCall_Stall, cpu);
+}
+
+
+static inline void doRemoteswitchFpuOwner(tcb_t *new_owner, word_t cpu)
+{
+    doRemoteOp1Arg(IpiRemoteCall_switchFpuOwner, (word_t)new_owner, cpu);
+}
+
+
+static inline void doRemoteInvalidateTranslationSingle(vptr_t vptr, word_t mask)
+{
+    doRemoteMaskOp1Arg(IpiRemoteCall_InvalidateTranslationSingle, vptr, mask);
+}
+
+static inline void doRemoteInvalidateTranslationASID(asid_t asid, word_t mask)
+{
+    doRemoteMaskOp1Arg(IpiRemoteCall_InvalidateTranslationASID, asid, mask);
+}
+
+static inline void doRemoteInvalidateTranslationAll(word_t mask)
+{
+    doRemoteMaskOp0Arg(IpiRemoteCall_InvalidateTranslationAll, mask);
+}
+
+static inline void doRemoteMaskPrivateInterrupt(word_t cpu, word_t disable, word_t irq)
+{
+    doRemoteOp2Arg(IpiRemoteCall_MaskPrivateInterrupt, disable, irq, cpu);
+}
 # 11 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/machine/tlb.h" 2
 
+# 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/armv/armv8-a/64/armv/tlb.h" 1
+/*
+ * Copyright 2020, Data61, CSIRO (ABN 41 687 119 230)
+ *
+ * SPDX-License-Identifier: GPL-2.0-only
+ */
 
+       
+
+
+
+
+static inline void invalidateLocalTLB_VMID(word_t vmid)
+{
+    word_t vttbr = getVTTBR();
+    word_t v = (vttbr >> 48);
+    dsb();
+    /* We need to switch to the target VMID for flushing
+     * the TLB if necessary.
+     * Note that an invalid address is used, and it seems
+     * fine. Otherwise, an ASID lookup is required.
+     */
+    if (v != vmid) {
+        setCurrentUserVSpaceRoot(ttbr_new(vmid, 0));
+    }
+    invalidateLocalTLB_VMALLS12E1();
+    if (v != vmid) {
+        /* Restore the previous VTTBR value */
+        setCurrentUserVSpaceRoot((ttbr_t) {
+            .words[0] = vttbr
+        });
+    }
+}
+
+static inline void invalidateLocalTLB_IPA_VMID(word_t ipa_plus_vmid)
+{
+    word_t vttbr = getVTTBR();
+    word_t v = (vttbr >> 48);
+    word_t vmid = ipa_plus_vmid >> 48;
+    /* The [0:35] bits are IPA, other bits are reserved as 0 */
+    word_t ipa = ipa_plus_vmid & 0xfffffffff;
+    dsb();
+    if (v != vmid) {
+        setCurrentUserVSpaceRoot(ttbr_new(vmid, 0));
+    }
+    invalidateLocalTLB_IPA(ipa);
+    if (v != vmid) {
+        setCurrentUserVSpaceRoot((ttbr_t) {
+            .words[0] = vttbr
+        });
+    }
+}
+# 13 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/arch/machine/tlb.h" 2
 
 
 static inline void invalidateTranslationSingleLocal(vptr_t vptr)
 {
 
+    invalidateLocalTLB_IPA_VMID(vptr);
 
 
-    invalidateLocalTLB_VAASID(vptr);
 
 }
 
 static inline void invalidateTranslationASIDLocal(hw_asid_t hw_asid)
 {
 
+    invalidateLocalTLB_VMID(hw_asid);
 
 
-    invalidateLocalTLB_ASID(hw_asid);
 
 }
 
@@ -9621,19 +10517,19 @@ static inline void invalidateTranslationAllLocal(void)
 static inline void invalidateTranslationSingle(vptr_t vptr)
 {
     invalidateTranslationSingleLocal(vptr);
-    ;
+    doRemoteInvalidateTranslationSingle(vptr, ((1ul << (4)) - 1ul));
 }
 
 static inline void invalidateTranslationASID(hw_asid_t hw_asid)
 {
     invalidateTranslationASIDLocal(hw_asid);
-    ;
+    doRemoteInvalidateTranslationASID(hw_asid, ((1ul << (4)) - 1ul));
 }
 
 static inline void invalidateTranslationAll(void)
 {
     invalidateTranslationAllLocal();
-    ;
+    doRemoteInvalidateTranslationAll(((1ul << (4)) - 1ul));
 }
 # 29 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c" 2
 
@@ -9720,21 +10616,21 @@ static word_t __attribute__((__const__)) APFromVMRights(vm_rights_t vm_rights)
 {
     switch (vm_rights) {
     case VMKernelOnly:
-        if (wrap_config_set(0)) {
+        if (wrap_config_set(1)) {
             return 0;
         } else {
             return 0;
         }
 
     case VMReadWrite:
-        if (wrap_config_set(0)) {
+        if (wrap_config_set(1)) {
             return 3;
         } else {
             return 1;
         }
 
     case VMReadOnly:
-        if (wrap_config_set(0)) {
+        if (wrap_config_set(1)) {
             return 1;
         } else {
             return 3;
@@ -9744,40 +10640,7 @@ static word_t __attribute__((__const__)) APFromVMRights(vm_rights_t vm_rights)
         _fail("Invalid VM rights", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 134, __func__);
     }
 }
-
-
-static inline __attribute__((__const__)) word_t pte_get_AP(pte_t pte)
-{
-    do { if (!(pte_is_page_type(pte))) { _assert_fail("pte_is_page_type(pte)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 141, __func__); } } while(0);
-    switch (pte_get_pte_type(pte)) {
-    case pte_pte_4k_page:
-        return pte_pte_4k_page_get_AP(pte);
-
-    case pte_pte_page:
-        return pte_pte_page_get_AP(pte);
-
-    default:
-        return 0;
-    }
-}
-
-static vm_rights_t __attribute__((__const__)) vmRightsFromPTE(pte_t pte)
-{
-    word_t access_perms = pte_get_AP(pte);
-    switch (access_perms) {
-    case 0:
-    case 2:
-        return VMKernelOnly;
-    case 1:
-        return VMReadWrite;
-    case 3:
-        return VMReadOnly;
-    default:
-        _fail("Invalid AP bit", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 166, __func__);
-    }
-}
-
-
+# 171 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c"
 vm_rights_t __attribute__((__const__)) maskVMRights(vm_rights_t vm_rights, seL4_CapRights_t cap_rights_mask)
 {
     if (vm_rights == VMReadOnly &&
@@ -9795,7 +10658,7 @@ vm_rights_t __attribute__((__const__)) maskVMRights(vm_rights_t vm_rights, seL4_
     if (vm_rights == VMReadWrite &&
         !seL4_CapRights_get_capAllowRead(cap_rights_mask) &&
         seL4_CapRights_get_capAllowWrite(cap_rights_mask)) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Attempted to make unsupported write only mapping" ">>" "\033[0m" "\n", 0lu, __func__, 188, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Attempted to make unsupported write only mapping" ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 188, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
     }
     return VMKernelOnly;
 }
@@ -9819,18 +10682,18 @@ vm_rights_t __attribute__((__const__)) maskVMRights(vm_rights_t vm_rights, seL4_
  */
 __attribute__((__section__(".boot.text"))) void map_kernel_frame(paddr_t paddr, pptr_t vaddr, vm_rights_t vm_rights, vm_attributes_t attributes)
 {
-    do { if (!(vaddr >= 0xffffffffc0000000ul /* 2^64 - 2^30 */)) { _assert_fail("vaddr >= PPTR_TOP", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 212, __func__); } } while(0);
+    do { if (!(vaddr >= 0x000000ffc0000000ul /* 2^40 - 2^30 */)) { _assert_fail("vaddr >= PPTR_TOP", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 212, __func__); } } while(0);
 
 
+    word_t uxn = vm_attributes_get_armExecuteNever(attributes);
 
 
-    word_t uxn = 1; /* unprivileged execute never */
 
     word_t attr_index;
     word_t shareable;
     if (vm_attributes_get_armPageCacheable(attributes)) {
         attr_index = NORMAL;
-        shareable = 0;
+        shareable = 3;
     } else {
         attr_index = DEVICE_nGnRnE;
         shareable = 0;
@@ -9851,23 +10714,23 @@ __attribute__((__section__(".boot.text"))) void map_kernel_window(void)
     word_t idx;
 
 
+    /* verify that the kernel window as at the second entry of the PGD */
+    do { if (!((((0x0000008000000000ul /* 2^40 - 2^39 */) >> (((9) * (((4) - 1) - ((0)))) + 12)) & ((1ul << (9)) - 1ul)) == 1)) { _assert_fail("GET_KPT_INDEX(PPTR_BASE, KLVL_FRM_ARM_PT_LVL(0)) == 1", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 245, __func__); } } while(0);
 
 
 
-    /* verify that the kernel window as at the last entry of the PGD */
-    do { if (!((((0xffffff8000000000ul /* 2^64 - 2^39 */) >> (((9) * (((4) - 1) - ((0)))) + 12)) & ((1ul << (9)) - 1ul)) == (1ul << (9)) - 1)) { _assert_fail("GET_KPT_INDEX(PPTR_BASE, KLVL_FRM_ARM_PT_LVL(0)) == BIT(PT_INDEX_BITS) - 1", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 248, __func__); } } while(0);
 
-    do { if (!((!((0xffffff8000000000ul /* 2^64 - 2^39 */) & ((1ul << (21)) - 1ul))))) { _assert_fail("IS_ALIGNED(PPTR_BASE, seL4_LargePageBits)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 250, __func__); } } while(0);
+    do { if (!((!((0x0000008000000000ul /* 2^40 - 2^39 */) & ((1ul << (21)) - 1ul))))) { _assert_fail("IS_ALIGNED(PPTR_BASE, seL4_LargePageBits)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 250, __func__); } } while(0);
     /* verify that the kernel device window is 1gb aligned and 1gb in size */
-    do { if (!((((0xffffffffc0000000ul /* 2^64 - 2^30 */) >> (((9) * (((4) - 1) - ((1)))) + 12)) & ((1ul << (9)) - 1ul)) == (1ul << (9)) - 1)) { _assert_fail("GET_KPT_INDEX(PPTR_TOP, KLVL_FRM_ARM_PT_LVL(1)) == BIT(PT_INDEX_BITS) - 1", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 252, __func__); } } while(0);
-    do { if (!((!((0xffffffffc0000000ul /* 2^64 - 2^30 */) & ((1ul << (30)) - 1ul))))) { _assert_fail("IS_ALIGNED(PPTR_TOP, seL4_HugePageBits)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 253, __func__); } } while(0);
+    do { if (!((((0x000000ffc0000000ul /* 2^40 - 2^30 */) >> (((9) * (((4) - 1) - ((1)))) + 12)) & ((1ul << (9)) - 1ul)) == (1ul << (9)) - 1)) { _assert_fail("GET_KPT_INDEX(PPTR_TOP, KLVL_FRM_ARM_PT_LVL(1)) == BIT(PT_INDEX_BITS) - 1", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 252, __func__); } } while(0);
+    do { if (!((!((0x000000ffc0000000ul /* 2^40 - 2^30 */) & ((1ul << (30)) - 1ul))))) { _assert_fail("IS_ALIGNED(PPTR_TOP, seL4_HugePageBits)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 253, __func__); } } while(0);
 
     /* place the PUD into the PGD */
-    armKSGlobalKernelPGD[(((0xffffff8000000000ul /* 2^64 - 2^39 */) >> (((9) * (((4) - 1) - ((0)))) + 12)) & ((1ul << (9)) - 1ul))] = pte_pte_table_new(
+    armKSGlobalKernelPGD[(((0x0000008000000000ul /* 2^40 - 2^39 */) >> (((9) * (((4) - 1) - ((0)))) + 12)) & ((1ul << (9)) - 1ul))] = pte_pte_table_new(
                                                                                  addrFromKPPtr(armKSGlobalKernelPUD));
 
     /* place all PDs except the last one in PUD */
-    for (idx = (((0xffffff8000000000ul /* 2^64 - 2^39 */) >> (((9) * (((4) - 1) - ((1)))) + 12)) & ((1ul << (9)) - 1ul)); idx < (((0xffffffffc0000000ul /* 2^64 - 2^30 */) >> (((9) * (((4) - 1) - ((1)))) + 12)) & ((1ul << (9)) - 1ul));
+    for (idx = (((0x0000008000000000ul /* 2^40 - 2^39 */) >> (((9) * (((4) - 1) - ((1)))) + 12)) & ((1ul << (9)) - 1ul)); idx < (((0x000000ffc0000000ul /* 2^40 - 2^30 */) >> (((9) * (((4) - 1) - ((1)))) + 12)) & ((1ul << (9)) - 1ul));
          idx++) {
         armKSGlobalKernelPUD[idx] = pte_pte_table_new(
                                         addrFromKPPtr(&armKSGlobalKernelPDs[idx][0])
@@ -9875,19 +10738,19 @@ __attribute__((__section__(".boot.text"))) void map_kernel_window(void)
     }
 
     /* map the kernel window using large pages */
-    vaddr = 0xffffff8000000000ul /* 2^64 - 2^39 */;
-    for (paddr = 0x0ul; paddr < (0xffffffffc0000000ul /* 2^64 - 2^30 */ - (0xffffff8000000000ul /* 2^64 - 2^39 */ - 0x0ul)); paddr += (1ul << (21))) {
+    vaddr = 0x0000008000000000ul /* 2^40 - 2^39 */;
+    for (paddr = 0x0ul; paddr < (0x000000ffc0000000ul /* 2^40 - 2^30 */ - (0x0000008000000000ul /* 2^40 - 2^39 */ - 0x0ul)); paddr += (1ul << (21))) {
         armKSGlobalKernelPDs[(((vaddr) >> (((9) * (((4) - 1) - ((1)))) + 12)) & ((1ul << (9)) - 1ul))][(((vaddr) >> (((9) * (((4) - 1) - ((2)))) + 12)) & ((1ul << (9)) - 1ul))
                                                                                                                 ] = pte_pte_page_new(
 
+                                                                                                                        0, // XN
 
 
-                                                                                                                        1, // UXN
 
                                                                                                                         paddr,
                                                                                                                         0, /* global */
                                                                                                                         1, /* access flag */
-                                                                                                                        0, /* Inner-shareable if SMP enabled, otherwise unshared */
+                                                                                                                        3, /* Inner-shareable if SMP enabled, otherwise unshared */
                                                                                                                         0, /* VMKernelOnly */
                                                                                                                         NORMAL
                                                                                                                     );
@@ -9895,7 +10758,7 @@ __attribute__((__section__(".boot.text"))) void map_kernel_window(void)
     }
 
     /* put the PD into the PUD for device window */
-    armKSGlobalKernelPUD[(((0xffffffffc0000000ul /* 2^64 - 2^30 */) >> (((9) * (((4) - 1) - ((1)))) + 12)) & ((1ul << (9)) - 1ul))] = pte_pte_table_new(
+    armKSGlobalKernelPUD[(((0x000000ffc0000000ul /* 2^40 - 2^30 */) >> (((9) * (((4) - 1) - ((1)))) + 12)) & ((1ul << (9)) - 1ul))] = pte_pte_table_new(
                                                                                 addrFromKPPtr(&armKSGlobalKernelPDs[(1ul << (9)) - 1][0])
                                                                             );
 
@@ -9925,33 +10788,33 @@ static __attribute__((__section__(".boot.text"))) void map_it_frame_cap(cap_t vs
     do { if (!(cap_frame_cap_get_capFMappedASID(frame_cap) != 0)) { _assert_fail("cap_frame_cap_get_capFMappedASID(frame_cap) != 0", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 315, __func__); } } while(0);
 
 
+    pud = vspaceRoot;
 
 
-    vspaceRoot += (((vptr) >> (((9) * (((4) - 1) - ((0)))) + 12)) & ((1ul << (((0) == 0 ? 9 : 9))) - 1ul));
-    do { if (!(pte_pte_table_ptr_get_present(vspaceRoot))) { _assert_fail("pte_pte_table_ptr_get_present(vspaceRoot)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 321, __func__); } } while(0);
-    pud = ptrFromPAddr(pte_pte_table_ptr_get_pt_base_address(vspaceRoot));
 
-    pud += (((vptr) >> (((9) * (((4) - 1) - ((1)))) + 12)) & ((1ul << (((1) == 0 ? 9 : 9))) - 1ul));
+
+
+    pud += (((vptr) >> (((9) * (((3) - 1) - (((1)-1)))) + 12)) & ((1ul << ((((1)-1) == 0 ? 10 : 9))) - 1ul));
     do { if (!(pte_pte_table_ptr_get_present(pud))) { _assert_fail("pte_pte_table_ptr_get_present(pud)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 325, __func__); } } while(0);
     pd = ptrFromPAddr(pte_pte_table_ptr_get_pt_base_address(pud));
-    pd += (((vptr) >> (((9) * (((4) - 1) - ((2)))) + 12)) & ((1ul << (((2) == 0 ? 9 : 9))) - 1ul));
+    pd += (((vptr) >> (((9) * (((3) - 1) - (((2)-1)))) + 12)) & ((1ul << ((((2)-1) == 0 ? 10 : 9))) - 1ul));
     do { if (!(pte_pte_table_ptr_get_present(pd))) { _assert_fail("pte_pte_table_ptr_get_present(pd)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 328, __func__); } } while(0);
     pt = ptrFromPAddr(pte_pte_table_ptr_get_pt_base_address(pd));
-    *(pt + (((vptr) >> (((9) * (((4) - 1) - ((3)))) + 12)) & ((1ul << (((3) == 0 ? 9 : 9))) - 1ul))) = pte_pte_4k_page_new(
+    *(pt + (((vptr) >> (((9) * (((3) - 1) - (((3)-1)))) + 12)) & ((1ul << ((((3)-1) == 0 ? 10 : 9))) - 1ul))) = pte_pte_4k_page_new(
                                                               !executable, /* unprivileged execute never */
                                                               addrFromPPtr(pptr), /* page_base_address    */
 
+                                                              0,
 
 
-                                                              1, /* not global */
 
                                                               1, /* access flag */
-                                                              0, /* Inner-shareable if SMP enabled, otherwise unshared */
+                                                              3, /* Inner-shareable if SMP enabled, otherwise unshared */
                                                               APFromVMRights(VMReadWrite),
 
+                                                              S2_NORMAL
 
 
-                                                              NORMAL
 
                                                           );
 }
@@ -9986,16 +10849,16 @@ static __attribute__((__section__(".boot.text"))) void map_it_pt_cap(cap_t vspac
     do { if (!(cap_page_table_cap_get_capPTIsMapped(pt_cap))) { _assert_fail("cap_page_table_cap_get_capPTIsMapped(pt_cap)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 376, __func__); } } while(0);
 
 
+    pud = vspaceRoot;
 
 
-    vspaceRoot += (((vptr) >> (((9) * (((4) - 1) - ((0)))) + 12)) & ((1ul << (((0) == 0 ? 9 : 9))) - 1ul));
-    do { if (!(pte_pte_table_ptr_get_present(vspaceRoot))) { _assert_fail("pte_pte_table_ptr_get_present(vspaceRoot)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 382, __func__); } } while(0);
-    pud = ptrFromPAddr(pte_pte_table_ptr_get_pt_base_address(vspaceRoot));
 
-    pud += (((vptr) >> (((9) * (((4) - 1) - ((1)))) + 12)) & ((1ul << (((1) == 0 ? 9 : 9))) - 1ul));
+
+
+    pud += (((vptr) >> (((9) * (((3) - 1) - (((1)-1)))) + 12)) & ((1ul << ((((1)-1) == 0 ? 10 : 9))) - 1ul));
     do { if (!(pte_pte_table_ptr_get_present(pud))) { _assert_fail("pte_pte_table_ptr_get_present(pud)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 386, __func__); } } while(0);
     pd = ptrFromPAddr(pte_pte_table_ptr_get_pt_base_address(pud));
-    *(pd + (((vptr) >> (((9) * (((4) - 1) - ((2)))) + 12)) & ((1ul << (((2) == 0 ? 9 : 9))) - 1ul))) = pte_pte_table_new(
+    *(pd + (((vptr) >> (((9) * (((3) - 1) - (((2)-1)))) + 12)) & ((1ul << ((((2)-1) == 0 ? 10 : 9))) - 1ul))) = pte_pte_table_new(
                                                               addrFromPPtr(pt)
                                                           );
 }
@@ -10023,13 +10886,13 @@ static __attribute__((__section__(".boot.text"))) void map_it_pd_cap(cap_t vspac
     do { if (!(cap_page_table_cap_get_capPTIsMapped(pd_cap))) { _assert_fail("cap_page_table_cap_get_capPTIsMapped(pd_cap)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 413, __func__); } } while(0);
 
 
+    pud = vspaceRoot;
 
 
-    vspaceRoot += (((vptr) >> (((9) * (((4) - 1) - ((0)))) + 12)) & ((1ul << (((0) == 0 ? 9 : 9))) - 1ul));
-    do { if (!(pte_pte_table_ptr_get_present(vspaceRoot))) { _assert_fail("pte_pte_table_ptr_get_present(vspaceRoot)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 419, __func__); } } while(0);
-    pud = ptrFromPAddr(pte_pte_table_ptr_get_pt_base_address(vspaceRoot));
 
-    *(pud + (((vptr) >> (((9) * (((4) - 1) - ((1)))) + 12)) & ((1ul << (((1) == 0 ? 9 : 9))) - 1ul))) = pte_pte_table_new(
+
+
+    *(pud + (((vptr) >> (((9) * (((3) - 1) - (((1)-1)))) + 12)) & ((1ul << ((((1)-1) == 0 ? 10 : 9))) - 1ul))) = pte_pte_table_new(
                                                                addrFromPPtr(pd)
                                                            );
 }
@@ -10046,41 +10909,15 @@ static __attribute__((__section__(".boot.text"))) cap_t create_it_pd_cap(cap_t v
     map_it_pd_cap(vspace_cap, cap);
     return cap;
 }
-
-
-static __attribute__((__section__(".boot.text"))) void map_it_pud_cap(cap_t vspace_cap, cap_t pud_cap)
-{
-    pte_t *pgd = ((pte_t *)(((pptr_t)cap_get_capPtr(vspace_cap))));
-    pte_t *pud = ((pte_t *)(cap_page_table_cap_get_capPTBasePtr(pud_cap)));
-    vptr_t vptr = cap_page_table_cap_get_capPTMappedAddress(pud_cap);
-
-    do { if (!(cap_page_table_cap_get_capPTIsMapped(pud_cap))) { _assert_fail("cap_page_table_cap_get_capPTIsMapped(pud_cap)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 447, __func__); } } while(0);
-
-    *(pgd + (((vptr) >> (((9) * (((4) - 1) - ((0)))) + 12)) & ((1ul << (((0) == 0 ? 9 : 9))) - 1ul))) = pte_pte_table_new(
-                                                               addrFromPPtr(pud));
-}
-
-static __attribute__((__section__(".boot.text"))) cap_t create_it_pud_cap(cap_t vspace_cap, pptr_t pptr, vptr_t vptr, asid_t asid)
-{
-    cap_t cap;
-    cap = cap_page_table_cap_new(
-              asid, /* capPTMappedASID */
-              pptr, /* capPTBasePtr */
-              1, /* capPTIsMapped */
-              vptr /* capPTMappedAddress */
-          );
-    map_it_pud_cap(vspace_cap, cap);
-    return cap;
-}
-
+# 466 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c"
 __attribute__((__section__(".boot.text"))) word_t arch_get_n_paging(v_region_t it_v_reg)
 {
     return
 
-        get_n_paging(it_v_reg, (((9) * (((4) - 1) - (((0))))) + 12)) +
 
-        get_n_paging(it_v_reg, (((9) * (((4) - 1) - (((1))))) + 12)) +
-        get_n_paging(it_v_reg, (((9) * (((4) - 1) - (((2))))) + 12));
+
+        get_n_paging(it_v_reg, (((9) * (((3) - 1) - ((((1)-1))))) + 12)) +
+        get_n_paging(it_v_reg, (((9) * (((3) - 1) - ((((2)-1))))) + 12));
 }
 
 __attribute__((__section__(".boot.text"))) cap_t create_it_address_space(cap_t root_cnode_cap, v_region_t it_v_reg)
@@ -10101,30 +10938,20 @@ __attribute__((__section__(".boot.text"))) cap_t create_it_address_space(cap_t r
                  );
     slot_pos_before = ndks_boot.slot_pos_cur;
     write_slot((((slot_ptr_t)(((pptr_t)cap_get_capPtr(root_cnode_cap)))) + (seL4_CapInitThreadVSpace)), vspace_cap);
-
-
-    /* Create any PUDs needed for the user land image */
-    for (vptr = (((it_v_reg.start) >> ((((9) * (((4) - 1) - (((0))))) + 12))) << ((((9) * (((4) - 1) - (((0))))) + 12)));
-         vptr < it_v_reg.end;
-         vptr += (1ul << ((((9) * (((4) - 1) - (((0))))) + 12)))) {
-        if (!provide_cap(root_cnode_cap, create_it_pud_cap(vspace_cap, it_alloc_paging(), vptr, 1 /* initial thread's ASID */))) {
-            return cap_null_cap_new();
-        }
-    }
-
+# 505 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c"
     /* Create any PDs needed for the user land image */
-    for (vptr = (((it_v_reg.start) >> ((((9) * (((4) - 1) - (((1))))) + 12))) << ((((9) * (((4) - 1) - (((1))))) + 12)));
+    for (vptr = (((it_v_reg.start) >> ((((9) * (((3) - 1) - ((((1)-1))))) + 12))) << ((((9) * (((3) - 1) - ((((1)-1))))) + 12)));
          vptr < it_v_reg.end;
-         vptr += (1ul << ((((9) * (((4) - 1) - (((1))))) + 12)))) {
+         vptr += (1ul << ((((9) * (((3) - 1) - ((((1)-1))))) + 12)))) {
         if (!provide_cap(root_cnode_cap, create_it_pd_cap(vspace_cap, it_alloc_paging(), vptr, 1 /* initial thread's ASID */))) {
             return cap_null_cap_new();
         }
     }
 
     /* Create any PTs needed for the user land image */
-    for (vptr = (((it_v_reg.start) >> ((((9) * (((4) - 1) - (((2))))) + 12))) << ((((9) * (((4) - 1) - (((2))))) + 12)));
+    for (vptr = (((it_v_reg.start) >> ((((9) * (((3) - 1) - ((((2)-1))))) + 12))) << ((((9) * (((3) - 1) - ((((2)-1))))) + 12)));
          vptr < it_v_reg.end;
-         vptr += (1ul << ((((9) * (((4) - 1) - (((2))))) + 12)))) {
+         vptr += (1ul << ((((9) * (((3) - 1) - ((((2)-1))))) + 12)))) {
         if (!provide_cap(root_cnode_cap, create_it_pt_cap(vspace_cap, it_alloc_paging(), vptr, 1 /* initial thread's ASID */))) {
             return cap_null_cap_new();
         }
@@ -10159,7 +10986,7 @@ __attribute__((__section__(".boot.text"))) void activate_kernel_vspace(void)
     setCurrentUserVSpaceRoot(ttbr_new(0, addrFromKPPtr(armKSGlobalUserVSpace)));
 
     invalidateLocalTLB();
-    lockTLBEntry(((0xffffff8000000000ul /* 2^64 - 2^39 */ - 0x0ul) + physBase()));
+    lockTLBEntry(((0x0000008000000000ul /* 2^40 - 2^39 */ - 0x0ul) + physBase()));
 }
 
 __attribute__((__section__(".boot.text"))) void write_it_asid_pool(cap_t it_ap_cap, cap_t it_vspace_cap)
@@ -10173,8 +11000,8 @@ __attribute__((__section__(".boot.text"))) void write_it_asid_pool(cap_t it_ap_c
                               /* vspace_root: reference to vspace root page table object */
                               (word_t)cap_vspace_cap_get_capVSBasePtr(it_vspace_cap)
 
-
-
+                              /* stored_hw_vmid, stored_vmid_valid: Assigned hardware VMID for TLB. */
+                              , 0, false
 
                           );
     ap->array[((1 /* initial thread's ASID */) & ((1ul << (asidLowBits)) - 1ul))] = asid_map;
@@ -10247,19 +11074,19 @@ word_t *__attribute__((__pure__)) lookupIPCBuffer(bool_t isReceiver, tcb_t *thre
 exception_t checkValidIPCBuffer(vptr_t vptr, cap_t cap)
 {
     if (cap_get_capType(cap) != cap_frame_cap) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "IPC Buffer is an invalid cap." ">>" "\033[0m" "\n", 0lu, __func__, 640, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "IPC Buffer is an invalid cap." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 640, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_IllegalOperation;
         return EXCEPTION_SYSCALL_ERROR;
     }
 
     if (__builtin_expect(!!(cap_frame_cap_get_capFIsDevice(cap)), 0)) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Specifying a device frame as an IPC buffer is not permitted." ">>" "\033[0m" "\n", 0lu, __func__, 646, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Specifying a device frame as an IPC buffer is not permitted." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 646, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_IllegalOperation;
         return EXCEPTION_SYSCALL_ERROR;
     }
 
     if (!(!((vptr) & ((1ul << (10)) - 1ul)))) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "IPC Buffer vaddr 0x%x is not aligned." ">>" "\033[0m" "\n", 0lu, __func__, 652, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), (int)vptr); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "IPC Buffer vaddr 0x%x is not aligned." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 652, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), (int)vptr); } while (0);
         current_syscall_error.type = seL4_AlignmentError;
         return EXCEPTION_SYSCALL_ERROR;
     }
@@ -10271,7 +11098,7 @@ static lookupPTSlot_ret_t lookupPTSlot(vspace_root_t *vspace, vptr_t vptr)
 {
     lookupPTSlot_ret_t ret;
 
-    word_t level = 4 - 1;
+    word_t level = 3 - 1;
     pte_t *pt = vspace;
 
     /* this is how many bits we potentially have left to decode. Initially we have the
@@ -10280,7 +11107,7 @@ static lookupPTSlot_ret_t lookupPTSlot(vspace_root_t *vspace, vptr_t vptr)
      * or already exists, in ret.ptSlot. The following formulation is an invariant of
      * the loop: */
     ret.ptBitsLeft = 9 * level + 12;
-    ret.ptSlot = pt + ((vptr >> ret.ptBitsLeft) & ((1ul << (9)) - 1ul));
+    ret.ptSlot = pt + ((vptr >> ret.ptBitsLeft) & ((1ul << (10)) - 1ul));
 
     while (pte_pte_table_ptr_get_present(ret.ptSlot) && __builtin_expect(!!(level > 0), 1)) {
         level--;
@@ -10301,15 +11128,15 @@ static pte_t makeUserPagePTE(paddr_t paddr, vm_rights_t vm_rights, vm_attributes
     word_t cacheable = vm_attributes_get_armPageCacheable(attributes);
 
 
+    word_t nG = 0; /* not global */
+    word_t attridx = cacheable ? S2_NORMAL : S2_DEVICE_nGnRnE;
 
 
 
-    word_t nG = 1; /* not global */
-    word_t attridx = cacheable ? NORMAL : DEVICE_nGnRnE;
 
 
     /* Inner-shareable if SMP enabled, otherwise unshared (ignored for devices) */
-    word_t shareable = cacheable ? 0 : 0;
+    word_t shareable = cacheable ? 3 : 0;
 
     if (page_size == ARMSmallPage) {
         return pte_pte_4k_page_new(nonexecutable, paddr, nG, 1 /* access flag */,
@@ -10330,10 +11157,10 @@ exception_t handleVMFault(tcb_t *thread, vm_fault_type_t vm_faultType)
         fault = getESR();
 
 
-
-
-
-
+        /* use the IPA */
+        if (ksSMP[(getCurrentCPUIndex())].cpu.armHSVCPUActive) {
+            addr = ((addressTranslateS1(addr)) & 0x0000fffffffff000ul) | (addr & ((1ul << (12)) - 1ul));
+        }
 
         current_fault = seL4_Fault_VMFault_new(addr, fault, false);
         return EXCEPTION_FAULT;
@@ -10346,9 +11173,9 @@ exception_t handleVMFault(tcb_t *thread, vm_fault_type_t vm_faultType)
         fault = getESR();
 
 
-
-
-
+        if (ksSMP[(getCurrentCPUIndex())].cpu.armHSVCPUActive) {
+            pc = ((addressTranslateS1(pc)) & 0x0000fffffffff000ul) | (pc & ((1ul << (12)) - 1ul));
+        }
 
         current_fault = seL4_Fault_VMFault_new(pc, fault, true);
         return EXCEPTION_FAULT;
@@ -10404,7 +11231,7 @@ static bool_t setVMRootForFlush(vspace_root_t *vspace, asid_t asid)
 {
     cap_t threadRoot;
 
-    threadRoot = (((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbVTable))->cap;
+    threadRoot = (((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbVTable))->cap;
 
     if (cap_get_capType(threadRoot) == cap_vspace_cap &&
         cap_vspace_cap_get_capVSIsMapped(threadRoot) &&
@@ -10415,18 +11242,156 @@ static bool_t setVMRootForFlush(vspace_root_t *vspace, asid_t asid)
     armv_contextSwitch(vspace, asid);
     return true;
 }
+
+
+
+
+static inline asid_pool_t *getPoolPtr(asid_t asid)
+{
+    return armKSASIDTable[((asid) >> asidLowBits)];
+}
+
+static inline asid_map_t getASIDMap(asid_pool_t *poolPtr, asid_t asid)
+{
+    do { if (!(poolPtr != ((void *)0))) { _assert_fail("poolPtr != NULL", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 819, __func__); } } while(0);
+    return poolPtr->array[((asid) & ((1ul << (asidLowBits)) - 1ul))];
+}
+
+static inline void setASIDMap(asid_pool_t *poolPtr, asid_t asid, asid_map_t asid_map)
+{
+    do { if (!(poolPtr != ((void *)0))) { _assert_fail("poolPtr != NULL", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 825, __func__); } } while(0);
+    poolPtr->array[((asid) & ((1ul << (asidLowBits)) - 1ul))] = asid_map;
+}
+
+static void invalidateASID(asid_t asid)
+{
+    asid_pool_t *poolPtr;
+    asid_map_t asid_map;
+
+    poolPtr = getPoolPtr(asid);
+    asid_map = getASIDMap(poolPtr, asid);
+    do { if (!(asid_map_get_type(asid_map) == asid_map_asid_map_vspace)) { _assert_fail("asid_map_get_type(asid_map) == asid_map_asid_map_vspace", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 836, __func__); } } while(0);
+
+    asid_map = asid_map_asid_map_vspace_set_stored_hw_vmid(asid_map, 0);
+    asid_map = asid_map_asid_map_vspace_set_stored_vmid_valid(asid_map, false);
+
+    setASIDMap(poolPtr, asid, asid_map);
+}
+
+static void storeHWASID(asid_t asid, hw_asid_t hw_asid)
+{
+    asid_pool_t *poolPtr;
+    asid_map_t asid_map;
+
+    poolPtr = getPoolPtr(asid);
+    asid_map = getASIDMap(poolPtr, asid);
+    do { if (!(asid_map_get_type(asid_map) == asid_map_asid_map_vspace)) { _assert_fail("asid_map_get_type(asid_map) == asid_map_asid_map_vspace", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c", 851, __func__); } } while(0);
+
+    asid_map = asid_map_asid_map_vspace_set_stored_hw_vmid(asid_map, hw_asid);
+    asid_map = asid_map_asid_map_vspace_set_stored_vmid_valid(asid_map, true);
+
+    setASIDMap(poolPtr, asid, asid_map);
+    armKSHWASIDTable[hw_asid] = asid;
+}
+
+static hw_asid_t findFreeHWASID(void)
+{
+    word_t hw_asid_offset;
+    hw_asid_t hw_asid;
+
+    /* Find a free hardware ASID */
+    for (hw_asid_offset = 0;
+         hw_asid_offset <= (word_t)((hw_asid_t) - 1);
+         hw_asid_offset++) {
+        hw_asid = armKSNextASID + ((hw_asid_t)hw_asid_offset);
+        if (armKSHWASIDTable[hw_asid] == asidInvalid) {
+            return hw_asid;
+        }
+    }
+
+    hw_asid = armKSNextASID;
+
+    /* If we've scanned the table without finding a free ASID */
+    invalidateASID(armKSHWASIDTable[hw_asid]);
+
+    /* Flush TLB */
+    invalidateTranslationASID(hw_asid);
+    armKSHWASIDTable[hw_asid] = asidInvalid;
+
+    /* Increment the NextASID index */
+    armKSNextASID++;
+
+    return hw_asid;
+}
+
+hw_asid_t getHWASID(asid_t asid)
+{
+    asid_map_t asid_map;
+
+    asid_map = findMapForASID(asid);
+    if (asid_map_asid_map_vspace_get_stored_vmid_valid(asid_map)) {
+        return asid_map_asid_map_vspace_get_stored_hw_vmid(asid_map);
+    } else {
+        hw_asid_t new_hw_asid;
+
+        new_hw_asid = findFreeHWASID();
+        storeHWASID(asid, new_hw_asid);
+        return new_hw_asid;
+    }
+}
+
+static void invalidateASIDEntry(asid_t asid)
+{
+    asid_map_t asid_map;
+
+    asid_map = findMapForASID(asid);
+    if (asid_map_asid_map_vspace_get_stored_vmid_valid(asid_map)) {
+        armKSHWASIDTable[asid_map_asid_map_vspace_get_stored_hw_vmid(asid_map)] =
+            asidInvalid;
+    }
+    invalidateASID(asid);
+}
 # 961 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c"
 static inline void invalidateTLBByASID(asid_t asid)
 {
-# 978 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c"
-    invalidateTranslationASID(asid);
+
+
+
+
+
+
+
+    asid_map_t asid_map;
+
+    asid_map = findMapForASID(asid);
+    if (!asid_map_asid_map_vspace_get_stored_vmid_valid(asid_map)) {
+        return;
+    }
+    invalidateTranslationASID(asid_map_asid_map_vspace_get_stored_hw_vmid(asid_map));
+
+
 
 }
 
 static inline void invalidateTLBByASIDVA(asid_t asid, vptr_t vaddr)
 {
-# 1000 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c"
-    invalidateTranslationSingle((asid << 48) | vaddr >> 12);
+
+
+
+
+
+
+
+    asid_map_t asid_map;
+
+    asid_map = findMapForASID(asid);
+    if (!asid_map_asid_map_vspace_get_stored_vmid_valid(asid_map)) {
+        return;
+    }
+    uint64_t hw_asid = asid_map_asid_map_vspace_get_stored_hw_vmid(asid_map);
+    invalidateTranslationSingle((hw_asid << 48) | vaddr >> 12);
+
+
 
 }
 
@@ -10441,8 +11406,8 @@ void unmapPageTable(asid_t asid, vptr_t vptr, pte_t *target_pt)
     pte_t *ptSlot = ((void *)0);
     pte_t *pt = (pte_t *)find_ret.vspace_root;
 
-    for (word_t i = 0; i < 4 - 1 && pt != target_pt; i++) {
-        ptSlot = pt + (((vptr) >> (((9) * (((4) - 1) - (i))) + 12)) & ((1ul << ((i == 0 ? 9 : 9))) - 1ul));
+    for (word_t i = 0; i < 3 - 1 && pt != target_pt; i++) {
+        ptSlot = pt + (((vptr) >> (((9) * (((3) - 1) - (i))) + 12)) & ((1ul << ((i == 0 ? 10 : 9))) - 1ul));
         if (__builtin_expect(!!(!pte_pte_table_ptr_get_present(ptSlot)), 0)) {
             /* couldn't find it */
             return;
@@ -10507,10 +11472,10 @@ void deleteASID(asid_t asid, vspace_root_t *vspace)
             (vspace_root_t *)asid_map_asid_map_vspace_get_vspace_root(asid_map) == vspace) {
             invalidateTLBByASID(asid);
 
-
+            invalidateASIDEntry(asid);
 
             poolPtr->array[((asid) & ((1ul << (asidLowBits)) - 1ul))] = asid_map_asid_map_none_new();
-            setVMRoot(ksCurThread);
+            setVMRoot(ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
         }
     }
 }
@@ -10527,12 +11492,12 @@ void deleteASIDPool(asid_t asid_base, asid_pool_t *pool)
             if (asid_map_get_type(asid_map) == asid_map_asid_map_vspace) {
                 invalidateTLBByASID(asid_base + offset);
 
-
+                invalidateASIDEntry(asid_base + offset);
 
             }
         }
         armKSASIDTable[((asid_base) >> asidLowBits)] = ((void *)0);
-        setVMRoot(ksCurThread);
+        setVMRoot(ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
     }
 }
 
@@ -10577,7 +11542,7 @@ static exception_t performVSpaceFlush(word_t invLabel, vspace_root_t *vspaceRoot
                                       vptr_t start, vptr_t end, paddr_t pstart)
 {
 
-    if (wrap_config_set(0)) {
+    if (wrap_config_set(1)) {
         word_t size = end - start;
         start = (vptr_t)ptrFromPAddr(pstart);
         end = start + size;
@@ -10592,7 +11557,7 @@ static exception_t performVSpaceFlush(word_t invLabel, vspace_root_t *vspaceRoot
             root_switched = setVMRootForFlush(vspaceRoot, asid);
             doFlush(invLabel, start, end, pstart);
             if (root_switched) {
-                setVMRoot(ksCurThread);
+                setVMRoot(ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
             }
         }
     }
@@ -10661,7 +11626,7 @@ static exception_t performPageInvocationUnmap(cap_t cap, cte_t *ctSlot)
 static exception_t performPageFlush(word_t invLabel, vspace_root_t *vspaceRoot, asid_t asid,
                                     vptr_t start, vptr_t end, paddr_t pstart)
 {
-    if (wrap_config_set(0)) {
+    if (wrap_config_set(1)) {
         /* We flush the cache with kernel virtual addresses since
          * the user virtual addresses are not valid in EL2.
          * Switching VMRoot is not required.
@@ -10680,7 +11645,7 @@ static exception_t performPageFlush(word_t invLabel, vspace_root_t *vspaceRoot, 
             root_switched = setVMRootForFlush(vspaceRoot, asid);
             doFlush(invLabel, start, end, pstart);
             if (root_switched) {
-                setVMRoot(ksCurThread);
+                setVMRoot(ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
             }
         }
     }
@@ -10692,7 +11657,7 @@ static exception_t performPageGetAddress(pptr_t base_ptr, bool_t call)
     paddr_t base = addrFromPPtr((void *)base_ptr);
 
     tcb_t *thread;
-    thread = ksCurThread;
+    thread = ksSMP[(getCurrentCPUIndex())].system.ksCurThread;
     if (call) {
         word_t *ipcBuffer = lookupIPCBuffer(true, thread);
         setRegister(thread, badgeRegister, 0);
@@ -10700,7 +11665,7 @@ static exception_t performPageGetAddress(pptr_t base_ptr, bool_t call)
         setRegister(thread, msgInfoRegister, wordFromMessageInfo(
                         seL4_MessageInfo_new(0, 0, 0, length)));
     }
-    setThreadState(ksCurThread, ThreadState_Running);
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Running);
     return EXCEPTION_NONE;
 }
 
@@ -10745,7 +11710,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, word_t length,
     case ARMVSpaceUnify_Instruction:
 
         if (length < 2) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "VSpaceRoot Flush: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 1319, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "VSpaceRoot Flush: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1319, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             current_syscall_error.type = seL4_TruncatedMessage;
             return EXCEPTION_SYSCALL_ERROR;
         }
@@ -10755,15 +11720,15 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, word_t length,
 
         /* Check sanity of arguments */
         if (end <= start) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "VSpaceRoot Flush: Invalid range." ">>" "\033[0m" "\n", 0lu, __func__, 1329, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "VSpaceRoot Flush: Invalid range." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1329, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             current_syscall_error.type = seL4_InvalidArgument;
             current_syscall_error.invalidArgumentNumber = 1;
             return EXCEPTION_SYSCALL_ERROR;
         }
 
         /* Don't let applications flush kernel regions. */
-        if (end > 0x00007fffffffffff) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "VSpaceRoot Flush: Exceed the user addressable region." ">>" "\033[0m" "\n", 0lu, __func__, 1337, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        if (end > 0x000000ffffffffff) {
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "VSpaceRoot Flush: Exceed the user addressable region." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1337, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             current_syscall_error.type = seL4_IllegalOperation;
             return EXCEPTION_SYSCALL_ERROR;
         }
@@ -10780,14 +11745,14 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, word_t length,
 
         find_ret = findVSpaceForASID(asid);
         if (__builtin_expect(!!(find_ret.status != EXCEPTION_NONE), 0)) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "VSpaceRoot Flush: No VSpace for ASID" ">>" "\033[0m" "\n", 0lu, __func__, 1354, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "VSpaceRoot Flush: No VSpace for ASID" ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1354, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             current_syscall_error.type = seL4_FailedLookup;
             current_syscall_error.failedLookupWasSource = false;
             return EXCEPTION_SYSCALL_ERROR;
         }
 
         if (__builtin_expect(!!(find_ret.vspace_root != vspaceRoot), 0)) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "VSpaceRoot Flush: Invalid VSpace Cap" ">>" "\033[0m" "\n", 0lu, __func__, 1361, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "VSpaceRoot Flush: Invalid VSpace Cap" ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1361, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             current_syscall_error.type = seL4_InvalidCapability;
             current_syscall_error.invalidCapNumber = 0;
             return EXCEPTION_SYSCALL_ERROR;
@@ -10803,7 +11768,7 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, word_t length,
             /* Fail silently, as there can't be any stale cached data (for the
              * given address space), and getting a syscall error because the
              * relevant page is non-resident would be 'astonishing'. */
-            setThreadState(ksCurThread, ThreadState_Restart);
+            setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
             return EXCEPTION_NONE;
         }
 
@@ -10813,26 +11778,17 @@ static exception_t decodeARMVSpaceRootInvocation(word_t invLabel, word_t length,
             current_syscall_error.rangeErrorMin = start;
             current_syscall_error.rangeErrorMax = (((start) >> (resolve_ret.ptBitsLeft)) << (resolve_ret.ptBitsLeft)) +
                                                   ((1ul << (resolve_ret.ptBitsLeft)) - 1ul);
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "VSpaceRoot Flush: cannot cross page boundary, valid range is [0x%lx..0x%lx)" ">>" "\033[0m" "\n", 0lu, __func__, 1387, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), current_syscall_error.rangeErrorMin, current_syscall_error.rangeErrorMax); } while (0)
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "VSpaceRoot Flush: cannot cross page boundary, valid range is [0x%lx..0x%lx)" ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1387, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), current_syscall_error.rangeErrorMin, current_syscall_error.rangeErrorMax); } while (0)
                                                                                                ;
             return EXCEPTION_SYSCALL_ERROR;
         }
-
-
-        /* When in EL1, the mapping must be write-able for ARMVSpaceInvalidate_Data */
-        if (invLabel == ARMVSpaceInvalidate_Data && vmRightsFromPTE(pte) != VMReadWrite) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "ARMVSpaceInvalidate_Data: Cannot call on mapping without write rights." ">>" "\033[0m" "\n", 0lu, __func__, 1395, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
-            current_syscall_error.type = seL4_IllegalOperation;
-            return EXCEPTION_SYSCALL_ERROR;
-        }
-
-
+# 1401 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c"
         /* Calculate the physical start address. */
         paddr_t frame_base = pte_get_page_base_address(pte);
 
         pstart = frame_base + (start & ((1ul << (resolve_ret.ptBitsLeft)) - 1ul));
 
-        setThreadState(ksCurThread, ThreadState_Restart);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
         return performVSpaceFlush(invLabel, vspaceRoot, asid, start, end - 1, pstart);
 
     default:
@@ -10859,7 +11815,7 @@ static exception_t decodeARMPageTableInvocation(word_t invLabel, word_t length,
             return EXCEPTION_SYSCALL_ERROR;
         }
 
-        setThreadState(ksCurThread, ThreadState_Restart);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
         return performPageTableInvocationUnmap(cap, cte);
     }
 
@@ -10891,7 +11847,7 @@ static exception_t decodeARMPageTableInvocation(word_t invLabel, word_t length,
     vspaceRoot = ((vspace_root_t *)(cap_vspace_cap_get_capVSBasePtr(vspaceRootCap)));
     asid = cap_vspace_cap_get_capVSMappedASID(vspaceRootCap);
 
-    if (__builtin_expect(!!(vaddr > 0x00007fffffffffff), 0)) {
+    if (__builtin_expect(!!(vaddr > 0x000000ffffffffff), 0)) {
         current_syscall_error.type = seL4_InvalidArgument;
         current_syscall_error.invalidArgumentNumber = 0;
         return EXCEPTION_SYSCALL_ERROR;
@@ -10923,7 +11879,7 @@ static exception_t decodeARMPageTableInvocation(word_t invLabel, word_t length,
     cap = cap_page_table_cap_set_capPTMappedASID(cap, asid);
     cap = cap_page_table_cap_set_capPTMappedAddress(cap, (vaddr & ~((1ul << (ptSlot.ptBitsLeft)) - 1ul)));
 
-    setThreadState(ksCurThread, ThreadState_Restart);
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
     return performPageTableInvocationMap(cap, cte, pte, ptSlot.ptSlot);
 }
 
@@ -10992,19 +11948,19 @@ static exception_t decodeARMFrameInvocation(word_t invLabel, word_t length,
 
         if (frame_asid != asidInvalid) {
             if (frame_asid != asid) {
-                do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "ARMPageMap: Attempting to remap a frame that does not belong to the passed address space" ">>" "\033[0m" "\n", 0lu, __func__, 1566, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+                do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "ARMPageMap: Attempting to remap a frame that does not belong to the passed address space" ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1566, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
                 current_syscall_error.type = seL4_InvalidCapability;
                 current_syscall_error.invalidCapNumber = 1;
                 return EXCEPTION_SYSCALL_ERROR;
 
             } else if (cap_frame_cap_get_capFMappedAddress(cap) != vaddr) {
-                do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "ARMPageMap: Attempting to map frame into multiple addresses" ">>" "\033[0m" "\n", 0lu, __func__, 1572, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+                do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "ARMPageMap: Attempting to map frame into multiple addresses" ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1572, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
                 current_syscall_error.type = seL4_InvalidArgument;
                 current_syscall_error.invalidArgumentNumber = 0;
                 return EXCEPTION_SYSCALL_ERROR;
             }
         } else {
-            if (__builtin_expect(!!(vaddr + (1ul << (pageBitsForSize(frameSize))) - 1 > 0x00007fffffffffff), 0)) {
+            if (__builtin_expect(!!(vaddr + (1ul << (pageBitsForSize(frameSize))) - 1 > 0x000000ffffffffff), 0)) {
                 current_syscall_error.type = seL4_InvalidArgument;
                 current_syscall_error.invalidArgumentNumber = 0;
                 return EXCEPTION_SYSCALL_ERROR;
@@ -11024,13 +11980,13 @@ static exception_t decodeARMFrameInvocation(word_t invLabel, word_t length,
             return EXCEPTION_SYSCALL_ERROR;
         }
 
-        setThreadState(ksCurThread, ThreadState_Restart);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
         return performPageInvocationMap(asid, cap, cte,
                                         makeUserPagePTE(base, vmRights, attributes, frameSize), lu_ret.ptSlot);
     }
 
     case ARMPageUnmap:
-        setThreadState(ksCurThread, ThreadState_Restart);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
         return performPageInvocationUnmap(cap, cte);
 
     case ARMPageClean_Data:
@@ -11044,13 +12000,13 @@ static exception_t decodeARMFrameInvocation(word_t invLabel, word_t length,
         findVSpaceForASID_ret_t find_ret;
 
         if (length < 2) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Page Flush: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 1618, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Page Flush: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1618, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             current_syscall_error.type = seL4_TruncatedMessage;
             return EXCEPTION_SYSCALL_ERROR;
         }
 
         if (__builtin_expect(!!(cap_frame_cap_get_capFMappedASID(cap) == 0), 0)) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Page Flush: Frame is not mapped." ">>" "\033[0m" "\n", 0lu, __func__, 1624, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Page Flush: Frame is not mapped." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1624, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             current_syscall_error.type = seL4_IllegalOperation;
             return EXCEPTION_SYSCALL_ERROR;
         }
@@ -11060,7 +12016,7 @@ static exception_t decodeARMFrameInvocation(word_t invLabel, word_t length,
 
         find_ret = findVSpaceForASID(asid);
         if (__builtin_expect(!!(find_ret.status != EXCEPTION_NONE), 0)) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Page Flush: No PGD for ASID" ">>" "\033[0m" "\n", 0lu, __func__, 1634, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Page Flush: No PGD for ASID" ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1634, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             current_syscall_error.type = seL4_FailedLookup;
             current_syscall_error.failedLookupWasSource = false;
             return EXCEPTION_SYSCALL_ERROR;
@@ -11071,7 +12027,7 @@ static exception_t decodeARMFrameInvocation(word_t invLabel, word_t length,
 
         /* check that the range is sane */
         if (end <= start) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "PageFlush: Invalid range" ">>" "\033[0m" "\n", 0lu, __func__, 1645, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "PageFlush: Invalid range" ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1645, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             current_syscall_error.type = seL4_InvalidArgument;
             current_syscall_error.invalidArgumentNumber = 1;
             return EXCEPTION_SYSCALL_ERROR;
@@ -11080,42 +12036,28 @@ static exception_t decodeARMFrameInvocation(word_t invLabel, word_t length,
         /* start and end are currently relative inside this page */
         page_size = (1ul << (pageBitsForSize(cap_frame_cap_get_capFSize(cap))));
         if (start >= page_size || end > page_size) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Page Flush: Requested range not inside page" ">>" "\033[0m" "\n", 0lu, __func__, 1654, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Page Flush: Requested range not inside page" ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1654, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             current_syscall_error.type = seL4_InvalidArgument;
             current_syscall_error.invalidArgumentNumber = 0;
             return EXCEPTION_SYSCALL_ERROR;
         }
 
         word_t pstart = addrFromPPtr((void *)cap_frame_cap_get_capFBasePtr(cap)) + start;
-# 1669 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c"
-        /* When in EL1, we are using the user page table for flushing and need to make sure
-           the mapping info in the cap is not stale. */
-        lookupPTSlot_ret_t lu_ret = lookupPTSlot(find_ret.vspace_root, vaddr);
-        pte_t pte = *lu_ret.ptSlot;
-        void *base_ptr = (void *) cap_frame_cap_get_capFBasePtr(cap);
-        if (__builtin_expect(!!(lu_ret.ptBitsLeft != pageBitsForSize(cap_frame_cap_get_capFSize(cap)) || !pte_is_page_type(pte) || pte_get_page_base_address(pte) != addrFromPPtr(base_ptr)), 0)
 
-                                                                               ) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Page Flush: Attempting to use cap with stale mapping information." ">>" "\033[0m" "\n", 0lu, __func__, 1677, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
-            current_syscall_error.type = seL4_InvalidCapability;
-            current_syscall_error.invalidCapNumber = 0;
-            return EXCEPTION_SYSCALL_ERROR;
-        }
-
-        /* When in EL1, the mapping must be writeable for DC IVAC */
-        if (invLabel == ARMPageInvalidate_Data && vmRightsFromPTE(pte) != VMReadWrite) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "ARMPageInvalidate_Data: Cannot call on mapping without write rights." ">>" "\033[0m" "\n", 0lu, __func__, 1685, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        /* Don't let applications flush outside of the kernel window */
+        if (pstart < 0x0ul || ((end - start) + pstart) > (0x000000ffc0000000ul /* 2^40 - 2^30 */ - (0x0000008000000000ul /* 2^40 - 2^39 */ - 0x0ul))) {
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Page Flush: Overlaps kernel region." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1664, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             current_syscall_error.type = seL4_IllegalOperation;
             return EXCEPTION_SYSCALL_ERROR;
         }
-
-        setThreadState(ksCurThread, ThreadState_Restart);
+# 1690 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/kernel/vspace.c"
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
         return performPageFlush(invLabel, find_ret.vspace_root, asid, vaddr + start, vaddr + end - 1,
                                 pstart);
     }
 
     case ARMPageGetAddress:
-        setThreadState(ksCurThread, ThreadState_Restart);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
         return performPageGetAddress(cap_frame_cap_get_capFBasePtr(cap), call);
 
     default:
@@ -11170,7 +12112,7 @@ exception_t decodeARMMMUInvocation(word_t invLabel, word_t length, cptr_t cptr,
         for (i = 0; i < (1ul << (asidHighBits)) && armKSASIDTable[i]; i++);
 
         if (__builtin_expect(!!(i == (1ul << (asidHighBits))), 0)) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "ASIDControlMakePool: No unallocated pools found." ">>" "\033[0m" "\n", 0lu, __func__, 1751, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "ASIDControlMakePool: No unallocated pools found." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1751, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             current_syscall_error.type = seL4_DeleteFirst;
 
             return EXCEPTION_SYSCALL_ERROR;
@@ -11205,7 +12147,7 @@ exception_t decodeARMMMUInvocation(word_t invLabel, word_t length, cptr_t cptr,
             return status;
         }
 
-        setThreadState(ksCurThread, ThreadState_Restart);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
         return performASIDControlInvocation(frame, destSlot, parentSlot, asid_base);
     }
 
@@ -11268,7 +12210,7 @@ exception_t decodeARMMMUInvocation(word_t invLabel, word_t length, cptr_t cptr,
 
         asid += i;
 
-        setThreadState(ksCurThread, ThreadState_Restart);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
         return performASIDPoolInvocation(asid, pool, vspaceCapSlot);
     }
 
@@ -11427,16 +12369,19 @@ static void cap_frame_print_attrs_impl(word_t SH, word_t AP, word_t NXN)
 
     /* rights */
     switch (AP) {
-# 82 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/machine/capdl.c"
+
     case 0b00:
         break;
     case 0b01:
-        printf("RW");
+        printf("R");
+        break;
     case 0b10:
+        printf("W");
         break;
     case 0b11:
-        printf("R");
-
+        printf("RW");
+        break;
+# 91 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/machine/capdl.c"
     default:
         break;
     }
@@ -11446,7 +12391,7 @@ static void cap_frame_print_attrs_impl(word_t SH, word_t AP, word_t NXN)
     }
 
     /* Only has effect if SMP enabled */
-    if (SH != 0) {
+    if (SH != 3) {
         printf(", uncached");
     }
 
@@ -11468,13 +12413,13 @@ static void _cap_frame_print_attrs_vptr(word_t vptr, vspace_root_t *vspace)
     switch (ret.ptBitsLeft) {
 
     case ARMHugePage:
-        table_index = (((vptr) >> (((9) * (((4) - 1) - ((1)))) + 12)) & ((1ul << (((1) == 0 ? 9 : 9))) - 1ul));
+        table_index = (((vptr) >> (((9) * (((3) - 1) - (((1)-1)))) + 12)) & ((1ul << ((((1)-1) == 0 ? 10 : 9))) - 1ul));
         break;
     case ARMLargePage:
-        table_index = (((vptr) >> (((9) * (((4) - 1) - ((2)))) + 12)) & ((1ul << (((2) == 0 ? 9 : 9))) - 1ul));
+        table_index = (((vptr) >> (((9) * (((3) - 1) - (((2)-1)))) + 12)) & ((1ul << ((((2)-1) == 0 ? 10 : 9))) - 1ul));
         break;
     case ARMSmallPage:
-        table_index = (((vptr) >> (((9) * (((4) - 1) - ((3)))) + 12)) & ((1ul << (((3) == 0 ? 9 : 9))) - 1ul));
+        table_index = (((vptr) >> (((9) * (((3) - 1) - (((3)-1)))) + 12)) & ((1ul << ((((3)-1) == 0 ? 10 : 9))) - 1ul));
         break;
     default:
         do { if (!(0)) { _assert_fail("0", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/machine/capdl.c", 131, __func__); } } while(0);
@@ -11495,7 +12440,7 @@ void cap_frame_print_attrs_vptr(word_t vptr, cap_t vspace)
 static void arm64_cap_pt_print_slots(pte_t *pdSlot, vptr_t vptr)
 {
     pte_t *pt = ptrFromPAddr(pte_pte_table_ptr_get_pt_base_address(pdSlot));
-    printf("pt_%p_%04lu {\n", pdSlot, (((vptr) >> (((9) * (((4) - 1) - ((2)))) + 12)) & ((1ul << (((2) == 0 ? 9 : 9))) - 1ul)));
+    printf("pt_%p_%04lu {\n", pdSlot, (((vptr) >> (((9) * (((3) - 1) - (((2)-1)))) + 12)) & ((1ul << ((((2)-1) == 0 ? 10 : 9))) - 1ul)));
 
     for (word_t i = 0; i < (1ul << (9)); i ++) {
         pte_t *ptSlot = pt + i;
@@ -11511,7 +12456,7 @@ static void arm64_cap_pt_print_slots(pte_t *pdSlot, vptr_t vptr)
 
 static void arm64_cap_pd_print_slots(pte_t *pudSlot, vptr_t vptr)
 {
-    printf("pd_%p_%04lu {\n", pudSlot, (((vptr) >> (((9) * (((4) - 1) - ((1)))) + 12)) & ((1ul << (((1) == 0 ? 9 : 9))) - 1ul)));
+    printf("pd_%p_%04lu {\n", pudSlot, (((vptr) >> (((9) * (((3) - 1) - (((1)-1)))) + 12)) & ((1ul << ((((1)-1) == 0 ? 10 : 9))) - 1ul)));
     pte_t *pd = ptrFromPAddr(pte_pte_table_ptr_get_pt_base_address(pudSlot));
 
     for (word_t i = 0; i < (1ul << (9)); i++) {
@@ -11535,7 +12480,7 @@ static void arm64_cap_pd_print_slots(pte_t *pudSlot, vptr_t vptr)
     for (word_t i = 0; i < (1ul << (9)); i++) {
         pte_t *pdSlot = pd + i;
         if (pte_ptr_get_pte_type(pdSlot) == pte_pte_table) {
-            arm64_cap_pt_print_slots(pdSlot, vptr + (i * (1ul << ((((9) * (((4) - 1) - (((2))))) + 12)))));
+            arm64_cap_pt_print_slots(pdSlot, vptr + (i * (1ul << ((((9) * (((3) - 1) - ((((2)-1))))) + 12)))));
         }
     }
 }
@@ -11543,13 +12488,13 @@ static void arm64_cap_pd_print_slots(pte_t *pudSlot, vptr_t vptr)
 static void arm64_cap_pud_print_slots(void *pgdSlot_or_vspace, vptr_t vptr)
 {
 
+    pte_t *pud = pgdSlot_or_vspace;
+    word_t index_bits = 10;
+    printf("%p_pd {\n", pgdSlot_or_vspace);
 
 
 
 
-    pte_t *pud = ptrFromPAddr(pte_pte_table_ptr_get_pt_base_address(pgdSlot_or_vspace));
-    word_t index_bits = 9;
-    printf("pud_%p_%04lu {\n", pgdSlot_or_vspace, (((vptr) >> (((9) * (((4) - 1) - ((0)))) + 12)) & ((1ul << (((0) == 0 ? 9 : 9))) - 1ul)));
 
 
     for (word_t i = 0; i < (1ul << (index_bits)); i++) {
@@ -11562,9 +12507,9 @@ static void arm64_cap_pud_print_slots(void *pgdSlot_or_vspace, vptr_t vptr)
     printf("}\n"); /* pgd/pud */
 
     for (word_t i = 0; i < (1ul << (index_bits)); i++) {
-        pte_t *pudSlot = pud + (((i) >> (((9) * (((4) - 1) - ((1)))) + 12)) & ((1ul << (((1) == 0 ? 9 : 9))) - 1ul));
+        pte_t *pudSlot = pud + (((i) >> (((9) * (((3) - 1) - (((1)-1)))) + 12)) & ((1ul << ((((1)-1) == 0 ? 10 : 9))) - 1ul));
         if (pte_ptr_get_pte_type(pudSlot) == pte_pte_table) {
-            arm64_cap_pd_print_slots(pudSlot, vptr + (i * (1ul << ((((9) * (((4) - 1) - (((1))))) + 12)))));
+            arm64_cap_pd_print_slots(pudSlot, vptr + (i * (1ul << ((((9) * (((3) - 1) - ((((1)-1))))) + 12)))));
         }
     }
 }
@@ -11580,24 +12525,8 @@ void obj_vtable_print_slots(tcb_t *tcb)
         * levels: PGD -> UPD -> PD -> PT
         */
 
-
-
-        printf("%p_pd {\n", vspace);
-        for (word_t i = 0; i < 9; i++) {
-            pte_t *ptSlot = vspace + i;
-            if (pte_pte_table_ptr_get_present(ptSlot)) {
-                printf("0x%lx: pud_%p_%04lu\n", i, ptSlot, i);
-            }
-        }
-        printf("}\n"); /* pd */
-
-        for (word_t i = 0; i < 9; i++) {
-            pte_t *ptSlot = vspace + i;
-            if (pte_pte_table_ptr_get_present(ptSlot)) {
-                arm64_cap_pud_print_slots(ptSlot, i * (1ul << ((((9) * (((4) - 1) - ((0)))) + 12))));
-            }
-        }
-
+        arm64_cap_pud_print_slots(vspace, 0);
+# 252 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/machine/capdl.c"
     }
 }
 
@@ -11621,8 +12550,8 @@ void print_cap_arch(cap_t cap)
         pte_t *ptSlot = ((void *)0);
         pte_t *pt = (pte_t *)find_ret.vspace_root;
         word_t level;
-        for (level = 0; level < 4 - 1 && pt != target_pt; level++) {
-            ptSlot = pt + (((vptr) >> (((9) * (((4) - 1) - (level))) + 12)) & ((1ul << ((level == 0 ? 9 : 9))) - 1ul));
+        for (level = 0; level < 3 - 1 && pt != target_pt; level++) {
+            ptSlot = pt + (((vptr) >> (((9) * (((3) - 1) - (level))) + 12)) & ((1ul << ((level == 0 ? 10 : 9))) - 1ul));
             if (__builtin_expect(!!(!pte_pte_table_ptr_get_present(ptSlot)), 0)) {
                 /* couldn't find it */
                 break;
@@ -11637,9 +12566,9 @@ void print_cap_arch(cap_t cap)
 
         if (asid) {
             printf("pt_%p_%04lu (asid: %lu)\n",
-                   target_pt, (((vptr) >> (((9) * (((4) - 1) - (level))) + 12)) & ((1ul << ((level == 0 ? 9 : 9))) - 1ul)), (long unsigned int)asid);
+                   target_pt, (((vptr) >> (((9) * (((3) - 1) - (level))) + 12)) & ((1ul << ((level == 0 ? 10 : 9))) - 1ul)), (long unsigned int)asid);
         } else {
-            printf("pt_%p_%04lu\n", target_pt, (((vptr) >> (((9) * (((4) - 1) - (level))) + 12)) & ((1ul << ((level == 0 ? 9 : 9))) - 1ul)));
+            printf("pt_%p_%04lu\n", target_pt, (((vptr) >> (((9) * (((3) - 1) - (level))) + 12)) & ((1ul << ((level == 0 ? 10 : 9))) - 1ul)));
         }
         break;
     }
@@ -11671,10 +12600,10 @@ void print_cap_arch(cap_t cap)
         break;
     }
 
-
-
-
-
+    case cap_vcpu_cap: {
+        printf("%p_vcpu\n", (void *)cap_vcpu_cap_get_capVCPUPtr(cap));
+        break;
+    }
 
 
         /* ARM specific caps */
@@ -11707,10 +12636,10 @@ void print_object_arch(cap_t cap)
         break;
     }
 
-
-
-
-
+    case cap_vcpu_cap: {
+        printf("%p_vcpu = vcpu\n", (void *)cap_vcpu_cap_get_capVCPUPtr(cap));
+        break;
+    }
 
         /* ARM specific objects */
 
@@ -11784,9 +12713,9 @@ void arm64_obj_pud_print_slots(void *pgdSlot_or_vspace)
 {
     pte_t *pud = ptrFromPAddr(pte_pte_table_ptr_get_pt_base_address(pgdSlot_or_vspace));
 
+    word_t index_bits = 10;
 
 
-    word_t index_bits = 9;
 
     for (word_t i = 0; i < (1ul << (index_bits)); i++) {
         pte_t *pudSlot = pud + i;
@@ -11817,18 +12746,9 @@ void obj_tcb_print_vtable(tcb_t *tcb)
          * levels: PGD -> PUD -> PD -> PT
          */
 
-
-
-
-        printf("%p_pd = pgd\n", vspace);
-        for (word_t i = 0; i < 9; i++) {
-            pte_t *ptSlot = vspace + i;
-            if (pte_pte_table_ptr_get_present(ptSlot)) {
-                printf("pud_%p_%04lu = pud\n", ptSlot, i);
-                arm64_obj_pud_print_slots(ptSlot);
-            }
-        }
-
+        printf("%p_pd = pud\n", vspace);
+        arm64_obj_pud_print_slots(vspace);
+# 483 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/machine/capdl.c"
     }
 }
 
@@ -11878,7 +12798,7 @@ __attribute__((__section__(".boot.text"))) bool_t fpsimd_init(void)
 {
     /* Set the FPU to lazy switch mode */
     disableFpu();
-    if (wrap_config_set(0)) {
+    if (wrap_config_set(1)) {
         enableFpuEL01();
     }
     /* Non-HYP Kernel assumes FPU is always enabled for EL1: Make sure it is */
@@ -12007,12 +12927,22 @@ asid_pool_t *armKSASIDTable[(1ul << (asidHighBits))];
  * applies.
  */
 
-vspace_root_t armKSGlobalUserVSpace[(1ul << (9))] __attribute__((__aligned__((1ul << (12))))) __attribute__((__section__(".bss.aligned")));
+vspace_root_t armKSGlobalUserVSpace[(1ul << (10))] __attribute__((__aligned__((1ul << (13))))) __attribute__((__section__(".bss.aligned")));
 pte_t armKSGlobalKernelPGD[(1ul << (9))] __attribute__((__aligned__((1ul << (12))))) __attribute__((__section__(".bss.aligned")));
 
 pte_t armKSGlobalKernelPUD[(1ul << (9))] __attribute__((__aligned__((1ul << (12))))) __attribute__((__section__(".bss.aligned")));
 pte_t armKSGlobalKernelPDs[(1ul << (9))][(1ul << (9))] __attribute__((__aligned__((1ul << (12))))) __attribute__((__section__(".bss.aligned")));
 pte_t armKSGlobalKernelPT[(1ul << (9))] __attribute__((__aligned__((1ul << (12))))) __attribute__((__section__(".bss.aligned")));
+# 101 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/model/statedata.c"
+;
+;
+
+/* The hardware VMID to virtual ASID mapping table.
+ * The ARMv8 supports 8-bit VMID which is used as logical ASID
+ * when the kernel runs in EL2.
+ */
+asid_t armKSHWASIDTable[(1ul << (hwASIDBits))];
+hw_asid_t armKSNextASID;
 # 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/object/objecttype.c"
 /*
  * Copyright 2020, Data61, CSIRO (ABN 41 687 119 230)
@@ -12044,7 +12974,7 @@ deriveCap_ret_t Arch_deriveCap(cte_t *slot, cap_t cap)
             ret.cap = cap;
             ret.status = EXCEPTION_NONE;
         } else {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Deriving a VSpace cap without an assigned ASID" ">>" "\033[0m" "\n", 0lu, __func__, 40, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Deriving a VSpace cap without an assigned ASID" ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 40, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             current_syscall_error.type = seL4_IllegalOperation;
             ret.cap = cap_null_cap_new();
             ret.status = EXCEPTION_SYSCALL_ERROR;
@@ -12056,7 +12986,7 @@ deriveCap_ret_t Arch_deriveCap(cte_t *slot, cap_t cap)
             ret.cap = cap;
             ret.status = EXCEPTION_NONE;
         } else {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Deriving a PT cap without an assigned ASID" ">>" "\033[0m" "\n", 0lu, __func__, 52, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Deriving a PT cap without an assigned ASID" ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 52, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             current_syscall_error.type = seL4_IllegalOperation;
             ret.cap = cap_null_cap_new();
             ret.status = EXCEPTION_SYSCALL_ERROR;
@@ -12073,8 +13003,9 @@ deriveCap_ret_t Arch_deriveCap(cte_t *slot, cap_t cap)
         ret.cap = cap;
         ret.status = EXCEPTION_NONE;
         return ret;
-# 77 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/object/objecttype.c"
-    case cap_sgi_signal_cap:
+
+
+    case cap_vcpu_cap:
         ret.cap = cap;
         ret.status = EXCEPTION_NONE;
         return ret;
@@ -12150,9 +13081,11 @@ finaliseCap_ret_t Arch_finaliseCap(cap_t cap, bool_t final)
                       cap_frame_cap_get_capFBasePtr(cap));
         }
         break;
-# 188 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/object/objecttype.c"
-    case cap_sgi_signal_cap:
-        // do nothing
+
+    case cap_vcpu_cap:
+        if (final) {
+            vcpu_finalise(((struct vcpu *)(cap_vcpu_cap_get_capVCPUPtr(cap))));
+        }
         break;
 # 209 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/object/objecttype.c"
     }
@@ -12203,13 +13136,12 @@ bool_t __attribute__((__const__)) Arch_sameRegionAs(cap_t cap_a, cap_t cap_b)
                    cap_asid_pool_cap_get_capASIDPool(cap_b);
         }
         break;
-# 267 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/object/objecttype.c"
-    case cap_sgi_signal_cap:
-        if (cap_get_capType(cap_b) == cap_sgi_signal_cap) {
-            return (cap_sgi_signal_cap_get_capSGIIRQ(cap_a) ==
-                    cap_sgi_signal_cap_get_capSGIIRQ(cap_b) &&
-                    cap_sgi_signal_cap_get_capSGITarget(cap_a) ==
-                    cap_sgi_signal_cap_get_capSGITarget(cap_b));
+
+
+    case cap_vcpu_cap:
+        if (cap_get_capType(cap_b) == cap_vcpu_cap) {
+            return cap_vcpu_cap_get_capVCPUPtr(cap_a) ==
+                   cap_vcpu_cap_get_capVCPUPtr(cap_b);
         }
         break;
 # 310 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/object/objecttype.c"
@@ -12229,12 +13161,7 @@ bool_t __attribute__((__const__)) Arch_sameObjectAs(cap_t cap_a, cap_t cap_b)
                      (cap_frame_cap_get_capFIsDevice(cap_b) == 0)));
         }
     }
-# 337 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/object/objecttype.c"
-    if (cap_get_capType(cap_a) == cap_sgi_signal_cap) {
-        return false;
-    }
-
-
+# 342 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/object/objecttype.c"
     return Arch_sameRegionAs(cap_a, cap_b);
 }
 
@@ -12250,10 +13177,10 @@ word_t Arch_getObjectSize(word_t t)
     case seL4_ARM_PageTableObject:
         return 12;
     case seL4_ARM_VSpaceObject:
+        return 13;
+
+    case seL4_ARM_VCPUObject:
         return 12;
-
-
-
 
     default:
         _fail("Invalid object type", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/object/objecttype.c", 363, __func__);
@@ -12346,7 +13273,7 @@ cap_t Arch_createObject(object_t t, void *regionBase, word_t userSize, bool_t de
               (Ptr (ptr_val \<acute>regionBase) :: (pte_C[vs_array_len]) ptr))" */
         /** GHOSTUPD: "(True, gs_new_pt_t VSRootPT_T (ptr_val \<acute>regionBase))" */
         cleanCacheRange_PoU((word_t)regionBase,
-                            (word_t)regionBase + ((1ul << (12)) - 1ul),
+                            (word_t)regionBase + ((1ul << (13)) - 1ul),
                             addrFromPPtr(regionBase));
 # 463 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/object/objecttype.c"
         return cap_vspace_cap_new(
@@ -12368,7 +13295,15 @@ cap_t Arch_createObject(object_t t, void *regionBase, word_t userSize, bool_t de
                    0, /* capPTIsMapped      */
                    0 /* capPTMappedAddress */
                );
-# 491 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/object/objecttype.c"
+
+
+    case seL4_ARM_VCPUObject:
+        /** AUXUPD: "(True, ptr_retyp
+          (Ptr (ptr_val \<acute>regionBase) :: vcpu_C ptr))" */
+        vcpu_init(((struct vcpu *)(regionBase)));
+        return cap_vcpu_cap_new(((word_t)(regionBase)));
+
+
     default:
         _fail("Arch_createObject got an API type or invalid object type", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/object/objecttype.c", 492, __func__);
     }
@@ -12385,12 +13320,8 @@ exception_t Arch_decodeInvocation(word_t label, word_t length, cptr_t cptr,
 
     switch (cap_get_capType(cap)) {
 
-
-
-
-
-    case cap_sgi_signal_cap:
-        return decodeSGISignalInvocation(label, length, cap, buffer);
+    case cap_vcpu_cap:
+        return decodeARMVCPUInvocation(label, length, cptr, slot, cap, call, buffer);
 # 528 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/64/object/objecttype.c"
     default:
 
@@ -12403,9 +13334,9 @@ exception_t Arch_decodeInvocation(word_t label, word_t length, cptr_t cptr,
 void
 Arch_prepareThreadDelete(tcb_t * thread) {
 
-
-
-
+    if (thread->tcbArch.tcbVCPU) {
+        dissociateVCPUTCB(thread->tcbArch.tcbVCPU, thread);
+    }
 
 
 
@@ -12424,7 +13355,15 @@ bool_t Arch_handleFaultReply(tcb_t *receiver, tcb_t *sender, word_t faultType)
     switch (faultType) {
     case seL4_Fault_VMFault:
         return true;
-# 28 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/api/faults.c"
+
+
+    case seL4_Fault_VGICMaintenance:
+        return true;
+    case seL4_Fault_VCPUFault:
+        return true;
+    case seL4_Fault_VPPIEvent:
+        return true;
+
     default:
         _fail("Invalid fault", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/api/faults.c", 29, __func__);
     }
@@ -12442,7 +13381,21 @@ word_t Arch_setMRs_fault(tcb_t *sender, tcb_t *receiver, word_t *receiveIPCBuffe
         return setMR(receiver, receiveIPCBuffer, seL4_VMFault_FSR,
                      seL4_Fault_VMFault_get_FSR(sender->tcbFault));
     }
-# 60 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/api/faults.c"
+
+
+    case seL4_Fault_VGICMaintenance:
+        if (seL4_Fault_VGICMaintenance_get_idxValid(sender->tcbFault)) {
+            return setMR(receiver, receiveIPCBuffer, seL4_VGICMaintenance_IDX,
+                         seL4_Fault_VGICMaintenance_get_idx(sender->tcbFault));
+        } else {
+            return setMR(receiver, receiveIPCBuffer, seL4_VGICMaintenance_IDX, -1);
+        }
+    case seL4_Fault_VCPUFault:
+        return setMR(receiver, receiveIPCBuffer, seL4_VCPUFault_HSR, seL4_Fault_VCPUFault_get_hsr(sender->tcbFault));
+    case seL4_Fault_VPPIEvent:
+        return setMR(receiver, receiveIPCBuffer, seL4_VPPIEvent_IRQ, seL4_Fault_VPPIEvent_get_irq_w(sender->tcbFault));
+
+
     default:
         _fail("Invalid fault", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/api/faults.c", 61, __func__);
     }
@@ -12601,7 +13554,17 @@ static void check_export_arch_timer(void)
     uint32_t val = 0;
 # 46 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/armv/armv8-a/64/user_access.c"
     do { word_t _v = val; __asm__ volatile("msr " "CNTKCTL_EL1" ",%x0" :: "r" (_v)); }while(0);
-# 58 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/armv/armv8-a/64/user_access.c"
+
+
+    val = 0;
+
+
+
+
+
+
+    do { word_t _v = val; __asm__ volatile("msr " "CNTHCTL_EL2" ",%x0" :: "r" (_v)); }while(0);
+
 }
 
 void armv_init_user_access(void)
@@ -12624,12 +13587,12 @@ void armv_init_user_access(void)
 # 20 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/c_traps.c"
 void __attribute__((externally_visible)) __attribute__((__noreturn__)) c_handle_undefined_instruction(void)
 {
-    do {} while (0);
+    do { clh_lock_acquire(false); } while(0);
     c_entry_hook();
 
 
     ksKernelEntry.path = Entry_UserLevelFault;
-    ksKernelEntry.word = getRegister(ksCurThread, NextIP);
+    ksKernelEntry.word = getRegister(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, NextIP);
 
 
     /* There's only one user-level fault on ARM, and the code is (0,0) */
@@ -12652,12 +13615,12 @@ void __attribute__((externally_visible)) __attribute__((__noreturn__)) c_handle_
 # 57 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/c_traps.c"
 static inline void __attribute__((__noreturn__)) c_handle_vm_fault(vm_fault_type_t type)
 {
-    do {} while (0);
+    do { clh_lock_acquire(false); } while(0);
     c_entry_hook();
 
 
     ksKernelEntry.path = Entry_VMFault;
-    ksKernelEntry.word = getRegister(ksCurThread, NextIP);
+    ksKernelEntry.word = getRegister(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, NextIP);
     ksKernelEntry.is_fastpath = false;
 
 
@@ -12682,13 +13645,13 @@ void __attribute__((externally_visible)) __attribute__((__noreturn__)) c_handle_
 
 void __attribute__((externally_visible)) __attribute__((__noreturn__)) c_handle_interrupt(void)
 {
-    do {} while (0);
+    do { if(((getActiveIRQ().irq) != 0)) { do { clh_lock_acquire(true); } while(0); } } while(0);
     c_entry_hook();
 
 
     ksKernelEntry.path = Entry_Interrupt;
-    ksKernelEntry.word = (getActiveIRQ());
-    ksKernelEntry.core = 0lu;
+    ksKernelEntry.word = (getActiveIRQ().irq);
+    ksKernelEntry.core = getCurrentCPUIndex();
 
 
     handleInterruptEntry();
@@ -12719,7 +13682,7 @@ void __attribute__((__noreturn__)) slowpath(syscall_t syscall)
 
 void __attribute__((externally_visible)) c_handle_syscall(word_t cptr, word_t msgInfo, syscall_t syscall)
 {
-    do {} while (0);
+    do { clh_lock_acquire(false); } while(0);
 
     c_entry_hook();
 
@@ -12735,7 +13698,7 @@ void __attribute__((externally_visible)) c_handle_syscall(word_t cptr, word_t ms
 __attribute__((__aligned__((1ul << (6)))))
 void __attribute__((externally_visible)) c_handle_fastpath_call(word_t cptr, word_t msgInfo)
 {
-    do {} while (0);
+    do { clh_lock_acquire(false); } while(0);
 
     c_entry_hook();
 
@@ -12754,7 +13717,7 @@ __attribute__((__aligned__((1ul << (6)))))
 void __attribute__((externally_visible)) c_handle_fastpath_reply_recv(word_t cptr, word_t msgInfo)
 
 {
-    do {} while (0);
+    do { clh_lock_acquire(false); } while(0);
 
     c_entry_hook();
 
@@ -12767,6 +13730,24 @@ void __attribute__((externally_visible)) c_handle_fastpath_reply_recv(word_t cpt
 
     fastpath_reply_recv(cptr, msgInfo);
 
+    __builtin_unreachable();
+}
+
+
+
+
+__attribute__((externally_visible)) __attribute__((__noreturn__)) void c_handle_vcpu_fault(word_t hsr)
+{
+    do { clh_lock_acquire(false); } while(0);
+
+    c_entry_hook();
+
+
+    ksKernelEntry.path = Entry_VCPUFault;
+    ksKernelEntry.word = hsr;
+
+    handleVCPUFault(hsr);
+    restore_user_context();
     __builtin_unreachable();
 }
 # 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/kernel/boot.c"
@@ -12801,7 +13782,15 @@ void init_kernel(
     uint32_t dtb_size
 );
 # 16 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/kernel/boot.c" 2
-# 40 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/kernel/boot.c"
+# 32 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/kernel/boot.c"
+/* SMP boot synchronization works based on a global variable with the initial
+ * value 0, as the loader must zero all BSS variables. Secondary cores keep
+ * spinning until the primary core has initialized all kernel structures and
+ * then set it to 1.
+ */
+__attribute__((__section__(".boot.bss"))) static volatile _Atomic int node_boot_lock;
+
+
 __attribute__((__section__(".boot.bss"))) static region_t reserved[(3 + 0)];
 
 __attribute__((__section__(".boot.text"))) static bool_t arch_init_freemem(p_region_t ui_p_reg,
@@ -12833,7 +13822,7 @@ __attribute__((__section__(".boot.text"))) static bool_t arch_init_freemem(p_reg
         printf("ERROR: MODE_RESERVED > 1 unsupported!\n");
         return false;
     }
-    if (ui_p_reg.start < (0xffffffffc0000000ul /* 2^64 - 2^30 */ - (0xffffff8000000000ul /* 2^64 - 2^39 */ - 0x0ul))) {
+    if (ui_p_reg.start < (0x000000ffc0000000ul /* 2^40 - 2^30 */ - (0x0000008000000000ul /* 2^40 - 2^39 */ - 0x0ul))) {
         region_t ui_reg = paddr_to_pptr_reg(ui_p_reg);
         if (0 == 1) {
             if (index + 1 >= (sizeof(reserved) / sizeof((reserved)[0]))) {
@@ -12886,10 +13875,17 @@ __attribute__((__section__(".boot.text"))) static void init_irqs(cap_t root_cnod
     unsigned i;
 
     for (i = 0; i <= maxIRQ ; i++) {
-        setIRQState(IRQInactive, (i));
+        setIRQState(IRQInactive, ((irq_t){.irq = (i), .target_core = (0)}));
     }
-    setIRQState(IRQTimer, (27));
-# 152 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/kernel/boot.c"
+    setIRQState(IRQTimer, ((irq_t){.irq = (26), .target_core = (0)}));
+
+    setIRQState(IRQReserved, ((irq_t){.irq = (25), .target_core = (0)}));
+    setIRQState(IRQReserved, ((irq_t){.irq = (27), .target_core = (0)}));
+# 148 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/kernel/boot.c"
+    setIRQState(IRQIPI, ((irq_t){.irq = (0), .target_core = (getCurrentCPUIndex())}));
+    setIRQState(IRQIPI, ((irq_t){.irq = (1), .target_core = (getCurrentCPUIndex())}));
+
+
     /* provide the IRQ control cap */
     write_slot((((slot_ptr_t)(((pptr_t)cap_get_capPtr(root_cnode_cap)))) + (seL4_CapIRQControl)), cap_irq_control_cap_new());
 }
@@ -12904,7 +13900,7 @@ __attribute__((__section__(".boot.text"))) static bool_t init_cpu(void)
     bool_t haveHWFPU;
 
 
-    if (wrap_config_set(0)) {
+    if (wrap_config_set(1)) {
         if (!checkTCR_EL2()) {
             return false;
         }
@@ -12912,15 +13908,23 @@ __attribute__((__section__(".boot.text"))) static bool_t init_cpu(void)
 
 
     activate_kernel_vspace();
-    if (wrap_config_set(0)) {
-        do {} while(0);
+    if (wrap_config_set(1)) {
+        vcpu_boot_init();
     }
 # 205 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/kernel/boot.c"
     /* Setup kernel stack pointer.
      * On ARM SMP, the array index here is the CPU ID
      */
-    word_t stack_top = ((word_t) kernel_stack_alloc[0lu]) + (1ul << (12));
-# 218 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/kernel/boot.c"
+    word_t stack_top = ((word_t) kernel_stack_alloc[getCurrentCPUIndex()]) + (1ul << (12));
+
+
+    /* the least 12 bits are used to store logical core ID */
+    stack_top |= getCurrentCPUIndex();
+
+
+
+
+
     setKernelStack(stack_top);
 
 
@@ -12970,7 +13974,71 @@ __attribute__((__section__(".boot.text"))) static void init_plat(void)
 
 
 }
-# 332 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/kernel/boot.c"
+
+
+__attribute__((__section__(".boot.text"))) static bool_t try_init_kernel_secondary_core(void)
+{
+    /* need to first wait until some kernel init has been done */
+    while (!node_boot_lock);
+
+    /* Perform cpu init */
+    init_cpu();
+
+    for (unsigned int i = 0; i < 32u; i++) {
+        maskInterrupt(true, ((irq_t){.irq = (i), .target_core = (getCurrentCPUIndex())}));
+    }
+    setIRQState(IRQIPI, ((irq_t){.irq = (0), .target_core = (getCurrentCPUIndex())}));
+    setIRQState(IRQIPI, ((irq_t){.irq = (1), .target_core = (getCurrentCPUIndex())}));
+    /* Enable per-CPU timer interrupts */
+    setIRQState(IRQTimer, ((irq_t){.irq = (26), .target_core = (getCurrentCPUIndex())}));
+
+    setIRQState(IRQReserved, ((irq_t){.irq = (25), .target_core = (getCurrentCPUIndex())}));
+    setIRQState(IRQReserved, ((irq_t){.irq = (27), .target_core = (getCurrentCPUIndex())}));
+
+    do { clh_lock_acquire(false); } while(0);
+
+    ;
+    ksNumCPUs++;
+
+    init_core_state(((tcb_t*)0));
+
+    return true;
+}
+
+__attribute__((__section__(".boot.text"))) static void release_secondary_cpus(void)
+{
+    /* release the cpus at the same time */
+    do { if (!(0 == node_boot_lock)) { _assert_fail("0 == node_boot_lock", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/kernel/boot.c", 301, __func__); } } while(0); /* Sanity check for a proper lock state. */
+    node_boot_lock = 1;
+
+    /*
+     * At this point in time the primary core (executing this code) already uses
+     * the seL4 MMU/cache setup. However, the secondary cores are still using
+     * the elfloader's MMU/cache setup, and thus any memory updates may not
+     * be visible there.
+     *
+     * On AARCH64, both elfloader and seL4 map memory inner shareable and have
+     * the caches enabled, so no explicit cache maintenance is necessary.
+     *
+     * On AARCH32 the elfloader uses strongly ordered uncached memory, but seL4
+     * has caching enabled, thus explicit cache cleaning is required.
+     */
+
+
+
+
+
+    /* Wait until all the secondary cores are done initialising */
+    while (ksNumCPUs != 4) {
+
+
+
+        /* perform a memory acquire to get new values of ksNumCPUs, release for ksCurTime */
+        __atomic_thread_fence(4);
+    }
+}
+
+
 /* Main kernel initialisation function. */
 
 static __attribute__((__section__(".boot.text"))) bool_t try_init_kernel(
@@ -13039,10 +14107,10 @@ static __attribute__((__section__(".boot.text"))) bool_t try_init_kernel(
         /* If the DTB is located in physical memory that is not mapped in the
          * kernel window we cannot access it.
          */
-        if (dtb_phys_end >= (0xffffffffc0000000ul /* 2^64 - 2^30 */ - (0xffffff8000000000ul /* 2^64 - 2^39 */ - 0x0ul))) {
+        if (dtb_phys_end >= (0x000000ffc0000000ul /* 2^40 - 2^30 */ - (0x0000008000000000ul /* 2^40 - 2^39 */ - 0x0ul))) {
             printf("ERROR: DTB at [%""lx""..%""lx"") "
                    "exceeds PADDR_TOP (%""lx"")\n",
-                   dtb_phys_addr, dtb_phys_end, (0xffffffffc0000000ul /* 2^64 - 2^30 */ - (0xffffff8000000000ul /* 2^64 - 2^39 */ - 0x0ul)));
+                   dtb_phys_addr, dtb_phys_end, (0x000000ffc0000000ul /* 2^40 - 2^30 */ - (0x0000008000000000ul /* 2^40 - 2^39 */ - 0x0ul)));
             return false;
         }
         /* DTB seems valid and accessible, pass it on in bootinfo. */
@@ -13060,14 +14128,14 @@ static __attribute__((__section__(".boot.text"))) bool_t try_init_kernel(
         .start = ui_v_reg.start,
         .end = extra_bi_frame_vptr + (extra_bi_size_bits > 0 ? (1ul << (extra_bi_size_bits)) : 0)
     };
-    if (it_v_reg.end >= 0x00007fffffffffff) {
+    if (it_v_reg.end >= 0x000000ffffffffff) {
         /* Variable arguments for printf() require well defined integer types to
          * work properly. Unfortunately, the definition of USER_TOP differs
          * between platforms (int, long), so we have to cast here to play safe.
          */
         printf("ERROR: userland image virt [%""lx""..%""lx"")"
                "exceeds USER_TOP (%""lx"")\n",
-               it_v_reg.start, it_v_reg.end, (word_t)0x00007fffffffffff);
+               it_v_reg.start, it_v_reg.end, (word_t)0x000000ffffffffff);
         return false;
     }
 
@@ -13089,7 +14157,7 @@ static __attribute__((__section__(".boot.text"))) bool_t try_init_kernel(
     /* initialise the IRQ states and provide the IRQ control cap */
     init_irqs(root_cnode_cap);
 # 458 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/kernel/boot.c"
-    populate_bi_frame(0, 1, ipcbuf_vptr, extra_bi_size);
+    populate_bi_frame(0, 4, ipcbuf_vptr, extra_bi_size);
 
     /* put DTB in the bootinfo block, if present. */
     seL4_BootInfoHeader header;
@@ -13242,22 +14310,22 @@ static __attribute__((__section__(".boot.text"))) bool_t try_init_kernel(
      */
     cleanInvalidateL1Caches();
     invalidateLocalTLB();
-    if (wrap_config_set(0)) {
+    if (wrap_config_set(1)) {
         invalidateHypTLB();
     }
 
     ksNumCPUs = 1;
 
     /* initialize BKL before booting up other cores */
-    ;
-    ;
+    clh_lock_init();
+    release_secondary_cpus();
 
     /* All cores are up now, so there can be concurrency. The kernel booting is
      * supposed to be finished before the secondary cores are released, all the
      * primary has to do now is schedule the initial thread. Currently there is
      * nothing that touches any global data structures, nevertheless we grab the
      * BKL here to play safe. It is released when the kernel is left. */
-    do {} while (0);
+    do { clh_lock_acquire(false); } while(0);
 
     printf("Booting all finished, dropped to user space\n");
 
@@ -13275,15 +14343,19 @@ __attribute__((__section__(".boot.text"))) __attribute__((externally_visible)) v
 )
 {
     bool_t result;
-# 658 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/kernel/boot.c"
-    result = try_init_kernel(ui_p_reg_start,
-                             ui_p_reg_end,
-                             pv_offset,
-                             v_entry,
-                             dtb_addr_p, dtb_size);
 
 
-
+    /* we assume there exists a cpu with id 0 and will use it for bootstrapping */
+    if (getCurrentCPUIndex() == 0) {
+        result = try_init_kernel(ui_p_reg_start,
+                                 ui_p_reg_end,
+                                 pv_offset,
+                                 v_entry,
+                                 dtb_addr_p, dtb_size);
+    } else {
+        result = try_init_kernel_secondary_core();
+    }
+# 666 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/kernel/boot.c"
     if (!result) {
         _fail("ERROR: kernel init failed", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/kernel/boot.c", 667, __func__);
         __builtin_unreachable();
@@ -13312,15 +14384,15 @@ void Arch_postModifyRegisters(tcb_t *tptr)
 
 void Arch_prepareNextDomain(void)
 {
-    if (wrap_config_set(0)) {
-        do {} while(0);
+    if (wrap_config_set(1)) {
+        vcpu_flush();
     }
 }
 
 void Arch_prepareSetDomain(tcb_t *tptr, dom_t dom)
 {
-    if (wrap_config_set(0)) {
-        do {} while(0);
+    if (wrap_config_set(1)) {
+        vcpu_flush_if_current(tptr);
     }
 }
 # 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/machine/cache.c"
@@ -13483,15 +14555,18 @@ void invalidateCacheRange_RAM(vptr_t start, vptr_t end, paddr_t pstart)
 
 void invalidateCacheRange_I(vptr_t start, vptr_t end, paddr_t pstart)
 {
-# 149 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/machine/cache.c"
-    vptr_t line;
-    word_t index;
 
-    for (index = ((((start) >> (6)) << (6))>>6); index < ((((end) >> (6)) << (6))>>6) + 1; index++) {
-        line = index << 6;
-        invalidateByVA_I(line, pstart + (line - start));
-    }
-
+    /* In cases where the hypervisor is supported, the virtual address passed
+     * to this function are kernel aliases for the underlying physical memory
+     * rather than the virtual address in the actual vspace. This works fine
+     * when the cache is PIPT, as the cache-line is indexed by physical address,
+     * and the alias maps to the same physical address. On VIPT this is not the
+     * case, and it is not possible to correctly index using an aliased address.
+     * As the only possible fallback the entire cache is invalidated in this
+     * case
+     */
+    invalidate_I_PoU();
+# 157 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/machine/cache.c"
 }
 
 void branchFlushRange(vptr_t start, vptr_t end, paddr_t pstart)
@@ -13588,17 +14663,17 @@ __attribute__((__section__(".boot.text"))) void __attribute__((externally_visibl
 
 
 volatile struct gic_dist_map *const gic_dist =
-    (volatile struct gic_dist_map *)((0xffffffffffe00000ul /* 2^64 - 2^21 */ + 0x1000));
+    (volatile struct gic_dist_map *)((0x000000ffffe00000ul /* 2^40 - 2^21 */ + 0x1000));
 
 
 
 
 
 volatile struct gic_cpu_iface_map *const gic_cpuiface =
-    (volatile struct gic_cpu_iface_map *)((0xffffffffffe00000ul /* 2^64 - 2^21 */ + 0x2000));
+    (volatile struct gic_cpu_iface_map *)((0x000000ffffe00000ul /* 2^40 - 2^21 */ + 0x2000));
 
 
-word_t active_irq[1];
+word_t active_irq[4];
 
 /* Get the target id for this processor. We rely on the constraint that the registers
  * for PPI are read only and return only the current processor as the target.
@@ -13638,7 +14713,7 @@ __attribute__((__section__(".boot.text"))) static void dist_init(void)
 
     /* reset interrupts priority */
     for (i = 32; i < nirqs; i += 4) {
-        if (wrap_config_set(0)) {
+        if (wrap_config_set(1)) {
             gic_dist->priority[i >> 2] = 0x80808080;
         } else {
             gic_dist->priority[i >> 2] = 0;
@@ -13661,7 +14736,7 @@ __attribute__((__section__(".boot.text"))) static void dist_init(void)
 
     /* group 0 for secure; group 1 for non-secure */
     for (i = 0; i < nirqs; i += 32) {
-        if (wrap_config_set(0) && !wrap_config_set(1)) {
+        if (wrap_config_set(1) && !wrap_config_set(1)) {
             gic_dist->security[i >> 5] = 0xffffffff;
         } else {
             gic_dist->security[i >> 5] = 0;
@@ -13680,7 +14755,7 @@ __attribute__((__section__(".boot.text"))) static void cpu_iface_init(void)
     gic_dist->pending_clr[0] = 0xffffffff;
 
     /* put everything in group 0; group 1 if in hyp mode */
-    if (wrap_config_set(0) && !wrap_config_set(1)) {
+    if (wrap_config_set(1) && !wrap_config_set(1)) {
         gic_dist->security[0] = 0xffffffff;
         gic_dist->priority[0] = 0x80808080;
     } else {
@@ -13716,8 +14791,8 @@ void setIRQTrigger(irq_t irq, bool_t trigger)
     /* in the gic_config, there is a 2 bit field for each irq,
      * setting the most significant bit of this field makes the irq edge-triggered,
      * while 0 indicates that it is level-triggered */
-    word_t index = (irq) / 16u;
-    word_t offset = ((irq) % 16u) * 2;
+    word_t index = (irq.irq) / 16u;
+    word_t offset = ((irq.irq) % 16u) * 2;
     if (trigger) {
         /* set the bit */
         gic_dist->config[index] |= (1ul << (offset + 1));
@@ -13729,13 +14804,13 @@ void setIRQTrigger(irq_t irq, bool_t trigger)
 __attribute__((__section__(".boot.text"))) void initIRQController(void)
 {
     /* irqInvalid cannot correspond to a valid IRQ index into the irq state array */
-    do { if (!((maxIRQ + 1) < (irqInvalid))) { _assert_fail("INT_STATE_ARRAY_SIZE < IRQT_TO_IRQ(irqInvalid)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/machine/gic_v2.c", 168, __func__); } } while(0);
+    do { if (!(((4 - 1) * 32u + maxIRQ + 1) < (irqInvalid.irq))) { _assert_fail("INT_STATE_ARRAY_SIZE < IRQT_TO_IRQ(irqInvalid)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/machine/gic_v2.c", 168, __func__); } } while(0);
     dist_init();
 }
 
 __attribute__((__section__(".boot.text"))) void cpu_initLocalIRQController(void)
 {
-    active_irq[0lu] = 1023u;
+    active_irq[getCurrentCPUIndex()] = 1023u;
     cpu_iface_init();
 }
 
@@ -13749,6 +14824,62 @@ void plat_sendSGI(word_t irq, word_t target)
 {
     gic_dist->sgi_control = ((1ul << (target)) << (16)) | (irq << 0);
 }
+
+
+/*
+* 25-24: target lister filter
+* 0b00 - send the ipi to the CPU interfaces specified in the CPU target list
+* 0b01 - send the ipi to all CPU interfaces except the cpu interface.
+*        that requested the ipi
+* 0b10 - send the ipi only to the CPU interface that requested the IPI.
+* 0b11 - reserved
+*.
+* 23-16: CPU targets list
+* each bit of CPU target list [7:0] refers to the corresponding CPU interface.
+* 3-0:   SGIINTID
+* software generated interrupt id, from 0 to 15...
+*/
+void ipi_send_target(irq_t irq, word_t cpuTargetList)
+{
+    if (wrap_config_set(0)) {
+        /* We need to swap the top 4 bits and the bottom 4 bits of the
+         * cpuTargetList since the A57 cores with logical core ID 0-3 are
+         * in cluster 1 and the Denver2 cores with logical core ID 4-5 are
+         * in cluster 0. */
+        cpuTargetList = ((cpuTargetList & 0xf) << 4) | ((cpuTargetList & 0xf0) >> 4);
+    }
+    gic_dist->sgi_control = (cpuTargetList << (16)) | ((irq.irq)
+                                                                                           << 0);
+}
+
+/*
+ * Set CPU target for the interrupt if it's not a PPI
+ */
+void setIRQTarget(irq_t irq, seL4_Word target)
+{
+    uint8_t targetList = 1 << target;
+    uint8_t *targets = (void *)(gic_dist->targets);
+    word_t hwIRQ = (irq.irq);
+
+    /* Return early if PPI */
+    if ((((irq.irq) < 32u))) {
+        _fail("PPI can't have designated target core\n", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/machine/gic_v2.c", 227, __func__);
+        return;
+    }
+    targets[hwIRQ] = targetList;
+}
+
+
+
+
+
+
+
+volatile struct gich_vcpu_ctrl_map *gic_vcpu_ctrl =
+    (volatile struct gich_vcpu_ctrl_map *)((0x000000ffffe00000ul /* 2^40 - 2^21 */ + 0x3000));
+
+
+word_t gic_vcpu_num_list_regs;
 # 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/machine/hardware.c"
 /*
  * Copyright 2014, General Dynamics C4 Systems
@@ -13881,18 +15012,7 @@ static exception_t Arch_invokeIRQControl(irq_t irq, cte_t *handlerSlot, cte_t *c
     }
     return invokeIRQControl(irq, handlerSlot, controlSlot);
 }
-
-
-
-
-static exception_t Arch_invokeIssueSGISignal(word_t irq, word_t target, cte_t *sgiSlot, cte_t *controlSlot)
-{
-    cteInsert(cap_sgi_signal_cap_new(target, irq), controlSlot, sgiSlot);
-    return EXCEPTION_NONE;
-}
-
-
-
+# 32 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/object/interrupt.c"
 exception_t Arch_decodeIRQControlInvocation(word_t invLabel, word_t length,
                                             cte_t *srcSlot, word_t *buffer)
 {
@@ -13903,13 +15023,13 @@ exception_t Arch_decodeIRQControlInvocation(word_t invLabel, word_t length,
         }
 
         if (!wrap_config_set(1)) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "This platform does not support setting the IRQ trigger" ">>" "\033[0m" "\n", 0lu, __func__, 42, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "This platform does not support setting the IRQ trigger" ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 42, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             current_syscall_error.type = seL4_IllegalOperation;
             return EXCEPTION_SYSCALL_ERROR;
         }
 
         word_t irq_w = getSyscallArg(0, buffer);
-        irq_t irq = (irq_t) (irq_w);
+        irq_t irq = (irq_t) ((irq_t){.irq = (irq_w), .target_core = (0)});
         bool_t trigger = !!getSyscallArg(1, buffer);
         word_t index = getSyscallArg(2, buffer);
         word_t depth = getSyscallArg(3, buffer);
@@ -13920,16 +15040,23 @@ exception_t Arch_decodeIRQControlInvocation(word_t invLabel, word_t length,
         if (status != EXCEPTION_NONE) {
             return status;
         }
-# 67 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/object/interrupt.c"
+
+
+        if ((((irq.irq) < 32u))) {
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Trying to get a handler on a PPI: use GetTriggerCore." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 62, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
+            current_syscall_error.type = seL4_IllegalOperation;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
         if (isIRQActive(irq)) {
             current_syscall_error.type = seL4_RevokeFirst;
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Rejecting request for IRQ %u. Already active." ">>" "\033[0m" "\n", 0lu, __func__, 69, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), (int)(irq)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Rejecting request for IRQ %u. Already active." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 69, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), (int)(irq.irq)); } while (0);
             return EXCEPTION_SYSCALL_ERROR;
         }
 
         lookupSlot_ret_t lu_ret = lookupTargetSlot(cnodeCap, index, depth);
         if (lu_ret.status != EXCEPTION_NONE) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Target slot for new IRQ Handler cap invalid: cap %lu, IRQ %u." ">>" "\033[0m" "\n", 0lu, __func__, 75, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), getExtraCPtr(buffer, 0), (int)(irq)); } while (0)
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Target slot for new IRQ Handler cap invalid: cap %lu, IRQ %u." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 75, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), getExtraCPtr(buffer, 0), (int)(irq.irq)); } while (0)
                                                                      ;
             return lu_ret.status;
         }
@@ -13938,94 +15065,70 @@ exception_t Arch_decodeIRQControlInvocation(word_t invLabel, word_t length,
 
         status = ensureEmptySlot(destSlot);
         if (status != EXCEPTION_NONE) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Target slot for new IRQ Handler cap not empty: cap %lu, IRQ %u." ">>" "\033[0m" "\n", 0lu, __func__, 84, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), getExtraCPtr(buffer, 0), (int)(irq)); } while (0)
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Target slot for new IRQ Handler cap not empty: cap %lu, IRQ %u." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 84, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), getExtraCPtr(buffer, 0), (int)(irq.irq)); } while (0)
                                                                      ;
             return status;
         }
 
-        setThreadState(ksCurThread, ThreadState_Restart);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
         return Arch_invokeIRQControl(irq, destSlot, srcSlot, trigger);
-
-    } else if (invLabel == ARMIRQIssueSGISignal) {
-        if (length < 4 || current_extra_caps.excaprefs[0] == ((void *)0)) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "IRQControl: IssueSGISignal: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 94, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
-            current_syscall_error.type = seL4_TruncatedMessage;
-            return EXCEPTION_SYSCALL_ERROR;
-        }
-
-        /* wrap_config_set to prevent verification automation from simplifying
-           away the condition when NUM_SGIS = 0 */
-        if (wrap_config_set(16u) == 0) {
-            current_syscall_error.type = seL4_IllegalOperation;
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "IRQControl: IssueSGISignal not available on this platform." ">>" "\033[0m" "\n", 0lu, __func__, 103, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
-            return EXCEPTION_SYSCALL_ERROR;
-        }
-
-        word_t irq = getSyscallArg(0, buffer);
-        word_t target = getSyscallArg(1, buffer);
+# 150 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/object/interrupt.c"
+    } else if (invLabel == ARMIRQIssueIRQHandlerTriggerCore) {
+        word_t irq_w = getSyscallArg(0, buffer);
+        bool_t trigger = !!getSyscallArg(1, buffer);
         word_t index = getSyscallArg(2, buffer);
-        word_t depth = getSyscallArg(3, buffer);
-
+        word_t depth = getSyscallArg(3, buffer) & 0xfful;
+        seL4_Word target = getSyscallArg(4, buffer);
         cap_t cnodeCap = current_extra_caps.excaprefs[0]->cap;
+        exception_t status = Arch_checkIRQ(irq_w);
+        irq_t irq = ((irq_t){.irq = (irq_w), .target_core = (target)});
 
-        /* wrap_config_set to prevent verification automation from simplifying
-           away the condition when NUM_SGIS = 0 */
-        if (irq >= wrap_config_set(16u)) {
-            current_syscall_error.type = seL4_RangeError;
-            current_syscall_error.rangeErrorMin = 0;
-            current_syscall_error.rangeErrorMax = 16u - 1;
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "IRQControl: IssueSGISignal: Invalid SGI IRQ 0x%lx." ">>" "\033[0m" "\n", 0lu, __func__, 120, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), irq); } while (0);
+        if (status != EXCEPTION_NONE) {
+            return status;
+        }
+
+        if (target >= 4) {
+            current_syscall_error.type = seL4_InvalidArgument;
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Target core %lu is invalid." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 166, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), target); } while (0);
             return EXCEPTION_SYSCALL_ERROR;
         }
 
-        if (!plat_SGITargetValid(target)) {
-            current_syscall_error.type = seL4_InvalidArgument;
-            current_syscall_error.invalidArgumentNumber = 1;
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "IRQControl: IssueSGISignal: Invalid SGI Target 0x%lx." ">>" "\033[0m" "\n", 0lu, __func__, 127, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), target); } while (0);
+        if (isIRQActive(irq)) {
+            current_syscall_error.type = seL4_RevokeFirst;
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Rejecting request for IRQ %u. Already active." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 172, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), (int)(irq.irq)); } while (0);
             return EXCEPTION_SYSCALL_ERROR;
         }
 
         lookupSlot_ret_t lu_ret = lookupTargetSlot(cnodeCap, index, depth);
         if (lu_ret.status != EXCEPTION_NONE) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "IRQControl: IssueSGISignal: Target slot for new ARM_SGI_Signal cap invalid: cap %lu." ">>" "\033[0m" "\n", 0lu, __func__, 133, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), getExtraCPtr(buffer, 0)); } while (0)
-                                              ;
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Target slot for new IRQ Handler cap invalid: cap %lu, IRQ %u." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 178, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), getExtraCPtr(buffer, 0), (int)(irq.irq)); } while (0)
+                                                                     ;
             return lu_ret.status;
         }
+
         cte_t *destSlot = lu_ret.slot;
 
-        exception_t status = ensureEmptySlot(destSlot);
+        status = ensureEmptySlot(destSlot);
         if (status != EXCEPTION_NONE) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "IRQControl: IssueSGISignal: Target slot for new ARM_SGI_Signal cap not empty: cap %lu." ">>" "\033[0m" "\n", 0lu, __func__, 141, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), getExtraCPtr(buffer, 0)); } while (0)
-                                              ;
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Target slot for new IRQ Handler cap not empty: cap %lu, IRQ %u." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 187, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), getExtraCPtr(buffer, 0), (int)(irq.irq)); } while (0)
+                                                                     ;
             return status;
         }
-        setThreadState(ksCurThread, ThreadState_Restart);
-        return Arch_invokeIssueSGISignal(irq, target, destSlot, srcSlot);
-# 202 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/object/interrupt.c"
+
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
+
+        /* If the IRQ is not a private interrupt, then the role of the syscall is to set
+         * target core to which the shared interrupt will be physically delivered.
+         */
+        if (!(((irq.irq) < 32u))) {
+            setIRQTarget(irq, target);
+        }
+        return Arch_invokeIRQControl(irq, destSlot, srcSlot, trigger);
+
     } else {
         current_syscall_error.type = seL4_IllegalOperation;
         return EXCEPTION_SYSCALL_ERROR;
     }
-}
-
-
-
-static exception_t invokeSGISignalGenerate(word_t irq, word_t target)
-{
-    plat_sendSGI(irq, target);
-    return EXCEPTION_NONE;
-}
-
-
-exception_t decodeSGISignalInvocation(word_t invLabel, word_t length,
-                                      cap_t cap, word_t *buffer)
-{
-
-    word_t irq = cap_sgi_signal_cap_get_capSGIIRQ(cap);
-    word_t target = cap_sgi_signal_cap_get_capSGITarget(cap);
-
-    setThreadState(ksCurThread, ThreadState_Restart);
-    return invokeSGISignalGenerate(irq, target);
 }
 # 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/object/iospace.c"
 /*
@@ -14067,6 +15170,1229 @@ exception_t __attribute__((__const__)) Arch_performTransfer(word_t arch, tcb_t *
  *
  * SPDX-License-Identifier: GPL-2.0-only
  */
+
+
+
+
+
+
+# 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/armv/armv8-a/64/armv/vcpu.h" 1
+/*
+ * Copyright 2020, Data61, CSIRO (ABN 41 687 119 230)
+ *
+ * SPDX-License-Identifier: GPL-2.0-only
+ */
+
+       
+# 16 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/armv/armv8-a/64/armv/vcpu.h"
+/* Note that the HCR_DC for ARMv8 disables S1 translation if enabled */
+/* Trap SMC and override CPSR.AIF */
+
+
+/* Allow native tasks to run at EL0, but restrict access */
+# 45 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/armv/armv8-a/64/armv/vcpu.h"
+/* Disable MMU, SP alignment check, and alignment check */
+/* A57 default value */
+# 67 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/armv/armv8-a/64/armv/vcpu.h"
+/* Physical address size */
+
+
+
+
+
+
+
+/* Translation granule size */
+
+
+
+
+
+
+
+/* Shareability attributes */
+
+
+
+
+/* Cacheability attributes */
+
+
+
+
+
+/* Start level  */
+# 129 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/armv/armv8-a/64/armv/vcpu.h"
+/* for EL1 SCTLR */
+static inline word_t getSCTLR(void)
+{
+    return readSystemControlRegister();
+}
+
+static inline void setSCTLR(word_t sctlr)
+{
+    writeSystemControlRegister(sctlr);
+}
+
+static inline word_t readTTBR0(void)
+{
+    word_t reg;
+    __asm__ volatile("mrs %x0," "ttbr0_el1" : "=r"(reg));
+    return reg;
+}
+
+static inline void writeTTBR0(word_t reg)
+{
+    do { word_t _v = reg; __asm__ volatile("msr " "ttbr0_el1" ",%x0" :: "r" (_v)); }while(0);
+}
+
+static inline word_t readTTBR1(void)
+{
+    word_t reg;
+    __asm__ volatile("mrs %x0," "ttbr1_el1" : "=r"(reg));
+    return reg;
+}
+
+static inline void writeTTBR1(word_t reg)
+{
+    do { word_t _v = reg; __asm__ volatile("msr " "ttbr1_el1" ",%x0" :: "r" (_v)); }while(0);
+}
+
+static inline word_t readTCR(void)
+{
+    word_t reg;
+    __asm__ volatile("mrs %x0," "tcr_el1" : "=r"(reg));
+    return reg;
+}
+
+static inline void writeTCR(word_t reg)
+{
+    do { word_t _v = reg; __asm__ volatile("msr " "tcr_el1" ",%x0" :: "r" (_v)); }while(0);
+}
+
+static inline word_t readMAIR(void)
+{
+    word_t reg;
+    __asm__ volatile("mrs %x0," "mair_el1" : "=r"(reg));
+    return reg;
+}
+
+static inline void writeMAIR(word_t reg)
+{
+    do { word_t _v = reg; __asm__ volatile("msr " "mair_el1" ",%x0" :: "r" (_v)); }while(0);
+}
+
+static inline word_t readAMAIR(void)
+{
+    word_t reg;
+    __asm__ volatile("mrs %x0," "amair_el1" : "=r"(reg));
+    return reg;
+}
+
+static inline void writeAMAIR(word_t reg)
+{
+    do { word_t _v = reg; __asm__ volatile("msr " "amair_el1" ",%x0" :: "r" (_v)); }while(0);
+}
+
+/** MODIFIES: */
+/** DONT_TRANSLATE */
+static inline word_t readCIDR(void)
+{
+    uint32_t reg;
+    __asm__ volatile("mrs %x0," "contextidr_el1" : "=r"(reg));
+    return (word_t)reg;
+}
+
+/** MODIFIES: phantom_machine_state */
+/** DONT_TRANSLATE */
+static inline void writeCIDR(word_t reg)
+{
+    do { word_t _v = (uint32_t)reg; __asm__ volatile("msr " "contextidr_el1" ",%x0" :: "r" (_v)); }while(0);
+}
+
+static inline word_t readACTLR(void)
+{
+    word_t reg;
+    __asm__ volatile("mrs %x0," "actlr_el1" : "=r"(reg));
+    return reg;
+}
+
+static inline void writeACTLR(word_t reg)
+{
+    do { word_t _v = reg; __asm__ volatile("msr " "actlr_el1" ",%x0" :: "r" (_v)); }while(0);
+}
+
+/** MODIFIES: */
+/** DONT_TRANSLATE */
+static inline word_t readAFSR0(void)
+{
+    uint32_t reg;
+    __asm__ volatile("mrs %x0," "afsr0_el1" : "=r"(reg));
+    return (word_t)reg;
+}
+
+/** MODIFIES: phantom_machine_state */
+/** DONT_TRANSLATE */
+static inline void writeAFSR0(word_t reg)
+{
+    do { word_t _v = (uint32_t)reg; __asm__ volatile("msr " "afsr0_el1" ",%x0" :: "r" (_v)); }while(0);
+}
+
+/** MODIFIES: */
+/** DONT_TRANSLATE */
+static inline word_t readAFSR1(void)
+{
+    uint32_t reg;
+    __asm__ volatile("mrs %x0," "afsr1_el1" : "=r"(reg));
+    return (word_t)reg;
+}
+
+/** MODIFIES: phantom_machine_state */
+/** DONT_TRANSLATE */
+static inline void writeAFSR1(word_t reg)
+{
+    do { word_t _v = (uint32_t)reg; __asm__ volatile("msr " "afsr1_el1" ",%x0" :: "r" (_v)); }while(0);
+}
+
+/** MODIFIES: */
+/** DONT_TRANSLATE */
+static inline word_t readESR(void)
+{
+    uint32_t reg;
+    __asm__ volatile("mrs %x0," "esr_el1" : "=r"(reg));
+    return (word_t)reg;
+}
+
+/** MODIFIES: phantom_machine_state */
+/** DONT_TRANSLATE */
+static inline void writeESR(word_t reg)
+{
+    do { word_t _v = (uint32_t)reg; __asm__ volatile("msr " "esr_el1" ",%x0" :: "r" (_v)); }while(0);
+}
+
+static inline word_t readFAR(void)
+{
+    word_t reg;
+    __asm__ volatile("mrs %x0," "far_el1" : "=r"(reg));
+    return reg;
+}
+
+static inline void writeFAR(word_t reg)
+{
+    do { word_t _v = reg; __asm__ volatile("msr " "far_el1" ",%x0" :: "r" (_v)); }while(0);
+}
+
+/* ISR is read-only */
+/** MODIFIES: */
+/** DONT_TRANSLATE */
+static inline word_t readISR(void)
+{
+    uint32_t reg;
+    __asm__ volatile("mrs %x0," "isr_el1" : "=r"(reg));
+    return (word_t)reg;
+}
+
+static inline word_t readVBAR(void)
+{
+    word_t reg;
+    __asm__ volatile("mrs %x0," "vbar_el1" : "=r"(reg));
+    return reg;
+}
+
+static inline void writeVBAR(word_t reg)
+{
+    do { word_t _v = reg; __asm__ volatile("msr " "vbar_el1" ",%x0" :: "r" (_v)); }while(0);
+}
+
+static inline word_t readSP_EL1(void)
+{
+    word_t reg;
+    __asm__ volatile("mrs %x0," "sp_el1" : "=r"(reg));
+    return reg;
+}
+
+static inline void writeSP_EL1(word_t reg)
+{
+    do { word_t _v = reg; __asm__ volatile("msr " "sp_el1" ",%x0" :: "r" (_v)); }while(0);
+}
+
+static inline word_t readELR_EL1(void)
+{
+    word_t reg;
+    __asm__ volatile("mrs %x0," "elr_el1" : "=r"(reg));
+    return reg;
+}
+
+static inline void writeELR_EL1(word_t reg)
+{
+    do { word_t _v = reg; __asm__ volatile("msr " "elr_el1" ",%x0" :: "r" (_v)); }while(0);
+}
+
+static inline word_t readSPSR_EL1(void)
+{
+    word_t reg;
+    __asm__ volatile("mrs %x0," "spsr_el1" : "=r"(reg));
+    return reg;
+}
+
+static inline void writeSPSR_EL1(word_t reg)
+{
+    do { word_t _v = reg; __asm__ volatile("msr " "spsr_el1" ",%x0" :: "r" (_v)); }while(0);
+}
+
+static inline word_t readCPACR_EL1(void)
+{
+    word_t reg;
+    __asm__ volatile("mrs %x0," "cpacr_el1" : "=r"(reg));
+    return reg;
+}
+
+static inline void writeCPACR_EL1(word_t reg)
+{
+    do { word_t _v = reg; __asm__ volatile("msr " "cpacr_el1" ",%x0" :: "r" (_v)); }while(0);
+}
+
+static inline word_t readCNTV_TVAL_EL0(void)
+{
+    word_t reg;
+    __asm__ volatile("mrs %x0," "cntv_tval_el0" : "=r"(reg));
+    return reg;
+}
+
+static inline void writeCNTV_TVAL_EL0(word_t reg)
+{
+    do { word_t _v = reg; __asm__ volatile("msr " "cntv_tval_el0" ",%x0" :: "r" (_v)); }while(0);
+}
+
+static inline word_t readCNTV_CTL_EL0(void)
+{
+    word_t reg;
+    __asm__ volatile("mrs %x0," "cntv_ctl_el0" : "=r"(reg));
+    return reg;
+}
+
+static inline void writeCNTV_CTL_EL0(word_t reg)
+{
+    do { word_t _v = reg; __asm__ volatile("msr " "cntv_ctl_el0" ",%x0" :: "r" (_v)); }while(0);
+}
+
+static inline word_t readCNTV_CVAL_EL0(void)
+{
+    word_t reg;
+    __asm__ volatile("mrs %x0," "cntv_cval_el0" : "=r"(reg));
+    return reg;
+}
+
+static inline void writeCNTV_CVAL_EL0(word_t reg)
+{
+    do { word_t _v = reg; __asm__ volatile("msr " "cntv_cval_el0" ",%x0" :: "r" (_v)); }while(0);
+}
+
+static inline word_t readCNTVOFF_EL2(void)
+{
+    word_t reg;
+    __asm__ volatile("mrs %x0," "cntvoff_el2" : "=r"(reg));
+    return reg;
+}
+
+static inline void writeCNTVOFF_EL2(word_t reg)
+{
+    do { word_t _v = reg; __asm__ volatile("msr " "cntvoff_el2" ",%x0" :: "r" (_v)); }while(0);
+}
+
+static inline word_t readCNTKCTL_EL1(void)
+{
+    word_t reg;
+    __asm__ volatile("mrs %x0," "cntkctl_el1" : "=r"(reg));
+    return reg;
+}
+
+static inline void writeCNTKCTL_EL1(word_t reg)
+{
+    do { word_t _v = reg; __asm__ volatile("msr " "cntkctl_el1" ",%x0" :: "r" (_v)); }while(0);
+}
+
+static inline word_t readVMPIDR_EL2(void)
+{
+    word_t reg;
+    __asm__ volatile("mrs %x0," "vmpidr_el2" : "=r"(reg));
+    return reg;
+}
+
+static inline void writeVMPIDR_EL2(word_t reg)
+{
+    do { word_t _v = reg; __asm__ volatile("msr " "vmpidr_el2" ",%x0" :: "r" (_v)); }while(0);
+}
+
+static inline void setHCR(word_t reg)
+{
+    do { word_t _v = reg; __asm__ volatile("msr " "hcr_el2" ",%x0" :: "r" (_v)); }while(0);
+}
+
+static word_t vcpu_hw_read_reg(word_t reg_index)
+{
+    word_t reg = 0;
+    switch (reg_index) {
+    case seL4_VCPUReg_SCTLR:
+        return getSCTLR();
+    case seL4_VCPUReg_TTBR0:
+        return readTTBR0();
+    case seL4_VCPUReg_TTBR1:
+        return readTTBR1();
+    case seL4_VCPUReg_TCR:
+        return readTCR();
+    case seL4_VCPUReg_MAIR:
+        return readMAIR();
+    case seL4_VCPUReg_AMAIR:
+        return readAMAIR();
+    case seL4_VCPUReg_CIDR:
+        return readCIDR();
+    case seL4_VCPUReg_ACTLR:
+        return readACTLR();
+    case seL4_VCPUReg_CPACR:
+        return readCPACR_EL1();
+    case seL4_VCPUReg_AFSR0:
+        return readAFSR0();
+    case seL4_VCPUReg_AFSR1:
+        return readAFSR1();
+    case seL4_VCPUReg_ESR:
+        return readESR();
+    case seL4_VCPUReg_FAR:
+        return readFAR();
+    case seL4_VCPUReg_ISR:
+        return readISR();
+    case seL4_VCPUReg_VBAR:
+        return readVBAR();
+    case seL4_VCPUReg_TPIDR_EL1:
+        return readTPIDR_EL1();
+    case seL4_VCPUReg_SP_EL1:
+        return readSP_EL1();
+    case seL4_VCPUReg_ELR_EL1:
+        return readELR_EL1();
+    case seL4_VCPUReg_SPSR_EL1:
+        return readSPSR_EL1();
+    case seL4_VCPUReg_CNTV_CTL:
+        return readCNTV_CTL_EL0();
+    case seL4_VCPUReg_CNTV_CVAL:
+        return readCNTV_CVAL_EL0();
+    case seL4_VCPUReg_CNTVOFF:
+        return readCNTVOFF_EL2();
+    case seL4_VCPUReg_CNTKCTL_EL1:
+        return readCNTKCTL_EL1();
+    case seL4_VCPUReg_VMPIDR_EL2:
+        return readVMPIDR_EL2();
+    default:
+        _fail("ARM/HYP: Invalid register index", "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/armv/armv8-a/64/armv/vcpu.h", 488, __func__);
+    }
+
+    return reg;
+}
+
+static void vcpu_hw_write_reg(word_t reg_index, word_t reg)
+{
+    switch (reg_index) {
+    case seL4_VCPUReg_SCTLR:
+        setSCTLR(reg);
+        break;
+    case seL4_VCPUReg_TTBR0:
+        writeTTBR0(reg);
+        break;
+    case seL4_VCPUReg_TTBR1:
+        writeTTBR1(reg);
+        break;
+    case seL4_VCPUReg_TCR:
+        writeTCR(reg);
+        break;
+    case seL4_VCPUReg_MAIR:
+        writeMAIR(reg);
+        break;
+    case seL4_VCPUReg_AMAIR:
+        writeAMAIR(reg);
+        break;
+    case seL4_VCPUReg_CIDR:
+        writeCIDR(reg);
+        break;
+    case seL4_VCPUReg_ACTLR:
+        writeACTLR(reg);
+        break;
+    case seL4_VCPUReg_CPACR:
+        writeCPACR_EL1(reg);
+        break;
+    case seL4_VCPUReg_AFSR0:
+        writeAFSR0(reg);
+        break;
+    case seL4_VCPUReg_AFSR1:
+        writeAFSR1(reg);
+        break;
+    case seL4_VCPUReg_ESR:
+        writeESR(reg);
+        break;
+    case seL4_VCPUReg_FAR:
+        writeFAR(reg);
+        break;
+    case seL4_VCPUReg_ISR:
+        /* ISR is read-only */
+        break;
+    case seL4_VCPUReg_VBAR:
+        writeVBAR(reg);
+        break;
+    case seL4_VCPUReg_TPIDR_EL1:
+        writeTPIDR_EL1(reg);
+        break;
+    case seL4_VCPUReg_SP_EL1:
+        writeSP_EL1(reg);
+        break;
+    case seL4_VCPUReg_ELR_EL1:
+        writeELR_EL1(reg);
+        break;
+    case seL4_VCPUReg_SPSR_EL1:
+        writeSPSR_EL1(reg);
+        break;
+    case seL4_VCPUReg_CNTV_CTL:
+        writeCNTV_CTL_EL0(reg);
+        break;
+    case seL4_VCPUReg_CNTV_CVAL:
+        writeCNTV_CVAL_EL0(reg);
+        break;
+    case seL4_VCPUReg_CNTVOFF:
+        writeCNTVOFF_EL2(reg);
+        break;
+    case seL4_VCPUReg_CNTKCTL_EL1:
+        writeCNTKCTL_EL1(reg);
+        break;
+    case seL4_VCPUReg_VMPIDR_EL2:
+        writeVMPIDR_EL2(reg);
+        break;
+    default:
+        _fail("ARM/HYP: Invalid register index", "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/armv/armv8-a/64/armv/vcpu.h", 570, __func__);
+    }
+}
+
+/** DONT_TRANSLATE */
+static inline void vcpu_init_vtcr(void)
+{
+
+    /* check that the processor supports the configuration */
+    uint32_t val;
+    __asm__ volatile("mrs %x0," "id_aa64mmfr0_el1" : "=r"(val));
+    uint32_t pa_range = ((val) & 0xf);
+    if (wrap_config_set(1) && pa_range < 2) {
+        _fail("Processor does not support a 40 bit PA", "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/armv/armv8-a/64/armv/vcpu.h", 583, __func__);
+    }
+    if (wrap_config_set(0) && pa_range < 4) {
+        _fail("Processor does not support a 44 bit PA", "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/armv/armv8-a/64/armv/vcpu.h", 586, __func__);
+    }
+    uint32_t granule = (((val) >> 28u) & 0xf);
+    if (granule) {
+        _fail("Processor does not support 4KB", "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/armv/armv8-a/64/armv/vcpu.h", 590, __func__);
+    }
+
+    /* Set up the stage-2 translation control register for cores supporting 44-bit PA */
+    uint32_t vtcr_el2;
+
+    vtcr_el2 = ((24) & 0x3f); // 40-bit input IPA
+    vtcr_el2 |= (((2) & 0x7) << 16); // 40-bit PA size
+    vtcr_el2 |= (((1 /* 4K, start at level 1 */) & 0x3) << 6); // 4KiB, start at level 1
+
+
+
+
+
+    vtcr_el2 |= (((1 /* write-back, write-allocate      */) & 0x3) << 8); // inner write-back, read/write allocate
+    vtcr_el2 |= (((1 /* write-back, write-allocate      */) & 0x3) << 10); // outer write-back, read/write allocate
+    vtcr_el2 |= (((3) & 0x3) << 12); // inner shareable
+    vtcr_el2 |= (((0) & 0x3) << 14); // 4KiB page size
+    vtcr_el2 |= (1ul << (31)); // reserved as 1
+
+    do { word_t _v = vtcr_el2; __asm__ volatile("msr " "vtcr_el2" ",%x0" :: "r" (_v)); }while(0);
+    isb();
+}
+
+static inline void armv_vcpu_boot_init(void)
+{
+    word_t hcr_el2 = 0;
+
+    vcpu_init_vtcr();
+
+    hcr_el2 = ( ( (1ul << (0)) /* Virtualization MMU enable      */ | (1ul << (31)) /* Execution state control        */ | (1ul << (5)) /* CPSR.A override enable         */ | (1ul << (4)) /* CPSR.I override enable         */ | (1ul << (3)) /* CPSR.F override enable         */ | (1ul << (19)) /* Trap SMC instructions          */) | (1ul << (27)) /* Trap general exceptions        */ | (1ul << (26)) /* Trap MMU access                */ | (1ul << (25)) /* Trap TLB operations            */ | (1ul << (12)) /* Default cacheable              */ | (1ul << (21)) /* Trap ACTLR access              */ | (1ul << (1)) /* set/way invalidate override    */ | (1ul << (19)) /* Trap SMC instructions          */ );
+    do { word_t _v = hcr_el2; __asm__ volatile("msr " "hcr_el2" ",%x0" :: "r" (_v)); }while(0);
+    isb();
+
+    /* set the SCTLR_EL1 for running native seL4 threads */
+    do { word_t _v = (( 0x30d00800 /* Reserved value */ | (1ul << (5)) /* AArch32 CP15 barrier enable    */ | (1ul << (16)) /* WFI executed as normal         */ | (1ul << (18)) /* WFE executed as normal         */ ) | (1ul << (2)) /* Enable data and unified caches */ | (1ul << (12)) /* Enable instruction cache       */ | ((1ul << (26)) /* Enable EL0 access to DC CVAU, DC CIVAC, DC CVAC,
+                                           and IC IVAU in AArch64 state   */
+# 625 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/armv/armv8-a/64/armv/vcpu.h"
+    | (1ul << (15)) /* Enable EL0 access to CTR_EL0   */)); __asm__ volatile("msr " "sctlr_el1" ",%x0" :: "r" (_v)); }while(0);
+    isb();
+
+
+
+
+}
+
+static inline void armv_vcpu_save(vcpu_t *vcpu, bool_t active)
+{
+    /* If we aren't active then this state already got stored when we were disabled */
+    if (active) {
+        vcpu_save_reg(vcpu, seL4_VCPUReg_CPACR);
+    }
+    vcpu_save_reg_range(vcpu, seL4_VCPURegSaveRange_start, seL4_VCPURegSaveRange_end);
+
+
+
+
+
+
+
+}
+
+static inline void vcpu_enable(vcpu_t *vcpu)
+{
+    vcpu_restore_reg(vcpu, seL4_VCPUReg_SCTLR);
+    setHCR(( ( (1ul << (0)) /* Virtualization MMU enable      */ | (1ul << (31)) /* Execution state control        */ | (1ul << (5)) /* CPSR.A override enable         */ | (1ul << (4)) /* CPSR.I override enable         */ | (1ul << (3)) /* CPSR.F override enable         */ | (1ul << (19)) /* Trap SMC instructions          */) | (1ul << (14)) /* Trap WFE                       */ | (1ul << (13)) /* Trap WFI                       */));
+    isb();
+
+    set_gic_vcpu_ctrl_hcr(vcpu->vgic.hcr);
+
+
+
+
+
+
+
+    vcpu_restore_reg(vcpu, seL4_VCPUReg_CPACR);
+    /* Restore virtual timer state */
+    restore_virt_timer(vcpu);
+}
+
+static inline void vcpu_disable(vcpu_t *vcpu)
+{
+
+    uint32_t hcr;
+    dsb();
+    if (__builtin_expect(!!(vcpu), 1)) {
+        hcr = get_gic_vcpu_ctrl_hcr();
+        vcpu->vgic.hcr = hcr;
+        vcpu_save_reg(vcpu, seL4_VCPUReg_SCTLR);
+        vcpu_save_reg(vcpu, seL4_VCPUReg_CPACR);
+        isb();
+    }
+    /* Turn off the VGIC */
+    set_gic_vcpu_ctrl_hcr(0);
+    isb();
+
+    /* Stage 1 MMU off */
+    setSCTLR((( 0x30d00800 /* Reserved value */ | (1ul << (5)) /* AArch32 CP15 barrier enable    */ | (1ul << (16)) /* WFI executed as normal         */ | (1ul << (18)) /* WFE executed as normal         */ ) | (1ul << (2)) /* Enable data and unified caches */ | (1ul << (12)) /* Enable instruction cache       */ | ((1ul << (26)) /* Enable EL0 access to DC CVAU, DC CIVAC, DC CVAC,
+                                           and IC IVAU in AArch64 state   */
+# 685 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/armv/armv8-a/64/armv/vcpu.h"
+             | (1ul << (15)) /* Enable EL0 access to CTR_EL0   */)));
+    isb();
+    setHCR(( ( (1ul << (0)) /* Virtualization MMU enable      */ | (1ul << (31)) /* Execution state control        */ | (1ul << (5)) /* CPSR.A override enable         */ | (1ul << (4)) /* CPSR.I override enable         */ | (1ul << (3)) /* CPSR.F override enable         */ | (1ul << (19)) /* Trap SMC instructions          */) | (1ul << (27)) /* Trap general exceptions        */ | (1ul << (26)) /* Trap MMU access                */ | (1ul << (25)) /* Trap TLB operations            */ | (1ul << (12)) /* Default cacheable              */ | (1ul << (21)) /* Trap ACTLR access              */ | (1ul << (1)) /* set/way invalidate override    */ | (1ul << (19)) /* Trap SMC instructions          */ ));
+    isb();
+# 697 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/armv/armv8-a/64/armv/vcpu.h"
+    /* Allow FPU instructions in EL0 and EL1 for native
+     * threads by setting the CPACR_EL1. The CPTR_EL2 is
+     * used to trap the FPU instructions to EL2.
+     */
+    enableFpuEL01();
+    if (__builtin_expect(!!(vcpu), 1)) {
+        /* Save virtual timer state */
+        save_virt_timer(vcpu);
+        /* Mask the virtual timer interrupt */
+        maskInterrupt(true, ((irq_t){.irq = (27), .target_core = (getCurrentCPUIndex())}));
+    }
+}
+
+static inline void armv_vcpu_init(vcpu_t *vcpu)
+{
+    vcpu_write_reg(vcpu, seL4_VCPUReg_SCTLR, (( 0x30d00800 /* Reserved value */ | (1ul << (5)) /* AArch32 CP15 barrier enable    */ | (1ul << (16)) /* WFI executed as normal         */ | (1ul << (18)) /* WFE executed as normal         */ ) | (1ul << (15)) /* Enable EL0 access to CTR_EL0   */ | (1ul << (26)) /* Enable EL0 access to DC CVAU, DC CIVAC, DC CVAC,
+                                           and IC IVAU in AArch64 state   */
+# 712 "/Users/bryan/Desktop/github_repos/AIOS/kernel/include/arch/arm/armv/armv8-a/64/armv/vcpu.h"
+                                             ));
+}
+
+static inline bool_t armv_handleVCPUFault(word_t hsr)
+{
+
+
+
+
+
+
+
+    if (hsr == 0x2000000) {
+        handleUserLevelFault(getESR(), 0);
+        return true;
+    }
+
+    return false;
+}
+
+static inline bool_t vcpu_reg_saved_when_disabled(word_t field)
+{
+    switch (field) {
+    case seL4_VCPUReg_SCTLR:
+    case seL4_VCPUReg_CNTV_CTL:
+    case seL4_VCPUReg_CNTV_CVAL:
+    case seL4_VCPUReg_CNTVOFF:
+    case seL4_VCPUReg_CNTKCTL_EL1:
+    case seL4_VCPUReg_CPACR:
+        return true;
+    default:
+        return false;
+    }
+}
+# 13 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/object/vcpu.c" 2
+
+
+
+
+
+__attribute__((__section__(".boot.text"))) void vcpu_boot_init(void)
+{
+    armv_vcpu_boot_init();
+    gic_vcpu_num_list_regs = ((((get_gic_vcpu_ctrl_vtr()) >> 0) & 0x3f) + 1);
+    if (gic_vcpu_num_list_regs > 64) {
+        printf("Warning: VGIC is reporting more list registers than we support. Truncating\n");
+        gic_vcpu_num_list_regs = 64;
+    }
+    vcpu_disable(((void *)0));
+    ksSMP[(getCurrentCPUIndex())].cpu.armHSCurVCPU = ((void *)0);
+    ksSMP[(getCurrentCPUIndex())].cpu.armHSVCPUActive = false;
+
+}
+
+static void vcpu_save(vcpu_t *vcpu, bool_t active)
+{
+    word_t i;
+    word_t lr_num;
+
+    do { if (!(vcpu)) { _assert_fail("vcpu", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/object/vcpu.c", 37, __func__); } } while(0);
+    dsb();
+    /* If we aren't active then this state already got stored when
+     * we were disabled */
+    if (active) {
+        vcpu_save_reg(vcpu, seL4_VCPUReg_SCTLR);
+        vcpu->vgic.hcr = get_gic_vcpu_ctrl_hcr();
+        save_virt_timer(vcpu);
+    }
+
+    /* Store GIC VCPU control state */
+    vcpu->vgic.vmcr = get_gic_vcpu_ctrl_vmcr();
+    vcpu->vgic.apr = get_gic_vcpu_ctrl_apr();
+    lr_num = gic_vcpu_num_list_regs;
+    for (i = 0; i < lr_num; i++) {
+        vcpu->vgic.lr[i] = get_gic_vcpu_ctrl_lr(i);
+    }
+    armv_vcpu_save(vcpu, active);
+}
+
+
+static word_t readVCPUReg(vcpu_t *vcpu, word_t field)
+{
+    if (__builtin_expect(!!(ksSMP[(getCurrentCPUIndex())].cpu.armHSCurVCPU == vcpu), 1)) {
+        if (vcpu_reg_saved_when_disabled(field) && !ksSMP[(getCurrentCPUIndex())].cpu.armHSVCPUActive) {
+            return vcpu_read_reg(vcpu, field);
+        } else {
+            return vcpu_hw_read_reg(field);
+        }
+    } else {
+        return vcpu_read_reg(vcpu, field);
+    }
+}
+
+static void writeVCPUReg(vcpu_t *vcpu, word_t field, word_t value)
+{
+    if (__builtin_expect(!!(ksSMP[(getCurrentCPUIndex())].cpu.armHSCurVCPU == vcpu), 1)) {
+        if (vcpu_reg_saved_when_disabled(field) && !ksSMP[(getCurrentCPUIndex())].cpu.armHSVCPUActive) {
+            vcpu_write_reg(vcpu, field, value);
+        } else {
+            vcpu_hw_write_reg(field, value);
+        }
+    } else {
+        vcpu_write_reg(vcpu, field, value);
+    }
+}
+
+void vcpu_restore(vcpu_t *vcpu)
+{
+    do { if (!(vcpu)) { _assert_fail("vcpu", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/object/vcpu.c", 86, __func__); } } while(0);
+    word_t i;
+    word_t lr_num;
+    /* Turn off the VGIC */
+    set_gic_vcpu_ctrl_hcr(0);
+    isb();
+
+    /* Restore GIC VCPU control state */
+    set_gic_vcpu_ctrl_vmcr(vcpu->vgic.vmcr);
+    set_gic_vcpu_ctrl_apr(vcpu->vgic.apr);
+    lr_num = gic_vcpu_num_list_regs;
+    for (i = 0; i < lr_num; i++) {
+        set_gic_vcpu_ctrl_lr(i, vcpu->vgic.lr[i]);
+    }
+
+    /* restore registers */
+    vcpu_restore_reg_range(vcpu, seL4_VCPURegSaveRange_start, seL4_VCPURegSaveRange_end);
+    vcpu_enable(vcpu);
+}
+
+void VPPIEvent(irq_t irq)
+{
+# 127 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/object/vcpu.c"
+    if (ksSMP[(getCurrentCPUIndex())].cpu.armHSVCPUActive) {
+        maskInterrupt(true, irq);
+        do { if (!(irqVPPIEventIndex(irq) != VPPIEventIRQ_invalid)) { _assert_fail("irqVPPIEventIndex(irq) != VPPIEventIRQ_invalid", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/object/vcpu.c", 129, __func__); } } while(0);
+        ksSMP[(getCurrentCPUIndex())].cpu.armHSCurVCPU->vppi_masked[irqVPPIEventIndex(irq)] = true;
+        current_fault = seL4_Fault_VPPIEvent_new((irq.irq));
+        /* Current VCPU being active should indicate that the current thread
+         * is runnable. At present, verification cannot establish this so we
+         * perform an extra check. */
+        do { if (!(isRunnable(ksSMP[(getCurrentCPUIndex())].system.ksCurThread))) { _assert_fail("isRunnable(NODE_STATE(ksCurThread))", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/object/vcpu.c", 135, __func__); } } while(0);
+        if (isRunnable(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)) {
+            handleFault(ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
+        }
+    }
+}
+
+void VGICMaintenance(void)
+{
+    uint32_t eisr0, eisr1;
+    uint32_t flags;
+# 154 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/object/vcpu.c"
+    /* We shouldn't get a VGICMaintenance interrupt while a VCPU isn't active,
+     * but if one becomes pending before the VGIC is disabled we might get one
+     * when returning to userlevel after disabling the current VCPU. In this
+     * case we simply return and rely on the interrupt being raised again when
+     * the VCPU is reenabled.
+     */
+    if (!ksSMP[(getCurrentCPUIndex())].cpu.armHSVCPUActive) {
+        printf("Received VGIC maintenance without active VCPU!\n");
+        return;
+    }
+
+    eisr0 = get_gic_vcpu_ctrl_eisr0();
+    eisr1 = get_gic_vcpu_ctrl_eisr1();
+    flags = get_gic_vcpu_ctrl_misr();
+
+    if (flags & (1U << 0)) {
+        int irq_idx;
+        if (eisr0) {
+            irq_idx = ctzl(eisr0);
+        } else if (eisr1) {
+            irq_idx = ctzl(eisr1) + 32;
+        } else {
+            irq_idx = -1;
+        }
+
+        /* the hardware should never give us an invalid index, but we don't
+         * want to trust it that far */
+        if (irq_idx == -1 || irq_idx >= gic_vcpu_num_list_regs) {
+            current_fault = seL4_Fault_VGICMaintenance_new(0, 0);
+        } else {
+            virq_t virq = get_gic_vcpu_ctrl_lr(irq_idx);
+            switch (virq_get_virqType(virq)) {
+            case virq_virq_active:
+                virq = virq_virq_active_set_virqEOIIRQEN(virq, 0);
+                break;
+            case virq_virq_pending:
+                virq = virq_virq_pending_set_virqEOIIRQEN(virq, 0);
+                break;
+            case virq_virq_invalid:
+                virq = virq_virq_invalid_set_virqEOIIRQEN(virq, 0);
+                break;
+            }
+            set_gic_vcpu_ctrl_lr(irq_idx, virq);
+            /* decodeVCPUInjectIRQ below checks the vgic.lr register,
+             * so we should also sync the shadow data structure as well */
+            do { if (!(ksSMP[(getCurrentCPUIndex())].cpu.armHSCurVCPU != ((void *)0) && ksSMP[(getCurrentCPUIndex())].cpu.armHSVCPUActive)) { _assert_fail("ARCH_NODE_STATE(armHSCurVCPU) != NULL && ARCH_NODE_STATE(armHSVCPUActive)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/object/vcpu.c", 199, __func__); } } while(0);
+            if (ksSMP[(getCurrentCPUIndex())].cpu.armHSCurVCPU != ((void *)0) && ksSMP[(getCurrentCPUIndex())].cpu.armHSVCPUActive) {
+                ksSMP[(getCurrentCPUIndex())].cpu.armHSCurVCPU->vgic.lr[irq_idx] = virq;
+            } else {
+                /* FIXME This should not happen */
+            }
+            current_fault = seL4_Fault_VGICMaintenance_new(irq_idx, 1);
+        }
+
+    } else {
+        /* Assume that it was an EOI for a LR that was not present */
+        current_fault = seL4_Fault_VGICMaintenance_new(0, 0);
+    }
+
+    /* Current VCPU being active should indicate that the current thread
+     * is runnable. At present, verification cannot establish this so we
+     * perform an extra check. */
+    do { if (!(isRunnable(ksSMP[(getCurrentCPUIndex())].system.ksCurThread))) { _assert_fail("isRunnable(NODE_STATE(ksCurThread))", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/object/vcpu.c", 216, __func__); } } while(0);
+    if (isRunnable(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)) {
+        handleFault(ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
+    }
+}
+
+void vcpu_init(vcpu_t *vcpu)
+{
+    armv_vcpu_init(vcpu);
+    /* GICH VCPU interface control */
+    vcpu->vgic.hcr = (1U << 0);
+
+    /* Virtual Timer interface */
+    vcpu->virtTimer.last_pcount = 0;
+
+}
+
+void vcpu_switch(vcpu_t *new)
+{
+    if (__builtin_expect(!!(ksSMP[(getCurrentCPUIndex())].cpu.armHSCurVCPU != new), 1)) {
+        if (__builtin_expect(!!(new != ((void *)0)), 0)) {
+            if (__builtin_expect(!!(ksSMP[(getCurrentCPUIndex())].cpu.armHSCurVCPU != ((void *)0)), 0)) {
+                vcpu_save(ksSMP[(getCurrentCPUIndex())].cpu.armHSCurVCPU, ksSMP[(getCurrentCPUIndex())].cpu.armHSVCPUActive);
+            }
+            vcpu_restore(new);
+            ksSMP[(getCurrentCPUIndex())].cpu.armHSCurVCPU = new;
+            ksSMP[(getCurrentCPUIndex())].cpu.armHSVCPUActive = true;
+        } else if (__builtin_expect(!!(ksSMP[(getCurrentCPUIndex())].cpu.armHSVCPUActive), 0)) {
+            /* leave the current VCPU state loaded, but disable vgic and mmu */
+
+
+
+            vcpu_disable(ksSMP[(getCurrentCPUIndex())].cpu.armHSCurVCPU);
+            ksSMP[(getCurrentCPUIndex())].cpu.armHSVCPUActive = false;
+        }
+    } else if (__builtin_expect(!!(!ksSMP[(getCurrentCPUIndex())].cpu.armHSVCPUActive && new != ((void *)0)), 1)) {
+        isb();
+        vcpu_enable(new);
+        ksSMP[(getCurrentCPUIndex())].cpu.armHSVCPUActive = true;
+    }
+}
+
+static void vcpu_invalidate_active(void)
+{
+    if (ksSMP[(getCurrentCPUIndex())].cpu.armHSVCPUActive) {
+        vcpu_disable(((void *)0));
+        ksSMP[(getCurrentCPUIndex())].cpu.armHSVCPUActive = false;
+    }
+    ksSMP[(getCurrentCPUIndex())].cpu.armHSCurVCPU = ((void *)0);
+}
+
+void vcpu_flush(void)
+{
+    if (ksSMP[(getCurrentCPUIndex())].cpu.armHSCurVCPU) {
+        vcpu_save(ksSMP[(getCurrentCPUIndex())].cpu.armHSCurVCPU, ksSMP[(getCurrentCPUIndex())].cpu.armHSVCPUActive);
+        vcpu_invalidate_active();
+    }
+}
+
+void vcpu_flush_if_current(tcb_t *tptr)
+{
+    if (tptr->tcbArch.tcbVCPU == ksSMP[(getCurrentCPUIndex())].cpu.armHSCurVCPU) {
+        vcpu_flush();
+    }
+}
+
+void vcpu_finalise(vcpu_t *vcpu)
+{
+    if (vcpu->vcpuTCB) {
+        dissociateVCPUTCB(vcpu, vcpu->vcpuTCB);
+    }
+}
+
+void associateVCPUTCB(vcpu_t *vcpu, tcb_t *tcb)
+{
+    if (tcb->tcbArch.tcbVCPU) {
+        dissociateVCPUTCB(tcb->tcbArch.tcbVCPU, tcb);
+    }
+    if (vcpu->vcpuTCB) {
+        dissociateVCPUTCB(vcpu, vcpu->vcpuTCB);
+    }
+    tcb->tcbArch.tcbVCPU = vcpu;
+    vcpu->vcpuTCB = tcb;
+
+    if (tcb == ksSMP[(getCurrentCPUIndex())].system.ksCurThread) {
+        vcpu_switch(vcpu);
+    }
+}
+
+void dissociateVCPUTCB(vcpu_t *vcpu, tcb_t *tcb)
+{
+    if (tcb->tcbArch.tcbVCPU != vcpu || vcpu->vcpuTCB != tcb) {
+        _fail("TCB and VCPU not associated.", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/object/vcpu.c", 308, __func__);
+    }
+    if (vcpu == ksSMP[(getCurrentCPUIndex())].cpu.armHSCurVCPU) {
+        vcpu_invalidate_active();
+    }
+    tcb->tcbArch.tcbVCPU = ((void *)0);
+    vcpu->vcpuTCB = ((void *)0);
+
+
+
+
+    /* sanitize the CPSR as without a VCPU a thread should only be in user mode */
+
+    setRegister(tcb, SPSR_EL1, sanitiseRegister(SPSR_EL1, getRegister(tcb, SPSR_EL1), false));
+
+
+
+}
+
+exception_t invokeVCPUWriteReg(vcpu_t *vcpu, word_t field, word_t value)
+{
+    writeVCPUReg(vcpu, field, value);
+    return EXCEPTION_NONE;
+}
+
+exception_t decodeVCPUWriteReg(cap_t cap, word_t length, word_t *buffer)
+{
+    word_t field;
+    word_t value;
+    if (length < 2) {
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "VCPUWriteReg: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 338, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
+        current_syscall_error.type = seL4_TruncatedMessage;
+        return EXCEPTION_SYSCALL_ERROR;
+    }
+    field = getSyscallArg(0, buffer);
+    value = getSyscallArg(1, buffer);
+    if (field >= seL4_VCPUReg_Num) {
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "VCPUWriteReg: Invalid field 0x%lx." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 345, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), (long)field); } while (0);
+        current_syscall_error.type = seL4_InvalidArgument;
+        current_syscall_error.invalidArgumentNumber = 1;
+        return EXCEPTION_SYSCALL_ERROR;
+    }
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
+    return invokeVCPUWriteReg(((struct vcpu *)(cap_vcpu_cap_get_capVCPUPtr(cap))), field, value);
+}
+
+exception_t invokeVCPUReadReg(vcpu_t *vcpu, word_t field, bool_t call)
+{
+    tcb_t *thread;
+    thread = ksSMP[(getCurrentCPUIndex())].system.ksCurThread;
+    word_t value = readVCPUReg(vcpu, field);
+    if (call) {
+        word_t *ipcBuffer = lookupIPCBuffer(true, thread);
+        setRegister(thread, badgeRegister, 0);
+        unsigned int length = setMR(thread, ipcBuffer, 0, value);
+        setRegister(thread, msgInfoRegister, wordFromMessageInfo(
+                        seL4_MessageInfo_new(0, 0, 0, length)));
+    }
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Running);
+    return EXCEPTION_NONE;
+}
+
+exception_t decodeVCPUReadReg(cap_t cap, word_t length, bool_t call, word_t *buffer)
+{
+    word_t field;
+    if (length < 1) {
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "VCPUReadReg: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 374, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
+        current_syscall_error.type = seL4_TruncatedMessage;
+        return EXCEPTION_SYSCALL_ERROR;
+    }
+
+    field = getSyscallArg(0, buffer);
+
+    if (field >= seL4_VCPUReg_Num) {
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "VCPUReadReg: Invalid field 0x%lx." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 382, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), (long)field); } while (0);
+        current_syscall_error.type = seL4_InvalidArgument;
+        current_syscall_error.invalidArgumentNumber = 1;
+        return EXCEPTION_SYSCALL_ERROR;
+    }
+
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
+    return invokeVCPUReadReg(((struct vcpu *)(cap_vcpu_cap_get_capVCPUPtr(cap))), field, call);
+}
+
+exception_t invokeVCPUInjectIRQ(vcpu_t *vcpu, unsigned long index, virq_t virq)
+{
+    if (__builtin_expect(!!(ksSMP[(getCurrentCPUIndex())].cpu.armHSCurVCPU == vcpu), 1)) {
+        set_gic_vcpu_ctrl_lr(index, virq);
+
+    } else if (vcpu->vcpuTCB != ((void *)0) && vcpu->vcpuTCB->tcbAffinity != getCurrentCPUIndex()) {
+        doRemoteOp3Arg(IpiRemoteCall_VCPUInjectInterrupt,
+                       (word_t)vcpu, index, virq.words[0],
+                       vcpu->vcpuTCB->tcbAffinity);
+
+    } else {
+        vcpu->vgic.lr[index] = virq;
+    }
+
+    return EXCEPTION_NONE;
+}
+
+exception_t decodeVCPUInjectIRQ(cap_t cap, word_t length, word_t *buffer)
+{
+    word_t vid, priority, group, index;
+    vcpu_t *vcpu;
+
+    word_t mr0;
+
+    vcpu = ((struct vcpu *)(cap_vcpu_cap_get_capVCPUPtr(cap)));
+
+    if (length < 1) {
+        current_syscall_error.type = seL4_TruncatedMessage;
+        return EXCEPTION_SYSCALL_ERROR;
+    }
+
+    mr0 = getSyscallArg(0, buffer);
+    vid = mr0 & 0xffff;
+    priority = (mr0 >> 16) & 0xff;
+    group = (mr0 >> 24) & 0xff;
+    index = (mr0 >> 32) & 0xff;
+# 446 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/object/vcpu.c"
+    /* Check IRQ parameters */
+    if (vid > (1U << 10) - 1) {
+        current_syscall_error.type = seL4_RangeError;
+        current_syscall_error.rangeErrorMin = 0;
+        current_syscall_error.rangeErrorMax = (1U << 10) - 1;
+        current_syscall_error.invalidArgumentNumber = 1;
+        current_syscall_error.type = seL4_RangeError;
+        return EXCEPTION_SYSCALL_ERROR;
+    }
+    if (priority > 31) {
+        current_syscall_error.type = seL4_RangeError;
+        current_syscall_error.rangeErrorMin = 0;
+        current_syscall_error.rangeErrorMax = 31;
+        current_syscall_error.invalidArgumentNumber = 2;
+        current_syscall_error.type = seL4_RangeError;
+        return EXCEPTION_SYSCALL_ERROR;
+    }
+    if (group > 1) {
+        current_syscall_error.type = seL4_RangeError;
+        current_syscall_error.rangeErrorMin = 0;
+        current_syscall_error.rangeErrorMax = 1;
+        current_syscall_error.invalidArgumentNumber = 3;
+        current_syscall_error.type = seL4_RangeError;
+        return EXCEPTION_SYSCALL_ERROR;
+    }
+    /* LR index out of range */
+    if (index >= gic_vcpu_num_list_regs) {
+        current_syscall_error.type = seL4_RangeError;
+        current_syscall_error.rangeErrorMin = 0;
+        current_syscall_error.rangeErrorMax = gic_vcpu_num_list_regs - 1;
+        current_syscall_error.invalidArgumentNumber = 4;
+        current_syscall_error.type = seL4_RangeError;
+        return EXCEPTION_SYSCALL_ERROR;
+    }
+    /* LR index is in use */
+    if (virq_get_virqType(vcpu->vgic.lr[index]) == virq_virq_active) {
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "VGIC List register in use." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 482, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
+        current_syscall_error.type = seL4_DeleteFirst;
+        return EXCEPTION_SYSCALL_ERROR;
+    }
+    virq_t virq = virq_virq_pending_new(group, priority, 1, vid);
+
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
+    return invokeVCPUInjectIRQ(vcpu, index, virq);
+}
+
+exception_t decodeARMVCPUInvocation(
+    word_t label,
+    word_t length,
+    cptr_t cptr,
+    cte_t *slot,
+    cap_t cap,
+    bool_t call,
+    word_t *buffer
+)
+{
+    switch (label) {
+    case ARMVCPUSetTCB:
+        return decodeVCPUSetTCB(cap);
+    case ARMVCPUReadReg:
+        return decodeVCPUReadReg(cap, length, call, buffer);
+    case ARMVCPUWriteReg:
+        return decodeVCPUWriteReg(cap, length, buffer);
+    case ARMVCPUInjectIRQ:
+        return decodeVCPUInjectIRQ(cap, length, buffer);
+    case ARMVCPUAckVPPI:
+        return decodeVCPUAckVPPI(cap, length, buffer);
+    default:
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "VCPU: Illegal operation." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 514, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
+        current_syscall_error.type = seL4_IllegalOperation;
+        return EXCEPTION_SYSCALL_ERROR;
+    }
+}
+
+exception_t decodeVCPUAckVPPI(cap_t cap, word_t length, word_t *buffer)
+{
+    vcpu_t *vcpu = ((struct vcpu *)(cap_vcpu_cap_get_capVCPUPtr(cap)));
+
+    if (length < 1) {
+        current_syscall_error.type = seL4_TruncatedMessage;
+        return EXCEPTION_SYSCALL_ERROR;
+    }
+
+    word_t irq_w = getSyscallArg(0, buffer);
+    irq_t irq = (irq_t) ((irq_t){.irq = (irq_w), .target_core = (getCurrentCPUIndex())});
+    exception_t status = Arch_checkIRQ(irq_w);
+    if (status != EXCEPTION_NONE) {
+        return status;
+    }
+
+    VPPIEventIRQ_t vppi = irqVPPIEventIndex(irq);
+    if (vppi == VPPIEventIRQ_invalid) {
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "VCPUAckVPPI: Invalid irq number." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 538, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
+        current_syscall_error.type = seL4_InvalidArgument;
+        current_syscall_error.invalidArgumentNumber = 0;
+        return EXCEPTION_SYSCALL_ERROR;
+    }
+
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
+    return invokeVCPUAckVPPI(vcpu, vppi);
+}
+
+exception_t invokeVCPUAckVPPI(vcpu_t *vcpu, VPPIEventIRQ_t vppi)
+{
+    vcpu->vppi_masked[vppi] = false;
+    return EXCEPTION_NONE;
+}
+
+exception_t decodeVCPUSetTCB(cap_t cap)
+{
+    cap_t tcbCap;
+    if (current_extra_caps.excaprefs[0] == ((void *)0)) {
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "VCPU SetTCB: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 558, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
+        current_syscall_error.type = seL4_TruncatedMessage;
+        return EXCEPTION_SYSCALL_ERROR;
+    }
+    tcbCap = current_extra_caps.excaprefs[0]->cap;
+
+    if (cap_get_capType(tcbCap) != cap_thread_cap) {
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB cap is not a TCB cap." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 565, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
+        current_syscall_error.type = seL4_IllegalOperation;
+        return EXCEPTION_SYSCALL_ERROR;
+    }
+
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
+    return invokeVCPUSetTCB(((struct vcpu *)(cap_vcpu_cap_get_capVCPUPtr(cap))), ((tcb_t *)(cap_thread_cap_get_capTCBPtr(tcbCap))));
+}
+
+exception_t invokeVCPUSetTCB(vcpu_t *vcpu, tcb_t *tcb)
+{
+    associateVCPUTCB(vcpu, tcb);
+
+    return EXCEPTION_NONE;
+}
+
+
+void handleVCPUFault(word_t hsr)
+{
+    { { if (armv_handleVCPUFault(hsr)) { return; } current_fault = seL4_Fault_VCPUFault_new(hsr); handleFault(ksSMP[(getCurrentCPUIndex())].system.ksCurThread); } }
+
+
+
+
+
+
+
+    schedule();
+    activateThread();
+}
+
+
+void handleVCPUInjectInterruptIPI(vcpu_t *vcpu, unsigned long index, virq_t virq)
+{
+    if (__builtin_expect(!!(ksSMP[(getCurrentCPUIndex())].cpu.armHSCurVCPU == vcpu), 1)) {
+        set_gic_vcpu_ctrl_lr(index, virq);
+    } else {
+        vcpu->vgic.lr[index] = virq;
+    }
+}
 # 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/smp/ipi.c"
 /*
  * Copyright 2020, Data61, CSIRO (ABN 41 687 119 230)
@@ -14083,7 +16409,77 @@ exception_t __attribute__((__const__)) Arch_performTransfer(word_t arch, tcb_t *
  */
 
        
+
+
+
+
+
+
+
+typedef enum {
+    /* placeholder for 64-bit ARM IPI types */
+    IpiNumModeRemoteCall
+} IpiModeRemoteCall_t;
 # 9 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/smp/ipi.c" 2
+
+
+
+
+
+void handleRemoteCall(IpiRemoteCall_t call, word_t arg0, word_t arg1, word_t arg2, bool_t irqPath)
+{
+    /* we gets spurious irq_remote_call_ipi calls, e.g. when handling IPI
+     * in lock while hardware IPI is pending. Guard against spurious IPIs! */
+    if (clh_is_ipi_pending(getCurrentCPUIndex())) {
+        switch (call) {
+        case IpiRemoteCall_Stall:
+            ipiStallCoreCallback(irqPath);
+            break;
+
+
+        case IpiRemoteCall_switchFpuOwner:
+            switchLocalFpuOwner((tcb_t *)arg0);
+            break;
+
+
+        case IpiRemoteCall_InvalidateTranslationSingle:
+            invalidateTranslationSingleLocal(arg0);
+            break;
+
+        case IpiRemoteCall_InvalidateTranslationASID:
+            invalidateTranslationASIDLocal(arg0);
+            break;
+
+        case IpiRemoteCall_InvalidateTranslationAll:
+            invalidateTranslationAllLocal();
+            break;
+
+        case IpiRemoteCall_MaskPrivateInterrupt:
+            maskInterrupt(arg0, (((arg1) < 32u*4) ? ((irq_t){.irq = ((arg1) - ((arg1)/32u)*32u), .target_core = ((arg1) / 32u)}): ((irq_t){.irq = ((arg1) - (4 -1)*32u), .target_core = (0)})));
+            break;
+# 53 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/smp/ipi.c"
+        case IpiRemoteCall_VCPUInjectInterrupt: {
+            virq_t virq;
+            virq.words[0] = arg2;
+            handleVCPUInjectInterruptIPI((vcpu_t *) arg0, arg1, virq);
+            break;
+        }
+
+
+        default:
+            _fail("Invalid remote call", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/smp/ipi.c", 62, __func__);
+            break;
+        }
+
+        big_kernel_lock.node[getCurrentCPUIndex()].ipi = 0;
+        ipi_wait();
+    }
+}
+
+void ipi_send_mask(irq_t ipi, word_t mask, bool_t isBlocking)
+{
+    generic_ipi_send_mask(ipi, mask, isBlocking);
+}
 # 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/assert.c"
 /*
  * Copyright 2014, General Dynamics C4 Systems
@@ -14153,18 +16549,18 @@ void _assert_fail(
 # 22 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/drivers/serial/pl011.c"
 void uart_drv_putchar(unsigned char c)
 {
-    while ((*((volatile uint32_t *)((0xffffffffffe00000ul /* 2^64 - 2^21 */ + 0x0) + (0x018))) & (1ul << (5))) != 0);
+    while ((*((volatile uint32_t *)((0x000000ffffe00000ul /* 2^40 - 2^21 */ + 0x0) + (0x018))) & (1ul << (5))) != 0);
 
-    *((volatile uint32_t *)((0xffffffffffe00000ul /* 2^64 - 2^21 */ + 0x0) + (0x000))) = c;
+    *((volatile uint32_t *)((0x000000ffffe00000ul /* 2^40 - 2^21 */ + 0x0) + (0x000))) = c;
 }
 
 
 
 unsigned char uart_drv_getchar(void)
 {
-    while ((*((volatile uint32_t *)((0xffffffffffe00000ul /* 2^64 - 2^21 */ + 0x0) + (0x018))) & (1ul << (4))) != 0);
+    while ((*((volatile uint32_t *)((0x000000ffffe00000ul /* 2^40 - 2^21 */ + 0x0) + (0x018))) & (1ul << (4))) != 0);
 
-    return *((volatile uint32_t *)((0xffffffffffe00000ul /* 2^64 - 2^21 */ + 0x0) + (0x000)));
+    return *((volatile uint32_t *)((0x000000ffffe00000ul /* 2^40 - 2^21 */ + 0x0) + (0x000)));
 }
 # 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/drivers/timer/generic_timer.c"
 /*
@@ -14198,7 +16594,7 @@ __attribute__((__section__(".boot.text"))) void initGenericTimer(void)
 
     resetTimer();
 
-    do { word_t _v = (1ul << (0)); __asm__ volatile("msr " "cntv_ctl_el0" ",%x0" :: "r" (_v)); }while(0);
+    do { word_t _v = (1ul << (0)); __asm__ volatile("msr " "cnthp_ctl_el2" ",%x0" :: "r" (_v)); }while(0);
 }
 
 /*
@@ -14213,6 +16609,72 @@ __attribute__((__section__(".boot.text"))) void initGenericTimer(void)
 __attribute__((__section__(".boot.text"))) void initTimer(void)
 {
     initGenericTimer();
+}
+
+
+
+
+
+
+
+/** MODIFIES: */
+/** DONT_TRANSLATE */
+static inline uint64_t read_cntpct(void)
+{
+    uint64_t val;
+    __asm__ volatile("mrs %x0," "cntpct_el0" : "=r"(val));
+    return val;
+}
+
+static void save_virt_timer(vcpu_t *vcpu)
+{
+    /* Save control register */
+    vcpu_save_reg(vcpu, seL4_VCPUReg_CNTV_CTL);
+    vcpu_hw_write_reg(seL4_VCPUReg_CNTV_CTL, 0);
+    /* Save Compare Value and Offset registers */
+
+    vcpu_save_reg(vcpu, seL4_VCPUReg_CNTV_CVAL);
+    vcpu_save_reg(vcpu, seL4_VCPUReg_CNTVOFF);
+    vcpu_save_reg(vcpu, seL4_VCPUReg_CNTKCTL_EL1);
+# 83 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/drivers/timer/generic_timer.c"
+    check_export_arch_timer();
+
+    /* Save counter value at the time the vcpu is disabled */
+    vcpu->virtTimer.last_pcount = read_cntpct();
+
+}
+
+static void restore_virt_timer(vcpu_t *vcpu)
+{
+    /* Restore virtual timer state */
+
+    vcpu_restore_reg(vcpu, seL4_VCPUReg_CNTV_CVAL);
+    vcpu_restore_reg(vcpu, seL4_VCPUReg_CNTKCTL_EL1);
+# 104 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/drivers/timer/generic_timer.c"
+    /* Set virtual timer offset */
+
+    uint64_t pcount_delta;
+    uint64_t current_cntpct = read_cntpct();
+    pcount_delta = current_cntpct - vcpu->virtTimer.last_pcount;
+
+
+
+    uint64_t offset = vcpu_read_reg(vcpu, seL4_VCPUReg_CNTVOFF);
+    offset += pcount_delta;
+    vcpu_write_reg(vcpu, seL4_VCPUReg_CNTVOFF, offset);
+
+    vcpu_restore_reg(vcpu, seL4_VCPUReg_CNTVOFF);
+# 128 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/drivers/timer/generic_timer.c"
+    /* For verification, need to ensure we don't unmask an inactive interrupt;
+     * the virtual timer should never get disabled, but the knowledge is not
+     * available at this point */
+    /* Restore interrupt mask state */
+    if (__builtin_expect(!!(isIRQActive(((irq_t){.irq = (27), .target_core = (getCurrentCPUIndex())}))), 1)) {
+        maskInterrupt(vcpu->vppi_masked[irqVPPIEventIndex(((irq_t){.irq = (27), .target_core = (getCurrentCPUIndex())}))],
+                      ((irq_t){.irq = (27), .target_core = (getCurrentCPUIndex())}));
+    }
+    /* Restore virtual timer control register */
+    vcpu_restore_reg(vcpu, seL4_VCPUReg_CNTV_CTL);
 }
 # 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/fastpath/fastpath.c"
 /*
@@ -14342,7 +16804,7 @@ void __attribute__((__noreturn__)) fastpath_call(word_t cptr, word_t msgInfo)
     /* Get message info, length, and fault type. */
     info = messageInfoFromWord_raw(msgInfo);
     length = seL4_MessageInfo_get_length(info);
-    fault_type = seL4_Fault_get_seL4_FaultType(ksCurThread->tcbFault);
+    fault_type = seL4_Fault_get_seL4_FaultType(ksSMP[(getCurrentCPUIndex())].system.ksCurThread->tcbFault);
 
     /* Check there's no extra caps, the length is ok and there's no
      * saved fault. */
@@ -14352,7 +16814,7 @@ void __attribute__((__noreturn__)) fastpath_call(word_t cptr, word_t msgInfo)
     }
 
     /* Lookup the cap */
-    ep_cap = lookup_fp((((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCTable))->cap, cptr);
+    ep_cap = lookup_fp((((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCTable))->cap, cptr);
 
     /* Check it's an endpoint */
     if (__builtin_expect(!!(!cap_capType_equals(ep_cap, cap_endpoint_cap) || !cap_endpoint_cap_get_capCanSend(ep_cap)), 0)
@@ -14397,13 +16859,18 @@ void __attribute__((__noreturn__)) fastpath_call(word_t cptr, word_t msgInfo)
                                                                                           ) {
         slowpath(SysCall);
     }
-# 114 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/fastpath/fastpath.c"
-    stored_hw_asid.words[0] = asid;
+
+    /* Ensure the vmid is valid. */
+    if (__builtin_expect(!!(!asid_map_asid_map_vspace_get_stored_vmid_valid(asid_map)), 0)) {
+        slowpath(SysCall);
+    }
+    /* vmids are the tags used instead of hw_asids in hyp mode */
+    stored_hw_asid.words[0] = asid_map_asid_map_vspace_get_stored_hw_vmid(asid_map);
 # 123 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/fastpath/fastpath.c"
     /* let gcc optimise this out for 1 domain */
     dom = maxDom ? ksCurDomain : 0;
     /* ensure only the idle thread or lower prio threads are present in the scheduler */
-    if (__builtin_expect(!!(dest->tcbPriority < ksCurThread->tcbPriority && !isHighestPrio(dom, dest->tcbPriority)), 0)
+    if (__builtin_expect(!!(dest->tcbPriority < ksSMP[(getCurrentCPUIndex())].system.ksCurThread->tcbPriority && !isHighestPrio(dom, dest->tcbPriority)), 0)
                                                         ) {
         slowpath(SysCall);
     }
@@ -14425,7 +16892,13 @@ void __attribute__((__noreturn__)) fastpath_call(word_t cptr, word_t msgInfo)
     if (__builtin_expect(!!(dest->tcbDomain != ksCurDomain && 0 < maxDom), 0)) {
         slowpath(SysCall);
     }
-# 167 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/fastpath/fastpath.c"
+# 161 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/fastpath/fastpath.c"
+    /* Ensure both threads have the same affinity */
+    if (__builtin_expect(!!(ksSMP[(getCurrentCPUIndex())].system.ksCurThread->tcbAffinity != dest->tcbAffinity), 0)) {
+        slowpath(SysCall);
+    }
+
+
     /*
      * --- POINT OF NO RETURN ---
      *
@@ -14447,11 +16920,11 @@ void __attribute__((__noreturn__)) fastpath_call(word_t cptr, word_t msgInfo)
     badge = cap_endpoint_cap_get_capEPBadge(ep_cap);
 
     /* Unlink dest <-> reply, link src (cur thread) <-> reply */
-    thread_state_ptr_set_tsType_np(&ksCurThread->tcbState,
+    thread_state_ptr_set_tsType_np(&ksSMP[(getCurrentCPUIndex())].system.ksCurThread->tcbState,
                                    ThreadState_BlockedOnReply);
 # 208 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/fastpath/fastpath.c"
     /* Get sender reply slot */
-    cte_t *replySlot = (((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbReply));
+    cte_t *replySlot = (((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbReply));
 
     /* Get dest caller slot */
     cte_t *callerSlot = (((cte_t *)((word_t)(dest)&~((1ul << (11)) - 1ul)))+(tcbCaller));
@@ -14459,13 +16932,13 @@ void __attribute__((__noreturn__)) fastpath_call(word_t cptr, word_t msgInfo)
     /* Insert reply cap */
     word_t replyCanGrant = thread_state_ptr_get_blockingIPCCanGrant(&dest->tcbState);;
     cap_reply_cap_ptr_new_np(&callerSlot->cap, replyCanGrant, 0,
-                             ((word_t)(ksCurThread)));
+                             ((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)));
     mdb_node_ptr_set_mdbPrev_np(&callerSlot->cteMDBNode, ((word_t)(replySlot)));
     mdb_node_ptr_mset_mdbNext_mdbRevocable_mdbFirstBadged(
         &replySlot->cteMDBNode, ((word_t)(callerSlot)), 1, 1);
 
 
-    fastpath_copy_mrs(length, ksCurThread, dest);
+    fastpath_copy_mrs(length, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, dest);
 
     /* Dest thread is set Running, but not queued. */
     thread_state_ptr_set_tsType_np(&dest->tcbState,
@@ -14474,7 +16947,7 @@ void __attribute__((__noreturn__)) fastpath_call(word_t cptr, word_t msgInfo)
 
     msgInfo = wordFromMessageInfo(seL4_MessageInfo_set_capsUnwrapped(info, 0));
 
-    fastpath_restore(badge, msgInfo, ksCurThread);
+    fastpath_restore(badge, msgInfo, ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
 }
 
 
@@ -14504,7 +16977,7 @@ void __attribute__((__noreturn__)) fastpath_reply_recv(word_t cptr, word_t msgIn
     /* Get message info and length */
     info = messageInfoFromWord_raw(msgInfo);
     length = seL4_MessageInfo_get_length(info);
-    fault_type = seL4_Fault_get_seL4_FaultType(ksCurThread->tcbFault);
+    fault_type = seL4_Fault_get_seL4_FaultType(ksSMP[(getCurrentCPUIndex())].system.ksCurThread->tcbFault);
 
     /* Check there's no extra caps, the length is ok and there's no
      * saved fault. */
@@ -14514,7 +16987,7 @@ void __attribute__((__noreturn__)) fastpath_reply_recv(word_t cptr, word_t msgIn
     }
 
     /* Lookup the cap */
-    ep_cap = lookup_fp((((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCTable))->cap,
+    ep_cap = lookup_fp((((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCTable))->cap,
                        cptr);
 
     /* Check it's an endpoint */
@@ -14524,7 +16997,7 @@ void __attribute__((__noreturn__)) fastpath_reply_recv(word_t cptr, word_t msgIn
     }
 # 291 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/fastpath/fastpath.c"
     /* Check there is nothing waiting on the notification */
-    if (__builtin_expect(!!(ksCurThread->tcbBoundNotification && notification_ptr_get_state(ksCurThread->tcbBoundNotification) == NtfnState_Active), 0)
+    if (__builtin_expect(!!(ksSMP[(getCurrentCPUIndex())].system.ksCurThread->tcbBoundNotification && notification_ptr_get_state(ksSMP[(getCurrentCPUIndex())].system.ksCurThread->tcbBoundNotification) == NtfnState_Active), 0)
                                                                                                                ) {
         slowpath(SysReplyRecv);
     }
@@ -14538,7 +17011,7 @@ void __attribute__((__noreturn__)) fastpath_reply_recv(word_t cptr, word_t msgIn
     }
 # 319 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/fastpath/fastpath.c"
     /* Only reply if the reply cap is valid. */
-    cte_t *callerSlot = (((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCaller));
+    cte_t *callerSlot = (((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCaller));
     cap_t callerCap = callerSlot->cap;
     if (__builtin_expect(!!(!fastpath_reply_cap_check(callerCap)), 0)) {
         slowpath(SysReplyRecv);
@@ -14588,15 +17061,15 @@ void __attribute__((__noreturn__)) fastpath_reply_recv(word_t cptr, word_t msgIn
                                                                                           ) {
         slowpath(SysReplyRecv);
     }
-# 392 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/fastpath/fastpath.c"
-    stored_hw_asid.words[0] = asid;
 
+    /* Ensure the vmid is valid. */
+    if (__builtin_expect(!!(!asid_map_asid_map_vspace_get_stored_vmid_valid(asid_map)), 0)) {
+        slowpath(SysReplyRecv);
+    }
 
-
-
-
-
-
+    /* vmids are the tags used instead of hw_asids in hyp mode */
+    stored_hw_asid.words[0] = asid_map_asid_map_vspace_get_stored_hw_vmid(asid_map);
+# 400 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/fastpath/fastpath.c"
     /* Ensure the original caller can be scheduled directly. */
     dom = maxDom ? ksCurDomain : 0;
     if (__builtin_expect(!!(!isHighestPrio(dom, caller->tcbPriority)), 0)) {
@@ -14607,7 +17080,13 @@ void __attribute__((__noreturn__)) fastpath_reply_recv(word_t cptr, word_t msgIn
     if (__builtin_expect(!!(caller->tcbDomain != ksCurDomain && 0 < maxDom), 0)) {
         slowpath(SysReplyRecv);
     }
-# 431 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/fastpath/fastpath.c"
+# 425 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/fastpath/fastpath.c"
+    /* Ensure both threads have the same affinity */
+    if (__builtin_expect(!!(ksSMP[(getCurrentCPUIndex())].system.ksCurThread->tcbAffinity != caller->tcbAffinity), 0)) {
+        slowpath(SysReplyRecv);
+    }
+
+
     /*
      * --- POINT OF NO RETURN ---
      *
@@ -14620,7 +17099,7 @@ void __attribute__((__noreturn__)) fastpath_reply_recv(word_t cptr, word_t msgIn
 
     /* Set thread state to BlockedOnReceive */
     thread_state_ptr_mset_blockingObject_tsType(
-        &ksCurThread->tcbState, (word_t)ep_ptr, ThreadState_BlockedOnReceive);
+        &ksSMP[(getCurrentCPUIndex())].system.ksCurThread->tcbState, (word_t)ep_ptr, ThreadState_BlockedOnReceive);
 
 
 
@@ -14628,19 +17107,19 @@ void __attribute__((__noreturn__)) fastpath_reply_recv(word_t cptr, word_t msgIn
 
 
 
-    thread_state_ptr_set_blockingIPCCanGrant(&ksCurThread->tcbState,
+    thread_state_ptr_set_blockingIPCCanGrant(&ksSMP[(getCurrentCPUIndex())].system.ksCurThread->tcbState,
                                              cap_endpoint_cap_get_capCanGrant(ep_cap));;
 
 
     /* Place the thread in the endpoint queue */
     endpointTail = ((tcb_t *)(endpoint_ptr_get_epQueue_tail(ep_ptr)));
     if (__builtin_expect(!!(!endpointTail), 1)) {
-        ksCurThread->tcbEPPrev = ((void *)0);
-        ksCurThread->tcbEPNext = ((void *)0);
+        ksSMP[(getCurrentCPUIndex())].system.ksCurThread->tcbEPPrev = ((void *)0);
+        ksSMP[(getCurrentCPUIndex())].system.ksCurThread->tcbEPNext = ((void *)0);
 
         /* Set head/tail of queue and endpoint state. */
-        endpoint_ptr_set_epQueue_head_np(ep_ptr, ((word_t)(ksCurThread)));
-        endpoint_ptr_mset_epQueue_tail_state(ep_ptr, ((word_t)(ksCurThread)),
+        endpoint_ptr_set_epQueue_head_np(ep_ptr, ((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)));
+        endpoint_ptr_mset_epQueue_tail_state(ep_ptr, ((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)),
                                              EPState_Recv);
     } else {
 
@@ -14650,12 +17129,12 @@ void __attribute__((__noreturn__)) fastpath_reply_recv(word_t cptr, word_t msgIn
 
 
         /* Append current thread onto the queue. */
-        endpointTail->tcbEPNext = ksCurThread;
-        ksCurThread->tcbEPPrev = endpointTail;
-        ksCurThread->tcbEPNext = ((void *)0);
+        endpointTail->tcbEPNext = ksSMP[(getCurrentCPUIndex())].system.ksCurThread;
+        ksSMP[(getCurrentCPUIndex())].system.ksCurThread->tcbEPPrev = endpointTail;
+        ksSMP[(getCurrentCPUIndex())].system.ksCurThread->tcbEPNext = ((void *)0);
 
         /* Update tail of queue. */
-        endpoint_ptr_mset_epQueue_tail_state(ep_ptr, ((word_t)(ksCurThread)),
+        endpoint_ptr_mset_epQueue_tail_state(ep_ptr, ((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)),
                                              EPState_Recv);
 
     }
@@ -14672,7 +17151,7 @@ void __attribute__((__noreturn__)) fastpath_reply_recv(word_t cptr, word_t msgIn
         /* Replies don't have a badge. */
         badge = 0;
 
-        fastpath_copy_mrs(length, ksCurThread, caller);
+        fastpath_copy_mrs(length, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, caller);
 
         /* Dest thread is set Running, but not queued. */
         thread_state_ptr_set_tsType_np(&caller->tcbState, ThreadState_Running);
@@ -14680,7 +17159,7 @@ void __attribute__((__noreturn__)) fastpath_reply_recv(word_t cptr, word_t msgIn
 
         msgInfo = wordFromMessageInfo(seL4_MessageInfo_set_capsUnwrapped(info, 0));
 
-        fastpath_restore(badge, msgInfo, ksCurThread);
+        fastpath_restore(badge, msgInfo, ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
 
 
 
@@ -14775,7 +17254,7 @@ extern char ki_boot_end[1];
 __attribute__((__section__(".boot.text"))) p_region_t get_p_reg_kernel_img_boot(void)
 {
     return (p_region_t) {
-        .start = addrFromKPPtr((const void *)((0xffffff8000000000ul /* 2^64 - 2^39 */ - 0x0ul) + physBase())),
+        .start = addrFromKPPtr((const void *)((0x0000008000000000ul /* 2^40 - 2^39 */ - 0x0ul) + physBase())),
         .end = addrFromKPPtr(ki_boot_end)
     };
 }
@@ -14784,7 +17263,7 @@ __attribute__((__section__(".boot.text"))) p_region_t get_p_reg_kernel_img_boot(
 __attribute__((__section__(".boot.text"))) p_region_t get_p_reg_kernel_img(void)
 {
     return (p_region_t) {
-        .start = addrFromKPPtr((const void *)((0xffffff8000000000ul /* 2^64 - 2^39 */ - 0x0ul) + physBase())),
+        .start = addrFromKPPtr((const void *)((0x0000008000000000ul /* 2^40 - 2^39 */ - 0x0ul) + physBase())),
         .end = addrFromKPPtr((const void *)((paddr_t)ki_end))
     };
 }
@@ -14913,7 +17392,7 @@ __attribute__((__section__(".boot.text"))) static pptr_t alloc_rootserver_obj(wo
 __attribute__((__section__(".boot.text"))) static word_t rootserver_max_size_bits(word_t extra_bi_size_bits)
 {
     word_t cnode_size_bits = 12 + 5;
-    word_t max = (((cnode_size_bits)>(12))?(cnode_size_bits):(12));
+    word_t max = (((cnode_size_bits)>(13))?(cnode_size_bits):(13));
     return (((max)>(extra_bi_size_bits))?(max):(extra_bi_size_bits));
 }
 
@@ -14926,7 +17405,7 @@ __attribute__((__section__(".boot.text"))) static word_t calculate_rootserver_si
     size += (1ul << (12)); // boot info
     size += (1ul << (12));
     size += extra_bi_size_bits > 0 ? (1ul << (extra_bi_size_bits)) : 0;
-    size += (1ul << (12)); // root vspace
+    size += (1ul << (13)); // root vspace
 
 
 
@@ -14960,8 +17439,8 @@ __attribute__((__section__(".boot.text"))) static void create_rootserver_objects
     /* the root cnode is at least 4k, so it could be larger or smaller than a pd. */
 
     rootserver.cnode = alloc_rootserver_obj(cnode_size_bits, 1);
-    maybe_alloc_extra_bi(12, extra_bi_size_bits);
-    rootserver.vspace = alloc_rootserver_obj(12, 1);
+    maybe_alloc_extra_bi(13, extra_bi_size_bits);
+    rootserver.vspace = alloc_rootserver_obj(13, 1);
 
 
 
@@ -15188,16 +17667,24 @@ __attribute__((__section__(".boot.text"))) void create_idle_thread(void)
     pptr_t pptr;
 
 
+    for (unsigned int i = 0; i < 4; i++) {
+
+        pptr = (pptr_t) &ksIdleThreadTCB[i];
+        ksSMP[(i)].system.ksIdleThread = ((tcb_t *)(pptr + (1ul << ((11 - 1)))));
+        configureIdleThread(ksSMP[(i)].system.ksIdleThread);
+
+        setThreadName(ksSMP[(i)].system.ksIdleThread, "idle_thread");
+
+        ksSMP[(i)].system.ksIdleThread->tcbAffinity = i;
 
 
-        pptr = (pptr_t) &ksIdleThreadTCB[0];
-        ksIdleThread = ((tcb_t *)(pptr + (1ul << ((11 - 1)))));
-        configureIdleThread(ksIdleThread);
 
-        setThreadName(ksIdleThread, "idle_thread");
 
-        ;
-# 494 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/kernel/boot.c"
+
+
+
+    }
+
 }
 
 __attribute__((__section__(".boot.text"))) tcb_t *create_initial_thread(cap_t root_cnode_cap, cap_t it_pd_cap, vptr_t ui_v_entry, vptr_t bi_frame_vptr,
@@ -15252,7 +17739,7 @@ __attribute__((__section__(".boot.text"))) tcb_t *create_initial_thread(cap_t ro
     setThreadState(tcb, ThreadState_Running);
 
 
-    ;
+    tcb->tcbAffinity = 0;
 
 
     /* create initial thread's TCB cap */
@@ -15273,19 +17760,19 @@ __attribute__((__section__(".boot.text"))) tcb_t *create_initial_thread(cap_t ro
 __attribute__((__section__(".boot.text"))) void init_core_state(tcb_t *scheduler_action)
 {
 
-    ksCurFPUOwner = ((void *)0);
+    ksSMP[(getCurrentCPUIndex())].system.ksCurFPUOwner = ((void *)0);
 
 
     /* add initial threads to the debug queue */
-    ksDebugTCBs = ((void *)0);
+    ksSMP[(getCurrentCPUIndex())].system.ksDebugTCBs = ((void *)0);
     if (scheduler_action != ((tcb_t*)0) &&
         scheduler_action != ((tcb_t*) 1)) {
         tcbDebugAppend(scheduler_action);
     }
-    tcbDebugAppend(ksIdleThread);
+    tcbDebugAppend(ksSMP[(getCurrentCPUIndex())].system.ksIdleThread);
 
-    ksSchedulerAction = scheduler_action;
-    ksCurThread = ksIdleThread;
+    ksSMP[(getCurrentCPUIndex())].system.ksSchedulerAction = scheduler_action;
+    ksSMP[(getCurrentCPUIndex())].system.ksCurThread = ksSMP[(getCurrentCPUIndex())].system.ksIdleThread;
 # 634 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/kernel/boot.c"
     /* No need for NODE_STATE() as there is no SMP support for domains */
     ksCurDomain = 0;
@@ -15306,7 +17793,7 @@ __attribute__((__section__(".boot.text"))) void init_core_state(tcb_t *scheduler
  */
 __attribute__((__section__(".boot.text"))) static bool_t pptr_in_kernel_window(pptr_t pptr)
 {
-    return pptr >= 0xffffff8000000000ul /* 2^64 - 2^39 */ && pptr < 0xffffffffc0000000ul /* 2^64 - 2^30 */;
+    return pptr >= 0x0000008000000000ul /* 2^40 - 2^39 */ && pptr < 0x000000ffc0000000ul /* 2^40 - 2^30 */;
 }
 
 /**
@@ -15528,8 +18015,8 @@ __attribute__((__section__(".boot.text"))) static inline pptr_t ceiling_kernel_w
     /* Adjust address if it exceeds the kernel window
      * Note that we compare physical address in case of overflow.
      */
-    if (addrFromPPtr((void *)p) > (0xffffffffc0000000ul /* 2^64 - 2^30 */ - (0xffffff8000000000ul /* 2^64 - 2^39 */ - 0x0ul))) {
-        p = 0xffffffffc0000000ul /* 2^64 - 2^30 */;
+    if (addrFromPPtr((void *)p) > (0x000000ffc0000000ul /* 2^40 - 2^30 */ - (0x0000008000000000ul /* 2^40 - 2^39 */ - 0x0ul))) {
+        p = 0x000000ffc0000000ul /* 2^40 - 2^30 */;
     }
     return p;
 }
@@ -16071,7 +18558,7 @@ void handleDoubleFault(tcb_t *tptr, seL4_Fault_t ex1)
 
 
 __attribute__((externally_visible)) __attribute__((__aligned__(4096)))
-char kernel_stack_alloc[1][(1ul << (12))];
+char kernel_stack_alloc[4][(1ul << (12))];
 # 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/kernel/thread.c"
 /*
  * Copyright 2014, General Dynamics C4 Systems
@@ -16100,7 +18587,7 @@ void activateThread(void)
 
 
 
-    switch (thread_state_get_tsType(ksCurThread->tcbState)) {
+    switch (thread_state_get_tsType(ksSMP[(getCurrentCPUIndex())].system.ksCurThread->tcbState)) {
     case ThreadState_Running:
 
 
@@ -16110,14 +18597,14 @@ void activateThread(void)
     case ThreadState_Restart: {
         word_t pc;
 
-        pc = getRestartPC(ksCurThread);
-        setNextPC(ksCurThread, pc);
-        setThreadState(ksCurThread, ThreadState_Running);
+        pc = getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
+        setNextPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, pc);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Running);
         break;
     }
 
     case ThreadState_IdleThreadState:
-        Arch_activateIdleThread(ksCurThread);
+        Arch_activateIdleThread(ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
         break;
 
     default:
@@ -16151,7 +18638,7 @@ void restart(tcb_t *target)
 # 106 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/kernel/thread.c"
         setupReplyMaster(target);
         setThreadState(target, ThreadState_Restart);
-        tcbSchedEnqueue(target);
+        do { tcbSchedEnqueue(target); remoteQueueUpdate(target); } while (0);
         possibleSwitchTo(target);
 
     }
@@ -16368,47 +18855,50 @@ void schedule(void)
 
 
 
-    if (ksSchedulerAction != ((tcb_t*)0)) {
+    if (ksSMP[(getCurrentCPUIndex())].system.ksSchedulerAction != ((tcb_t*)0)) {
         bool_t was_runnable;
-        if (isRunnable(ksCurThread)) {
+        if (isRunnable(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)) {
             was_runnable = true;
-            tcbSchedEnqueue(ksCurThread);
+            tcbSchedEnqueue(ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
         } else {
             was_runnable = false;
         }
 
-        if (ksSchedulerAction == ((tcb_t*) 1)) {
+        if (ksSMP[(getCurrentCPUIndex())].system.ksSchedulerAction == ((tcb_t*) 1)) {
             scheduleChooseNewThread();
         } else {
-            tcb_t *candidate = ksSchedulerAction;
+            tcb_t *candidate = ksSMP[(getCurrentCPUIndex())].system.ksSchedulerAction;
             do { if (!(isRunnable(candidate))) { _assert_fail("isSchedulable(candidate)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/kernel/thread.c", 392, __func__); } } while(0);
             /* Avoid checking bitmap when ksCurThread is higher prio, to
              * match fast path.
              * Don't look at ksCurThread prio when it's idle, to respect
              * information flow in non-fastpath cases. */
             bool_t fastfail =
-                ksCurThread == ksIdleThread
-                || (candidate->tcbPriority < ksCurThread->tcbPriority);
+                ksSMP[(getCurrentCPUIndex())].system.ksCurThread == ksSMP[(getCurrentCPUIndex())].system.ksIdleThread
+                || (candidate->tcbPriority < ksSMP[(getCurrentCPUIndex())].system.ksCurThread->tcbPriority);
             if (fastfail &&
                 !isHighestPrio(ksCurDomain, candidate->tcbPriority)) {
-                tcbSchedEnqueue(candidate);
+                do { tcbSchedEnqueue(candidate); remoteQueueUpdate(candidate); } while (0);
                 /* we can't, need to reschedule */
-                ksSchedulerAction = ((tcb_t*) 1);
+                ksSMP[(getCurrentCPUIndex())].system.ksSchedulerAction = ((tcb_t*) 1);
                 scheduleChooseNewThread();
-            } else if (was_runnable && candidate->tcbPriority == ksCurThread->tcbPriority) {
+            } else if (was_runnable && candidate->tcbPriority == ksSMP[(getCurrentCPUIndex())].system.ksCurThread->tcbPriority) {
                 /* We append the candidate at the end of the scheduling queue, that way the
                  * current thread, that was enqueued at the start of the scheduling queue
                  * will get picked during chooseNewThread */
-                tcbSchedAppend(candidate);
-                ksSchedulerAction = ((tcb_t*) 1);
+                do { tcbSchedAppend(candidate); remoteQueueUpdate(candidate); } while (0);
+                ksSMP[(getCurrentCPUIndex())].system.ksSchedulerAction = ((tcb_t*) 1);
                 scheduleChooseNewThread();
             } else {
-                do { if (!(candidate != ksCurThread)) { _assert_fail("candidate != NODE_STATE(ksCurThread)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/kernel/thread.c", 414, __func__); } } while(0);
+                do { if (!(candidate != ksSMP[(getCurrentCPUIndex())].system.ksCurThread)) { _assert_fail("candidate != NODE_STATE(ksCurThread)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/kernel/thread.c", 414, __func__); } } while(0);
                 switchToThread(candidate);
             }
         }
     }
-    ksSchedulerAction = ((tcb_t*)0);
+    ksSMP[(getCurrentCPUIndex())].system.ksSchedulerAction = ((tcb_t*)0);
+
+    doMaskReschedule(ksSMP[(getCurrentCPUIndex())].cpu.ipiReschedulePending);
+    ksSMP[(getCurrentCPUIndex())].cpu.ipiReschedulePending = 0;
 # 433 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/kernel/thread.c"
 }
 
@@ -16424,9 +18914,9 @@ void chooseThread(void)
         dom = 0;
     }
 
-    if (__builtin_expect(!!(ksReadyQueuesL1Bitmap[dom]), 1)) {
+    if (__builtin_expect(!!(ksSMP[(getCurrentCPUIndex())].system.ksReadyQueuesL1Bitmap[dom]), 1)) {
         prio = getHighestPrio(dom);
-        thread = ksReadyQueues[ready_queues_index(dom, prio)].head;
+        thread = ksSMP[(getCurrentCPUIndex())].system.ksReadyQueues[ready_queues_index(dom, prio)].head;
         do { if (!(thread)) { _assert_fail("thread", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/kernel/thread.c", 450, __func__); } } while(0);
         do { if (!(isRunnable(thread))) { _assert_fail("isSchedulable(thread)", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/kernel/thread.c", 451, __func__); } } while(0);
 
@@ -16449,7 +18939,7 @@ void switchToThread(tcb_t *thread)
 
 
     tcbSchedDequeue(thread);
-    ksCurThread = thread;
+    ksSMP[(getCurrentCPUIndex())].system.ksCurThread = thread;
 }
 
 void switchToIdleThread(void)
@@ -16458,7 +18948,7 @@ void switchToIdleThread(void)
 
 
     Arch_switchToIdleThread();
-    ksCurThread = ksIdleThread;
+    ksSMP[(getCurrentCPUIndex())].system.ksCurThread = ksSMP[(getCurrentCPUIndex())].system.ksIdleThread;
 }
 
 void setDomain(tcb_t *tptr, dom_t dom)
@@ -16466,9 +18956,9 @@ void setDomain(tcb_t *tptr, dom_t dom)
     tcbSchedDequeue(tptr);
     tptr->tcbDomain = dom;
     if (isRunnable(tptr)) {
-        tcbSchedEnqueue(tptr);
+        do { tcbSchedEnqueue(tptr); remoteQueueUpdate(tptr); } while (0);
     }
-    if (tptr == ksCurThread) {
+    if (tptr == ksSMP[(getCurrentCPUIndex())].system.ksCurThread) {
         rescheduleRequired();
     }
 }
@@ -16483,7 +18973,7 @@ void setPriority(tcb_t *tptr, prio_t prio)
     tcbSchedDequeue(tptr);
     tptr->tcbPriority = prio;
     if (isRunnable(tptr)) {
-        if (tptr == ksCurThread) {
+        if (tptr == ksSMP[(getCurrentCPUIndex())].system.ksCurThread) {
             rescheduleRequired();
         } else {
             possibleSwitchTo(tptr);
@@ -16502,14 +18992,14 @@ void possibleSwitchTo(tcb_t *target)
 
 
         if (ksCurDomain != target->tcbDomain
-            ) {
-            tcbSchedEnqueue(target);
-        } else if (ksSchedulerAction != ((tcb_t*)0)) {
+            || target->tcbAffinity != getCurrentCPUIndex()) {
+            do { tcbSchedEnqueue(target); remoteQueueUpdate(target); } while (0);
+        } else if (ksSMP[(getCurrentCPUIndex())].system.ksSchedulerAction != ((tcb_t*)0)) {
             /* Too many threads want special treatment, use regular queues. */
             rescheduleRequired();
-            tcbSchedEnqueue(target);
+            do { tcbSchedEnqueue(target); remoteQueueUpdate(target); } while (0);
         } else {
-            ksSchedulerAction = target;
+            ksSMP[(getCurrentCPUIndex())].system.ksSchedulerAction = target;
         }
 
 
@@ -16525,8 +19015,8 @@ void setThreadState(tcb_t *tptr, _thread_state_t ts)
 
 void scheduleTCB(tcb_t *tptr)
 {
-    if (tptr == ksCurThread &&
-        ksSchedulerAction == ((tcb_t*)0) &&
+    if (tptr == ksSMP[(getCurrentCPUIndex())].system.ksCurThread &&
+        ksSMP[(getCurrentCPUIndex())].system.ksSchedulerAction == ((tcb_t*)0) &&
         !isRunnable(tptr)) {
         rescheduleRequired();
     }
@@ -16534,18 +19024,18 @@ void scheduleTCB(tcb_t *tptr)
 # 675 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/kernel/thread.c"
 void timerTick(void)
 {
-    if (__builtin_expect(!!(thread_state_get_tsType(ksCurThread->tcbState) == ThreadState_Running), 1)
+    if (__builtin_expect(!!(thread_state_get_tsType(ksSMP[(getCurrentCPUIndex())].system.ksCurThread->tcbState) == ThreadState_Running), 1)
 
 
 
 
 
        ) {
-        if (ksCurThread->tcbTimeSlice > 1) {
-            ksCurThread->tcbTimeSlice--;
+        if (ksSMP[(getCurrentCPUIndex())].system.ksCurThread->tcbTimeSlice > 1) {
+            ksSMP[(getCurrentCPUIndex())].system.ksCurThread->tcbTimeSlice--;
         } else {
-            ksCurThread->tcbTimeSlice = 5;
-            tcbSchedAppend(ksCurThread);
+            ksSMP[(getCurrentCPUIndex())].system.ksCurThread->tcbTimeSlice = 5;
+            tcbSchedAppend(ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
             rescheduleRequired();
         }
     }
@@ -16561,8 +19051,8 @@ void timerTick(void)
 
 void rescheduleRequired(void)
 {
-    if (ksSchedulerAction != ((tcb_t*)0)
-        && ksSchedulerAction != ((tcb_t*) 1)
+    if (ksSMP[(getCurrentCPUIndex())].system.ksSchedulerAction != ((tcb_t*)0)
+        && ksSMP[(getCurrentCPUIndex())].system.ksSchedulerAction != ((tcb_t*) 1)
 
 
 
@@ -16571,9 +19061,9 @@ void rescheduleRequired(void)
 
 
 
-        tcbSchedEnqueue(ksSchedulerAction);
+        do { tcbSchedEnqueue(ksSMP[(getCurrentCPUIndex())].system.ksSchedulerAction); remoteQueueUpdate(ksSMP[(getCurrentCPUIndex())].system.ksSchedulerAction); } while (0);
     }
-    ksSchedulerAction = ((tcb_t*) 1);
+    ksSMP[(getCurrentCPUIndex())].system.ksSchedulerAction = ((tcb_t*) 1);
 }
 # 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/machine/capdl.c"
 /*
@@ -16670,7 +19160,7 @@ void obj_tcb_print_attrs(tcb_t *tcb)
            (long unsigned int)tcb->tcbMCP);
 
 
-
+    printf(", affinity: %lu", (long unsigned int)tcb->tcbAffinity);
 
 
     /* init */
@@ -16848,18 +19338,18 @@ void obj_irq_print_maps(void)
 {
     printf("irq maps {\n");
 
-    for (seL4_Word target = 0; target < 1; target++) {
+    for (seL4_Word target = 0; target < 4; target++) {
         for (unsigned i = 0; i <= maxIRQ; i++) {
-            irq_t irq = (i);
+            irq_t irq = ((irq_t){.irq = (i), .target_core = (target)});
             if (isIRQActive(irq)) {
-                cap_t cap = intStateIRQNode[(irq)].cap;
+                cap_t cap = intStateIRQNode[(((irq.irq) < 32u) ? (irq.target_core) * 32u + (irq.irq) : (4 - 1) * 32u + (irq.irq))].cap;
                 if (cap_get_capType(cap) != cap_null_cap) {
                     printf("%d: 0x%lx_%lu_irq\n",
                            i,
 
+                           (long unsigned int)irq.irq,
 
 
-                           (long unsigned int)irq,
 
                            (long unsigned int)target);
                 }
@@ -16871,16 +19361,16 @@ void obj_irq_print_maps(void)
 
 void obj_irq_print_slots(cap_t irq_cap)
 {
-    irq_t irq = (cap_irq_handler_cap_get_capIRQ(irq_cap));
+    irq_t irq = (((cap_irq_handler_cap_get_capIRQ(irq_cap)) < 32u*4) ? ((irq_t){.irq = ((cap_irq_handler_cap_get_capIRQ(irq_cap)) - ((cap_irq_handler_cap_get_capIRQ(irq_cap))/32u)*32u), .target_core = ((cap_irq_handler_cap_get_capIRQ(irq_cap)) / 32u)}): ((irq_t){.irq = ((cap_irq_handler_cap_get_capIRQ(irq_cap)) - (4 -1)*32u), .target_core = (0)}));
     if (isIRQActive(irq)) {
         printf("0x%lx_%lu_irq {\n",
 
+               (long unsigned int)irq.irq,
 
 
-               (long unsigned int)irq,
 
-               (long unsigned int)0);
-        cap_t ntfn_cap = intStateIRQNode[(irq)].cap;
+               (long unsigned int)(irq.target_core));
+        cap_t ntfn_cap = intStateIRQNode[(((irq.irq) < 32u) ? (irq.target_core) * 32u + (irq.irq) : (4 - 1) * 32u + (irq.irq))].cap;
         if (cap_get_capType(ntfn_cap) != cap_null_cap) {
             printf("0x0: ");
             print_cap(ntfn_cap);
@@ -16891,7 +19381,7 @@ void obj_irq_print_slots(cap_t irq_cap)
 
 void print_objects(void)
 {
-    for (tcb_t *curr = ksDebugTCBs; curr != ((void *)0); curr = ((debug_tcb_t *)(((cte_t *)((word_t)(curr)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbDebugNext) {
+    for (tcb_t *curr = ksSMP[(getCurrentCPUIndex())].system.ksDebugTCBs; curr != ((void *)0); curr = ((debug_tcb_t *)(((cte_t *)((word_t)(curr)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbDebugNext) {
         if (root_or_idle_tcb(curr)) {
             continue;
         }
@@ -16899,7 +19389,7 @@ void print_objects(void)
         obj_tcb_print_vtable(curr);
     }
 
-    for (tcb_t *curr = ksDebugTCBs; curr != ((void *)0); curr = ((debug_tcb_t *)(((cte_t *)((word_t)(curr)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbDebugNext) {
+    for (tcb_t *curr = ksSMP[(getCurrentCPUIndex())].system.ksDebugTCBs; curr != ((void *)0); curr = ((debug_tcb_t *)(((cte_t *)((word_t)(curr)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbDebugNext) {
         if (root_or_idle_tcb(curr)) {
             continue;
         }
@@ -16917,7 +19407,7 @@ void print_objects(void)
 
 void print_caps(void)
 {
-    for (tcb_t *curr = ksDebugTCBs; curr != ((void *)0); curr = ((debug_tcb_t *)(((cte_t *)((word_t)(curr)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbDebugNext) {
+    for (tcb_t *curr = ksSMP[(getCurrentCPUIndex())].system.ksDebugTCBs; curr != ((void *)0); curr = ((debug_tcb_t *)(((cte_t *)((word_t)(curr)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbDebugNext) {
         if (root_or_idle_tcb(curr)) {
             continue;
         }
@@ -16966,7 +19456,7 @@ void print_cap(cap_t cap)
     case cap_irq_handler_cap: {
         printf("%p_%lu_irq\n",
                (void *)cap_irq_handler_cap_get_capIRQ(cap),
-               (long unsigned int)0);
+               (long unsigned int)((((cap_irq_handler_cap_get_capIRQ(cap)) < 32u*4) ? ((irq_t){.irq = ((cap_irq_handler_cap_get_capIRQ(cap)) - ((cap_irq_handler_cap_get_capIRQ(cap))/32u)*32u), .target_core = ((cap_irq_handler_cap_get_capIRQ(cap)) / 32u)}): ((irq_t){.irq = ((cap_irq_handler_cap_get_capIRQ(cap)) - (4 -1)*32u), .target_core = (0)})).target_core));
         break;
     }
     default: {
@@ -17000,7 +19490,7 @@ void print_object(cap_t cap)
     case cap_irq_handler_cap: {
         printf("%p_%lu_irq = irq\n",
                (void *)cap_irq_handler_cap_get_capIRQ(cap),
-               (long unsigned int)0);
+               (long unsigned int)((((cap_irq_handler_cap_get_capIRQ(cap)) < 32u*4) ? ((irq_t){.irq = ((cap_irq_handler_cap_get_capIRQ(cap)) - ((cap_irq_handler_cap_get_capIRQ(cap))/32u)*32u), .target_core = ((cap_irq_handler_cap_get_capIRQ(cap)) / 32u)}): ((irq_t){.irq = ((cap_irq_handler_cap_get_capIRQ(cap)) - (4 -1)*32u), .target_core = (0)})).target_core));
         break;
     }
     default:
@@ -17019,23 +19509,23 @@ void print_object(cap_t cap)
 void switchLocalFpuOwner(tcb_t *new_owner)
 {
     enableFpu();
-    if (ksCurFPUOwner) {
-        saveFpuState(ksCurFPUOwner);
+    if (ksSMP[(getCurrentCPUIndex())].system.ksCurFPUOwner) {
+        saveFpuState(ksSMP[(getCurrentCPUIndex())].system.ksCurFPUOwner);
     }
     if (new_owner) {
         loadFpuState(new_owner);
     } else {
         disableFpu();
     }
-    ksCurFPUOwner = new_owner;
+    ksSMP[(getCurrentCPUIndex())].system.ksCurFPUOwner = new_owner;
 }
 
 void switchFpuOwner(tcb_t *new_owner, word_t cpu)
 {
 
-
-
-
+    if (cpu != getCurrentCPUIndex()) {
+        doRemoteswitchFpuOwner(new_owner, cpu);
+    } else
 
     {
         switchLocalFpuOwner(new_owner);
@@ -17048,7 +19538,7 @@ void fpuRelease(tcb_t *thread)
     /* If the thread being deleted currently owns the FPU, switch away from it
      * so that 'ksCurFPUOwner' doesn't point to invalid memory. */
     if (nativeThreadUsingFPU(thread)) {
-        switchFpuOwner(((void *)0), 0);
+        switchFpuOwner(((void *)0), thread->tcbAffinity);
     }
 }
 # 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/machine/io.c"
@@ -17745,6 +20235,33 @@ exception_t preemptionPoint(void)
  *
  * SPDX-License-Identifier: GPL-2.0-only
  */
+
+
+
+
+
+
+
+void migrateTCB(tcb_t *tcb, word_t new_core)
+{
+    if (new_core == tcb->tcbAffinity) {
+        return;
+    }
+
+    tcbDebugRemove(tcb);
+
+
+    /* If the thread owns the FPU of the core it is currently running on (which
+     * is not necessarily the core, that we are now running on), then release
+     * that cores's FPU.
+     */
+    fpuRelease(tcb);
+
+    tcb->tcbAffinity = new_core;
+
+    tcbDebugAppend(tcb);
+
+}
 # 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/model/statedata.c"
 /*
  * Copyright 2014, General Dynamics C4 Systems
@@ -17769,15 +20286,15 @@ exception_t preemptionPoint(void)
 
 
 /* Collective cpu states, including both pre core architecture dependant and independent data */
-;
+smpStatedata_t ksSMP[4] __attribute__((__aligned__((1ul << (6)))));
 
 /* Global count of how many cpus there are */
 word_t ksNumCPUs;
 
 /* Pointer to the head of the scheduler queue for each priority */
-tcb_queue_t ksReadyQueues[(1 * 256)];
-word_t ksReadyQueuesL1Bitmap[1];
-word_t ksReadyQueuesL2Bitmap[1][((256 + (1 << 6) - 1) / (1 << 6))];
+;
+;
+;
 _Static_assert((((256 + (1 << 6) - 1) / (1 << 6)) - 1) <= (1 << 6), "ksReadyQueuesL1BitmapBigEnough");
 
 
@@ -17785,31 +20302,31 @@ _Static_assert((((256 + (1 << 6) - 1) / (1 << 6)) - 1) <= (1 << 6), "ksReadyQueu
 
 
 /* Current thread TCB pointer */
-tcb_t * ksCurThread;
+;
 
 /* Idle thread TCB pointer */
-tcb_t * ksIdleThread;
+;
 
 /* Values of 0 and ~0 encode ResumeCurrentThread and ChooseNewThread
  * respectively; other values encode SwitchToThread and must be valid
  * tcb pointers */
-tcb_t * ksSchedulerAction;
+;
 
 
 /* The thread using the FPU, or NULL if FPU state is invalid */
-tcb_t * ksCurFPUOwner;
+;
 # 62 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/model/statedata.c"
-tcb_t * ksDebugTCBs;
+;
 # 73 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/model/statedata.c"
 /* Units of work we have completed since the last time we checked for
  * pending interrupts */
 word_t ksWorkUnitsCompleted;
 
-irq_state_t intStateIRQTable[(maxIRQ + 1)];
+irq_state_t intStateIRQTable[((4 - 1) * 32u + maxIRQ + 1)];
 /* CNode containing interrupt handler endpoints - like all seL4 objects, this CNode needs to be
  * of a size that is a power of 2 and aligned to its size. */
 cte_t intStateIRQNode[(1ul << ((8)))] __attribute__((__aligned__((1ul << ((8) + 5)))));
-_Static_assert(sizeof(intStateIRQNode) >= (((maxIRQ + 1)) *sizeof(cte_t)), "irqCNodeSize");;
+_Static_assert(sizeof(intStateIRQNode) >= ((((4 - 1) * 32u + maxIRQ + 1)) *sizeof(cte_t)), "irqCNodeSize");;
 
 /* Currently active domain */
 dom_t ksCurDomain;
@@ -17825,7 +20342,7 @@ word_t ksDomScheduleIdx;
 word_t ksDomScheduleStart;
 
 /* Idle thread. */
-__attribute__((__section__("._idle_thread"))) char ksIdleThreadTCB[1][(1ul << (11))] __attribute__((__aligned__((1ul << (11)))));
+__attribute__((__section__("._idle_thread"))) char ksIdleThreadTCB[4][(1ul << (11))] __attribute__((__aligned__((1ul << (11)))));
 
 
 
@@ -17870,13 +20387,13 @@ exception_t decodeCNodeInvocation(word_t invLabel, word_t length, cap_t cap,
     do { if (!(cap_get_capType(cap) == cap_cnode_cap)) { _assert_fail("cap_get_capType(cap) == cap_cnode_cap", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/object/cnode.c", 51, __func__); } } while(0);
 
     if (invLabel < CNodeRevoke || invLabel > CNodeSaveCaller) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNodeCap: Illegal Operation attempted." ">>" "\033[0m" "\n", 0lu, __func__, 54, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNodeCap: Illegal Operation attempted." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 54, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_IllegalOperation;
         return EXCEPTION_SYSCALL_ERROR;
     }
 
     if (length < 2) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode operation: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 60, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode operation: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 60, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
@@ -17885,7 +20402,7 @@ exception_t decodeCNodeInvocation(word_t invLabel, word_t length, cap_t cap,
 
     lu_ret = lookupTargetSlot(cap, index, w_bits);
     if (lu_ret.status != EXCEPTION_NONE) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode operation: Target slot invalid." ">>" "\033[0m" "\n", 0lu, __func__, 69, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode operation: Target slot invalid." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 69, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         return lu_ret.status;
     }
     destSlot = lu_ret.slot;
@@ -17900,7 +20417,7 @@ exception_t decodeCNodeInvocation(word_t invLabel, word_t length, cap_t cap,
         cap_t srcCap;
 
         if (length < 4 || current_extra_caps.excaprefs[0] == ((void *)0)) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode Copy/Mint/Move/Mutate: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 84, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode Copy/Mint/Move/Mutate: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 84, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             current_syscall_error.type = seL4_TruncatedMessage;
             return EXCEPTION_SYSCALL_ERROR;
         }
@@ -17911,19 +20428,19 @@ exception_t decodeCNodeInvocation(word_t invLabel, word_t length, cap_t cap,
 
         status = ensureEmptySlot(destSlot);
         if (status != EXCEPTION_NONE) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode Copy/Mint/Move/Mutate: Destination not empty." ">>" "\033[0m" "\n", 0lu, __func__, 95, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode Copy/Mint/Move/Mutate: Destination not empty." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 95, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             return status;
         }
 
         lu_ret = lookupSourceSlot(srcRoot, srcIndex, srcDepth);
         if (lu_ret.status != EXCEPTION_NONE) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode Copy/Mint/Move/Mutate: Invalid source slot." ">>" "\033[0m" "\n", 0lu, __func__, 101, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode Copy/Mint/Move/Mutate: Invalid source slot." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 101, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             return lu_ret.status;
         }
         srcSlot = lu_ret.slot;
 
         if (cap_get_capType(srcSlot->cap) == cap_null_cap) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode Copy/Mint/Move/Mutate: Source slot invalid or empty." ">>" "\033[0m" "\n", 0lu, __func__, 107, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode Copy/Mint/Move/Mutate: Source slot invalid or empty." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 107, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             current_syscall_error.type = seL4_FailedLookup;
             current_syscall_error.failedLookupWasSource = 1;
             current_lookup_fault =
@@ -17935,7 +20452,7 @@ exception_t decodeCNodeInvocation(word_t invLabel, word_t length, cap_t cap,
         case CNodeCopy:
 
             if (length < 5) {
-                do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Truncated message for CNode Copy operation." ">>" "\033[0m" "\n", 0lu, __func__, 119, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+                do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Truncated message for CNode Copy operation." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 119, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
                 current_syscall_error.type = seL4_TruncatedMessage;
                 return EXCEPTION_SYSCALL_ERROR;
             }
@@ -17944,7 +20461,7 @@ exception_t decodeCNodeInvocation(word_t invLabel, word_t length, cap_t cap,
             srcCap = maskCapRights(cap_rights, srcSlot->cap);
             dc_ret = deriveCap(srcSlot, srcCap);
             if (dc_ret.status != EXCEPTION_NONE) {
-                do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Error deriving cap for CNode Copy operation." ">>" "\033[0m" "\n", 0lu, __func__, 128, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+                do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Error deriving cap for CNode Copy operation." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 128, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
                 return dc_ret.status;
             }
             newCap = dc_ret.cap;
@@ -17954,7 +20471,7 @@ exception_t decodeCNodeInvocation(word_t invLabel, word_t length, cap_t cap,
 
         case CNodeMint:
             if (length < 6) {
-                do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode Mint: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 138, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+                do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode Mint: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 138, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
                 current_syscall_error.type = seL4_TruncatedMessage;
                 return EXCEPTION_SYSCALL_ERROR;
             }
@@ -17965,7 +20482,7 @@ exception_t decodeCNodeInvocation(word_t invLabel, word_t length, cap_t cap,
             dc_ret = deriveCap(srcSlot,
                                updateCapData(false, capData, srcCap));
             if (dc_ret.status != EXCEPTION_NONE) {
-                do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Error deriving cap for CNode Mint operation." ">>" "\033[0m" "\n", 0lu, __func__, 149, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+                do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Error deriving cap for CNode Mint operation." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 149, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
                 return dc_ret.status;
             }
             newCap = dc_ret.cap;
@@ -17981,7 +20498,7 @@ exception_t decodeCNodeInvocation(word_t invLabel, word_t length, cap_t cap,
 
         case CNodeMutate:
             if (length < 5) {
-                do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode Mutate: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 165, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+                do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode Mutate: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 165, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
                 current_syscall_error.type = seL4_TruncatedMessage;
                 return EXCEPTION_SYSCALL_ERROR;
             }
@@ -17998,12 +20515,12 @@ exception_t decodeCNodeInvocation(word_t invLabel, word_t length, cap_t cap,
         }
 
         if (cap_get_capType(newCap) == cap_null_cap) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode Copy/Mint/Move/Mutate: Mutated cap would be invalid." ">>" "\033[0m" "\n", 0lu, __func__, 182, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode Copy/Mint/Move/Mutate: Mutated cap would be invalid." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 182, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             current_syscall_error.type = seL4_IllegalOperation;
             return EXCEPTION_SYSCALL_ERROR;
         }
 
-        setThreadState(ksCurThread, ThreadState_Restart);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
         if (isMove) {
             return invokeCNodeMove(newCap, srcSlot, destSlot);
         } else {
@@ -18012,12 +20529,12 @@ exception_t decodeCNodeInvocation(word_t invLabel, word_t length, cap_t cap,
     }
 
     if (invLabel == CNodeRevoke) {
-        setThreadState(ksCurThread, ThreadState_Restart);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
         return invokeCNodeRevoke(destSlot);
     }
 
     if (invLabel == CNodeDelete) {
-        setThreadState(ksCurThread, ThreadState_Restart);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
         return invokeCNodeDelete(destSlot);
     }
 
@@ -18025,11 +20542,11 @@ exception_t decodeCNodeInvocation(word_t invLabel, word_t length, cap_t cap,
     if (invLabel == CNodeSaveCaller) {
         status = ensureEmptySlot(destSlot);
         if (status != EXCEPTION_NONE) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode SaveCaller: Destination slot not empty." ">>" "\033[0m" "\n", 0lu, __func__, 209, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode SaveCaller: Destination slot not empty." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 209, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             return status;
         }
 
-        setThreadState(ksCurThread, ThreadState_Restart);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
         return invokeCNodeSaveCaller(destSlot);
     }
 
@@ -18040,11 +20557,11 @@ exception_t decodeCNodeInvocation(word_t invLabel, word_t length, cap_t cap,
         destCap = destSlot->cap;
 
         if (!hasCancelSendRights(destCap)) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode CancelBadgedSends: Target cap invalid." ">>" "\033[0m" "\n", 0lu, __func__, 224, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode CancelBadgedSends: Target cap invalid." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 224, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             current_syscall_error.type = seL4_IllegalOperation;
             return EXCEPTION_SYSCALL_ERROR;
         }
-        setThreadState(ksCurThread, ThreadState_Restart);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
         return invokeCNodeCancelBadgedSends(destCap);
     }
 
@@ -18082,7 +20599,7 @@ exception_t decodeCNodeInvocation(word_t invLabel, word_t length, cap_t cap,
         pivotSlot = lu_ret.slot;
 
         if (pivotSlot == srcSlot || pivotSlot == destSlot) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode Rotate: Pivot slot the same as source or dest slot." ">>" "\033[0m" "\n", 0lu, __func__, 266, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode Rotate: Pivot slot the same as source or dest slot." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 266, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             current_syscall_error.type = seL4_IllegalOperation;
             return EXCEPTION_SYSCALL_ERROR;
         }
@@ -18112,18 +20629,18 @@ exception_t decodeCNodeInvocation(word_t invLabel, word_t length, cap_t cap,
         newPivotCap = updateCapData(true, pivotNewData, pivotSlot->cap);
 
         if (cap_get_capType(newSrcCap) == cap_null_cap) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode Rotate: Source cap invalid." ">>" "\033[0m" "\n", 0lu, __func__, 296, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode Rotate: Source cap invalid." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 296, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             current_syscall_error.type = seL4_IllegalOperation;
             return EXCEPTION_SYSCALL_ERROR;
         }
 
         if (cap_get_capType(newPivotCap) == cap_null_cap) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode Rotate: Pivot cap invalid." ">>" "\033[0m" "\n", 0lu, __func__, 302, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode Rotate: Pivot cap invalid." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 302, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             current_syscall_error.type = seL4_IllegalOperation;
             return EXCEPTION_SYSCALL_ERROR;
         }
 
-        setThreadState(ksCurThread, ThreadState_Restart);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
         return invokeCNodeRotate(newSrcCap, newPivotCap,
                                  srcSlot, pivotSlot, destSlot);
     }
@@ -18185,12 +20702,12 @@ exception_t invokeCNodeSaveCaller(cte_t *destSlot)
     cap_t cap;
     cte_t *srcSlot;
 
-    srcSlot = (((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCaller));
+    srcSlot = (((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCaller));
     cap = srcSlot->cap;
 
     switch (cap_get_capType(cap)) {
     case cap_null_cap:
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode SaveCaller: Reply cap not present." ">>" "\033[0m" "\n", 0lu, __func__, 374, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "CNode SaveCaller: Reply cap not present." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 374, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         break;
 
     case cap_reply_cap:
@@ -18802,13 +21319,13 @@ static exception_t decodeDomainSetSetInvocation(word_t length, word_t *buffer)
     cap_t tcap;
 
     if (__builtin_expect(!!(length == 0), 0)) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Configure: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 30, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Configure: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 30, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     } else {
         domain = getSyscallArg(0, buffer);
         if (domain >= numDomains) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Configure: invalid domain (%lu >= %u)." ">>" "\033[0m" "\n", 0lu, __func__, 36, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), domain, numDomains); } while (0)
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Configure: invalid domain (%lu >= %u)." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 36, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), domain, numDomains); } while (0)
                                          ;
             current_syscall_error.type = seL4_InvalidArgument;
             current_syscall_error.invalidArgumentNumber = 0;
@@ -18817,19 +21334,19 @@ static exception_t decodeDomainSetSetInvocation(word_t length, word_t *buffer)
     }
 
     if (__builtin_expect(!!(current_extra_caps.excaprefs[0] == ((void *)0)), 0)) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Configure: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 45, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Configure: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 45, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
 
     tcap = current_extra_caps.excaprefs[0]->cap;
     if (__builtin_expect(!!(cap_get_capType(tcap) != cap_thread_cap), 0)) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Configure: thread cap required." ">>" "\033[0m" "\n", 0lu, __func__, 52, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Configure: thread cap required." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 52, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_InvalidArgument;
         current_syscall_error.invalidArgumentNumber = 1;
         return EXCEPTION_SYSCALL_ERROR;
     }
-    setThreadState(ksCurThread, ThreadState_Restart);
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
     invokeDomainSetSet(((tcb_t *)(cap_thread_cap_get_capTCBPtr(tcap))), domain);
     return EXCEPTION_NONE;
 }
@@ -18846,7 +21363,7 @@ static exception_t decodeDomainScheduleConfigure(word_t length, word_t *buffer)
     ticks_t duration;
 
     if (__builtin_expect(!!(length < 2 + (sizeof(ticks_t) / sizeof(word_t))), 0)) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Schedule Configure: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 74, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Schedule Configure: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 74, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
@@ -18856,38 +21373,38 @@ static exception_t decodeDomainScheduleConfigure(word_t length, word_t *buffer)
 
     /* Last entry must stay an end marker, hence the -1: */
     if (index >= domScheduleLength - 1) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Schedule Configure: Invalid index." ">>" "\033[0m" "\n", 0lu, __func__, 84, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Schedule Configure: Invalid index." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 84, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_RangeError;
         current_syscall_error.rangeErrorMin = 0;
         current_syscall_error.rangeErrorMax = domScheduleLength - 2;
         return EXCEPTION_SYSCALL_ERROR;
     }
     if (domain >= numDomains) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Schedule Configure: Invalid domain." ">>" "\033[0m" "\n", 0lu, __func__, 91, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Schedule Configure: Invalid domain." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 91, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_RangeError;
         current_syscall_error.rangeErrorMin = 0;
         current_syscall_error.rangeErrorMax = numDomains - 1;
         return EXCEPTION_SYSCALL_ERROR;
     }
     if (duration > ((0xFFFFFFFFFFFFFFFF) >> 8 /* Maximum of 255 domains supported*/)) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Schedule Configure: Duration must fit in 56 bits." ">>" "\033[0m" "\n", 0lu, __func__, 98, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Schedule Configure: Duration must fit in 56 bits." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 98, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.invalidArgumentNumber = 2;
         current_syscall_error.type = seL4_InvalidArgument;
         return EXCEPTION_SYSCALL_ERROR;
     }
     if (duration == 0 && domain != 0) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Schedule Configure: Both domain and duration must be zero for end markers." ">>" "\033[0m" "\n", 0lu, __func__, 104, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Schedule Configure: Both domain and duration must be zero for end markers." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 104, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.invalidArgumentNumber = 1;
         current_syscall_error.type = seL4_InvalidArgument;
         return EXCEPTION_SYSCALL_ERROR;
     }
     if (index == ksDomScheduleStart && duration == 0) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Schedule Configure: Starting schedule's duration must not be zero." ">>" "\033[0m" "\n", 0lu, __func__, 110, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Schedule Configure: Starting schedule's duration must not be zero." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 110, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.invalidArgumentNumber = 2;
         current_syscall_error.type = seL4_InvalidArgument;
         return EXCEPTION_SYSCALL_ERROR;
     }
-    setThreadState(ksCurThread, ThreadState_Restart);
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
     invokeDomainScheduleConfigure(index, domain, duration);
     return EXCEPTION_NONE;
 }
@@ -18907,26 +21424,26 @@ static exception_t decodeDomainScheduleSetStart(word_t length, word_t *buffer)
     word_t index;
 
     if (__builtin_expect(!!(length < 1), 0)) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Schedule Configure: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 135, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Schedule Configure: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 135, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
     index = getSyscallArg(0, buffer);
 
     if (index >= domScheduleLength) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Schedule Set Start: Invalid index." ">>" "\033[0m" "\n", 0lu, __func__, 142, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Schedule Set Start: Invalid index." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 142, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_RangeError;
         current_syscall_error.rangeErrorMin = 0;
         current_syscall_error.rangeErrorMax = domScheduleLength - 1;
         return EXCEPTION_SYSCALL_ERROR;
     }
     if (dschedule_is_end_marker(index)) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Schedule Set Start: Starting schedule must not be an end marker." ">>" "\033[0m" "\n", 0lu, __func__, 149, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Domain Schedule Set Start: Starting schedule must not be an end marker." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 149, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.invalidArgumentNumber = 0;
         current_syscall_error.type = seL4_InvalidArgument;
         return EXCEPTION_SYSCALL_ERROR;
     }
-    setThreadState(ksCurThread, ThreadState_Restart);
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
     invokeDomainScheduleSetStart(index);
     return EXCEPTION_NONE;
 }
@@ -19233,7 +21750,7 @@ void cancelAllIPC(endpoint_t *epptr)
         for (; thread; thread = thread->tcbEPNext) {
 # 425 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/object/endpoint.c"
             setThreadState(thread, ThreadState_Restart);
-            tcbSchedEnqueue(thread);
+            do { tcbSchedEnqueue(thread); remoteQueueUpdate(thread); } while (0);
 
         }
 
@@ -19268,7 +21785,7 @@ void cancelBadgedSends(endpoint_t *epptr, word_t badge)
 # 466 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/object/endpoint.c"
             if (b == badge) {
                 setThreadState(thread, ThreadState_Restart);
-                tcbSchedEnqueue(thread);
+                do { tcbSchedEnqueue(thread); remoteQueueUpdate(thread); } while (0);
                 queue = tcbEPDequeue(thread, queue);
             }
 
@@ -19311,7 +21828,7 @@ exception_t decodeIRQControlInvocation(word_t invLabel, word_t length,
             return EXCEPTION_SYSCALL_ERROR;
         }
         irq_w = getSyscallArg(0, buffer);
-        irq = (irq_w);
+        irq = ((irq_t){.irq = (irq_w), .target_core = (0)});
         index = getSyscallArg(1, buffer);
         depth = getSyscallArg(2, buffer);
 
@@ -19324,13 +21841,13 @@ exception_t decodeIRQControlInvocation(word_t invLabel, word_t length,
 
         if (isIRQActive(irq)) {
             current_syscall_error.type = seL4_RevokeFirst;
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Rejecting request for IRQ %u. Already active." ">>" "\033[0m" "\n", 0lu, __func__, 52, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), (int)(irq)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Rejecting request for IRQ %u. Already active." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 52, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), (int)(irq.irq)); } while (0);
             return EXCEPTION_SYSCALL_ERROR;
         }
 
         lu_ret = lookupTargetSlot(cnodeCap, index, depth);
         if (lu_ret.status != EXCEPTION_NONE) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Target slot for new IRQ Handler cap invalid: cap %lu, IRQ %u." ">>" "\033[0m" "\n", 0lu, __func__, 58, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), getExtraCPtr(buffer, 0), (int)(irq)); } while (0)
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Target slot for new IRQ Handler cap invalid: cap %lu, IRQ %u." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 58, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), getExtraCPtr(buffer, 0), (int)(irq.irq)); } while (0)
                                                                      ;
             return lu_ret.status;
         }
@@ -19338,12 +21855,12 @@ exception_t decodeIRQControlInvocation(word_t invLabel, word_t length,
 
         status = ensureEmptySlot(destSlot);
         if (status != EXCEPTION_NONE) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Target slot for new IRQ Handler cap not empty: cap %lu, IRQ %u." ">>" "\033[0m" "\n", 0lu, __func__, 66, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), getExtraCPtr(buffer, 0), (int)(irq)); } while (0)
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Target slot for new IRQ Handler cap not empty: cap %lu, IRQ %u." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 66, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), getExtraCPtr(buffer, 0), (int)(irq.irq)); } while (0)
                                                                      ;
             return status;
         }
 
-        setThreadState(ksCurThread, ThreadState_Restart);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
         return invokeIRQControl(irq, destSlot, srcSlot);
     } else {
         return Arch_decodeIRQControlInvocation(invLabel, length, srcSlot, buffer);
@@ -19353,7 +21870,7 @@ exception_t decodeIRQControlInvocation(word_t invLabel, word_t length,
 exception_t invokeIRQControl(irq_t irq, cte_t *handlerSlot, cte_t *controlSlot)
 {
     setIRQState(IRQSignal, irq);
-    cteInsert(cap_irq_handler_cap_new((irq)), controlSlot, handlerSlot);
+    cteInsert(cap_irq_handler_cap_new((((irq.irq) < 32u) ? (irq.target_core) * 32u + (irq.irq) : (4 - 1) * 32u + (irq.irq))), controlSlot, handlerSlot);
 
     return EXCEPTION_NONE;
 }
@@ -19362,7 +21879,7 @@ exception_t decodeIRQHandlerInvocation(word_t invLabel, irq_t irq)
 {
     switch (invLabel) {
     case IRQAckIRQ:
-        setThreadState(ksCurThread, ThreadState_Restart);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
         invokeIRQHandler_AckIRQ(irq);
         return EXCEPTION_NONE;
 
@@ -19380,27 +21897,27 @@ exception_t decodeIRQHandlerInvocation(word_t invLabel, irq_t irq)
         if (cap_get_capType(ntfnCap) != cap_notification_cap ||
             !cap_notification_cap_get_capNtfnCanSend(ntfnCap)) {
             if (cap_get_capType(ntfnCap) != cap_notification_cap) {
-                do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "IRQSetHandler: provided cap is not an notification capability." ">>" "\033[0m" "\n", 0lu, __func__, 108, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+                do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "IRQSetHandler: provided cap is not an notification capability." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 108, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             } else {
-                do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "IRQSetHandler: caller does not have send rights on the endpoint." ">>" "\033[0m" "\n", 0lu, __func__, 110, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+                do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "IRQSetHandler: caller does not have send rights on the endpoint." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 110, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             }
             current_syscall_error.type = seL4_InvalidCapability;
             current_syscall_error.invalidCapNumber = 0;
             return EXCEPTION_SYSCALL_ERROR;
         }
 
-        setThreadState(ksCurThread, ThreadState_Restart);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
         invokeIRQHandler_SetIRQHandler(irq, ntfnCap, slot);
         return EXCEPTION_NONE;
     }
 
     case IRQClearIRQHandler:
-        setThreadState(ksCurThread, ThreadState_Restart);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
         invokeIRQHandler_ClearIRQHandler(irq);
         return EXCEPTION_NONE;
 
     default:
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "IRQHandler: Illegal operation." ">>" "\033[0m" "\n", 0lu, __func__, 128, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "IRQHandler: Illegal operation." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 128, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_IllegalOperation;
         return EXCEPTION_SYSCALL_ERROR;
     }
@@ -19408,7 +21925,19 @@ exception_t decodeIRQHandlerInvocation(word_t invLabel, irq_t irq)
 
 void invokeIRQHandler_AckIRQ(irq_t irq)
 {
-# 159 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/object/interrupt.c"
+# 147 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/object/interrupt.c"
+    if ((((irq.irq) < 32u)) && (irq.target_core) != getCurrentCPUIndex()) {
+
+
+
+
+
+
+        doRemoteMaskPrivateInterrupt((irq.target_core), false, (((irq.irq) < 32u) ? (irq.target_core) * 32u + (irq.irq) : (4 - 1) * 32u + (irq.irq)));
+
+        return;
+    }
+
     if (wrap_config_set(0)) {
         deactivateInterrupt(irq);
     } else {
@@ -19421,7 +21950,7 @@ void invokeIRQHandler_SetIRQHandler(irq_t irq, cap_t cap, cte_t *slot)
 {
     cte_t *irqSlot;
 
-    irqSlot = intStateIRQNode + (irq);
+    irqSlot = intStateIRQNode + (((irq.irq) < 32u) ? (irq.target_core) * 32u + (irq.irq) : (4 - 1) * 32u + (irq.irq));
     /** GHOSTUPD: "(True, gs_set_assn cteDeleteOne_'proc (-1))" */
     cteDeleteOne(irqSlot);
     cteInsert(cap, slot, irqSlot);
@@ -19431,7 +21960,7 @@ void invokeIRQHandler_ClearIRQHandler(irq_t irq)
 {
     cte_t *irqSlot;
 
-    irqSlot = intStateIRQNode + (irq);
+    irqSlot = intStateIRQNode + (((irq.irq) < 32u) ? (irq.target_core) * 32u + (irq.irq) : (4 - 1) * 32u + (irq.irq));
     /** GHOSTUPD: "(True, gs_set_assn cteDeleteOne_'proc (-1))" */
     cteDeleteOne(irqSlot);
 }
@@ -19440,7 +21969,7 @@ void deletingIRQHandler(irq_t irq)
 {
     cte_t *slot;
 
-    slot = intStateIRQNode + (irq);
+    slot = intStateIRQNode + (((irq.irq) < 32u) ? (irq.target_core) * 32u + (irq.irq) : (4 - 1) * 32u + (irq.irq));
     /** GHOSTUPD: "(True, gs_set_assn cteDeleteOne_'proc (ucast cap_notification_cap))" */
     cteDeleteOne(slot);
 }
@@ -19452,33 +21981,33 @@ void deletedIRQHandler(irq_t irq)
 
 void handleInterrupt(irq_t irq)
 {
-    if (__builtin_expect(!!((irq) > maxIRQ), 0)) {
+    if (__builtin_expect(!!((irq.irq) > maxIRQ), 0)) {
         /* The interrupt number is out of range. Pretend it did not happen by
          * handling it like an inactive interrupt (mask and ack). We assume this
          * is acceptable, because the platform specific interrupt controller
          * driver reported this interrupt. Maybe the value maxIRQ is just wrong
          * or set to a lower value because the interrupts are unused.
          */
-        printf("Received IRQ %d, which is above the platforms maxIRQ of %d\n", (int)(irq), (int)maxIRQ);
+        printf("Received IRQ %d, which is above the platforms maxIRQ of %d\n", (int)(irq.irq), (int)maxIRQ);
         maskInterrupt(true, irq);
         ackInterrupt(irq);
         return;
     }
 
-    switch (intStateIRQTable[(irq)]) {
+    switch (intStateIRQTable[(((irq.irq) < 32u) ? (irq.target_core) * 32u + (irq.irq) : (4 - 1) * 32u + (irq.irq))]) {
     case IRQSignal: {
         /* Merging the variable declaration and initialization into one line
          * requires an update in the proofs first. Might be a c89 legacy.
          */
         cap_t cap;
-        cap = intStateIRQNode[(irq)].cap;
+        cap = intStateIRQNode[(((irq.irq) < 32u) ? (irq.target_core) * 32u + (irq.irq) : (4 - 1) * 32u + (irq.irq))].cap;
         if (cap_get_capType(cap) == cap_notification_cap &&
             cap_notification_cap_get_capNtfnCanSend(cap)) {
             sendSignal(((notification_t *)(cap_notification_cap_get_capNtfnPtr(cap))),
                        cap_notification_cap_get_capNtfnBadge(cap));
         } else {
 
-            printf("Undelivered IRQ: %d\n", (int)(irq));
+            printf("Undelivered IRQ: %d\n", (int)(irq.irq));
 
         }
 
@@ -19501,9 +22030,9 @@ void handleInterrupt(irq_t irq)
         break;
 
 
-
-
-
+    case IRQIPI:
+        handleIPI(irq, true);
+        break;
 
 
     case IRQReserved:
@@ -19517,7 +22046,7 @@ void handleInterrupt(irq_t irq)
          */
         maskInterrupt(true, irq);
 
-        printf("Received disabled IRQ: %d\n", (int)(irq));
+        printf("Received disabled IRQ: %d\n", (int)(irq.irq));
 
         break;
 
@@ -19534,17 +22063,17 @@ void handleInterrupt(irq_t irq)
 
 bool_t isIRQActive(irq_t irq)
 {
-    return intStateIRQTable[(irq)] != IRQInactive;
+    return intStateIRQTable[(((irq.irq) < 32u) ? (irq.target_core) * 32u + (irq.irq) : (4 - 1) * 32u + (irq.irq))] != IRQInactive;
 }
 
 void setIRQState(irq_state_t irqState, irq_t irq)
 {
-    intStateIRQTable[(irq)] = irqState;
+    intStateIRQTable[(((irq.irq) < 32u) ? (irq.target_core) * 32u + (irq.irq) : (4 - 1) * 32u + (irq.irq))] = irqState;
 
-
-
-
-
+    if ((((irq.irq) < 32u)) && (irq.target_core) != getCurrentCPUIndex()) {
+        doRemoteMaskPrivateInterrupt((irq.target_core), irqState == IRQInactive, (((irq.irq) < 32u) ? (irq.target_core) * 32u + (irq.irq) : (4 - 1) * 32u + (irq.irq)));
+        return;
+    }
 
     maskInterrupt(irqState == IRQInactive, irq);
 }
@@ -19697,7 +22226,7 @@ void cancelAllSignals(notification_t *ntfnPtr)
         for (; thread; thread = thread->tcbEPNext) {
             setThreadState(thread, ThreadState_Restart);
 # 269 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/object/notification.c"
-            tcbSchedEnqueue(thread);
+            do { tcbSchedEnqueue(thread); remoteQueueUpdate(thread); } while (0);
 
         }
         rescheduleRequired();
@@ -19913,7 +22442,7 @@ finaliseCap_ret_t finaliseCap(cap_t cap, bool_t final, bool_t exposed)
             cte_t *cte_ptr;
 
             tcb = ((tcb_t *)(cap_thread_cap_get_capTCBPtr(cap)));
-           
+            remoteTCBStall(tcb);
             cte_ptr = (((cte_t *)((word_t)(tcb)&~((1ul << (11)) - 1ul)))+(tcbCTable));
             unbindNotification(tcb);
 # 201 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/object/objecttype.c"
@@ -19941,7 +22470,7 @@ finaliseCap_ret_t finaliseCap(cap_t cap, bool_t final, bool_t exposed)
 
     case cap_irq_handler_cap:
         if (final) {
-            irq_t irq = (cap_irq_handler_cap_get_capIRQ(cap));
+            irq_t irq = (((cap_irq_handler_cap_get_capIRQ(cap)) < 32u*4) ? ((irq_t){.irq = ((cap_irq_handler_cap_get_capIRQ(cap)) - ((cap_irq_handler_cap_get_capIRQ(cap))/32u)*32u), .target_core = ((cap_irq_handler_cap_get_capIRQ(cap)) / 32u)}): ((irq_t){.irq = ((cap_irq_handler_cap_get_capIRQ(cap)) - (4 -1)*32u), .target_core = (0)}));
 
             deletingIRQHandler(irq);
 
@@ -20214,11 +22743,11 @@ cap_t createObject(object_t t, void *regionBase, word_t userSize, bool_t deviceM
         tcb->tcbDomain = ksCurDomain;
 
         /* Initialize the new TCB to the current core */
-        ;
+        tcb->tcbAffinity = getCurrentCPUIndex();
 
 
         strlcpy(((debug_tcb_t *)(((cte_t *)((word_t)(tcb)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, "child of: '", ((1ul << (11 -1)) - (tcbCNodeEntries * sizeof(cte_t)) - sizeof(debug_tcb_t)));
-        strlcat(((debug_tcb_t *)(((cte_t *)((word_t)(tcb)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, ((1ul << (11 -1)) - (tcbCNodeEntries * sizeof(cte_t)) - sizeof(debug_tcb_t)));
+        strlcat(((debug_tcb_t *)(((cte_t *)((word_t)(tcb)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, ((1ul << (11 -1)) - (tcbCNodeEntries * sizeof(cte_t)) - sizeof(debug_tcb_t)));
         strlcat(((debug_tcb_t *)(((cte_t *)((word_t)(tcb)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, "'", ((1ul << (11 -1)) - (tcbCNodeEntries * sizeof(cte_t)) - sizeof(debug_tcb_t)));
         tcbDebugAppend(tcb);
 
@@ -20306,27 +22835,27 @@ exception_t decodeInvocation(word_t invLabel, word_t length,
 
     switch (cap_get_capType(cap)) {
     case cap_null_cap:
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Attempted to invoke a null cap #%lu." ">>" "\033[0m" "\n", 0lu, __func__, 643, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), capIndex); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Attempted to invoke a null cap #%lu." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 643, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), capIndex); } while (0);
         current_syscall_error.type = seL4_InvalidCapability;
         current_syscall_error.invalidCapNumber = 0;
         return EXCEPTION_SYSCALL_ERROR;
 
     case cap_zombie_cap:
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Attempted to invoke a zombie cap #%lu." ">>" "\033[0m" "\n", 0lu, __func__, 649, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), capIndex); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Attempted to invoke a zombie cap #%lu." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 649, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), capIndex); } while (0);
         current_syscall_error.type = seL4_InvalidCapability;
         current_syscall_error.invalidCapNumber = 0;
         return EXCEPTION_SYSCALL_ERROR;
 
     case cap_endpoint_cap:
         if (__builtin_expect(!!(!cap_endpoint_cap_get_capCanSend(cap)), 0)) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Attempted to invoke a read-only endpoint cap #%lu." ">>" "\033[0m" "\n", 0lu, __func__, 656, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), capIndex); } while (0)
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Attempted to invoke a read-only endpoint cap #%lu." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 656, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), capIndex); } while (0)
                                ;
             current_syscall_error.type = seL4_InvalidCapability;
             current_syscall_error.invalidCapNumber = 0;
             return EXCEPTION_SYSCALL_ERROR;
         }
 
-        setThreadState(ksCurThread, ThreadState_Restart);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
 
 
 
@@ -20343,14 +22872,14 @@ exception_t decodeInvocation(word_t invLabel, word_t length,
 
     case cap_notification_cap: {
         if (__builtin_expect(!!(!cap_notification_cap_get_capNtfnCanSend(cap)), 0)) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Attempted to invoke a read-only notification cap #%lu." ">>" "\033[0m" "\n", 0lu, __func__, 680, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), capIndex); } while (0)
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Attempted to invoke a read-only notification cap #%lu." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 680, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), capIndex); } while (0)
                                ;
             current_syscall_error.type = seL4_InvalidCapability;
             current_syscall_error.invalidCapNumber = 0;
             return EXCEPTION_SYSCALL_ERROR;
         }
 
-        setThreadState(ksCurThread, ThreadState_Restart);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
         return performInvocation_Notification(
                    ((notification_t *)(cap_notification_cap_get_capNtfnPtr(cap))),
                    cap_notification_cap_get_capNtfnBadge(cap));
@@ -20358,14 +22887,14 @@ exception_t decodeInvocation(word_t invLabel, word_t length,
 # 701 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/object/objecttype.c"
     case cap_reply_cap:
         if (__builtin_expect(!!(cap_reply_cap_get_capReplyMaster(cap)), 0)) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Attempted to invoke an invalid reply cap #%lu." ">>" "\033[0m" "\n", 0lu, __func__, 703, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), capIndex); } while (0)
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Attempted to invoke an invalid reply cap #%lu." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 703, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), capIndex); } while (0)
                                ;
             current_syscall_error.type = seL4_InvalidCapability;
             current_syscall_error.invalidCapNumber = 0;
             return EXCEPTION_SYSCALL_ERROR;
         }
 
-        setThreadState(ksCurThread, ThreadState_Restart);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
         return performInvocation_Reply(
                    ((tcb_t *)(cap_reply_cap_get_capTCBPtr(cap))), slot,
                    cap_reply_cap_get_capReplyCanGrant(cap));
@@ -20392,7 +22921,7 @@ exception_t decodeInvocation(word_t invLabel, word_t length,
 
     case cap_irq_handler_cap:
         return decodeIRQHandlerInvocation(invLabel,
-                                          (cap_irq_handler_cap_get_capIRQ(cap)));
+                                          (((cap_irq_handler_cap_get_capIRQ(cap)) < 32u*4) ? ((irq_t){.irq = ((cap_irq_handler_cap_get_capIRQ(cap)) - ((cap_irq_handler_cap_get_capIRQ(cap))/32u)*32u), .target_core = ((cap_irq_handler_cap_get_capIRQ(cap)) / 32u)}): ((irq_t){.irq = ((cap_irq_handler_cap_get_capIRQ(cap)) - (4 -1)*32u), .target_core = (0)})));
 # 780 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/object/objecttype.c"
     default:
         _fail("Invalid cap type", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/object/objecttype.c", 781, __func__);
@@ -20403,7 +22932,7 @@ exception_t performInvocation_Endpoint(endpoint_t *ep, word_t badge,
                                        bool_t canGrant, bool_t canGrantReply,
                                        bool_t block, bool_t call)
 {
-    sendIPC(block, call, badge, canGrant, canGrantReply, ksCurThread, ep);
+    sendIPC(block, call, badge, canGrant, canGrantReply, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ep);
 
     return EXCEPTION_NONE;
 }
@@ -20418,7 +22947,7 @@ exception_t performInvocation_Notification(notification_t *ntfn, word_t badge)
 # 819 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/object/objecttype.c"
 exception_t performInvocation_Reply(tcb_t *thread, cte_t *slot, bool_t canGrant)
 {
-    doReplyTransfer(ksCurThread, thread, slot, canGrant);
+    doReplyTransfer(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, thread, slot, canGrant);
     return EXCEPTION_NONE;
 }
 
@@ -20657,12 +23186,12 @@ static inline void addToBitmap(word_t cpu, word_t dom, word_t prio)
     l1index = prio_to_l1index(prio);
     l1index_inverted = invert_l1index(l1index);
 
-    ksReadyQueuesL1Bitmap[dom] |= (1ul << (l1index));
+    ksSMP[(cpu)].system.ksReadyQueuesL1Bitmap[dom] |= (1ul << (l1index));
     /* we invert the l1 index when accessed the 2nd level of the bitmap in
        order to increase the likelihood that high prio threads l2 index word will
        be on the same cache line as the l1 index word - this makes sure the
        fastpath is fastest for high prio threads */
-    ksReadyQueuesL2Bitmap[dom][l1index_inverted] |= (1ul << (prio & ((1ul << (6)) - 1ul)));
+    ksSMP[(cpu)].system.ksReadyQueuesL2Bitmap[dom][l1index_inverted] |= (1ul << (prio & ((1ul << (6)) - 1ul)));
 }
 
 static inline void removeFromBitmap(word_t cpu, word_t dom, word_t prio)
@@ -20672,9 +23201,9 @@ static inline void removeFromBitmap(word_t cpu, word_t dom, word_t prio)
 
     l1index = prio_to_l1index(prio);
     l1index_inverted = invert_l1index(l1index);
-    ksReadyQueuesL2Bitmap[dom][l1index_inverted] &= ~(1ul << (prio & ((1ul << (6)) - 1ul)));
-    if (__builtin_expect(!!(!ksReadyQueuesL2Bitmap[dom][l1index_inverted]), 0)) {
-        ksReadyQueuesL1Bitmap[dom] &= ~(1ul << (l1index));
+    ksSMP[(cpu)].system.ksReadyQueuesL2Bitmap[dom][l1index_inverted] &= ~(1ul << (prio & ((1ul << (6)) - 1ul)));
+    if (__builtin_expect(!!(!ksSMP[(cpu)].system.ksReadyQueuesL2Bitmap[dom][l1index_inverted]), 0)) {
+        ksSMP[(cpu)].system.ksReadyQueuesL1Bitmap[dom] &= ~(1ul << (l1index));
     }
 }
 
@@ -20728,13 +23257,13 @@ void tcbSchedEnqueue(tcb_t *tcb)
         dom = tcb->tcbDomain;
         prio = tcb->tcbPriority;
         idx = ready_queues_index(dom, prio);
-        queue = ksReadyQueues[idx];
+        queue = ksSMP[(tcb->tcbAffinity)].system.ksReadyQueues[idx];
 
         if (tcb_queue_empty(queue)) {
-            addToBitmap(0, dom, prio);
+            addToBitmap(tcb->tcbAffinity, dom, prio);
         }
 
-        ksReadyQueues[idx] = tcb_queue_prepend(queue, tcb);
+        ksSMP[(tcb->tcbAffinity)].system.ksReadyQueues[idx] = tcb_queue_prepend(queue, tcb);
 
         thread_state_ptr_set_tcbQueued(&tcb->tcbState, true);
     }
@@ -20757,13 +23286,13 @@ void tcbSchedAppend(tcb_t *tcb)
         dom = tcb->tcbDomain;
         prio = tcb->tcbPriority;
         idx = ready_queues_index(dom, prio);
-        queue = ksReadyQueues[idx];
+        queue = ksSMP[(tcb->tcbAffinity)].system.ksReadyQueues[idx];
 
         if (tcb_queue_empty(queue)) {
-            addToBitmap(0, dom, prio);
+            addToBitmap(tcb->tcbAffinity, dom, prio);
         }
 
-        ksReadyQueues[idx] = tcb_queue_append(queue, tcb);
+        ksSMP[(tcb->tcbAffinity)].system.ksReadyQueues[idx] = tcb_queue_append(queue, tcb);
 
         thread_state_ptr_set_tcbQueued(&tcb->tcbState, true);
     }
@@ -20782,16 +23311,16 @@ void tcbSchedDequeue(tcb_t *tcb)
         dom = tcb->tcbDomain;
         prio = tcb->tcbPriority;
         idx = ready_queues_index(dom, prio);
-        queue = ksReadyQueues[idx];
+        queue = ksSMP[(tcb->tcbAffinity)].system.ksReadyQueues[idx];
 
         new_queue = tcb_queue_remove(queue, tcb);
 
-        ksReadyQueues[idx] = new_queue;
+        ksSMP[(tcb->tcbAffinity)].system.ksReadyQueues[idx] = new_queue;
 
         thread_state_ptr_set_tcbQueued(&tcb->tcbState, false);
 
         if (__builtin_expect(!!(tcb_queue_empty(new_queue)), 1)) {
-            removeFromBitmap(0, dom, prio);
+            removeFromBitmap(tcb->tcbAffinity, dom, prio);
         }
     }
 }
@@ -20803,22 +23332,22 @@ void tcbDebugAppend(tcb_t *tcb)
     /* prepend to the list */
     debug_tcb->tcbDebugPrev = ((void *)0);
 
-    debug_tcb->tcbDebugNext = ksDebugTCBs;
+    debug_tcb->tcbDebugNext = ksSMP[(tcb->tcbAffinity)].system.ksDebugTCBs;
 
-    if (ksDebugTCBs) {
-        ((debug_tcb_t *)(((cte_t *)((word_t)(ksDebugTCBs)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbDebugPrev = tcb;
+    if (ksSMP[(tcb->tcbAffinity)].system.ksDebugTCBs) {
+        ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(tcb->tcbAffinity)].system.ksDebugTCBs)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbDebugPrev = tcb;
     }
 
-    ksDebugTCBs = tcb;
+    ksSMP[(tcb->tcbAffinity)].system.ksDebugTCBs = tcb;
 }
 
 void tcbDebugRemove(tcb_t *tcb)
 {
     debug_tcb_t *debug_tcb = ((debug_tcb_t *)(((cte_t *)((word_t)(tcb)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)));
 
-    do { if (!(ksDebugTCBs != ((void *)0))) { _assert_fail("NODE_STATE_ON_CORE(ksDebugTCBs, tcb->tcbAffinity) != NULL", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/object/tcb.c", 219, __func__); } } while(0);
-    if (tcb == ksDebugTCBs) {
-        ksDebugTCBs = ((debug_tcb_t *)(((cte_t *)((word_t)(ksDebugTCBs)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))
+    do { if (!(ksSMP[(tcb->tcbAffinity)].system.ksDebugTCBs != ((void *)0))) { _assert_fail("NODE_STATE_ON_CORE(ksDebugTCBs, tcb->tcbAffinity) != NULL", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/object/tcb.c", 219, __func__); } } while(0);
+    if (tcb == ksSMP[(tcb->tcbAffinity)].system.ksDebugTCBs) {
+        ksSMP[(tcb->tcbAffinity)].system.ksDebugTCBs = ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(tcb->tcbAffinity)].system.ksDebugTCBs)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))
                                                                                                                    ->tcbDebugNext;
     } else {
         do { if (!(((debug_tcb_t *)(((cte_t *)((word_t)(tcb)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbDebugPrev)) { _assert_fail("TCB_PTR_DEBUG_PTR(tcb)->tcbDebugPrev", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/object/tcb.c", 224, __func__); } } while(0);
@@ -20968,11 +23497,91 @@ word_t copyMRs(tcb_t *sender, word_t *sendBuf, tcb_t *receiver,
 
     return i;
 }
+
+
+/* This checks if the current updated to scheduler queue is changing the previous scheduling
+ * decision made by the scheduler. If its a case, an `irq_reschedule_ipi` is sent */
+void remoteQueueUpdate(tcb_t *tcb)
+{
+    /* only ipi if the target is for the current domain */
+    if (tcb->tcbAffinity != getCurrentCPUIndex() && tcb->tcbDomain == ksCurDomain) {
+        tcb_t *targetCurThread = ksSMP[(tcb->tcbAffinity)].system.ksCurThread;
+
+        /* reschedule if the target core is idle or we are waking a higher priority thread (or
+         * if a new irq would need to be set on MCS) */
+        if (targetCurThread == ksSMP[(tcb->tcbAffinity)].system.ksIdleThread ||
+            tcb->tcbPriority > targetCurThread->tcbPriority
+
+
+
+           ) {
+            ksSMP[(getCurrentCPUIndex())].cpu.ipiReschedulePending |= (1ul << (tcb->tcbAffinity));
+        }
+    }
+}
+
+/* This makes sure the the TCB is not being run on other core.
+ * It would request 'IpiRemoteCall_Stall' to switch the core from this TCB
+ * We also request the 'irq_reschedule_ipi' to restore the state of target core */
+void remoteTCBStall(tcb_t *tcb)
+{
+
+    if (
+
+
+
+        tcb->tcbAffinity != getCurrentCPUIndex() &&
+        ksSMP[(tcb->tcbAffinity)].system.ksCurThread == tcb) {
+        doRemoteStall(tcb->tcbAffinity);
+        ksSMP[(getCurrentCPUIndex())].cpu.ipiReschedulePending |= (1ul << (tcb->tcbAffinity));
+    }
+}
+
+
+static exception_t invokeTCB_SetAffinity(tcb_t *thread, word_t affinity)
+{
+    /* remove the tcb from scheduler queue in case it is already in one
+     * and add it to new queue if required */
+    tcbSchedDequeue(thread);
+    migrateTCB(thread, affinity);
+    if (isRunnable(thread)) {
+        do { tcbSchedAppend(thread); remoteQueueUpdate(thread); } while (0);
+    }
+    /* reschedule current cpu if tcb moves itself */
+    if (thread == ksSMP[(getCurrentCPUIndex())].system.ksCurThread) {
+        rescheduleRequired();
+    }
+    return EXCEPTION_NONE;
+}
+
+static exception_t decodeSetAffinity(cap_t cap, word_t length, word_t *buffer)
+{
+    tcb_t *tcb;
+    word_t affinity;
+
+    if (length < 1) {
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetAffinity: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 500, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
+        current_syscall_error.type = seL4_TruncatedMessage;
+        return EXCEPTION_SYSCALL_ERROR;
+    }
+
+    tcb = ((tcb_t *)(cap_thread_cap_get_capTCBPtr(cap)));
+
+    affinity = getSyscallArg(0, buffer);
+    if (affinity >= ksNumCPUs) {
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetAffinity: Requested CPU does not exist." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 509, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
+        current_syscall_error.type = seL4_IllegalOperation;
+        return EXCEPTION_SYSCALL_ERROR;
+    }
+
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
+    return invokeTCB_SetAffinity(tcb, affinity);
+}
 # 767 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/object/tcb.c"
 static exception_t invokeSetTLSBase(tcb_t *thread, word_t tls_base)
 {
     setRegister(thread, TLS_BASE, tls_base);
-    if (thread == ksCurThread) {
+    if (thread == ksSMP[(getCurrentCPUIndex())].system.ksCurThread) {
         /* If this is the current thread force a reschedule to ensure that any changes
          * to the TLS_BASE are realized */
         rescheduleRequired();
@@ -20986,20 +23595,20 @@ static exception_t decodeSetTLSBase(cap_t cap, word_t length, word_t *buffer)
     word_t tls_base;
 
     if (length < 1) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetTLSBase: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 784, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetTLSBase: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 784, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
 
     tls_base = getSyscallArg(0, buffer);
 
-    setThreadState(ksCurThread, ThreadState_Restart);
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
     return invokeSetTLSBase(((tcb_t *)(cap_thread_cap_get_capTCBPtr(cap))), tls_base);
 }
 
 static void invokeSetFlags(tcb_t *thread, word_t clear, word_t set, bool_t call)
 {
-    tcb_t *cur_thread = ksCurThread;
+    tcb_t *cur_thread = ksSMP[(getCurrentCPUIndex())].system.ksCurThread;
     word_t flags = thread->tcbFlags;
 
     flags &= ~clear;
@@ -21030,7 +23639,7 @@ static exception_t decodeSetFlags(cap_t cap, word_t length, bool_t call, word_t 
     tcb_t *thread = ((tcb_t *)(cap_thread_cap_get_capTCBPtr(cap)));
 
     if (length < 2) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetFlags: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 828, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetFlags: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 828, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
@@ -21038,7 +23647,7 @@ static exception_t decodeSetFlags(cap_t cap, word_t length, bool_t call, word_t 
     word_t clear = getSyscallArg(0, buffer);
     word_t set = getSyscallArg(1, buffer);
 
-    setThreadState(ksCurThread, ThreadState_Restart);
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
     invokeSetFlags(thread, clear, set, call);
     return EXCEPTION_NONE;
 }
@@ -21051,7 +23660,7 @@ exception_t decodeTCBInvocation(word_t invLabel, word_t length, cap_t cap,
                                 cte_t *slot, bool_t call, word_t *buffer)
 {
     /* Stall the core if we are operating on a remote TCB that is currently running */
-   
+    remoteTCBStall(((tcb_t *)(cap_thread_cap_get_capTCBPtr(cap))));
 
     switch (invLabel) {
     case TCBReadRegisters:
@@ -21066,12 +23675,12 @@ exception_t decodeTCBInvocation(word_t invLabel, word_t length, cap_t cap,
 
     case TCBSuspend:
         /* Jump straight to the invoke */
-        setThreadState(ksCurThread, ThreadState_Restart);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
         return invokeTCB_Suspend(
                    ((tcb_t *)(cap_thread_cap_get_capTCBPtr(cap))));
 
     case TCBResume:
-        setThreadState(ksCurThread, ThreadState_Restart);
+        setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
         return invokeTCB_Resume(
                    ((tcb_t *)(cap_thread_cap_get_capTCBPtr(cap))));
 
@@ -21102,7 +23711,17 @@ exception_t decodeTCBInvocation(word_t invLabel, word_t length, cap_t cap,
 
     case TCBUnbindNotification:
         return decodeUnbindNotification(cap);
-# 911 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/object/tcb.c"
+
+
+
+
+
+
+    case TCBSetAffinity:
+        return decodeSetAffinity(cap, length, buffer);
+
+
+
         /* There is no notion of arch specific TCB invocations so this needs to go here */
 # 931 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/object/tcb.c"
     case TCBSetTLSBase:
@@ -21113,7 +23732,7 @@ exception_t decodeTCBInvocation(word_t invLabel, word_t length, cap_t cap,
 
     default:
         /* Haskell: "throw IllegalOperation" */
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB: Illegal operation." ">>" "\033[0m" "\n", 0lu, __func__, 939, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB: Illegal operation." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 939, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_IllegalOperation;
         return EXCEPTION_SYSCALL_ERROR;
     }
@@ -21134,7 +23753,7 @@ exception_t decodeCopyRegisters(cap_t cap, word_t length, word_t *buffer)
     word_t flags;
 
     if (length < 1 || current_extra_caps.excaprefs[0] == ((void *)0)) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB CopyRegisters: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 960, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB CopyRegisters: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 960, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
@@ -21148,13 +23767,13 @@ exception_t decodeCopyRegisters(cap_t cap, word_t length, word_t *buffer)
     if (cap_get_capType(source_cap) == cap_thread_cap) {
         srcTCB = ((tcb_t *)(cap_thread_cap_get_capTCBPtr(source_cap)));
     } else {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB CopyRegisters: Invalid source TCB." ">>" "\033[0m" "\n", 0lu, __func__, 974, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB CopyRegisters: Invalid source TCB." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 974, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_InvalidCapability;
         current_syscall_error.invalidCapNumber = 1;
         return EXCEPTION_SYSCALL_ERROR;
     }
 
-    setThreadState(ksCurThread, ThreadState_Restart);
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
     return invokeTCB_CopyRegisters(
                ((tcb_t *)(cap_thread_cap_get_capTCBPtr(cap))), srcTCB,
                flags & (1ul << (CopyRegisters_suspendSource)),
@@ -21176,7 +23795,7 @@ exception_t decodeReadRegisters(cap_t cap, word_t length, bool_t call,
     tcb_t *thread;
 
     if (length < 2) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB ReadRegisters: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 1002, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB ReadRegisters: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1002, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
@@ -21185,7 +23804,7 @@ exception_t decodeReadRegisters(cap_t cap, word_t length, bool_t call,
     n = getSyscallArg(1, buffer);
 
     if (n < 1 || n > n_frameRegisters + n_gpRegisters) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB ReadRegisters: Attempted to read an invalid number of registers (%d)." ">>" "\033[0m" "\n", 0lu, __func__, 1011, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), (int)n); } while (0)
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB ReadRegisters: Attempted to read an invalid number of registers (%d)." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1011, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), (int)n); } while (0)
                          ;
         current_syscall_error.type = seL4_RangeError;
         current_syscall_error.rangeErrorMin = 1;
@@ -21197,13 +23816,13 @@ exception_t decodeReadRegisters(cap_t cap, word_t length, bool_t call,
     transferArch = Arch_decodeTransfer(flags >> 8);
 
     thread = ((tcb_t *)(cap_thread_cap_get_capTCBPtr(cap)));
-    if (thread == ksCurThread) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB ReadRegisters: Attempted to read our own registers." ">>" "\033[0m" "\n", 0lu, __func__, 1024, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+    if (thread == ksSMP[(getCurrentCPUIndex())].system.ksCurThread) {
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB ReadRegisters: Attempted to read our own registers." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1024, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_IllegalOperation;
         return EXCEPTION_SYSCALL_ERROR;
     }
 
-    setThreadState(ksCurThread, ThreadState_Restart);
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
     return invokeTCB_ReadRegisters(
                ((tcb_t *)(cap_thread_cap_get_capTCBPtr(cap))),
                flags & (1ul << (ReadRegisters_suspend)),
@@ -21221,7 +23840,7 @@ exception_t decodeWriteRegisters(cap_t cap, word_t length, word_t *buffer)
     tcb_t *thread;
 
     if (length < 2) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB WriteRegisters: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 1047, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB WriteRegisters: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1047, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
@@ -21230,7 +23849,7 @@ exception_t decodeWriteRegisters(cap_t cap, word_t length, word_t *buffer)
     w = getSyscallArg(1, buffer);
 
     if (length - 2 < w) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB WriteRegisters: Message too short for requested write size (%d/%d)." ">>" "\033[0m" "\n", 0lu, __func__, 1056, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), (int)(length - 2), (int)w); } while (0)
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB WriteRegisters: Message too short for requested write size (%d/%d)." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1056, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), (int)(length - 2), (int)w); } while (0)
                                             ;
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
@@ -21239,13 +23858,13 @@ exception_t decodeWriteRegisters(cap_t cap, word_t length, word_t *buffer)
     transferArch = Arch_decodeTransfer(flags >> 8);
 
     thread = ((tcb_t *)(cap_thread_cap_get_capTCBPtr(cap)));
-    if (thread == ksCurThread) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB WriteRegisters: Attempted to write our own registers." ">>" "\033[0m" "\n", 0lu, __func__, 1066, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+    if (thread == ksSMP[(getCurrentCPUIndex())].system.ksCurThread) {
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB WriteRegisters: Attempted to write our own registers." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1066, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_IllegalOperation;
         return EXCEPTION_SYSCALL_ERROR;
     }
 
-    setThreadState(ksCurThread, ThreadState_Restart);
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
     return invokeTCB_WriteRegisters(thread,
                                     flags & (1ul << (WriteRegisters_resume)),
                                     w, transferArch, buffer);
@@ -21266,7 +23885,7 @@ exception_t decodeTCBConfigure(cap_t cap, word_t length, cte_t *slot, word_t *bu
     if (length < 4 || current_extra_caps.excaprefs[0] == ((void *)0)
         || current_extra_caps.excaprefs[1] == ((void *)0)
         || current_extra_caps.excaprefs[2] == ((void *)0)) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB Configure: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 1113, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB Configure: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1113, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
@@ -21308,7 +23927,7 @@ exception_t decodeTCBConfigure(cap_t cap, word_t length, cte_t *slot, word_t *bu
             (((cte_t *)((word_t)(cap_thread_cap_get_capTCBPtr(cap))&~((1ul << (11)) - 1ul)))+(tcbCTable))) ||
         slotCapLongRunningDelete(
             (((cte_t *)((word_t)(cap_thread_cap_get_capTCBPtr(cap))&~((1ul << (11)) - 1ul)))+(tcbVTable)))) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB Configure: CSpace or VSpace currently being deleted." ">>" "\033[0m" "\n", 0lu, __func__, 1155, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB Configure: CSpace or VSpace currently being deleted." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1155, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_IllegalOperation;
         return EXCEPTION_SYSCALL_ERROR;
     }
@@ -21324,7 +23943,7 @@ exception_t decodeTCBConfigure(cap_t cap, word_t length, cte_t *slot, word_t *bu
     cRootCap = dc_ret.cap;
 
     if (cap_get_capType(cRootCap) != cap_cnode_cap) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB Configure: CSpace cap is invalid." ">>" "\033[0m" "\n", 0lu, __func__, 1171, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB Configure: CSpace cap is invalid." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1171, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_IllegalOperation;
         return EXCEPTION_SYSCALL_ERROR;
     }
@@ -21340,12 +23959,12 @@ exception_t decodeTCBConfigure(cap_t cap, word_t length, cte_t *slot, word_t *bu
     vRootCap = dc_ret.cap;
 
     if (!isValidVTableRoot(vRootCap)) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB Configure: VSpace cap is invalid." ">>" "\033[0m" "\n", 0lu, __func__, 1187, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB Configure: VSpace cap is invalid." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1187, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_IllegalOperation;
         return EXCEPTION_SYSCALL_ERROR;
     }
 
-    setThreadState(ksCurThread, ThreadState_Restart);
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
 # 1204 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/object/tcb.c"
     return invokeTCB_ThreadControl(
                ((tcb_t *)(cap_thread_cap_get_capTCBPtr(cap))), slot,
@@ -21361,7 +23980,7 @@ exception_t decodeTCBConfigure(cap_t cap, word_t length, cte_t *slot, word_t *bu
 exception_t decodeSetPriority(cap_t cap, word_t length, word_t *buffer)
 {
     if (length < 1 || current_extra_caps.excaprefs[0] == ((void *)0)) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetPriority: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 1218, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetPriority: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1218, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
@@ -21370,7 +23989,7 @@ exception_t decodeSetPriority(cap_t cap, word_t length, word_t *buffer)
     cap_t authCap = current_extra_caps.excaprefs[0]->cap;
 
     if (cap_get_capType(authCap) != cap_thread_cap) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Set priority: authority cap not a TCB." ">>" "\033[0m" "\n", 0lu, __func__, 1227, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Set priority: authority cap not a TCB." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1227, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_InvalidCapability;
         current_syscall_error.invalidCapNumber = 1;
         return EXCEPTION_SYSCALL_ERROR;
@@ -21379,12 +23998,12 @@ exception_t decodeSetPriority(cap_t cap, word_t length, word_t *buffer)
     tcb_t *authTCB = ((tcb_t *)(cap_thread_cap_get_capTCBPtr(authCap)));
     exception_t status = checkPrio(newPrio, authTCB);
     if (status != EXCEPTION_NONE) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetPriority: Requested priority %lu too high (max %lu)." ">>" "\033[0m" "\n", 0lu, __func__, 1236, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), (unsigned long) newPrio, (unsigned long) authTCB->tcbMCP); } while (0)
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetPriority: Requested priority %lu too high (max %lu)." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1236, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), (unsigned long) newPrio, (unsigned long) authTCB->tcbMCP); } while (0)
                                                                            ;
         return status;
     }
 
-    setThreadState(ksCurThread, ThreadState_Restart);
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
 
 
 
@@ -21405,7 +24024,7 @@ exception_t decodeSetPriority(cap_t cap, word_t length, word_t *buffer)
 exception_t decodeSetMCPriority(cap_t cap, word_t length, word_t *buffer)
 {
     if (length < 1 || current_extra_caps.excaprefs[0] == ((void *)0)) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetMCPriority: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 1262, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetMCPriority: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1262, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
@@ -21414,7 +24033,7 @@ exception_t decodeSetMCPriority(cap_t cap, word_t length, word_t *buffer)
     cap_t authCap = current_extra_caps.excaprefs[0]->cap;
 
     if (cap_get_capType(authCap) != cap_thread_cap) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetMCPriority: authority cap not a TCB." ">>" "\033[0m" "\n", 0lu, __func__, 1271, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetMCPriority: authority cap not a TCB." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1271, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_InvalidCapability;
         current_syscall_error.invalidCapNumber = 1;
         return EXCEPTION_SYSCALL_ERROR;
@@ -21423,12 +24042,12 @@ exception_t decodeSetMCPriority(cap_t cap, word_t length, word_t *buffer)
     tcb_t *authTCB = ((tcb_t *)(cap_thread_cap_get_capTCBPtr(authCap)));
     exception_t status = checkPrio(newMcp, authTCB);
     if (status != EXCEPTION_NONE) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetMCPriority: Requested maximum controlled priority %lu too high (max %lu)." ">>" "\033[0m" "\n", 0lu, __func__, 1280, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), (unsigned long) newMcp, (unsigned long) authTCB->tcbMCP); } while (0)
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetMCPriority: Requested maximum controlled priority %lu too high (max %lu)." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1280, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), (unsigned long) newMcp, (unsigned long) authTCB->tcbMCP); } while (0)
                                                                           ;
         return status;
     }
 
-    setThreadState(ksCurThread, ThreadState_Restart);
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
 
 
 
@@ -21454,7 +24073,7 @@ exception_t decodeSetSchedParams(cap_t cap, word_t length, word_t *buffer)
 
 
        ) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetSchedParams: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 1346, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetSchedParams: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1346, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
@@ -21469,7 +24088,7 @@ exception_t decodeSetSchedParams(cap_t cap, word_t length, word_t *buffer)
 
 
     if (cap_get_capType(authCap) != cap_thread_cap) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetSchedParams: authority cap not a TCB." ">>" "\033[0m" "\n", 0lu, __func__, 1361, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetSchedParams: authority cap not a TCB." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1361, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_InvalidCapability;
         current_syscall_error.invalidCapNumber = 1;
         return EXCEPTION_SYSCALL_ERROR;
@@ -21478,19 +24097,19 @@ exception_t decodeSetSchedParams(cap_t cap, word_t length, word_t *buffer)
     tcb_t *authTCB = ((tcb_t *)(cap_thread_cap_get_capTCBPtr(authCap)));
     exception_t status = checkPrio(newMcp, authTCB);
     if (status != EXCEPTION_NONE) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetSchedParams: Requested maximum controlled priority %lu too high (max %lu)." ">>" "\033[0m" "\n", 0lu, __func__, 1370, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), (unsigned long) newMcp, (unsigned long) authTCB->tcbMCP); } while (0)
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetSchedParams: Requested maximum controlled priority %lu too high (max %lu)." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1370, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), (unsigned long) newMcp, (unsigned long) authTCB->tcbMCP); } while (0)
                                                                           ;
         return status;
     }
 
     status = checkPrio(newPrio, authTCB);
     if (status != EXCEPTION_NONE) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetSchedParams: Requested priority %lu too high (max %lu)." ">>" "\033[0m" "\n", 0lu, __func__, 1377, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), (unsigned long) newPrio, (unsigned long) authTCB->tcbMCP); } while (0)
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetSchedParams: Requested priority %lu too high (max %lu)." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1377, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), (unsigned long) newPrio, (unsigned long) authTCB->tcbMCP); } while (0)
                                                                            ;
         return status;
     }
 # 1435 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/object/tcb.c"
-    setThreadState(ksCurThread, ThreadState_Restart);
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
 
 
 
@@ -21517,7 +24136,7 @@ exception_t decodeSetIPCBuffer(cap_t cap, word_t length, cte_t *slot, word_t *bu
     cte_t *bufferSlot;
 
     if (length < 1 || current_extra_caps.excaprefs[0] == ((void *)0)) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetIPCBuffer: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 1462, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetIPCBuffer: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1462, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
@@ -21543,7 +24162,7 @@ exception_t decodeSetIPCBuffer(cap_t cap, word_t length, cte_t *slot, word_t *bu
         }
     }
 
-    setThreadState(ksCurThread, ThreadState_Restart);
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
 # 1499 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/object/tcb.c"
     return invokeTCB_ThreadControl(
                ((tcb_t *)(cap_thread_cap_get_capTCBPtr(cap))), slot,
@@ -21574,7 +24193,7 @@ exception_t decodeSetSpace(cap_t cap, word_t length, cte_t *slot, word_t *buffer
 
 
        ) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetSpace: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 1528, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetSpace: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1528, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
@@ -21593,7 +24212,7 @@ exception_t decodeSetSpace(cap_t cap, word_t length, cte_t *slot, word_t *buffer
             (((cte_t *)((word_t)(cap_thread_cap_get_capTCBPtr(cap))&~((1ul << (11)) - 1ul)))+(tcbCTable))) ||
         slotCapLongRunningDelete(
             (((cte_t *)((word_t)(cap_thread_cap_get_capTCBPtr(cap))&~((1ul << (11)) - 1ul)))+(tcbVTable)))) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetSpace: CSpace or VSpace currently being deleted." ">>" "\033[0m" "\n", 0lu, __func__, 1558, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetSpace: CSpace or VSpace currently being deleted." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1558, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_IllegalOperation;
         return EXCEPTION_SYSCALL_ERROR;
     }
@@ -21609,7 +24228,7 @@ exception_t decodeSetSpace(cap_t cap, word_t length, cte_t *slot, word_t *buffer
     cRootCap = dc_ret.cap;
 
     if (cap_get_capType(cRootCap) != cap_cnode_cap) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetSpace: Invalid CNode cap." ">>" "\033[0m" "\n", 0lu, __func__, 1574, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetSpace: Invalid CNode cap." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1574, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_IllegalOperation;
         return EXCEPTION_SYSCALL_ERROR;
     }
@@ -21625,12 +24244,12 @@ exception_t decodeSetSpace(cap_t cap, word_t length, cte_t *slot, word_t *buffer
     vRootCap = dc_ret.cap;
 
     if (!isValidVTableRoot(vRootCap)) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetSpace: Invalid VSpace cap." ">>" "\033[0m" "\n", 0lu, __func__, 1590, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB SetSpace: Invalid VSpace cap." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1590, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_IllegalOperation;
         return EXCEPTION_SYSCALL_ERROR;
     }
 # 1605 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/object/tcb.c"
-    setThreadState(ksCurThread, ThreadState_Restart);
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
 # 1615 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/object/tcb.c"
     return invokeTCB_ThreadControl(
                ((tcb_t *)(cap_thread_cap_get_capTCBPtr(cap))), slot,
@@ -21649,7 +24268,7 @@ exception_t decodeBindNotification(cap_t cap)
     cap_t ntfn_cap;
 
     if (current_extra_caps.excaprefs[0] == ((void *)0)) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB BindNotification: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 1632, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB BindNotification: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1632, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
@@ -21657,7 +24276,7 @@ exception_t decodeBindNotification(cap_t cap)
     tcb = ((tcb_t *)(cap_thread_cap_get_capTCBPtr(cap)));
 
     if (tcb->tcbBoundNotification) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB BindNotification: TCB already has a bound notification." ">>" "\033[0m" "\n", 0lu, __func__, 1640, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB BindNotification: TCB already has a bound notification." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1640, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_IllegalOperation;
         return EXCEPTION_SYSCALL_ERROR;
     }
@@ -21667,26 +24286,26 @@ exception_t decodeBindNotification(cap_t cap)
     if (cap_get_capType(ntfn_cap) == cap_notification_cap) {
         ntfnPtr = ((notification_t *)(cap_notification_cap_get_capNtfnPtr(ntfn_cap)));
     } else {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB BindNotification: Notification is invalid." ">>" "\033[0m" "\n", 0lu, __func__, 1650, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB BindNotification: Notification is invalid." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1650, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_IllegalOperation;
         return EXCEPTION_SYSCALL_ERROR;
     }
 
     if (!cap_notification_cap_get_capNtfnCanReceive(ntfn_cap)) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB BindNotification: Insufficient access rights" ">>" "\033[0m" "\n", 0lu, __func__, 1656, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB BindNotification: Insufficient access rights" ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1656, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_IllegalOperation;
         return EXCEPTION_SYSCALL_ERROR;
     }
 
     if ((tcb_t *)notification_ptr_get_ntfnQueue_head(ntfnPtr)
         || (tcb_t *)notification_ptr_get_ntfnBoundTCB(ntfnPtr)) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB BindNotification: Notification cannot be bound." ">>" "\033[0m" "\n", 0lu, __func__, 1663, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB BindNotification: Notification cannot be bound." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1663, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_IllegalOperation;
         return EXCEPTION_SYSCALL_ERROR;
     }
 
 
-    setThreadState(ksCurThread, ThreadState_Restart);
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
     return invokeTCB_NotificationControl(tcb, ntfnPtr);
 }
 
@@ -21697,12 +24316,12 @@ exception_t decodeUnbindNotification(cap_t cap)
     tcb = ((tcb_t *)(cap_thread_cap_get_capTCBPtr(cap)));
 
     if (!tcb->tcbBoundNotification) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB UnbindNotification: TCB already has no bound Notification." ">>" "\033[0m" "\n", 0lu, __func__, 1680, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "TCB UnbindNotification: TCB already has no bound Notification." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 1680, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_IllegalOperation;
         return EXCEPTION_SYSCALL_ERROR;
     }
 
-    setThreadState(ksCurThread, ThreadState_Restart);
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
     return invokeTCB_NotificationControl(tcb, ((void *)0));
 }
 
@@ -21782,7 +24401,7 @@ exception_t invokeTCB_ThreadControl(tcb_t *target, cte_t *slot,
             cteInsert(bufferCap, bufferSrcSlot, bufferSlot);
         }
 
-        if (target == ksCurThread) {
+        if (target == ksSMP[(getCurrentCPUIndex())].system.ksCurThread) {
             rescheduleRequired();
         }
     }
@@ -21833,7 +24452,7 @@ exception_t invokeTCB_CopyRegisters(tcb_t *dest, tcb_t *tcb_src,
 
     Arch_postModifyRegisters(dest);
 
-    if (dest == ksCurThread) {
+    if (dest == ksSMP[(getCurrentCPUIndex())].system.ksCurThread) {
         /* If we modified the current thread we may need to reschedule
          * due to changing registers are only reloaded in Arch_switchToThread */
         rescheduleRequired();
@@ -21855,13 +24474,13 @@ exception_t invokeTCB_ReadRegisters(tcb_t *tcb_src, bool_t suspendSource,
     exception_t e;
     tcb_t *thread;
 
-    thread = ksCurThread;
+    thread = ksSMP[(getCurrentCPUIndex())].system.ksCurThread;
 
     if (suspendSource) {
         suspend(tcb_src);
     }
 
-    e = Arch_performTransfer(arch, tcb_src, ksCurThread);
+    e = Arch_performTransfer(arch, tcb_src, ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
     if (e != EXCEPTION_NONE) {
         return e;
     }
@@ -21916,7 +24535,7 @@ exception_t invokeTCB_WriteRegisters(tcb_t *dest, bool_t resumeTarget,
     exception_t e;
     bool_t archInfo;
 
-    e = Arch_performTransfer(arch, ksCurThread, dest);
+    e = Arch_performTransfer(arch, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, dest);
     if (e != EXCEPTION_NONE) {
         return e;
     }
@@ -21950,7 +24569,7 @@ exception_t invokeTCB_WriteRegisters(tcb_t *dest, bool_t resumeTarget,
         restart(dest);
     }
 
-    if (dest == ksCurThread) {
+    if (dest == ksSMP[(getCurrentCPUIndex())].system.ksCurThread) {
         /* If we modified the current thread we may need to reschedule
          * due to changing registers are only reloaded in Arch_switchToThread */
         rescheduleRequired();
@@ -22048,14 +24667,14 @@ exception_t decodeUntypedInvocation(word_t invLabel, word_t length, cte_t *slot,
 
     /* Ensure operation is valid. */
     if (invLabel != UntypedRetype) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped cap: Illegal operation attempted." ">>" "\033[0m" "\n", 0lu, __func__, 45, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped cap: Illegal operation attempted." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 45, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_IllegalOperation;
         return EXCEPTION_SYSCALL_ERROR;
     }
 
     /* Ensure message length valid. */
     if (length < 6 || current_extra_caps.excaprefs[0] == ((void *)0)) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped invocation: Truncated message." ">>" "\033[0m" "\n", 0lu, __func__, 52, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped invocation: Truncated message." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 52, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
@@ -22071,7 +24690,7 @@ exception_t decodeUntypedInvocation(word_t invLabel, word_t length, cte_t *slot,
 
     /* Is the requested object type valid? */
     if (newType >= seL4_ObjectTypeCount) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Invalid object type." ">>" "\033[0m" "\n", 0lu, __func__, 68, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Invalid object type." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 68, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_InvalidArgument;
         current_syscall_error.invalidArgumentNumber = 0;
         return EXCEPTION_SYSCALL_ERROR;
@@ -22083,7 +24702,7 @@ exception_t decodeUntypedInvocation(word_t invLabel, word_t length, cte_t *slot,
        is close to 2^wordBits, which is nonsensical in any case, so we check that this
        did not happen. userObjSize will always need to be less than wordBits. */
     if (userObjSize >= (1 << 6) || objectSize > 47) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Invalid object size." ">>" "\033[0m" "\n", 0lu, __func__, 80, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Invalid object size." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 80, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_RangeError;
         current_syscall_error.rangeErrorMin = 0;
         current_syscall_error.rangeErrorMax = 47;
@@ -22092,7 +24711,7 @@ exception_t decodeUntypedInvocation(word_t invLabel, word_t length, cte_t *slot,
 
     /* If the target object is a CNode, is it at least size 1? */
     if (newType == seL4_CapTableObject && userObjSize == 0) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Requested CapTable size too small." ">>" "\033[0m" "\n", 0lu, __func__, 89, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Requested CapTable size too small." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 89, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_InvalidArgument;
         current_syscall_error.invalidArgumentNumber = 1;
         return EXCEPTION_SYSCALL_ERROR;
@@ -22100,7 +24719,7 @@ exception_t decodeUntypedInvocation(word_t invLabel, word_t length, cte_t *slot,
 
     /* If the target object is a Untyped, is it at least size 4? */
     if (newType == seL4_UntypedObject && userObjSize < 4) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Requested UntypedItem size too small." ">>" "\033[0m" "\n", 0lu, __func__, 97, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Requested UntypedItem size too small." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 97, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_InvalidArgument;
         current_syscall_error.invalidArgumentNumber = 1;
         return EXCEPTION_SYSCALL_ERROR;
@@ -22113,7 +24732,7 @@ exception_t decodeUntypedInvocation(word_t invLabel, word_t length, cte_t *slot,
         cap_t rootCap = rootSlot->cap;
         lu_ret = lookupTargetSlot(rootCap, nodeIndex, nodeDepth);
         if (lu_ret.status != EXCEPTION_NONE) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Invalid destination address." ">>" "\033[0m" "\n", 0lu, __func__, 119, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Invalid destination address." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 119, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
             return lu_ret.status;
         }
         nodeCap = lu_ret.slot->cap;
@@ -22121,7 +24740,7 @@ exception_t decodeUntypedInvocation(word_t invLabel, word_t length, cte_t *slot,
 
     /* Is the destination actually a CNode? */
     if (cap_get_capType(nodeCap) != cap_cnode_cap) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Destination cap invalid or read-only." ">>" "\033[0m" "\n", 0lu, __func__, 127, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Destination cap invalid or read-only." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 127, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_FailedLookup;
         current_syscall_error.failedLookupWasSource = 0;
         current_lookup_fault = lookup_fault_missing_capability_new(nodeDepth);
@@ -22131,7 +24750,7 @@ exception_t decodeUntypedInvocation(word_t invLabel, word_t length, cte_t *slot,
     /* Is the region where the user wants to put the caps valid? */
     nodeSize = 1ul << cap_cnode_cap_get_capCNodeRadix(nodeCap);
     if (nodeOffset > nodeSize - 1) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Destination node offset #%d too large." ">>" "\033[0m" "\n", 0lu, __func__, 137, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), (int)nodeOffset); } while (0)
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Destination node offset #%d too large." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 137, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), (int)nodeOffset); } while (0)
                                   ;
         current_syscall_error.type = seL4_RangeError;
         current_syscall_error.rangeErrorMin = 0;
@@ -22139,7 +24758,7 @@ exception_t decodeUntypedInvocation(word_t invLabel, word_t length, cte_t *slot,
         return EXCEPTION_SYSCALL_ERROR;
     }
     if (nodeWindow < 1 || nodeWindow > 256) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Number of requested objects (%d) too small or large." ">>" "\033[0m" "\n", 0lu, __func__, 145, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), (int)nodeWindow); } while (0)
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Number of requested objects (%d) too small or large." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 145, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), (int)nodeWindow); } while (0)
                                   ;
         current_syscall_error.type = seL4_RangeError;
         current_syscall_error.rangeErrorMin = 1;
@@ -22147,7 +24766,7 @@ exception_t decodeUntypedInvocation(word_t invLabel, word_t length, cte_t *slot,
         return EXCEPTION_SYSCALL_ERROR;
     }
     if (nodeWindow > nodeSize - nodeOffset) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Requested destination window overruns size of node." ">>" "\033[0m" "\n", 0lu, __func__, 153, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Requested destination window overruns size of node." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 153, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_RangeError;
         current_syscall_error.rangeErrorMin = 1;
         current_syscall_error.rangeErrorMax = nodeSize - nodeOffset;
@@ -22159,7 +24778,7 @@ exception_t decodeUntypedInvocation(word_t invLabel, word_t length, cte_t *slot,
     for (i = nodeOffset; i < nodeOffset + nodeWindow; i++) {
         status = ensureEmptySlot(destCNode + i);
         if (status != EXCEPTION_NONE) {
-            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Slot #%d in destination window non-empty." ">>" "\033[0m" "\n", 0lu, __func__, 165, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), (int)i); } while (0)
+            do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Slot #%d in destination window non-empty." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 165, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), (int)i); } while (0)
                              ;
             return status;
         }
@@ -22198,7 +24817,7 @@ exception_t decodeUntypedInvocation(word_t invLabel, word_t length, cte_t *slot,
                        ((freeIndex)<<4);
 
     if ((untypedFreeBytes >> objectSize) < nodeWindow) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Insufficient memory " "(%lu * %lu bytes needed, %lu bytes available)." ">>" "\033[0m" "\n", 0lu, __func__, 204, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread), (word_t)nodeWindow, (objectSize >= (1 << 6) ? -1 : (1ul << objectSize)), (word_t)(untypedFreeBytes)); } while (0)
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Insufficient memory " "(%lu * %lu bytes needed, %lu bytes available)." ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 204, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread), (word_t)nodeWindow, (objectSize >= (1 << 6) ? -1 : (1ul << objectSize)), (word_t)(untypedFreeBytes)); } while (0)
 
 
 
@@ -22211,7 +24830,7 @@ exception_t decodeUntypedInvocation(word_t invLabel, word_t length, cte_t *slot,
     deviceMemory = cap_untyped_cap_get_capIsDevice(cap);
     if ((deviceMemory && !Arch_isFrameType(newType))
         && newType != seL4_UntypedObject) {
-        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Creating kernel objects with device untyped" ">>" "\033[0m" "\n", 0lu, __func__, 217, ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksCurThread)); } while (0);
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "Untyped Retype: Creating kernel objects with device untyped" ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 217, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
         current_syscall_error.type = seL4_InvalidArgument;
         current_syscall_error.invalidArgumentNumber = 1;
         return EXCEPTION_SYSCALL_ERROR;
@@ -22222,7 +24841,7 @@ exception_t decodeUntypedInvocation(word_t invLabel, word_t length, cte_t *slot,
     alignedFreeRef = alignUp(freeRef, objectSize);
 
     /* Perform the retype. */
-    setThreadState(ksCurThread, ThreadState_Restart);
+    setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
     return invokeUntyped_Retype(slot, reset,
                                 (void *)alignedFreeRef, newType, userObjSize,
                                 destCNode, nodeOffset, nodeWindow, deviceMemory);
@@ -22306,12 +24925,236 @@ exception_t invokeUntyped_Retype(cte_t *srcSlot,
  *
  * SPDX-License-Identifier: GPL-2.0-only
  */
+# 15 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/smp/ipi.c"
+/* This function switches the core it is called on to the idle thread,
+ * in order to avoid IPI storms. If the core is waiting on the lock, the actual
+ * switch will not occur until the core attempts to obtain the lock, at which
+ * point the core will capture the pending IPI, which is discarded.
+
+ * The core who triggered the store is responsible for triggering a reschedule,
+ * or this call will idle forever */
+void ipiStallCoreCallback(bool_t irqPath)
+{
+    word_t cpu = getCurrentCPUIndex();
+    clh_node_t *node = &big_kernel_lock.node[cpu];
+
+    if (clh_is_self_in_queue() && !irqPath) {
+        /* The current thread is running as we would replace this thread with an idle thread
+         *
+         * The instruction should be re-executed if we are in kernel to handle syscalls.
+         * Also, thread in 'ThreadState_RunningVM' should remain in same state.
+         * Note that, 'ThreadState_Restart' does not always result in regenerating exception
+         * if we are in kernel to handle them, e.g. hardware single step exception. */
+        if (thread_state_ptr_get_tsType(&ksSMP[(getCurrentCPUIndex())].system.ksCurThread->tcbState) == ThreadState_Running) {
+            setThreadState(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ThreadState_Restart);
+        }
+
+        tcbSchedEnqueue(ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
+        switchToIdleThread();
+
+
+
+
+        ksSMP[(getCurrentCPUIndex())].system.ksSchedulerAction = ((tcb_t*)0);
+
+        /* Let the cpu requesting this IPI continue while we wait on the lock */
+        node->ipi = 0;
+
+
+
+        ipi_wait();
+
+        /* Continue waiting on lock */
+        while (node->watch->state != CLHState_Granted) {
+            __atomic_thread_fence(2);
+            if (clh_is_ipi_pending(cpu)) {
+                /* Multiple calls for similar reason could result in stack overflow */
+                do { if (!(big_kernel_lock.ipi.remoteCall != IpiRemoteCall_Stall)) { _assert_fail("big_kernel_lock.ipi.remoteCall != IpiRemoteCall_Stall", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/smp/ipi.c", 58, __func__); } } while(0);
+                handleIPI(((irq_t){.irq = (0), .target_core = (cpu)}), irqPath);
+            }
+            arch_pause();
+        }
+
+        /* make sure no resource access passes from this point */
+        __asm__ volatile("" ::: "memory");
+
+        /* Start idle thread to capture the pending IPI */
+        activateThread();
+        restore_user_context();
+    } else {
+        /* We get here either without grabbing the lock from normal interrupt path or from
+         * inside the lock while waiting to grab the lock for handling pending interrupt.
+         * In latter case, we return to the 'clh_lock_acquire' to grab the lock and
+         * handle the pending interrupt. Its valid as interrupts are async events! */
+        tcbSchedEnqueue(ksSMP[(getCurrentCPUIndex())].system.ksCurThread);
+        switchToIdleThread();
+
+
+
+
+        ksSMP[(getCurrentCPUIndex())].system.ksSchedulerAction = ((tcb_t*)0);
+    }
+}
+
+void ipi_wait(void)
+{
+    ipi_state_t *ipi = &big_kernel_lock.ipi;
+    word_t cores = ipi->totalCoreBarrier;
+    word_t localsense = ipi->globalsense;
+    word_t *count = &ipi->count;
+
+    if (__atomic_fetch_add(count, 1, 4) == cores) {
+        *count = 0;
+        ipi->globalsense++;
+        __atomic_thread_fence(3);
+    }
+    /* Check globalsense instead of count to protect against a race where
+     * a new IPI started before this core saw that the old one finished. */
+    while (localsense == ipi->globalsense) {
+        __atomic_thread_fence(2);
+        arch_pause();
+    }
+}
+
+static inline void init_ipi_args(IpiRemoteCall_t func,
+                                 word_t data1, word_t data2, word_t data3,
+                                 word_t mask)
+{
+    ipi_state_t *ipi = &big_kernel_lock.ipi;
+
+    ipi->remoteCall = func;
+    ipi->args[0] = data1;
+    ipi->args[1] = data2;
+    ipi->args[2] = data3;
+
+    /* get number of cores involved in this IPI */
+    ipi->totalCoreBarrier = popcountl(mask);
+}
+
+void handleIPI(irq_t irq, bool_t irqPath)
+{
+    ipi_state_t *ipi = &big_kernel_lock.ipi;
+
+    if ((irq.irq) == 0) {
+        handleRemoteCall(ipi->remoteCall, ipi->args[0], ipi->args[1], ipi->args[2], irqPath);
+    } else if ((irq.irq) == 1) {
+        rescheduleRequired();
+
+
+
+    } else {
+        _fail("Invalid IPI", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/smp/ipi.c", 132, __func__);
+    }
+}
+
+void doRemoteMaskOp(IpiRemoteCall_t func, word_t data1, word_t data2, word_t data3, word_t mask)
+{
+    /* make sure the current core is not set in the mask */
+    mask &= ~(1ul << (getCurrentCPUIndex()));
+
+    /* this may happen, e.g. the caller tries to map a pagetable in
+     * newly created PD which has not been run yet. Guard against them! */
+    if (mask != 0) {
+        init_ipi_args(func, data1, data2, data3, mask);
+
+        /* make sure no resource access passes from this point */
+        __asm__ volatile("" ::: "memory");
+        ipi_send_mask(((irq_t){.irq = (0), .target_core = (0)}), mask, true);
+        ipi_wait();
+    }
+}
+
+void doMaskReschedule(word_t mask)
+{
+    /* make sure the current core is not set in the mask */
+    mask &= ~(1ul << (getCurrentCPUIndex()));
+    if (mask != 0) {
+        ipi_send_mask(((irq_t){.irq = (1), .target_core = (0)}), mask, false);
+    }
+}
+
+void generic_ipi_send_mask(irq_t ipi, word_t mask, bool_t isBlocking)
+{
+    word_t nr_target_cores = 0;
+    uint16_t target_cores[4];
+
+    while (mask) {
+        int index = (1 << 6) - 1 - clzl(mask);
+        if (isBlocking) {
+            /*
+             * All writes before setting ipi to 1 must be observed,
+             * as other cores may check the ipi flag at any moment.
+             * IPI_MEM_BARRIER is too late to prevent reordering
+             * between IPI data and flag reads.
+             */
+            __atomic_store_n(&big_kernel_lock.node[index].ipi, 1, 3);
+            target_cores[nr_target_cores] = index;
+            nr_target_cores++;
+        } else {
+            do { /* This can be relaxed for GICv2 but for GICv3 dmb() no longer works */ /* since the way IPI is triggered is different (memory-mapped or MSR inst.) */ /* and dmb() is not able to avoid re-ordering between memory accesses and */ /* instructions. In order to support both GICv2 and v3 dsb() is required. */ dsb_ishst(); } while (0);
+            ipi_send_target(ipi, cpuIndexToID(index));
+        }
+        mask &= ~(1ul << (index));
+    }
+
+    if (nr_target_cores > 0) {
+        /* sending IPIs... */
+        do { /* This can be relaxed for GICv2 but for GICv3 dmb() no longer works */ /* since the way IPI is triggered is different (memory-mapped or MSR inst.) */ /* and dmb() is not able to avoid re-ordering between memory accesses and */ /* instructions. In order to support both GICv2 and v3 dsb() is required. */ dsb_ishst(); } while (0);
+        for (int i = 0; i < nr_target_cores; i++) {
+            ipi_send_target(ipi, cpuIndexToID(target_cores[i]));
+        }
+    }
+}
+
+
+exception_t handle_SysDebugSendIPI(void)
+{
+
+    word_t target = getRegister(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, capRegister);
+    word_t irq = getRegister(ksSMP[(getCurrentCPUIndex())].system.ksCurThread, msgInfoRegister);
+    if (target > 4) {
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "SysDebugSendIPI: Invalid target, halting" ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 202, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
+        halt();
+    }
+    if (irq > 15) {
+        do { printf("\033[0m" "\033[1m" "<<" "\033[0m" "\033[32m" "seL4(CPU %" "lu" ")" "\033[0m" "\033[1m" " [%s/%d T%p \"%s\" @%lx]: " "SysDebugSendIPI: Invalid IRQ, not a SGI, halting" ">>" "\033[0m" "\n", getCurrentCPUIndex(), __func__, 206, ksSMP[(getCurrentCPUIndex())].system.ksCurThread, ((debug_tcb_t *)(((cte_t *)((word_t)(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)&~((1ul << (11)) - 1ul)))+(tcbCNodeEntries)))->tcbName, (word_t)getRestartPC(ksSMP[(getCurrentCPUIndex())].system.ksCurThread)); } while (0);
+        halt();
+    }
+    ipi_send_target(((irq_t){.irq = (irq), .target_core = (0)}), (1ul << (target)));
+    return EXCEPTION_NONE;
+
+
+
+
+}
 # 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/smp/lock.c"
 /*
  * Copyright 2020, Data61, CSIRO (ABN 41 687 119 230)
  *
  * SPDX-License-Identifier: GPL-2.0-only
  */
+
+
+
+
+
+
+_Static_assert(sizeof(big_kernel_lock) % 2048 == 0, "BKL_not_padded");;
+
+clh_lock_t big_kernel_lock;
+
+__attribute__((__section__(".boot.text"))) void clh_lock_init(void)
+{
+    /* Check if linker honoured alignment */
+    do { if (!(((seL4_Word)&big_kernel_lock) % 2048 == 0)) { _assert_fail("((seL4_Word)&big_kernel_lock) % EXCL_RES_GRANULE_SIZE == 0", "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/smp/lock.c", 19, __func__); } } while(0);
+    for (int i = 0; i < 4; i++) {
+        big_kernel_lock.node[i].myreq = &big_kernel_lock.request[i];
+    }
+
+    /* Initialize the CLH tail */
+    big_kernel_lock.request[4].state = CLHState_Granted;
+    big_kernel_lock.tail = &big_kernel_lock.request[4];
+}
 # 1 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/string.c"
 /*
  * Copyright 2014, General Dynamics C4 Systems

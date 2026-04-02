@@ -13,7 +13,7 @@
        
        
 -- Default base size: uint64_t
-base 64(48,1)
+base 64(48,0)
 -- Including the common structures_64.bf is necessary because
 -- we need the structures to be visible here when building
 -- the capType
@@ -79,8 +79,7 @@ block irq_control_cap {
     padding word_size - 5
 }
 block irq_handler_cap {
-    padding word_size - 12
-    field capIRQ 12
+    field capIRQ 64
     field capType 5
     padding word_size - 5
 }
@@ -277,12 +276,11 @@ block asid_pool_cap {
     padding 6
     field_high capASIDPool 37
 }
-block sgi_signal_cap {
-    padding 32
-    field capSGITarget 32
+block vcpu_cap {
+    padding 64
     field capType 5
-    field capSGIIRQ 4
-    padding 55
+    field_high capVCPUPtr 48
+    padding 11
 }
 -- NB: odd numbers are arch caps (see isArchCap())
 tagged_union cap capType {
@@ -304,7 +302,7 @@ tagged_union cap capType {
     tag vspace_cap 9
     tag asid_control_cap 11
     tag asid_pool_cap 13
-    tag sgi_signal_cap 27
+    tag vcpu_cap 15
 }
 ---- Arch-independent object types
 block VMFault {
@@ -312,6 +310,27 @@ block VMFault {
     field FSR 32
     field instructionFault 1
     padding 27
+    field seL4_FaultType 4
+}
+block VGICMaintenance {
+    padding 64
+    field idx 6
+    field idxValid 1
+    padding 25
+    padding 28
+    field seL4_FaultType 4
+}
+block VCPUFault {
+    padding 64
+    field hsr 32
+    padding 28
+    field seL4_FaultType 4
+}
+block VPPIEvent {
+    padding 55
+    field irq_w 9
+    padding 32
+    padding 28
     field seL4_FaultType 4
 }
 -- VM attributes
@@ -330,7 +349,9 @@ block asid_map_none {
 block asid_map_vspace {
     padding 16
     field_high vspace_root 36
-    padding 11
+    padding 2
+    field stored_hw_vmid 8
+    field stored_vmid_valid 1
     field type 1
 }
 tagged_union asid_map type {
@@ -361,8 +382,7 @@ block pte_page {
     field AF 1
     field SH 2
     field AP 2
-    padding 1
-    field AttrIndx 3
+    field AttrIndx 4
     field pte_hw_type 2
 }
 -- The level 3 page pte structure
@@ -377,8 +397,7 @@ block pte_4k_page {
     field AF 1
     field SH 2
     field AP 2
-    padding 1
-    field AttrIndx 3
+    field AttrIndx 4
     field pte_hw_type 2
 }
 block pte_invalid {
@@ -401,6 +420,38 @@ block ttbr {
     field asid 16
     field_high base_address 48
 }
+block virq_invalid {
+    padding 32
+    padding 2
+    field virqType 2
+    padding 8
+    field virqEOIIRQEN 1
+    padding 19
+}
+block virq_active {
+    padding 32
+    padding 2
+    field virqType 2
+    padding 8
+    field virqEOIIRQEN 1
+    padding 19
+}
+block virq_pending {
+    padding 32
+    padding 1
+    field virqGroup 1
+    field virqType 2
+    field virqPriority 5
+    padding 3
+    field virqEOIIRQEN 1
+    padding 9
+    field virqIRQ 10
+}
+tagged_union virq virqType {
+    tag virq_invalid 0
+    tag virq_pending 1
+    tag virq_active 2
+}
 --
 -- Copyright 2020, Data61, CSIRO (ABN 41 687 119 230)
 --
@@ -415,4 +466,7 @@ tagged_union seL4_Fault seL4_FaultType {
     tag UserException 3
     -- arch specific faults
     tag VMFault 5
+    tag VGICMaintenance 6
+    tag VCPUFault 7
+    tag VPPIEvent 8
 }

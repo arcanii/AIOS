@@ -12,7 +12,7 @@ set(KernelSel4Arch "aarch64" CACHE STRING "" FORCE)
 set(KernelArmCPU "cortex-a53" CACHE STRING "" FORCE)
 
 # SMP
-set(KernelMaxNumNodes 1 CACHE STRING "" FORCE)
+set(KernelMaxNumNodes 4 CACHE STRING "" FORCE)
 
 # Debug
 set(KernelVerificationBuild OFF CACHE BOOL "" FORCE)
@@ -25,3 +25,4 @@ set(KernelIsMCS OFF CACHE BOOL "" FORCE)
 # GCC 15 workaround: musl weak_alias generates protected visibility symbols
 # which the linker cannot copy-relocate. Force default visibility.
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fvisibility=default" CACHE STRING "" FORCE)
+set(KernelArmHypervisorSupport ON CACHE BOOL "" FORCE)

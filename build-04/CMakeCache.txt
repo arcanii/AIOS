@@ -93,7 +93,7 @@ CMAKE_C_COMPILER_AR:FILEPATH=/opt/homebrew/bin/aarch64-linux-gnu-gcc-ar
 // for the GCC compiler
 CMAKE_C_COMPILER_RANLIB:FILEPATH=/opt/homebrew/bin/aarch64-linux-gnu-gcc-ranlib
 
-CMAKE_C_FLAGS:STRING= -fvisibility=default -fvisibility=default -fvisibility=default -fvisibility=default
+CMAKE_C_FLAGS:STRING= -fvisibility=default
 
 //Flags used by the C compiler during DEBUG builds.
 CMAKE_C_FLAGS_DEBUG:STRING=-g
@@ -364,6 +364,10 @@ KernelAllowSMCCalls:BOOL=OFF
 //Architecture to use when building the kernel
 KernelArch:STRING=arm
 
+//Disable the trapping of WFI     and WFE instructions when configuring
+// the     Hyp Configuration Registor (HCR) of a VCPU
+KernelArmDisableWFIWFETraps:BOOL=OFF
+
 //PL0 access to generic timer CNTPCT and CNTFRQ.     Grant user
 // access to physical counter and counter     frequency registers
 // of the generic timer.     WARNING: selecting this option opens
@@ -402,12 +406,18 @@ KernelArmGicV3:BOOL=OFF
 
 //Build as Hypervisor. Utilise ARM virtualisation extensions to
 // build the kernel as a hypervisor
-KernelArmHypervisorSupport:BOOL=OFF
+KernelArmHypervisorSupport:BOOL=ON
 
 //Which TLS register is used for Kernel TLS syscalls and invocations.
 //     The usual registers used by gnu-elf ABIs are:     - on aarch32:
 // tpidruro     - on aarch64: tpidru.
 KernelArmTLSReg:STRING=tpidru
+
+//When set the kernel will update the VOFFSET     register of a
+// VCPU when restoring it so that its view of Virtual time hasn't
+// increased while it     was suspended.  When unset the VOFFSET
+// won't be updated other than by the read and write register api.
+KernelArmVtimerUpdateVOffset:BOOL=ON
 
 //Enable benchmarks including logging and tracing info.     Setting
 // this value > 1 enables a 1MB log buffer and functions for extracting
@@ -468,10 +478,6 @@ KernelCustomDTS:FILEPATH=
 // KernelPlatform's         device tree during build time
 KernelCustomDTSOverlay:STRING=
 
-//Adds a system call that allows users to specify code to be run
-// in kernel mode.     Useful for profiling.
-KernelDangerousCodeInjection:BOOL=OFF
-
 //Enable debug facilities (symbols and assertions) in the kernel
 KernelDebugBuild:BOOL=ON
 
@@ -510,7 +516,7 @@ KernelIsMCS:BOOL=OFF
 //Max number of bootinfo untyped caps
 KernelMaxNumBootinfoUntypedCaps:STRING=230
 
-KernelMaxNumNodes:STRING=1
+KernelMaxNumNodes:STRING=4
 
 //Maximum number of work units (delete/revoke iterations) until
 // the kernel checks for    pending interrupts (and preempts the
@@ -1395,10 +1401,8 @@ KernelArmCortexA7:INTERNAL=OFF
 KernelArmCortexA72:INTERNAL=OFF
 KernelArmCortexA8:INTERNAL=OFF
 KernelArmCortexA9:INTERNAL=OFF
-//Disable the trapping of WFI     and WFE instructions when configuring
-// the     Hyp Configuration Registor (HCR) of a VCPU
-KernelArmDisableWFIWFETraps:INTERNAL=OFF
-KernelArmDisableWFIWFETraps_DISABLED:INTERNAL=TRUE
+//ADVANCED property for variable: KernelArmDisableWFIWFETraps
+KernelArmDisableWFIWFETraps-ADVANCED:INTERNAL=1
 //Enable Cortex-A9 prefetcher     Cortex-A9 has an L1 and L2 prefetcher.
 // By default     they are disabled. This config options allows
 //     them to be turned on. Enabling the prefetchers     requires
@@ -1480,12 +1484,8 @@ KernelArmTLSReg-STRINGS:INTERNAL=tpidru;tpidruro
 KernelArmTLSRegTPIDRU:INTERNAL=ON
 KernelArmTLSRegTPIDRURO:INTERNAL=OFF
 KernelArmTLSReg_all_strings:INTERNAL=tpidru;tpidruro
-//When set the kernel will update the VOFFSET     register of a
-// VCPU when restoring it so that its view of Virtual time hasn't
-// increased while it     was suspended.  When unset the VOFFSET
-// won't be updated other than by the read and write register api.
-KernelArmVtimerUpdateVOffset:INTERNAL=ON
-KernelArmVtimerUpdateVOffset_DISABLED:INTERNAL=TRUE
+//ADVANCED property for variable: KernelArmVtimerUpdateVOffset
+KernelArmVtimerUpdateVOffset-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: KernelBenchmarks
 KernelBenchmarks-ADVANCED:INTERNAL=1
 //STRINGS property for variable: KernelBenchmarks
@@ -1521,9 +1521,11 @@ KernelCtzNoBuiltin-ADVANCED:INTERNAL=1
 //Location of kernel DTB file
 KernelDTBPath:INTERNAL=/Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/kernel.dtb
 //Size of DTB blob, in bytes
-KernelDTBSize:INTERNAL=7697
-//ADVANCED property for variable: KernelDangerousCodeInjection
-KernelDangerousCodeInjection-ADVANCED:INTERNAL=1
+KernelDTBSize:INTERNAL=8362
+//Adds a system call that allows users to specify code to be run
+// in kernel mode.     Useful for profiling.
+KernelDangerousCodeInjection:INTERNAL=OFF
+KernelDangerousCodeInjection_DISABLED:INTERNAL=TRUE
 //ADVANCED property for variable: KernelDebugBuild
 KernelDebugBuild-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: KernelDebugDisableBranchPrediction
@@ -1544,7 +1546,7 @@ KernelDebugDisableL2Cache-ADVANCED:INTERNAL=1
 KernelDebugDisablePrefetchers:INTERNAL=OFF
 KernelDebugDisablePrefetchers_DISABLED:INTERNAL=TRUE
 KernelEnableBenchmarks:INTERNAL=OFF
-KernelEnableSMPSupport:INTERNAL=OFF
+KernelEnableSMPSupport:INTERNAL=ON
 //ADVANCED property for variable: KernelExceptionFastpath
 KernelExceptionFastpath-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: KernelFWholeProgram

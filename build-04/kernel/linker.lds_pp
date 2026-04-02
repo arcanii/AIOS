@@ -85,7 +85,6 @@
 /* disabled: CONFIG_DEBUG_DISABLE_L1_ICACHE */
 /* disabled: CONFIG_DEBUG_DISABLE_L1_DCACHE */
 /* disabled: CONFIG_DEBUG_DISABLE_BRANCH_PREDICTION */
-/* disabled: CONFIG_ARM_HYPERVISOR_SUPPORT */
 /* disabled: CONFIG_ARM_GIC_V3_SUPPORT */
 /* disabled: CONFIG_AARCH64_VSPACE_S2_START_L1 */
 /* disabled: CONFIG_ARM_HYP_ENABLE_VCPU_CP14_SAVE_AND_RESTORE */
@@ -103,7 +102,6 @@
 /* disabled: CONFIG_ARM_HAS_TLB_LOCK */
 /* disabled: CONFIG_EXCEPTION_FASTPATH */
 /* disabled: CONFIG_SIGNAL_FASTPATH */
-/* disabled: CONFIG_ENABLE_SMP_SUPPORT */
 /* disabled: CONFIG_VERIFICATION_BUILD */
 /* disabled: CONFIG_BINARY_VERIFICATION_BUILD */
 /* disabled: CONFIG_HARDWARE_DEBUG_API */
@@ -236,9 +234,17 @@
  * the same size as a 'long'.
  */
 /* object sizes - 2^n */
+/* for a 3 level translation, we skip the PGD */
 /* word size */
 /* Untyped size limits */
 /* IPC buffer is 1024 bytes, giving size bits of 10 */
+/* The userspace occupies the range 0x0 to 0xfffffffffff.
+ * The stage-1 translation is disabled, and the stage-2
+ * translation input addree size is constrained by the
+ * ID_AA64MMFR0_EL1.PARange which is 44 bits on TX1.
+ * Anything address above the range above triggers an
+ * address size fault.
+ */
 /* First address in the virtual address space that is not accessible to user level */
 /* Extract the n-level PT index from a virtual address:
  * - n is page table level counting from the root page table,
@@ -532,10 +538,10 @@
  */
        
 ENTRY(_start)
-KERNEL_OFFSET = ((0xffffff8000000000 /* 2^64 - 2^39 */ - 0x0) + 0x40000000) - 0x40000000;
+KERNEL_OFFSET = ((0x0000008000000000 /* 2^40 - 2^39 */ - 0x0) + 0x60000000) - 0x60000000;
 SECTIONS
 {
-    . = ((0xffffff8000000000 /* 2^64 - 2^39 */ - 0x0) + 0x40000000);
+    . = ((0x0000008000000000 /* 2^40 - 2^39 */ - 0x0) + 0x60000000);
     .boot . : AT(ADDR(.boot) - KERNEL_OFFSET)
     {
         *(.boot.text)

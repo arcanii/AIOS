@@ -15,7 +15,10 @@ enum seL4_Fault_tag {
     seL4_Fault_CapFault = 1,
     seL4_Fault_UnknownSyscall = 2,
     seL4_Fault_UserException = 3,
-    seL4_Fault_VMFault = 5
+    seL4_Fault_VMFault = 5,
+    seL4_Fault_VGICMaintenance = 6,
+    seL4_Fault_VCPUFault = 7,
+    seL4_Fault_VPPIEvent = 8
 };
 typedef enum seL4_Fault_tag seL4_Fault_tag_t;
 
@@ -1832,6 +1835,314 @@ LIBSEL4_INLINE_FUNC void
 seL4_Fault_VMFault_ptr_set_FSR(seL4_Fault_t *seL4_Fault_ptr, seL4_Uint64 v64) {
     /* fail if union does not have the expected tag */
     seL4_DebugAssert(((seL4_Fault_ptr->words[0] >> 0) & 0xf) == seL4_Fault_VMFault);
+
+    /* fail if user has passed bits that we will override */
+    seL4_DebugAssert((((~0xffffffffffffffffull >> 0) | 0x0) & v64) == ((0 && (v64 & (1ull << (63)))) ? 0x0 : 0));
+
+    seL4_Fault_ptr->words[1] &= ~0xffffffffffffffffull;
+    seL4_Fault_ptr->words[1] |= (v64 << 0) & 0xffffffffffffffffull;
+}
+
+LIBSEL4_INLINE_FUNC seL4_Fault_t CONST
+seL4_Fault_VGICMaintenance_new(seL4_Uint64 IDX) {
+    seL4_Fault_t seL4_Fault;
+
+    /* fail if user has passed bits that we will override */  
+    seL4_DebugAssert(((seL4_Uint64)seL4_Fault_VGICMaintenance & ~0xfull) == ((0 && ((seL4_Uint64)seL4_Fault_VGICMaintenance & (1ull << 63))) ? 0x0 : 0));
+
+    seL4_Fault.words[0] = 0
+        | ((seL4_Uint64)seL4_Fault_VGICMaintenance & 0xfull) << 0;
+    seL4_Fault.words[1] = 0
+        | IDX << 0;
+    seL4_Fault.words[2] = 0;
+    seL4_Fault.words[3] = 0;
+    seL4_Fault.words[4] = 0;
+    seL4_Fault.words[5] = 0;
+    seL4_Fault.words[6] = 0;
+    seL4_Fault.words[7] = 0;
+    seL4_Fault.words[8] = 0;
+    seL4_Fault.words[9] = 0;
+    seL4_Fault.words[10] = 0;
+    seL4_Fault.words[11] = 0;
+    seL4_Fault.words[12] = 0;
+    seL4_Fault.words[13] = 0;
+
+    return seL4_Fault;
+}
+
+LIBSEL4_INLINE_FUNC void
+seL4_Fault_VGICMaintenance_ptr_new(seL4_Fault_t *seL4_Fault_ptr, seL4_Uint64 IDX) {
+    /* fail if user has passed bits that we will override */  
+    seL4_DebugAssert(((seL4_Uint64)seL4_Fault_VGICMaintenance & ~0xfull) == ((0 && ((seL4_Uint64)seL4_Fault_VGICMaintenance & (1ull << 63))) ? 0x0 : 0));
+
+    seL4_Fault_ptr->words[0] = 0
+        | ((seL4_Uint64)seL4_Fault_VGICMaintenance & 0xfull) << 0;
+    seL4_Fault_ptr->words[1] = 0
+        | IDX << 0;
+    seL4_Fault_ptr->words[2] = 0;
+    seL4_Fault_ptr->words[3] = 0;
+    seL4_Fault_ptr->words[4] = 0;
+    seL4_Fault_ptr->words[5] = 0;
+    seL4_Fault_ptr->words[6] = 0;
+    seL4_Fault_ptr->words[7] = 0;
+    seL4_Fault_ptr->words[8] = 0;
+    seL4_Fault_ptr->words[9] = 0;
+    seL4_Fault_ptr->words[10] = 0;
+    seL4_Fault_ptr->words[11] = 0;
+    seL4_Fault_ptr->words[12] = 0;
+    seL4_Fault_ptr->words[13] = 0;
+}
+
+LIBSEL4_INLINE_FUNC seL4_Uint64 CONST
+seL4_Fault_VGICMaintenance_get_IDX(seL4_Fault_t seL4_Fault) {
+    seL4_Uint64 ret;
+    /* fail if union does not have the expected tag */
+    seL4_DebugAssert(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VGICMaintenance);
+
+    ret = (seL4_Fault.words[1] & 0xffffffffffffffffull) >> 0;
+    /* Possibly sign extend */
+    if (__builtin_expect(!!(0 && (ret & (1ull << (63)))), 0)) {
+        ret |= 0x0;
+    }
+    return ret;
+}
+
+LIBSEL4_INLINE_FUNC seL4_Fault_t CONST
+seL4_Fault_VGICMaintenance_set_IDX(seL4_Fault_t seL4_Fault, seL4_Uint64 v64) {
+    /* fail if union does not have the expected tag */
+    seL4_DebugAssert(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VGICMaintenance);
+    /* fail if user has passed bits that we will override */
+    seL4_DebugAssert((((~0xffffffffffffffffull >> 0 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (63)))) ? 0x0 : 0));
+
+    seL4_Fault.words[1] &= ~0xffffffffffffffffull;
+    seL4_Fault.words[1] |= (v64 << 0) & 0xffffffffffffffffull;
+    return seL4_Fault;
+}
+
+LIBSEL4_INLINE_FUNC seL4_Uint64 PURE
+seL4_Fault_VGICMaintenance_ptr_get_IDX(seL4_Fault_t *seL4_Fault_ptr) {
+    seL4_Uint64 ret;
+    /* fail if union does not have the expected tag */
+    seL4_DebugAssert(((seL4_Fault_ptr->words[0] >> 0) & 0xf) == seL4_Fault_VGICMaintenance);
+
+    ret = (seL4_Fault_ptr->words[1] & 0xffffffffffffffffull) >> 0;
+    /* Possibly sign extend */
+    if (__builtin_expect(!!(0 && (ret & (1ull << (63)))), 0)) {
+        ret |= 0x0;
+    }
+    return ret;
+}
+
+LIBSEL4_INLINE_FUNC void
+seL4_Fault_VGICMaintenance_ptr_set_IDX(seL4_Fault_t *seL4_Fault_ptr, seL4_Uint64 v64) {
+    /* fail if union does not have the expected tag */
+    seL4_DebugAssert(((seL4_Fault_ptr->words[0] >> 0) & 0xf) == seL4_Fault_VGICMaintenance);
+
+    /* fail if user has passed bits that we will override */
+    seL4_DebugAssert((((~0xffffffffffffffffull >> 0) | 0x0) & v64) == ((0 && (v64 & (1ull << (63)))) ? 0x0 : 0));
+
+    seL4_Fault_ptr->words[1] &= ~0xffffffffffffffffull;
+    seL4_Fault_ptr->words[1] |= (v64 << 0) & 0xffffffffffffffffull;
+}
+
+LIBSEL4_INLINE_FUNC seL4_Fault_t CONST
+seL4_Fault_VCPUFault_new(seL4_Uint64 HSR) {
+    seL4_Fault_t seL4_Fault;
+
+    /* fail if user has passed bits that we will override */  
+    seL4_DebugAssert((HSR & ~0xffffffffull) == ((0 && (HSR & (1ull << 63))) ? 0x0 : 0));  
+    seL4_DebugAssert(((seL4_Uint64)seL4_Fault_VCPUFault & ~0xfull) == ((0 && ((seL4_Uint64)seL4_Fault_VCPUFault & (1ull << 63))) ? 0x0 : 0));
+
+    seL4_Fault.words[0] = 0
+        | ((seL4_Uint64)seL4_Fault_VCPUFault & 0xfull) << 0;
+    seL4_Fault.words[1] = 0
+        | (HSR & 0xffffffffull) << 0;
+    seL4_Fault.words[2] = 0;
+    seL4_Fault.words[3] = 0;
+    seL4_Fault.words[4] = 0;
+    seL4_Fault.words[5] = 0;
+    seL4_Fault.words[6] = 0;
+    seL4_Fault.words[7] = 0;
+    seL4_Fault.words[8] = 0;
+    seL4_Fault.words[9] = 0;
+    seL4_Fault.words[10] = 0;
+    seL4_Fault.words[11] = 0;
+    seL4_Fault.words[12] = 0;
+    seL4_Fault.words[13] = 0;
+
+    return seL4_Fault;
+}
+
+LIBSEL4_INLINE_FUNC void
+seL4_Fault_VCPUFault_ptr_new(seL4_Fault_t *seL4_Fault_ptr, seL4_Uint64 HSR) {
+    /* fail if user has passed bits that we will override */  
+    seL4_DebugAssert((HSR & ~0xffffffffull) == ((0 && (HSR & (1ull << 63))) ? 0x0 : 0));  
+    seL4_DebugAssert(((seL4_Uint64)seL4_Fault_VCPUFault & ~0xfull) == ((0 && ((seL4_Uint64)seL4_Fault_VCPUFault & (1ull << 63))) ? 0x0 : 0));
+
+    seL4_Fault_ptr->words[0] = 0
+        | ((seL4_Uint64)seL4_Fault_VCPUFault & 0xfull) << 0;
+    seL4_Fault_ptr->words[1] = 0
+        | (HSR & 0xffffffffull) << 0;
+    seL4_Fault_ptr->words[2] = 0;
+    seL4_Fault_ptr->words[3] = 0;
+    seL4_Fault_ptr->words[4] = 0;
+    seL4_Fault_ptr->words[5] = 0;
+    seL4_Fault_ptr->words[6] = 0;
+    seL4_Fault_ptr->words[7] = 0;
+    seL4_Fault_ptr->words[8] = 0;
+    seL4_Fault_ptr->words[9] = 0;
+    seL4_Fault_ptr->words[10] = 0;
+    seL4_Fault_ptr->words[11] = 0;
+    seL4_Fault_ptr->words[12] = 0;
+    seL4_Fault_ptr->words[13] = 0;
+}
+
+LIBSEL4_INLINE_FUNC seL4_Uint64 CONST
+seL4_Fault_VCPUFault_get_HSR(seL4_Fault_t seL4_Fault) {
+    seL4_Uint64 ret;
+    /* fail if union does not have the expected tag */
+    seL4_DebugAssert(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VCPUFault);
+
+    ret = (seL4_Fault.words[1] & 0xffffffffull) >> 0;
+    /* Possibly sign extend */
+    if (__builtin_expect(!!(0 && (ret & (1ull << (63)))), 0)) {
+        ret |= 0x0;
+    }
+    return ret;
+}
+
+LIBSEL4_INLINE_FUNC seL4_Fault_t CONST
+seL4_Fault_VCPUFault_set_HSR(seL4_Fault_t seL4_Fault, seL4_Uint64 v64) {
+    /* fail if union does not have the expected tag */
+    seL4_DebugAssert(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VCPUFault);
+    /* fail if user has passed bits that we will override */
+    seL4_DebugAssert((((~0xffffffffull >> 0 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (63)))) ? 0x0 : 0));
+
+    seL4_Fault.words[1] &= ~0xffffffffull;
+    seL4_Fault.words[1] |= (v64 << 0) & 0xffffffffull;
+    return seL4_Fault;
+}
+
+LIBSEL4_INLINE_FUNC seL4_Uint64 PURE
+seL4_Fault_VCPUFault_ptr_get_HSR(seL4_Fault_t *seL4_Fault_ptr) {
+    seL4_Uint64 ret;
+    /* fail if union does not have the expected tag */
+    seL4_DebugAssert(((seL4_Fault_ptr->words[0] >> 0) & 0xf) == seL4_Fault_VCPUFault);
+
+    ret = (seL4_Fault_ptr->words[1] & 0xffffffffull) >> 0;
+    /* Possibly sign extend */
+    if (__builtin_expect(!!(0 && (ret & (1ull << (63)))), 0)) {
+        ret |= 0x0;
+    }
+    return ret;
+}
+
+LIBSEL4_INLINE_FUNC void
+seL4_Fault_VCPUFault_ptr_set_HSR(seL4_Fault_t *seL4_Fault_ptr, seL4_Uint64 v64) {
+    /* fail if union does not have the expected tag */
+    seL4_DebugAssert(((seL4_Fault_ptr->words[0] >> 0) & 0xf) == seL4_Fault_VCPUFault);
+
+    /* fail if user has passed bits that we will override */
+    seL4_DebugAssert((((~0xffffffffull >> 0) | 0x0) & v64) == ((0 && (v64 & (1ull << (63)))) ? 0x0 : 0));
+
+    seL4_Fault_ptr->words[1] &= ~0xffffffffull;
+    seL4_Fault_ptr->words[1] |= (v64 << 0) & 0xffffffffull;
+}
+
+LIBSEL4_INLINE_FUNC seL4_Fault_t CONST
+seL4_Fault_VPPIEvent_new(seL4_Uint64 irq) {
+    seL4_Fault_t seL4_Fault;
+
+    /* fail if user has passed bits that we will override */  
+    seL4_DebugAssert(((seL4_Uint64)seL4_Fault_VPPIEvent & ~0xfull) == ((0 && ((seL4_Uint64)seL4_Fault_VPPIEvent & (1ull << 63))) ? 0x0 : 0));
+
+    seL4_Fault.words[0] = 0
+        | ((seL4_Uint64)seL4_Fault_VPPIEvent & 0xfull) << 0;
+    seL4_Fault.words[1] = 0
+        | irq << 0;
+    seL4_Fault.words[2] = 0;
+    seL4_Fault.words[3] = 0;
+    seL4_Fault.words[4] = 0;
+    seL4_Fault.words[5] = 0;
+    seL4_Fault.words[6] = 0;
+    seL4_Fault.words[7] = 0;
+    seL4_Fault.words[8] = 0;
+    seL4_Fault.words[9] = 0;
+    seL4_Fault.words[10] = 0;
+    seL4_Fault.words[11] = 0;
+    seL4_Fault.words[12] = 0;
+    seL4_Fault.words[13] = 0;
+
+    return seL4_Fault;
+}
+
+LIBSEL4_INLINE_FUNC void
+seL4_Fault_VPPIEvent_ptr_new(seL4_Fault_t *seL4_Fault_ptr, seL4_Uint64 irq) {
+    /* fail if user has passed bits that we will override */  
+    seL4_DebugAssert(((seL4_Uint64)seL4_Fault_VPPIEvent & ~0xfull) == ((0 && ((seL4_Uint64)seL4_Fault_VPPIEvent & (1ull << 63))) ? 0x0 : 0));
+
+    seL4_Fault_ptr->words[0] = 0
+        | ((seL4_Uint64)seL4_Fault_VPPIEvent & 0xfull) << 0;
+    seL4_Fault_ptr->words[1] = 0
+        | irq << 0;
+    seL4_Fault_ptr->words[2] = 0;
+    seL4_Fault_ptr->words[3] = 0;
+    seL4_Fault_ptr->words[4] = 0;
+    seL4_Fault_ptr->words[5] = 0;
+    seL4_Fault_ptr->words[6] = 0;
+    seL4_Fault_ptr->words[7] = 0;
+    seL4_Fault_ptr->words[8] = 0;
+    seL4_Fault_ptr->words[9] = 0;
+    seL4_Fault_ptr->words[10] = 0;
+    seL4_Fault_ptr->words[11] = 0;
+    seL4_Fault_ptr->words[12] = 0;
+    seL4_Fault_ptr->words[13] = 0;
+}
+
+LIBSEL4_INLINE_FUNC seL4_Uint64 CONST
+seL4_Fault_VPPIEvent_get_irq(seL4_Fault_t seL4_Fault) {
+    seL4_Uint64 ret;
+    /* fail if union does not have the expected tag */
+    seL4_DebugAssert(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VPPIEvent);
+
+    ret = (seL4_Fault.words[1] & 0xffffffffffffffffull) >> 0;
+    /* Possibly sign extend */
+    if (__builtin_expect(!!(0 && (ret & (1ull << (63)))), 0)) {
+        ret |= 0x0;
+    }
+    return ret;
+}
+
+LIBSEL4_INLINE_FUNC seL4_Fault_t CONST
+seL4_Fault_VPPIEvent_set_irq(seL4_Fault_t seL4_Fault, seL4_Uint64 v64) {
+    /* fail if union does not have the expected tag */
+    seL4_DebugAssert(((seL4_Fault.words[0] >> 0) & 0xf) == seL4_Fault_VPPIEvent);
+    /* fail if user has passed bits that we will override */
+    seL4_DebugAssert((((~0xffffffffffffffffull >> 0 ) | 0x0) & v64) == ((0 && (v64 & (1ull << (63)))) ? 0x0 : 0));
+
+    seL4_Fault.words[1] &= ~0xffffffffffffffffull;
+    seL4_Fault.words[1] |= (v64 << 0) & 0xffffffffffffffffull;
+    return seL4_Fault;
+}
+
+LIBSEL4_INLINE_FUNC seL4_Uint64 PURE
+seL4_Fault_VPPIEvent_ptr_get_irq(seL4_Fault_t *seL4_Fault_ptr) {
+    seL4_Uint64 ret;
+    /* fail if union does not have the expected tag */
+    seL4_DebugAssert(((seL4_Fault_ptr->words[0] >> 0) & 0xf) == seL4_Fault_VPPIEvent);
+
+    ret = (seL4_Fault_ptr->words[1] & 0xffffffffffffffffull) >> 0;
+    /* Possibly sign extend */
+    if (__builtin_expect(!!(0 && (ret & (1ull << (63)))), 0)) {
+        ret |= 0x0;
+    }
+    return ret;
+}
+
+LIBSEL4_INLINE_FUNC void
+seL4_Fault_VPPIEvent_ptr_set_irq(seL4_Fault_t *seL4_Fault_ptr, seL4_Uint64 v64) {
+    /* fail if union does not have the expected tag */
+    seL4_DebugAssert(((seL4_Fault_ptr->words[0] >> 0) & 0xf) == seL4_Fault_VPPIEvent);
 
     /* fail if user has passed bits that we will override */
     seL4_DebugAssert((((~0xffffffffffffffffull >> 0) | 0x0) & v64) == ((0 && (v64 & (1ull << (63)))) ? 0x0 : 0));
