@@ -1220,6 +1220,7 @@ static void dispatch(void) {
     else if (starts_with(line, "cp "))  cmd_cp(line + 3);
     else if (starts_with(line, "mv "))  cmd_mv(line + 3);
     else if (starts_with(line, "rm "))  unlink(line + 3);
+    else if (str_eq(line, "echo"))        { print("\n"); }
     else if (starts_with(line, "echo ")) cmd_echo(line + 5);
     else if (str_eq(line, "date")) {
         long (*tfn)(void) = sys->time;
@@ -1423,7 +1424,7 @@ static void dispatch(void) {
                 }
             }
 
-            /* Try as shell script */
+            /* Try as shell script (.sh extension or shebang) */
             if (rc < 0) {
                 char sh[72];
                 int si = 0;
@@ -1431,12 +1432,29 @@ static void dispatch(void) {
                 int has_sh = (si > 3 && sh[si-3] == '.' && sh[si-2] == 's' && sh[si-1] == 'h');
                 if (!has_sh) { sh[si++] = '.'; sh[si++] = 's'; sh[si++] = 'h'; }
                 sh[si] = '\0';
+                /* Try cmd.sh first, then cmd itself */
+                const char *script_name = (void *)0;
                 int sfd = open(sh, O_RDONLY);
-                if (sfd < 0) sfd = open(cmd, O_RDONLY);
                 if (sfd >= 0) {
+                    script_name = sh;
+                } else {
+                    sfd = open(cmd, O_RDONLY);
+                    if (sfd >= 0) script_name = cmd;
+                }
+                if (sfd >= 0 && script_name) {
+                    /* Verify it looks like text, not a binary */
+                    char probe[4];
+                    int pn = (int)read(sfd, probe, 4);
                     close(sfd);
-                    cmd_source(has_sh ? cmd : sh);
-                    rc = 0;
+                    int is_text = 0;
+                    if (pn > 0 && (probe[0] == '#' || probe[0] == '\n' ||
+                        (probe[0] >= ' ' && probe[0] < 127))) {
+                        is_text = 1;
+                    }
+                    if (is_text) {
+                        cmd_source(script_name);
+                        rc = 0;
+                    }
                 }
             }
 
