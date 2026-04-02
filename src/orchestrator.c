@@ -537,6 +537,22 @@ void notified(microkit_channel ch) {
         microkit_notify(CH_SANDBOX);
         arm_preempt_timer();
     }
+    if (ch == CH_SERIAL) {
+        /* Serial driver received input — check for Ctrl-C (0x03) */
+        ring_buf_t *rx = (ring_buf_t *)rx_buf;
+        /* Peek at ring buffer for 0x03 without consuming */
+        uint32_t head = rx->write_idx;
+        uint32_t tail = rx->read_idx;
+        while (head != tail) {
+            if (rx->data[tail % RING_SIZE] == 0x03) {
+                /* Set Ctrl-C flag in sandbox shared memory */
+                WR32(sandbox_io, CTRL_C_FLAG, 1);
+                microkit_notify(CH_SANDBOX);
+                break;
+            }
+            tail++;
+        }
+    }
     if (ch == CH_SANDBOX) {
         /* Async request from sandbox kernel */
         handle_async_request();

@@ -84,6 +84,7 @@ typedef struct {
 #define TH_FINISHED 4
 #define TH_BLOCKED_MTX 5   /* blocked waiting for mutex */
 #define TH_BLOCKED_COND 6  /* blocked waiting for condvar */
+#define TH_BLOCKED_IO   7  /* blocked waiting for async I/O */
 
 /* ---- Process state ---- */
 #define MAX_FDS 16
@@ -369,7 +370,7 @@ static void ks_puts_direct(const char *s) {
 
 
 /* Check if current thread's time slice expired, yield if so */
-static void check_preempt(void) {
+static void __attribute__((unused)) check_preempt(void) {
     if (current_thread >= 0 && slice_ticks > 0) {
         uint64_t now;
         __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
@@ -382,6 +383,10 @@ static void check_preempt(void) {
 /* Forward declaration for signal delivery */
 static int ks_kill_proc(int pid, int sig);
 
+/* ks_getc: yields between retries so other threads get scheduled.
+ * The PPC check is fast (ring buffer peek). Between checks, the
+ * calling thread yields its timeslice — background threads run
+ * on the intervening scheduler ticks. */
 static int ks_getc(void) {
     for (;;) {
         seL4_SetMR(0, SYS_GETC);
@@ -392,7 +397,6 @@ static int ks_getc(void) {
             if ((unsigned char)r == 0x03) {
                 if (current_thread >= 0) {
                     int caller_pi = threads[current_thread].proc_idx;
-                    /* Find foreground process (may be child of shell) */
                     int fg_pid = -1;
                     for (int i = 0; i < MAX_PROCS; i++) {
                         if (procs[i].state == PROC_ALIVE && procs[i].foreground &&
@@ -404,18 +408,19 @@ static int ks_getc(void) {
                     if (fg_pid > 0) {
                         ks_kill_proc(fg_pid, 2); /* SIGINT */
                         kputs("^C\n");
-                        return -1; /* signal sent, return error to break input loop */
+                        return -1;
                     }
                 }
-                /* No foreground child -- just echo ^C */
                 kputs("^C\n");
                 return -1;
             }
             return (int)(unsigned char)r;
         }
         if (r == -2) {
-            /* EAGAIN -- yield to other threads then retry */
-            check_preempt();
+            /* No input yet — yield so other threads run.
+             * Thread stays READY so scheduler picks it up next round.
+             * The PPC above also serves as a Microkit event loop return
+             * point — notifications get delivered during ppcall. */
             sched_yield();
             continue;
         }
@@ -1290,7 +1295,6 @@ static int ks_sync(void) {
 }
 
 
-#define TH_BLOCKED_IO_VAL 7  /* matches TH_BLOCKED_IO in async_ipc.h */
 
 static volatile uint32_t async_next_id = 1;
 
@@ -1326,7 +1330,7 @@ static int64_t __attribute__((unused)) async_syscall(uint32_t syscall_nr, uint64
     microkit_notify(CH_ORCH);
 
     /* Block this thread until response arrives */
-    threads[current_thread].state = TH_BLOCKED_IO_VAL;
+    threads[current_thread].state = TH_BLOCKED_IO;
     threads[current_thread].wait_channel = (int)req_id;
     sched_yield();
 
@@ -1345,7 +1349,7 @@ static void async_check_completion(void) {
 
     /* Find and wake the blocked thread */
     for (int i = 0; i < MAX_THREADS; i++) {
-        if (threads[i].state == TH_BLOCKED_IO_VAL &&
+        if (threads[i].state == TH_BLOCKED_IO &&
             threads[i].wait_channel == (int)req_id) {
             threads[i].state = TH_READY;
             threads[i].wait_channel = -1;
@@ -1722,6 +1726,24 @@ void notified(microkit_channel ch) {
     (void)ch;
     /* Check for async IPC completion */
     async_check_completion();
+    /* Check for out-of-band Ctrl-C from serial driver */
+    {
+        volatile uint8_t *io = (volatile uint8_t *)sandbox_io;
+        uint32_t ctrl_c = RD32((uintptr_t)io, CTRL_C_FLAG);
+        if (ctrl_c) {
+            WR32((uintptr_t)io, CTRL_C_FLAG, 0); /* clear flag */
+            /* Send SIGINT to foreground process */
+            for (int i = 0; i < MAX_PROCS; i++) {
+                if (procs[i].state == PROC_ALIVE && procs[i].foreground &&
+                    procs[i].pid > 1) { /* don't kill shell */
+                    ks_kill_proc(procs[i].pid, 2); /* SIGINT */
+                    kputs("^C\n");
+                    break;
+                }
+            }
+        }
+    }
+
     /* Preemption tick from orchestrator */
     if (current_thread >= 0 && threads[current_thread].state == TH_RUNNING) {
         /* Check if there are other ready threads */

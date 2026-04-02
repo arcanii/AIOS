@@ -58,4 +58,10 @@
 /* Thread state for async I/O blocked */
 #define TH_BLOCKED_IO   7
 
+
+/* Out-of-band signal: Ctrl-C detected by serial driver
+ * Orchestrator sets this flag in sandbox_io when 0x03 seen in RX.
+ * Sandbox notified() checks and delivers SIGINT to foreground process. */
+#define CTRL_C_FLAG     0x0F0   /* offset in sandbox_io: 1 = Ctrl-C pending */
+
 #endif /* AIOS_ASYNC_IPC_H */
