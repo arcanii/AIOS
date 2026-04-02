@@ -1,31 +1,28 @@
-#
-# AIOS root task + child apps
-#
 cmake_minimum_required(VERSION 3.16.0)
 project(aios-rootserver C ASM)
 
 set(AIOS_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
 
-# Child app 1: hello
-add_executable(hello_child ${AIOS_ROOT}/src/apps/hello_child.c)
-target_link_libraries(hello_child
-    sel4runtime sel4 sel4muslcsys muslc
-    sel4platsupport sel4utils sel4simple sel4simple-default
-    sel4vka sel4allocman
-)
-target_include_directories(hello_child PRIVATE ${AIOS_ROOT}/include)
+# Helper macro for child apps
+macro(AiosChildApp name)
+    add_executable(${name} ${AIOS_ROOT}/src/apps/${name}.c)
+    target_link_libraries(${name}
+        sel4runtime sel4 sel4muslcsys muslc
+        sel4platsupport sel4utils sel4simple sel4simple-default
+        sel4vka sel4allocman
+    )
+    target_include_directories(${name} PRIVATE ${AIOS_ROOT}/include)
+endmacro()
 
-# Child app 2: echo server (IPC demo)
-add_executable(echo_server ${AIOS_ROOT}/src/apps/echo_server.c)
-target_link_libraries(echo_server
-    sel4runtime sel4 sel4muslcsys muslc
-    sel4platsupport sel4utils sel4simple sel4simple-default
-    sel4vka sel4allocman
-)
-target_include_directories(echo_server PRIVATE ${AIOS_ROOT}/include)
+AiosChildApp(hello_child)
+AiosChildApp(echo_server)
+AiosChildApp(serial_server)
+AiosChildApp(mini_shell)
 
-# Embed all children into CPIO
-MakeCPIO(apps_cpio.o "$<TARGET_FILE:hello_child>;$<TARGET_FILE:echo_server>")
+# Embed all into CPIO
+MakeCPIO(apps_cpio.o
+    "$<TARGET_FILE:hello_child>;$<TARGET_FILE:echo_server>;$<TARGET_FILE:serial_server>;$<TARGET_FILE:mini_shell>"
+)
 
 # Root task
 add_executable(aios_root ${AIOS_ROOT}/src/aios_root.c apps_cpio.o)

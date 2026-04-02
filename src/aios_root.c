@@ -1,6 +1,6 @@
 /*
- * AIOS 0.4.x Root Task — Phase 3
- * Multiple processes + IPC
+ * AIOS 0.4.x Root Task — Phase 3b
+ * Serial server + mini shell via IPC
  */
 #include <stdio.h>
 #include <sel4/sel4.h>
@@ -10,6 +10,7 @@
 #include <sel4utils/vspace.h>
 #include <sel4utils/process.h>
 #include <sel4utils/process_config.h>
+#include <vka/capops.h>
 #include <simple/simple.h>
 #include <simple-default/simple-default.h>
 #include <utils/util.h>
@@ -23,8 +24,13 @@ static vka_t vka;
 static vspace_t vspace;
 static allocman_t *allocman;
 
-static int spawn_child(const char *name, uint8_t prio,
-                       sel4utils_process_t *proc, vka_object_t *fault_ep) {
+/* Spawn a server process, pass an endpoint cap, start it */
+static int spawn_with_ep(const char *name, uint8_t prio,
+                         sel4utils_process_t *proc,
+                         vka_object_t *fault_ep,
+                         seL4_CPtr ep_cap,
+                         seL4_CPtr *child_slot_out) {
+    int error;
     sel4utils_process_config_t config = process_config_new(&simple);
     config = process_config_elf(config, name, true);
     config = process_config_create_cnode(config, 12);
@@ -33,9 +39,28 @@ static int spawn_child(const char *name, uint8_t prio,
     config = process_config_auth(config, simple_get_tcb(&simple));
     config = process_config_fault_endpoint(config, *fault_ep);
 
-    int error = sel4utils_configure_process_custom(proc, &vka, &vspace, config);
+    error = sel4utils_configure_process_custom(proc, &vka, &vspace, config);
     if (error) return error;
-    return sel4utils_spawn_process_v(proc, &vka, &vspace, 0, NULL, 1);
+
+    /* Copy endpoint into child's CSpace */
+    seL4_CPtr child_ep = sel4utils_copy_cap_to_process(proc, &vka, ep_cap);
+    if (child_slot_out) *child_slot_out = child_ep;
+
+    /* Pass EP slot as argv[0] */
+    char ep_str[16];
+    int len = 0;
+    unsigned long v = child_ep;
+    if (v == 0) { ep_str[len++] = '0'; }
+    else {
+        char tmp[16]; int ti = 0;
+        while (v) { tmp[ti++] = '0' + (v % 10); v /= 10; }
+        while (ti--) ep_str[len++] = tmp[ti];
+    }
+    ep_str[len] = '\0';
+
+    char *child_argv[] = { ep_str };
+    error = sel4utils_spawn_process_v(proc, &vka, &vspace, 1, child_argv, 1);
+    return error;
 }
 
 int main(int argc, char *argv[]) {
@@ -43,19 +68,18 @@ int main(int argc, char *argv[]) {
 
     printf("\n");
     printf("============================================\n");
-    printf("  AIOS 0.4.x Root Task — Phase 3\n");
-    printf("  Multi-process + IPC\n");
+    printf("  AIOS 0.4.x Root Task — Phase 3b\n");
+    printf("  Serial Server + Shell via IPC\n");
     printf("============================================\n\n");
 
+    /* Boot */
     seL4_BootInfo *info = platsupport_get_bootinfo();
     if (!info) { printf("FATAL: No bootinfo\n"); return -1; }
-
     simple_default_init_bootinfo(&simple, info);
     allocman = bootstrap_use_current_simple(
         &simple, ALLOCATOR_STATIC_POOL_SIZE, allocator_mem_pool);
     if (!allocman) { printf("FATAL: allocman\n"); return -1; }
     allocman_make_vka(&vka, allocman);
-
     error = sel4utils_bootstrap_vspace_with_bootinfo_leaky(
         &vspace, &vspace_data,
         simple_get_pd(&simple), &vka, info);
@@ -63,81 +87,66 @@ int main(int argc, char *argv[]) {
     printf("[boot] All subsystems OK\n\n");
 
     /* Endpoints */
-    vka_object_t fault_ep, echo_ep;
+    vka_object_t fault_ep, serial_ep;
     vka_alloc_endpoint(&vka, &fault_ep);
-    vka_alloc_endpoint(&vka, &echo_ep);
+    vka_alloc_endpoint(&vka, &serial_ep);
 
     /* Lower root priority */
     seL4_TCB_SetPriority(seL4_CapInitThreadTCB,
-                         seL4_CapInitThreadTCB, 100);
+                         seL4_CapInitThreadTCB, 50);
 
-    /* === Spawn hello children === */
-    printf("[proc] === Spawning processes ===\n\n");
+    /* 1. Spawn serial server */
+    printf("[proc] Spawning serial_server...\n");
+    sel4utils_process_t serial_proc;
+    seL4_CPtr serial_child_slot;
+    error = spawn_with_ep("serial_server", 200, &serial_proc,
+                          &fault_ep, serial_ep.cptr, &serial_child_slot);
+    if (error) { printf("[proc] serial_server FAILED: %d\n", error); goto idle; }
+    printf("[proc] serial_server OK (ep slot %lu)\n",
+           (unsigned long)serial_child_slot);
 
-    sel4utils_process_t child1, child2;
-    error = spawn_child("hello_child", 200, &child1, &fault_ep);
-    printf("[proc] hello_child #1: %s\n", error ? "FAILED" : "OK");
+    /* 2. Spawn mini shell — give it same serial endpoint
+     * Badge the endpoint so serial_server can identify the shell */
+    printf("[proc] Spawning mini_shell...\n");
 
-    error = spawn_child("hello_child", 200, &child2, &fault_ep);
-    printf("[proc] hello_child #2: %s\n", error ? "FAILED" : "OK");
-
-    /* === Spawn echo server with endpoint === */
-    sel4utils_process_t echo_proc;
+    /* Create a badged copy of serial_ep for the shell */
+    seL4_CPtr shell_serial_ep;
     {
-        sel4utils_process_config_t config = process_config_new(&simple);
-        config = process_config_elf(config, "echo_server", true);
-        config = process_config_create_cnode(config, 12);
-        config = process_config_create_vspace(config, NULL, 0);
-        config = process_config_priority(config, 200);
-        config = process_config_auth(config, simple_get_tcb(&simple));
-        config = process_config_fault_endpoint(config, fault_ep);
-
-        error = sel4utils_configure_process_custom(
-            &echo_proc, &vka, &vspace, config);
-        if (error) { printf("[proc] echo_server configure FAILED: %d\n", error); goto idle; }
-
-        /* Copy endpoint into child's CSpace */
-        seL4_CPtr child_ep_slot = sel4utils_copy_cap_to_process(
-            &echo_proc, &vka, echo_ep.cptr);
-        printf("[proc] echo_server: ep at child slot %lu\n",
-               (unsigned long)child_ep_slot);
-
-        /* Pass EP slot as argv[0] */
-        char ep_str[16];
-        snprintf(ep_str, sizeof(ep_str), "%lu", (unsigned long)child_ep_slot);
-        char *echo_argv[] = { ep_str };
-        error = sel4utils_spawn_process_v(
-            &echo_proc, &vka, &vspace, 1, echo_argv, 1);
-        printf("[proc] echo_server: %s\n", error ? "FAILED" : "OK");
+        cspacepath_t src, dest;
+        vka_cspace_make_path(&vka, serial_ep.cptr, &src);
+        error = vka_cspace_alloc_path(&vka, &dest);
+        if (!error) {
+            error = vka_cnode_mint(&dest, &src, seL4_AllRights,
+                                   1);
+        }
+        if (error) {
+            printf("[proc] WARNING: badge failed, using unbadged ep\n");
+            shell_serial_ep = serial_ep.cptr;
+        } else {
+            shell_serial_ep = dest.capPtr;
+        }
     }
 
-    printf("\n[proc] Waiting for hello children to exit...\n");
-    for (int i = 0; i < 2; i++) {
-        seL4_Word badge;
-        seL4_Recv(fault_ep.cptr, &badge);
-        printf("[root] Child exited\n");
-    }
+    sel4utils_process_t shell_proc;
+    seL4_CPtr shell_ep_slot;
+    error = spawn_with_ep("mini_shell", 150, &shell_proc,
+                          &fault_ep, shell_serial_ep, &shell_ep_slot);
+    if (error) { printf("[proc] mini_shell FAILED: %d\n", error); goto idle; }
+    printf("[proc] mini_shell OK (ep slot %lu)\n",
+           (unsigned long)shell_ep_slot);
 
-    /* === IPC test === */
-    printf("\n[ipc] === IPC with echo_server ===\n\n");
-    for (int i = 0; i < 5; i++) {
-        seL4_SetMR(0, (seL4_Word)(i * 10));
-        seL4_MessageInfo_t reply = seL4_Call(
-            echo_ep.cptr, seL4_MessageInfo_new(0, 0, 0, 1));
-        seL4_Word result = seL4_GetMR(0);
-        printf("[root] Sent %d, got %lu\n", i * 10, (unsigned long)result);
-    }
+    printf("\n[root] All processes spawned. Waiting...\n\n");
 
-    /* Collect echo server exit */
+    /* Wait for shell to exit */
     {
         seL4_Word badge;
         seL4_Recv(fault_ep.cptr, &badge);
-        printf("[root] echo_server exited\n");
+        printf("[root] mini_shell exited\n");
     }
 
     printf("\n============================================\n");
-    printf("  Phase 3 complete!\n");
-    printf("  3 processes + IPC verified\n");
+    printf("  Phase 3b complete!\n");
+    printf("  Serial server + shell via IPC\n");
     printf("============================================\n\n");
 
 idle:
