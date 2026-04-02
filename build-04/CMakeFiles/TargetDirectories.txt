@@ -58,6 +58,7 @@
 /Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/echo_server.dir
 /Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/serial_server.dir
 /Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/mini_shell.dir
+/Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/crash_test.dir
 /Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/aios_root.dir
 /Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/rootserver_image.dir
 /Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/edit_cache.dir

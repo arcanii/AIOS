@@ -93,7 +93,7 @@ CMAKE_C_COMPILER_AR:FILEPATH=/opt/homebrew/bin/aarch64-linux-gnu-gcc-ar
 // for the GCC compiler
 CMAKE_C_COMPILER_RANLIB:FILEPATH=/opt/homebrew/bin/aarch64-linux-gnu-gcc-ranlib
 
-CMAKE_C_FLAGS:STRING= -fvisibility=default -fvisibility=default -fvisibility=default
+CMAKE_C_FLAGS:STRING= -fvisibility=default -fvisibility=default -fvisibility=default -fvisibility=default
 
 //Flags used by the C compiler during DEBUG builds.
 CMAKE_C_FLAGS_DEBUG:STRING=-g

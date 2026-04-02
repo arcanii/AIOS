@@ -3,7 +3,6 @@ project(aios-rootserver C ASM)
 
 set(AIOS_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
 
-# Helper macro for child apps
 macro(AiosChildApp name)
     add_executable(${name} ${AIOS_ROOT}/src/apps/${name}.c)
     target_link_libraries(${name}
@@ -18,20 +17,18 @@ AiosChildApp(hello_child)
 AiosChildApp(echo_server)
 AiosChildApp(serial_server)
 AiosChildApp(mini_shell)
+AiosChildApp(crash_test)
 
-# Embed all into CPIO
 MakeCPIO(apps_cpio.o
-    "$<TARGET_FILE:hello_child>;$<TARGET_FILE:echo_server>;$<TARGET_FILE:serial_server>;$<TARGET_FILE:mini_shell>"
+    "$<TARGET_FILE:hello_child>;$<TARGET_FILE:echo_server>;$<TARGET_FILE:serial_server>;$<TARGET_FILE:mini_shell>;$<TARGET_FILE:crash_test>"
 )
 
-# Root task
 add_executable(aios_root ${AIOS_ROOT}/src/aios_root.c apps_cpio.o)
 target_link_libraries(aios_root
     sel4runtime sel4
     sel4allocman sel4vka sel4utils
     sel4simple sel4simple-default
-    sel4platsupport
-    sel4muslcsys muslc
+    sel4platsupport sel4muslcsys muslc
     cpio elf
 )
 target_include_directories(aios_root PRIVATE ${AIOS_ROOT}/include)
