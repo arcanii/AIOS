@@ -857,10 +857,10 @@ static void cmd_kill(const char *arg) {
         return;
     }
     int rc = kill_proc(pid, sig);
-    if (rc < 0) {
-        print("kill: failed to kill pid ");
-        print_dec((unsigned long)pid);
-        print("\n");
+    if (rc == 0) {
+        print("["); print_dec((unsigned long)pid); print("] killed\n");
+    } else {
+        print("kill: ("); print_dec((unsigned long)pid); print(") - no such process\n");
     }
 }
 
@@ -1333,25 +1333,31 @@ static void dispatch(void) {
         }
         int rc;
         if (bg) {
-            /* Background: use spawn instead of exec */
-            char spawn_cmd[272];
-            int si = 0;
-            /* Try /bin/<cmd>.bin first */
-            spawn_cmd[si++] = '/'; spawn_cmd[si++] = 'b'; spawn_cmd[si++] = 'i';
-            spawn_cmd[si++] = 'n'; spawn_cmd[si++] = '/';
-            for (int k = 0; cmd[k] && si < 259; k++) spawn_cmd[si++] = cmd[k];
-            spawn_cmd[si++] = '.'; spawn_cmd[si++] = 'b'; spawn_cmd[si++] = 'i';
-            spawn_cmd[si++] = 'n'; spawn_cmd[si] = '\0';
-            rc = spawn(spawn_cmd, args);
-            if (rc < 0) {
-                /* Try cmd directly */
-                rc = spawn(cmd, args);
+            /* Background: POSIX PATH search using spawn() */
+            int is_path = 0;
+            for (int k = 0; cmd[k]; k++) {
+                if (cmd[k] == '/') { is_path = 1; break; }
             }
-            if (rc == -2) {
-                /* Script detected — can't background, run in foreground */
-                print("sh: scripts cannot run in background, running in foreground\n");
-                cmd_source(cmd);
-                return;
+            rc = -1;
+            if (is_path) {
+                rc = spawn(cmd, args);
+            } else {
+                char *path_env = getenv("PATH");
+                if (!path_env) path_env = "/bin";
+                const char *p = path_env;
+                while (*p && rc < 0) {
+                    char trypath[272];
+                    int ti = 0;
+                    while (*p && *p != ':' && ti < 255)
+                        trypath[ti++] = *p++;
+                    if (*p == ':') p++;
+                    if (ti == 0) { trypath[ti++] = '.'; }
+                    if (trypath[ti-1] != '/') trypath[ti++] = '/';
+                    for (int k = 0; cmd[k] && ti < 268; k++)
+                        trypath[ti++] = cmd[k];
+                    trypath[ti] = '\0';
+                    rc = spawn(trypath, args);
+                }
             }
             if (rc >= 0) {
                 int jid = add_job(rc, cmd);
@@ -1363,25 +1369,9 @@ static void dispatch(void) {
                 }
                 return;
             }
-            /* Try as .sh script */
-            {
-                char sh[72];
-                int shi = 0;
-                for (int k = 0; cmd[k] && shi < 63; k++) sh[shi++] = cmd[k];
-                int has_sh = (shi > 3 && sh[shi-3] == '.' && sh[shi-2] == 's' && sh[shi-1] == 'h');
-                if (!has_sh) { sh[shi++] = '.'; sh[shi++] = 's'; sh[shi++] = 'h'; }
-                sh[shi] = '\0';
-                int sfd = open(sh, O_RDONLY);
-                if (sfd < 0) sfd = open(cmd, O_RDONLY);
-                if (sfd >= 0) {
-                    close(sfd);
-                    print("sh: scripts cannot run in background, running in foreground\n");
-                    cmd_source(has_sh ? cmd : sh);
-                    return;
-                }
-            }
-            /* Fall through to not-found */
-            rc = -1;
+            print(cmd);
+            print(": command not found\n");
+            return;
         } else {
             /* POSIX command resolution:
              * 1. If cmd contains / -> execute as path directly

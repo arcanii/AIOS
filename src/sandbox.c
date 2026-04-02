@@ -228,28 +228,41 @@ static int deliver_signals(int pi) {
  * Note: bump allocator cannot truly free, but we can reuse slots.
  * Future: slab allocator would allow real stack reclamation. */
 static void reap_finished(void) {
+    /* 1. Free detached+finished thread slots */
     for (int i = 0; i < MAX_THREADS; i++) {
         if (threads[i].state == TH_FINISHED && threads[i].join_waiting == -2) {
-            /* Detached and finished -- free the slot */
             threads[i].state = TH_FREE;
             threads[i].join_waiting = -1;
             threads[i].wait_channel = -1;
-            /* Check if owning process has no more threads */
-            int pi = threads[i].proc_idx;
-            if (pi >= 0 && pi < MAX_PROCS && procs[pi].state == PROC_ZOMBIE) {
-                int has_threads = 0;
-                for (int j = 0; j < MAX_THREADS; j++) {
-                    if (j != i && threads[j].state != TH_FREE &&
-                        threads[j].proc_idx == pi) {
-                        has_threads = 1;
-                        break;
-                    }
-                }
-                if (!has_threads) {
-                    procs[pi].state = PROC_FREE;
-                }
+        }
+    }
+
+    /* 2. Reap zombie processes: free process + all its threads
+     * A zombie has no running threads — safe to reclaim everything. */
+    for (int pi = 0; pi < MAX_PROCS; pi++) {
+        if (procs[pi].state != PROC_ZOMBIE) continue;
+
+        /* Check no thread is still alive (READY/RUNNING/BLOCKED) */
+        int alive = 0;
+        for (int t = 0; t < MAX_THREADS; t++) {
+            if (threads[t].proc_idx == pi &&
+                threads[t].state != TH_FREE &&
+                threads[t].state != TH_FINISHED) {
+                alive = 1;
+                break;
             }
         }
+        if (alive) continue;
+
+        /* All threads dead — free them */
+        for (int t = 0; t < MAX_THREADS; t++) {
+            if (threads[t].proc_idx == pi) {
+                threads[t].state = TH_FREE;
+                threads[t].join_waiting = -1;
+                threads[t].wait_channel = -1;
+            }
+        }
+        procs[pi].state = PROC_FREE;
     }
 }
 
@@ -794,7 +807,25 @@ static long ks_time(void) {
     microkit_ppcall(CH_ORCH, microkit_msginfo_new(0, 1));
     return (long)seL4_GetMR(1);
 }
-static int ks_spawn(const char *path, const char *args) { return ks_exec(path, args); }
+/* spawn: load program and return immediately with child PID.
+ * Child runs in background — parent continues without waiting. */
+static int ks_spawn(const char *path, const char *args) {
+    (void)args;
+    int caller_pi = -1;
+    if (current_thread >= 0)
+        caller_pi = threads[current_thread].proc_idx;
+    int child_pid = load_program(path, caller_pi >= 0 ? procs[caller_pi].pid : 0);
+    if (child_pid < 0) return child_pid;
+    /* Mark child as background (not foreground) */
+    for (int i = 0; i < MAX_PROCS; i++) {
+        if (procs[i].state == PROC_ALIVE && procs[i].pid == child_pid) {
+            procs[i].foreground = 0;
+            break;
+        }
+    }
+    /* Return PID immediately — child runs via scheduler */
+    return child_pid;
+}
 static int ks_waitpid(int pid, int *status) { (void)pid; if (status) *status = 0; return pid; }
 static int ks_fork(void) { return -1; }
 static int ks_chmod(const char *path, unsigned int mode) {
@@ -821,6 +852,19 @@ static int ks_kill_proc(int pid, int sig) {
     if (sig < 1 || sig > 31) return -1; /* EINVAL */
     /* Find process by pid */
     for (int i = 0; i < MAX_PROCS; i++) {
+        /* Allow kill on zombies too — cleans them up */
+        if (procs[i].state == PROC_ZOMBIE && procs[i].pid == pid) {
+            procs[i].state = PROC_FREE;
+            /* Free all threads belonging to this process */
+            for (int t = 0; t < MAX_THREADS; t++) {
+                if (threads[t].proc_idx == i) {
+                    threads[t].state = TH_FREE;
+                    threads[t].join_waiting = -1;
+                    threads[t].wait_channel = -1;
+                }
+            }
+            return 0;
+        }
         if (procs[i].state == PROC_ALIVE && procs[i].pid == pid) {
             /* SIGKILL cannot be caught or ignored */
             if (sig == 9) {
@@ -1633,7 +1677,7 @@ void init(void) {
                 } while (gc < 0);
                 char c = (char)(unsigned char)gc;
                 if (c == '\n' || c == '\r') break;
-                if (c == 127 || c == 8) { if (pi > 0) pi--; continue; }
+                if (c == 127 || c == 8) { if (pi > 0) { pi--; kputs("\b \b"); } continue; }
                 if (c >= ' ') { password[pi++] = c; kputc('*'); }
             }
             password[pi] = '\0';
