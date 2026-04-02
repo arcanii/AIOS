@@ -1,205 +1,253 @@
-# AIOS Architecture
+# AIOS Architecture — v0.3.x
 
-## Vision
+## Overview
 
-AIOS is a microkernel operating system built on seL4, designed for stability,
-security, and AI-native development. External AI (Claude, etc.) generates and
-reviews code, which is compiled and deployed to AIOS. The long-term goal is
-self-hosted development within AIOS itself.
+AIOS (Open Aries) is a microkernel operating system built on seL4/Microkit for AArch64 (Cortex-A53, QEMU virt). It implements a POSIX-compatible user-space kernel inside a single seL4 Protection Domain (PD), with separate PDs for device drivers and system services.
 
-## Design Principles
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        QEMU virt (AArch64)                      │
+│  4 cores, 2GB RAM, virtio-blk, virtio-net, PL011 UART          │
+├─────────────────────────────────────────────────────────────────┤
+│                     seL4 Microkernel (14.0.0)                   │
+│                     Microkit 2.1.0 (SMP)                        │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐          │
+│  │ serial   │ │ blk      │ │ net      │ │ net      │          │
+│  │ _driver  │ │ _driver  │ │ _driver  │ │ _server  │          │
+│  │ PL011    │ │ virtio   │ │ virtio   │ │ IP stack │          │
+│  │ pri=254  │ │ pri=250  │ │ pri=230  │ │ pri=210  │          │
+│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘          │
+│       │             │             │             │                │
+│  ┌────┴─────────────┴─────────────┴─────────────┴──────────┐   │
+│  │                    orchestrator (pri=200)                │   │
+│  │  Service router · Timer · Preemption · Shutdown          │   │
+│  │  Async IPC handler · Ctrl-C detection                    │   │
+│  ├──────────────────────────────────────────────────────────┤   │
+│  │  ┌──────────────────────────────────────────────────┐    │   │
+│  │  │              sandbox (pri=150, child PD)         │    │   │
+│  │  │  User-space kernel · Scheduler · Threads         │    │   │
+│  │  │  Processes · Signals · POSIX libc                │    │   │
+│  │  │  128 MB memory pool · Up to 256 processes        │    │   │
+│  │  │  Up to 1024 threads · 16 FDs per process         │    │   │
+│  │  └──────────────────────────────────────────────────┘    │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐                       │
+│  │ vfs      │ │ fs       │ │ auth     │                       │
+│  │ _server  │ │ _server  │ │ _server  │                       │
+│  │ pri=235  │ │ pri=240  │ │ pri=210  │                       │
+│  └──────────┘ └──────────┘ └──────────┘                       │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-- **Microkernel**: minimal trusted computing base, all services in userspace
-- **POSIX-compatible**: applications expect a POSIX-like interface
-- **AI-native**: AI agent is a first-class system component
-- **Linux as reference**: re-engineer Linux patterns for microkernel security
-- **Network-first**: status reporting, remote management, AI API access
+## Protection Domains
 
-## Hardware Targets
+AIOS uses 9 seL4 Protection Domains, each isolated by the microkernel:
 
-- Development: QEMU virt (AArch64) - current platform
-- Primary: Raspberry Pi 4/5 (BCM2711/BCM2712, AArch64)
-- Stretch: x86-64 (Ryzen Strix Halo)
+| PD | Priority | Role | Lines |
+|----|----------|------|-------|
+| serial_driver | 254 | PL011 UART RX/TX via ring buffers | 139 |
+| blk_driver | 250 | virtio-blk disk I/O | 237 |
+| fs_server | 240 | ext2/FAT16/FAT32 filesystem implementation | 1539 |
+| vfs_server | 235 | Virtual filesystem layer, routes to fs_server | 129 |
+| net_driver | 230 | virtio-net packet I/O | 286 |
+| auth_server | 210 | Login authentication, /etc/passwd | 917 |
+| net_server | 210 | TCP/IP stack, socket API | 603 |
+| orchestrator | 200 | Service router, timer, preemption, async IPC | 576 |
+| sandbox | 150 | User-space kernel: scheduler, threads, processes, POSIX | 1781 |
 
----
+The sandbox is a child PD of the orchestrator, sharing memory regions for IPC.
 
-## Architecture Versions
+## IPC Architecture
 
-### 0.2.x (Deprecated)
+All inter-PD communication uses Microkit channels (seL4 endpoints):
 
-The 0.2.x design used 8 separate sandbox PDs for user processes. This created
-issues with threading (pthreads impossible across PDs) and inefficient IPC.
+```
+sandbox ─── PPC CH_SANDBOX(7) ──→ orchestrator
+                                      ├── PPC CH_VFS(5)  ──→ vfs_server ──→ PPC CH_FS(4) ──→ fs_server
+                                      │                                         └── notify(10) ──→ blk_driver
+                                      ├── PPC CH_AUTH(11) ──→ auth_server
+                                      ├── PPC CH_NET_SRV(12) ──→ net_server ←── notify(8) ←── net_driver
+                                      └── notify CH_SERIAL(1) ──→ serial_driver
 
-### 0.3.x (Current Design)
+Timer: IRQ30 → orchestrator notified() → notify(CH_SANDBOX) → sandbox notified() → preempt
+```
 
-The 0.3.x design consolidates to 8 Protection Domains total. A single sandbox
-PD contains an internal user-space kernel that manages all processes and threads.
+Two IPC mechanisms are used:
 
-See docs/sandbox_kernel_design.md for full details.
+- **PPC (Protected Procedure Call)**: Synchronous request/response. Caller blocks until callee returns. Used for all syscalls (sandbox → orchestrator → service PDs).
+- **Notifications**: Asynchronous one-way signals. Used for timer interrupts, serial I/O, and Ctrl-C delivery.
 
----
+## Sandbox Kernel
 
-## Architecture Overview (0.3.x)
+The sandbox PD contains a complete user-space kernel that manages processes and threads within a single 128 MB memory pool. It implements:
 
-    +------------------------------------------------------------------+
-    |                        SANDBOX PD (150)                          |
-    |  +------------------------------------------------------------+  |
-    |  |              Sandbox Kernel (user-space)                   |  |
-    |  |  +--------+ +--------+ +--------+ +--------+               |  |
-    |  |  | shell  | | httpd  | | prog   | |  ...   |   Processes   |  |
-    |  |  +--------+ +--------+ +--------+ +--------+               |  |
-    |  |  Scheduler, Threads, Memory, Local Syscalls                |  |
-    |  +----------------------------+-------------------------------+  |
-    |                               | PPC (remote syscalls)            |
-    +-------------------------------+----------------------------------+
-    |                       ORCHESTRATOR (200)                         |
-    |               Service Router, Policy, Preemption Tick            |
-    +-----------+-----------+-----------+------------------------------+
-    | fs_server | net_server| auth_server                              |
-    |   (240)   |   (210)   |   (210)                                  |
-    +-----------+-----------+-----------+------------------------------+
-    | blk_driver| net_driver| serial_driver                            |
-    |   (250)   |   (230)   |   (254)                                  |
-    +-----------+-----------+-----------+------------------------------+
-    |                  seL4 Microkernel (Microkit)                     |
-    +------------------------------------------------------------------+
-    |                  Hardware (RPi / QEMU)                           |
-    +------------------------------------------------------------------+
+### Scheduler
 
-## Protection Domain Layout (0.3.x)
+- **Preemptive**: 10ms quantum via ARM generic timer (IRQ 30)
+- **Priority-aware**: Highest-priority READY thread selected first, round-robin on tie
+- **Context switch**: setjmp/longjmp with full FP/SIMD save (x19-x28, x29, x30, sp + q0-q31 + FPCR/FPSR = 768 bytes per thread)
+- **Thread states**: FREE(0), READY(1), RUNNING(2), BLOCKED(3), FINISHED(4), BLOCKED_MTX(5), BLOCKED_COND(6), BLOCKED_IO(7)
 
-| PD              | Priority | Role                                    |
-|-----------------|----------|-----------------------------------------|
-| serial_driver   | 254      | UART hardware access                    |
-| blk_driver      | 250      | Disk hardware (virtio-blk, SD card)     |
-| fs_server       | 240      | ext2 filesystem                         |
-| net_driver      | 230      | Network hardware (virtio-net)           |
-| net_server      | 210      | TCP/IP stack (lwIP)                     |
-| auth_server     | 210      | Authentication and credentials          |
-| orchestrator    | 200      | Service router, policy, preemption tick |
-| sandbox         | 150      | User-space kernel, all user processes   |
+### Processes
 
-Down from 14 PDs in 0.2.x to 8 PDs in 0.3.x.
+- Up to 256 concurrent processes (MAX_PROCS)
+- Each process: code loaded from ext2 filesystem, heap (bump allocator), stack, 16 file descriptors
+- Process states: FREE, ALIVE, ZOMBIE
+- Per-process signal table: `sig_pending` bitmap + `sig_handlers[32]`
+- Foreground/background flag for job control
 
-Removed: llm_server (deferred), echo_server, vfs_server (merged), proc_server (merged), sbx0-sbx7.
+### Threads (POSIX pthreads)
 
-## Sandbox PD Memory Layout
+- Up to 1024 concurrent threads (MAX_THREADS)
+- `pthread_create/join/detach/exit` with void* return values
+- Block/wake mutex (not spin): contending threads sleep on wait_channel, unlock wakes highest-priority waiter
+- Block/wake condition variables: wait blocks, signal wakes one, broadcast wakes all
+- Block/wake read-write locks
+- Thread-Local Storage: 64 keys per thread
+- Thread-safe malloc: heap_lock with block/wake
+- Automatic reaping: scheduler frees detached+finished threads and zombie processes
 
-Total: 512 MB allocated to sandbox PD
+### Signal Infrastructure
 
-    0x20000000  sandbox_io    4 KB     IPC page shared with orchestrator
-    0x20001000  sandbox_mem   512 MB   Single region for kernel + user space
+- Per-process: `sig_pending` (32-bit bitmap) + `sig_handlers[32]`
+- `deliver_signals()` called by scheduler before thread resume
+- Default actions: SIGINT/SIGTERM/SIGKILL terminate, SIGCHLD ignore
+- SIGKILL/SIGSTOP cannot be caught or ignored
+- Ctrl-C chain: serial_driver → orchestrator peeks RX for 0x03 → sets CTRL_C_FLAG → sandbox delivers SIGINT to foreground process
 
-Internal layout managed by sandbox kernel:
+### Memory Layout
 
-    Kernel zone (first 1 MB):
-      - Process table (dynamic)
-      - Thread table (dynamic)
-      - Memory allocator metadata
-      - Scheduler state
+```
+0x20000000  sandbox_io    (4 KB)   Shared memory with orchestrator
+0x20001000  sandbox_mem   (128 MB) Process memory pool
+            ├── Process 0: code + heap + stack
+            ├── Process 1: code + heap + stack
+            └── ...
+```
 
-    User memory pool (~510 MB):
-      - Per-process: code region, heap, thread stacks
-      - Dynamically allocated and freed
+All processes share the same flat address space (no MMU-based isolation between processes).
 
-## Syscall Flow (0.3.x)
+## Filesystem
 
-    User program -> sandbox kernel -> (if needed) orchestrator -> service PD
+### Stack
 
-**Local syscalls** (handled in sandbox kernel):
+```
+Application → sandbox kernel (ks_open/ks_read/...) 
+            → PPC to orchestrator
+            → PPC to vfs_server (VFS layer)
+            → PPC to fs_server (ext2/FAT implementation)
+            → notify to blk_driver (disk I/O)
+```
 
-    pthread_create, pthread_join, pthread_yield
-    mutex_lock, mutex_unlock
-    getpid, getppid, gettid
-    malloc, free, sbrk
-    sleep (timer-based yield)
+### ext2 Implementation
 
-**Remote syscalls** (forwarded via PPC to orchestrator):
+- Read/write support for files and directories
+- Inode-based with block groups
+- Directory entries with rec_len chaining
+- File permissions (rwxr-xr-x) respected
+- Custom tools: `mkext2.py` (create image), `ext2_inject.py` (populate image)
+- Programs injected without `.bin` extension (POSIX-clean names)
 
-    open, read, write, close
-    exec, fork, exit, waitpid
-    socket, connect, send, recv
-    kill, signal
-    auth operations
+## Shell
 
-## IPC Protocol (sandbox <-> orchestrator)
+1566-line POSIX-compatible shell (`programs/shell.c`) with:
 
-Single shared IO page (4 KB):
+- **Command resolution**: POSIX PATH walker (`$PATH`, default `/bin:/sbin`). No extension appending. `./cmd` for current directory.
+- **Builtins**: cd, pwd, ls, echo, cat, cp, head, wc, sort, env, export, ps, top, kill, jobs, fg, exit, help, clear, source, uname, date
+- **Job control**: `cmd &` for background, `jobs` to list, `kill pid` to terminate, `fg` to foreground
+- **I/O redirection**: `>` (write), `>>` (append), `<` (input), `|` (pipe)
+- **Variable expansion**: `$VAR` and `$PATH` in commands
+- **Script execution**: `source file.sh` or `sh file.sh`
+- **Login**: username/password authentication via auth_server
 
-    Offset 0x000: command/status word
-    Offset 0x004: syscall number
-    Offset 0x008: arg0..arg5 (48 bytes)
-    Offset 0x040: return value
-    Offset 0x044: error code
-    Offset 0x080: data buffer (3.8 KB for read/write/exec payloads)
+## Syscalls
 
-Sandbox kernel makes PPC call to orchestrator for remote syscalls.
-Orchestrator processes and returns result synchronously.
+The sandbox kernel implements 63 syscall numbers organized by function:
 
-## Scheduling
+| Range | Category | Examples |
+|-------|----------|----------|
+| 1-16 | File I/O | open, close, read, write, stat, mkdir, rmdir, getcwd, chdir |
+| 17-19 | File ops | access, umask, dup |
+| 20-29 | Process | exit, getpid, sleep, exec, getuid, getgid, getppid |
+| 30-31 | Terminal | putc, getc |
+| 40-46 | Sockets | socket, bind, listen, accept, connect, send, recv |
+| 50-51 | Memory | brk, mmap |
+| 60-76 | Extended | dup2, truncate, pipe, time, spawn, waitpid, kill, signal, fork |
+| 80-82 | Internal | suspended, getpid_, getprocs |
+| 90-93 | System | login, logout, shutdown, sync |
 
-Cooperative + timer-assisted preemption:
+## Async IPC
 
-- Round-robin across all READY threads (all processes)
-- Context switch on: yield, syscall, mutex contention, sleep
-- Orchestrator sends periodic notification for preemption tick
-- Sandbox kernel notified() handler saves context and switches
+Framework for non-blocking syscalls (scaffolding wired, used for getc):
 
-## Code Loading
+```
+sandbox_io shared memory layout:
+  0x000 - 0x0FF: Control area (SBX_CMD, SBX_STATUS, etc.)
+  0x0F0:         CTRL_C_FLAG (out-of-band Ctrl-C from serial)
+  0x100 - 0x13F: Async request/response header
+  0x200 - 0xFFF: Data area
+```
 
-1. User types "exec foo.bin" in shell
-2. Shell calls SYS_EXEC -> sandbox kernel
-3. Sandbox kernel allocates code+heap region from pool
-4. Sandbox kernel calls orchestrator (PPC): load foo.bin
-5. Orchestrator reads file via fs_server into sandbox_mem
-6. Sandbox kernel creates process entry, main thread, jumps to entry
+The getc path uses yield-loop: shell thread stays READY between input checks, yielding timeslices so background threads run. The PPC to orchestrator doubles as a Microkit event loop return point for notification delivery.
 
-## Fault Protection
+## Build System
 
-All processes share one address space - no hardware isolation between them.
-The sandbox kernel mitigates risk with:
+```
+make              Build kernel image (build/loader.img)
+make programs     Build all user programs (programs/*.bin + sbin + tests)
+make ext2-disk    Create and populate ext2 disk image
+make run          Boot in QEMU (4 cores, 2GB, virtio-blk/net)
+make bump-patch   Increment version patch number
+make clean        Remove build artifacts
+```
 
-- Guard canaries between allocations
-- Stack canaries on thread stacks
-- Bounds checking on syscall arguments
-- Watchdog: force-switch threads that run too long without yielding
-- Orchestrator watchdog: restart sandbox PD if unresponsive
+Programs are cross-compiled with `aarch64-linux-gnu-gcc`, linked with a custom `link.ld`, and objcopy'd to flat binaries. Intermediates go in `build/prg/`.
 
----
+## Test Suite
 
-## Boot Sequence
+4 test programs, 42 tests total:
 
-1. seL4 kernel starts, Microkit initializes all PDs
-2. Drivers init: serial, block, network
-3. fs_server mounts root filesystem (ext2)
-4. orchestrator reads /etc/init.cfg
-5. sandbox PD initializes internal kernel
-6. Starts network services
-7. Starts shell on serial console
+| Program | Tests | Coverage |
+|---------|-------|----------|
+| test_basic | 12 | syscalls, memory allocation, string operations |
+| test_fileio | 8 | file create/read/write/stat, mkdir/rmdir |
+| test_threads | 13 | pthread create/join, mutex contention, condvar, rwlock, TLS, preemption |
+| test_signals | 9 | kill, signal handler registration, SIG_IGN, SIGKILL/SIGSTOP protection |
 
-## Status Reporting
+All 42 tests pass with concurrent background processes running.
 
-- HTTP server on port 80 serves system status JSON + web UI
-- Reports: uptime, memory, disk, network, build info
-- Interactive: user can submit priorities, approve/reject proposals
-- WebSocket for real-time log streaming
+## User Programs
 
-## Development Workflow
+34 programs in `/bin/`, 1 in `/sbin/`:
 
-**Phase 1 (Current): External AI**
-- Claude/GPT generates code on host
-- Cross-compile with aarch64-gcc
-- Deploy via disk image or network
-- Test in QEMU, then on RPi
+**Utilities**: cat, cp, echo, head, ls, mkdir, mv, rm, rmdir, sort, wc, whoami, uname
+**System**: info, fstat, daemon, idle, netstat, wget, shutdown (sbin, root-only)
+**Tests/Benchmarks**: bench, sieve, fib, stress, memtest, ftest, dirtest, forktest, spawn_test, posix_test, posixtest2, slot_test, socktest
+**Shell**: Full POSIX-compatible shell with job control
 
-**Phase 2: Assisted Development**
-- AIOS hosts git client
-- External AI pushes code via network
-- AIOS compiles (TCC port) and tests
-- Results reported via status UI
+## Known Limitations
 
-**Phase 3: Self-Hosted**
-- AI agent runs inside AIOS (LLM or API access)
-- Reads own source, proposes changes
-- Compiles, tests, commits to git
-- Human reviews via web UI
+1. **File I/O blocks all threads**: Sync PPC to orchestrator suspends entire sandbox PD. Window is microseconds per call.
+2. **Single address space**: No memory protection between processes. All share 128 MB pool.
+3. **Single seL4 TCB**: Sandbox is one seL4 schedulable entity. No true SMP parallelism.
+4. **No fork**: `fork()` returns -1. Process duplication requires MMU-based address space copying.
+5. **Ctrl-C via QEMU**: QEMU `-nographic` intercepts Ctrl-C before guest. Chain wired but untestable in current setup.
+6. **Bump allocator**: malloc never frees. Long-running processes eventually exhaust heap.
+
+## Version History (0.3.x)
+
+| Version | Milestone |
+|---------|-----------|
+| 0.3.7 | Build tooling, PD sync, consistency checks |
+| 0.3.8 | VFS server PD, channel cleanup, dead code archive |
+| 0.3.9 | POSIX stubs (272/272 coverage) |
+| 0.3.10 | Verified preemptive pthreads (35/35 tests) |
+| 0.3.11 | Full FP/SIMD context save (q0-q31) |
+| 0.3.12 | Priority scheduler, block/wake mutex/cond/rwlock |
+| 0.3.13 | Shutdown command, POSIX PATH walker |
+| 0.3.14 | Thread-safe malloc, thread reaper, async IPC framework |
+| 0.3.15 | Shell parser fixes, script fallback probe |
+| 0.3.16 | Signal infrastructure, split test suite (42/42) |
+| 0.3.17 | Real background spawn, kill feedback, kernel zombie reaper |
+| 0.3.18 | Async getc, Ctrl-C chain, concurrent background I/O |

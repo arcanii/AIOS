@@ -1,155 +1,246 @@
-## Vision
-AIOS is a microkernel operating system built on seL4, designed for stability,
-security, and AI-native development. External AI (Claude, etc.) generates and
-reviews code, which is compiled and deployed to AIOS. The long-term goal is
-self-hosted development within AIOS itself. This is also a study on AI coding using Claude (Currently : Opus 4.6).
-Adding : Gtok 4.5 and GPT 5.4Pro (currently reviewing)
+# Open Aries (AIOS)
 
-Security is a high priority topic theme. 
+A microkernel operating system built on [seL4](https://sel4.systems/) / [Microkit](https://github.com/seL4/microkit), targeting AArch64. Features preemptive multitasking, POSIX-compatible threading, an ext2 filesystem, and a Unix-like shell — all running on the world's most formally verified microkernel.
 
-This is in an experimental / research phase, welcome for collaborators.
-
-It currently is only tested in QEMU on aarch64 a53 
-
-:persevere: Update April 1, 2026 : hit a brick wall with the 0.2.x design, so having to redesign it. New design : 0.3.x
-
-The new design is to protect the key services (Orchestrator, blk_driver, net_driver, fs_server, vfs_server, auth_server) as PD, and make the Sandbox (the real userspace) as a single unit with a sandbox kernel to oversee it and handle communication with the other PDs.
-Setting aside the LLM for the moment until this design can be fleshed out.
-Let's see how this approach goes.
-
-
-## Current Progress update
-
-This is an unofficial report for tracking.
-
-Created by tools/posix_audit.py
-```============================================================
-  AIOS POSIX.1 Compliance Audit
-  Generated: 2026-04-01 07:43
-============================================================
-
-  Syscall handlers:  57
-  POSIX wrappers:    205
-  Standard headers:  20
-  posix.h lines:     2066
-  libc lines:        874
-
-  File I/O               ████████████████████  18/18  COMPLETE
-  File Status            ████████████████████  21/21  COMPLETE
-  Directories            ████████████████████  10/10  COMPLETE
-  Process Control        ████████████████████  15/15  COMPLETE
-  Signals                ████████████████████  15/15  COMPLETE
-  Pipes & FDs            ████████████████████   7/7   COMPLETE
-  Sockets                ████████████████████  23/23  COMPLETE
-  Memory                 ████████████████████   9/9   COMPLETE
-  Strings                ████████████████████  18/18  COMPLETE
-  stdio                  ████████████████████  27/27  COMPLETE
-  stdlib                 ████████████████████  17/17  COMPLETE
-  User/Group             ████████████████████  14/14  COMPLETE
-  Environment            ████████████████████   4/4   COMPLETE
-  Time                   ████████████████████  12/12  COMPLETE
-  System Info            ████████████████████  10/10  COMPLETE
-  I/O Multiplexing       ████████████████████   5/5   COMPLETE
-  Threads (pthreads)     ░░░░░░░░░░░░░░░░░░░░   0/19  0%
-  Semaphores             ░░░░░░░░░░░░░░░░░░░░   0/7   0%
-  Dynamic Loading        ░░░░░░░░░░░░░░░░░░░░   0/4   0%
-  Nonlocal Jumps         ████████████████████   4/4   COMPLETE
-  Regex & Glob           ████████████████████   6/6   COMPLETE
-  Logging                ████████████████████   3/3   COMPLETE
-  Misc                   ████████████████████   4/4   COMPLETE
-
-------------------------------------------------------------
-  TOTAL:          242/272 functions present (88%)
-  Full impl:      169/272 (62%)
-  Partial/wrap:   73
-  Stubs only:     0
-  Missing:        30
-  Real coverage:  242/272 (88%)
-------------------------------------------------------------
-
-  Missing functions:
-
-    Threads (pthreads):
-      pthread_create, pthread_join, pthread_detach, pthread_exit, pthread_mutex_init, pthread_mutex_lock
-      pthread_mutex_unlock, pthread_mutex_destroy, pthread_cond_init, pthread_cond_wait, pthread_cond_signal, pthread_cond_broadcast
-      pthread_rwlock_init, pthread_rwlock_rdlock, pthread_rwlock_wrlock, pthread_rwlock_unlock, pthread_key_create, pthread_setspecific
-      pthread_getspecific
-    Semaphores:
-      sem_init, sem_wait, sem_post, sem_destroy, sem_open, sem_close
-      sem_unlink
-    Dynamic Loading:
-      dlopen, dlsym, dlclose, dlerror
-
-  Wiki report: docs/POSIX_COMPLIANCE.md
-  (242/272 functions, 88% POSIX.1 compliance)
+```
+  ___                      _         _
+ / _ \ _ __   ___ _ __    / \   _ __(_) ___  ___
+| | | | '_ \ / _ \ '_ \  / _ \ | '__| |/ _ \/ __|
+| |_| | |_) |  __/ | | |/ ___ \| |  | |  __/\__ \
+ \___/| .__/ \___|_| |_/_/   \_\_|  |_|\___||___/
+      |_|
 ```
 
+## Status
 
-## Hardware Targets
-- [x] - Development: QEMU virt (AArch64) — current platform
-- [ ] Primary: Raspberry Pi 4/5 (BCM2711/BCM2712, AArch64)
-- [ ] Primary++ : x86-64 (Ryzen Strix Halo)
+**v0.3.18** — Experimental / Research
 
-The goal is to make it POSIX compatible, and Linux compatible.
-Stretch goals : BSD, Win32, MacOS.
+- 9 seL4 Protection Domains (drivers, services, sandbox kernel)
+- Preemptive scheduler with 10ms quantum, priority-aware
+- POSIX pthreads: create/join/mutex/condvar/rwlock/TLS
+- ext2 filesystem (read/write)
+- 34 user programs, POSIX shell with job control
+- 42/42 test suite passing
+- Background process concurrency verified
+
+This is a research project exploring AI-assisted OS development. External AI (Claude) generates and reviews code. The long-term goal is self-hosted development within AIOS itself.
 
 ## Quick Start
-Prerequisites:
 
-  - Microkit SDK 2.1.0 (https://trustworthy.systems/projects/microkit/)
-  - AArch64 cross-compiler (aarch64-linux-gnu-gcc or aarch64-elf-gcc)
-  - QEMU (qemu-system-aarch64)
-  - (optional for FAT16) mtools (mformat, mcopy) - brew install mtools or apt install mtools
+### Prerequisites
 
-## AIOS Development Roadmap 
-(see docs/ROADMAP.md)
+- **macOS** (Apple Silicon or Intel) or **Linux** (x86-64)
+- `aarch64-linux-gnu-gcc` cross-compiler
+- `qemu-system-aarch64` (v7+)
+- Python 3.9+
+- seL4 Microkit SDK 2.1.0
+
+### Install Dependencies
+
+**macOS (Homebrew):**
+```bash
+brew install aarch64-linux-gnu-gcc qemu python3
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt install gcc-aarch64-linux-gnu qemu-system-arm python3
+```
+
+### Get the Microkit SDK
+
+Download from [Microkit releases](https://github.com/seL4/microkit/releases) and extract:
+
+```bash
+mkdir -p ~/microkit
+cd ~/microkit
+# macOS Apple Silicon:
+wget https://github.com/seL4/microkit/releases/download/2.1.0/microkit-sdk-2.1.0-macos-aarch64.tar.gz
+tar xf microkit-sdk-2.1.0-macos-aarch64.tar.gz
+```
+
+Or set `MICROKIT_SDK` if installed elsewhere:
+```bash
+export MICROKIT_SDK=/path/to/microkit-sdk-2.1.0
+```
+
+### Build and Run
+
+```bash
+git clone https://github.com/arcanii/AIOS.git
+cd AIOS
+make                  # Build kernel image
+make programs         # Build user programs
+make ext2-disk        # Create and populate disk image
+make run              # Boot in QEMU
+```
+
+### First Boot
+
+```
+login: root
+password: root
+
+$ echo $PATH
+/bin:/sbin
+$ ls
+bin/   sbin/   etc/   home/   tmp/   dev/   var/   hello.txt
+$ hello
+Hello from AIOS!
+$ daemon &
+[1] 2
+$ ps
+  PID  PPID  UID  SLOT  STATE  FG  NAME
+     1     0    0     0  RUN    fg  /bin/shell
+     2     1    0     0  READY  bg  /bin/daemon
+$ kill 2
+[2] killed
+$ shutdown
+The system is going down for halt NOW!
+System halted. It is safe to power off.
+```
+
+Exit QEMU: `Ctrl-A X`
+
+### Run Tests
+
+```
+$ cd /bin/tests
+$ ./test_basic
+$ ./test_fileio
+$ ./test_threads
+$ ./test_signals
+```
+
+All 42 tests should pass (12 + 8 + 13 + 9).
 
 ## Architecture
-(see docs/ARCHITECTURE.md)
 
-> **TODO**: Layered auth_server PDs for defense in depth
+9 seL4 Protection Domains, each isolated by the microkernel:
 
-### 0.3.x Architecture (8 Protection Domains)
+```
+serial_driver (PL011 UART)         blk_driver (virtio-blk)
+      │                                  │
+      └──── orchestrator ────────────────┘
+             │    │    │
+        vfs_server  auth_server  net_server ── net_driver
+             │
+        fs_server (ext2)
+             │
+         ┌───┴───┐
+         │sandbox │  ← user-space kernel
+         │  shell │     processes, threads
+         │  apps  │     scheduler, signals
+         └───────┘
+```
 
-    +------------------------------------------------------------------+
-    |                        SANDBOX PD (150)                          |
-    |  +------------------------------------------------------------+  |
-    |  |              Sandbox Kernel (user-space)                   |  |
-    |  |  +--------+ +--------+ +--------+ +--------+               |  |
-    |  |  | shell  | | httpd  | | prog   | |  ...   |   Processes   |  |
-    |  |  +--------+ +--------+ +--------+ +--------+               |  |
-    |  |  Scheduler, Threads, Memory, Local Syscalls                |  |
-    |  +----------------------------+-------------------------------+  |
-    |                               | PPC (remote syscalls)            |
-    +-------------------------------+----------------------------------+
-    |                       ORCHESTRATOR (200)                         |
-    |               Service Router, Policy, Preemption Tick            |
-    +-----------+-----------+-----------+------------------------------+
-    | fs_server | net_server| auth_server                              |
-    |   (240)   |   (210)   |   (210)                                  |
-    +-----------+-----------+-----------+------------------------------+
-    | blk_driver| net_driver| serial_driver                            |
-    |   (250)   |   (230)   |   (254)                                  |
-    +-----------+-----------+-----------+------------------------------+
-    |                  seL4 Microkernel (Microkit)                     |
-    +------------------------------------------------------------------+
-    |                  Hardware (RPi / QEMU)                           |
-    +------------------------------------------------------------------+
+The **sandbox** PD contains a complete user-space kernel managing up to 256 processes and 1024 threads within 128 MB of memory. It implements preemptive scheduling, POSIX pthreads, signals, and a POSIX-compatible shell.
 
-**Key changes in 0.3.x:**
-- Single sandbox PD with internal user-space kernel
-- All user processes/threads managed inside sandbox
-- Cooperative + preemptive scheduling via orchestrator tick
-- pthreads possible within sandbox (no cross-PD threads)
-- Down from 14 PDs to 8
+See [ARCHITECTURE.md](ARCHITECTURE.md) for full technical details.
 
-See docs/sandbox_kernel_design.md for full design details.
+## Build Targets
 
+| Target | Description |
+|--------|-------------|
+| `make` | Build kernel image (`build/loader.img`) |
+| `make programs` | Build all user programs (bin + sbin + tests) |
+| `make ext2-disk` | Create ext2 disk image with programs and config |
+| `make run` | Boot in QEMU (4 cores, 2GB RAM, virtio devices) |
+| `make debug` | Boot with GDB server (`-S -s`) |
+| `make clean` | Remove build artifacts |
+| `make bump-patch` | Increment version patch number |
+| `make version` | Print current version |
 
+## Project Structure
+
+```
+AIOS/
+├── src/                    # Kernel PD source code
+│   ├── sandbox.c           # User-space kernel (1781 lines)
+│   ├── orchestrator.c      # Service router, timer, IPC
+│   ├── serial_driver.c     # PL011 UART driver
+│   ├── blk_driver.c        # virtio-blk driver
+│   ├── net_driver.c        # virtio-net driver
+│   ├── net_server.c        # TCP/IP stack
+│   ├── auth_server.c       # Login authentication
+│   ├── vfs_server.c        # Virtual filesystem layer
+│   ├── fs/                 # Filesystem implementations
+│   │   ├── vfs.c           # VFS dispatch
+│   │   ├── ext2.c          # ext2 (primary)
+│   │   ├── fat16.c         # FAT16 (legacy)
+│   │   └── fat32.c         # FAT32 (legacy)
+│   └── arch/aarch64/       # Architecture-specific
+│       ├── setjmp.S        # Context save (int + FP/SIMD)
+│       └── context.h       # Context layout
+├── include/
+│   ├── aios/               # Kernel headers
+│   │   ├── aios.h          # Syscall table + macros
+│   │   ├── channels.h      # PD channel IDs
+│   │   ├── async_ipc.h     # Async IPC protocol
+│   │   └── version.h       # Version numbers
+│   └── posix.h             # POSIX wrappers for user programs
+├── libc/                   # Minimal C library
+│   ├── include/            # signal.h, pthread.h, etc.
+│   └── src/                # Stubs for POSIX functions
+├── programs/               # User programs
+│   ├── shell.c             # POSIX shell (1566 lines)
+│   ├── *.c                 # 34 utilities (cat, ls, cp, etc.)
+│   ├── sbin/               # Privileged programs
+│   │   └── shutdown.c      # Root-only system shutdown
+│   └── tests/              # Test suite
+│       ├── test_basic.c    # Syscalls, memory, strings (12 tests)
+│       ├── test_fileio.c   # File I/O, directories (8 tests)
+│       ├── test_threads.c  # Pthreads, scheduling (13 tests)
+│       └── test_signals.c  # Kill, signal handlers (9 tests)
+├── tools/                  # Build tools
+│   ├── mkext2.py           # Create ext2 disk image
+│   ├── ext2_inject.py      # Populate disk with programs
+│   ├── posix_audit.py      # POSIX compliance checker
+│   └── gen_system_json.py  # System description generator
+├── disk/                   # Files injected onto disk
+│   ├── etc/                # hostname, motd, passwd, services
+│   └── hello.txt
+├── aios.system             # Microkit system description (PDs, channels, memory)
+├── Makefile                # Build system
+└── ARCHITECTURE.md         # Full technical documentation
+```
+
+## Shell Commands
+
+**Builtins:** cd, pwd, ls, echo, cat, cp, head, wc, sort, env, export, ps, top, kill, jobs, fg, exit, help, clear, source, uname, date
+
+**External programs:** bench, daemon, dirtest, fib, forktest, fstat, ftest, hello, idle, info, memtest, mkdir, mv, netstat, posix_test, rm, rmdir, sieve, socktest, sort, spawn_test, stress, uname, wc, wget, whoami
+
+**Shell features:** `$PATH` resolution, `./cmd`, `cmd &` (background), `cmd > file`, `cmd >> file`, `cmd < file`, `cmd1 | cmd2`, `$VAR` expansion, script execution
+
+## Key Design Decisions
+
+**Why seL4?** Formally verified microkernel with mathematical proof of correctness. All AIOS services run in isolated PDs — a driver crash cannot take down the kernel.
+
+**Why a user-space kernel?** The sandbox PD implements process/thread management in user space rather than using seL4 TCBs directly. This allows rapid iteration on scheduling and threading without modifying seL4, at the cost of true hardware isolation between user processes.
+
+**Why POSIX?** Familiar programming model. Programs written for AIOS look like standard Unix programs. The 272-function POSIX surface enables porting existing software.
+
+## Known Limitations
+
+- File I/O blocks all threads briefly (sync PPC to orchestrator, microseconds per call)
+- Single address space for all user processes (no inter-process memory protection)
+- Single seL4 TCB for sandbox (no true SMP parallelism for user threads)
+- `fork()` returns -1 (no process duplication)
+- Bump allocator for malloc (no free, long-running processes exhaust heap)
+- Ctrl-C chain wired but QEMU `-nographic` intercepts it before the guest
+
+## Contributing
+
+This project is in an experimental/research phase. Collaborators welcome.
+
+- Issues and PRs on [GitHub](https://github.com/arcanii/AIOS)
+- MIT License
+
+## Acknowledgments
+
+Built on [seL4](https://sel4.systems/) by Trustworthy Systems (UNSW) and the [seL4 Foundation](https://sel4.systems/). seL4 won the 2023 ACM Software System Award.
 
 ## License
 
-MIT License. See LICENSE file.
-
-The LLM inference engine is based on llama2.c by Andrej Karpathy
-(MIT License). https://github.com/karpathy/llama2.c
+MIT — see [LICENSE](LICENSE)
