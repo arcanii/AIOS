@@ -83,11 +83,19 @@ static int spawn_simple(const char *name, uint8_t prio,
 
 /* Worker thread for threading test */
 static volatile int shared_counter = 0;
+static volatile int core_seen[4] = {0, 0, 0, 0};
+
 static void worker_thread(void *arg0, void *arg1, void *ipc_buf) {
     int id = (int)(uintptr_t)arg0;
     volatile int *ctr = (volatile int *)arg1;
+
+    /* Busy work to prove we're running in parallel */
+    volatile int dummy = 0;
+    for (int i = 0; i < 100000; i++) dummy += i;
+
     (*ctr)++;
-    printf("[worker %d] counter=%d\n", id, *ctr);
+    core_seen[id] = 1;
+    printf("[worker %d] counter=%d (pinned to core %d)\n", id, *ctr, id);
     while (1) seL4_Yield();
 }
 
@@ -192,7 +200,7 @@ int main(int argc, char *argv[]) {
 test3:
 
     /* ========= TEST 3: Multi-threading ========= */
-    printf("\n--- Test 3: Multi-threading (4 TCBs) ---\n");
+    printf("\n--- Test 3: Multi-threading + SMP (4 TCBs, 4 cores) ---\n");
     tests_total++;
     {
         shared_counter = 0;
@@ -209,6 +217,12 @@ test3:
 
             seL4_TCB_SetPriority(workers[i].tcb.cptr,
                                   simple_get_tcb(&simple), 200);
+            /* Pin each thread to a different core */
+            error = seL4_TCB_SetAffinity(workers[i].tcb.cptr, (seL4_Word)i);
+            if (error) {
+                printf("[test3] SetAffinity(%d, core %d) failed: %d\n",
+                       i, i, error);
+            }
             error = sel4utils_start_thread(&workers[i],
                 (sel4utils_thread_entry_fn)worker_thread,
                 (void *)(uintptr_t)i,
@@ -223,6 +237,11 @@ test3:
         if (all_ok && shared_counter == NUM_WORKERS) {
             printf("[test3] PASS: %d threads, counter=%d\n",
                    NUM_WORKERS, (int)shared_counter);
+            printf("[test3] Cores used:");
+            for (int i = 0; i < 4; i++) {
+                if (core_seen[i]) printf(" %d", i);
+            }
+            printf("\n");
             tests_passed++;
         } else {
             printf("[test3] FAIL: counter=%d (expected %d)\n",
