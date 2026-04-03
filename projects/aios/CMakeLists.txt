@@ -57,6 +57,11 @@ AiosPosixApp(posix_tee)
 AiosPosixApp(posix_sort)
 AiosPosixApp(posix_grep)
 AiosPosixApp(gnu_hello)
+AiosPosixApp(gnu_cat)
+AiosPosixApp(posix_help)
+AiosPosixApp(posix_rm)
+AiosPosixApp(posix_touch)
+AiosPosixApp(posix_mkdir)
 
 set(ALL_APPS
     hello_child echo_server serial_server mini_shell crash_test blk_test
@@ -66,6 +71,8 @@ set(ALL_APPS
     posix_whoami posix_id posix_date posix_env posix_yes posix_tee
     posix_sort posix_grep
     gnu_hello
+    gnu_cat
+    posix_mkdir posix_touch posix_rm posix_help
 )
 
 set(CPIO_FILES "")

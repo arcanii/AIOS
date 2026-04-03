@@ -23,7 +23,7 @@
 #include "aios/vfs.h"
 #include "aios/procfs.h"
 
-#define ALLOCATOR_STATIC_POOL_SIZE (BIT(seL4_PageBits) * 400)
+#define ALLOCATOR_STATIC_POOL_SIZE (BIT(seL4_PageBits) * 800)
 static char allocator_mem_pool[ALLOCATOR_STATIC_POOL_SIZE];
 static sel4utils_alloc_data_t vspace_data;
 
@@ -162,6 +162,7 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         seL4_CNode_SaveCaller(seL4_CapInitThreadCNode, reply_slot,
                                seL4_WordBits);
 
+        /* Debug: show received command */
         /* Split "name arg1 arg2" into prog_name + args */
         char *exec_args = 0;
         for (int i = 0; i < nl; i++) {
@@ -253,6 +254,7 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         seL4_Recv(child_fault_ep.cptr, &child_badge);
         // printf("[exec] %s exited\n", prog_name);
         sel4utils_destroy_process(&proc, &vka);
+        vka_free_object(&vka, &child_fault_ep);
         if (child_pid > 0) proc_remove(child_pid);
 
         /* Reply to shell via saved cap */

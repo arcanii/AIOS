@@ -86,6 +86,11 @@
 /Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/posix_sort.dir
 /Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/posix_grep.dir
 /Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/gnu_hello.dir
+/Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/gnu_cat.dir
+/Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/posix_help.dir
+/Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/posix_rm.dir
+/Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/posix_touch.dir
+/Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/posix_mkdir.dir
 /Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/aios_root.dir
 /Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/rootserver_image.dir
 /Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/edit_cache.dir

@@ -1,261 +1,134 @@
 /*
- * AIOS 0.4.x — Interactive Shell with filesystem
- * argv[0] = serial ep, argv[1] = fs ep
+ * AIOS 0.4.x miniShell — thin exec launcher
+ *
+ * Builtins: cd, exit
+ * Everything else → exec (alias or direct CPIO name)
+ *
+ * argv[0] = serial_ep, argv[1] = fs_ep, argv[2] = exec_ep
  */
 #include <stdint.h>
 #include <sel4/sel4.h>
 
 #define SER_PUTC 1
 #define SER_GETC 2
-#define FS_LS   10
-#define FS_CAT  11
-
-static seL4_CPtr serial_ep;
-static seL4_CPtr fs_ep;
-static seL4_CPtr exec_ep;
-
 #define EXEC_RUN 20
+
+static seL4_CPtr serial_ep, fs_ep, exec_ep;
 
 static void ser_putc(char c) {
     seL4_SetMR(0, (seL4_Word)c);
     seL4_Call(serial_ep, seL4_MessageInfo_new(SER_PUTC, 0, 0, 1));
 }
 static void ser_puts(const char *s) { while (*s) ser_putc(*s++); }
-
 static int ser_getc(void) {
     seL4_MessageInfo_t r = seL4_Call(serial_ep, seL4_MessageInfo_new(SER_GETC, 0, 0, 0));
     return (int)(long)seL4_GetMR(0);
 }
 
 static long parse_num(const char *s) {
-    long v = 0;
-    while (*s >= '0' && *s <= '9') { v = v * 10 + (*s - '0'); s++; }
-    return v;
+    long v = 0; while (*s >= '0' && *s <= '9') { v = v * 10 + (*s - '0'); s++; } return v;
 }
-
 static int str_eq(const char *a, const char *b) {
-    while (*a && *b && *a == *b) { a++; b++; }
-    return *a == *b;
-}
-static int str_prefix(const char *s, const char *p) {
-    while (*p && *s == *p) { s++; p++; }
-    return *p == '\0';
+    while (*a && *b && *a == *b) { a++; b++; } return *a == *b;
 }
 static int str_len(const char *s) { int n = 0; while (s[n]) n++; return n; }
-
-/* Command aliases — shell command → CPIO program name */
-struct alias { const char *cmd; const char *prog; };
-static const struct alias aliases[] = {
-    { "cat",   "posix_cat" },
-    { "ls",    "posix_ls" },
-    { "wc",    "posix_wc" },
-    { "head",  "posix_head" },
-    { "uname", "posix_uname" },
-    { "echo",  "posix_echo" },
-    { "ps",    "posix_ps" },
-    { "grep",  "posix_grep" },
-    { "sort",  "posix_sort" },
-    { "id",    "posix_id" },
-    { "whoami","posix_whoami" },
-    { "date",  "posix_date" },
-    { "env",   "posix_env" },
-    { "yes",   "posix_yes" },
-    { "basename","posix_basename" },
-    { "dirname","posix_dirname" },
-    { "true",  "posix_true" },
-    { "false", "posix_false" },
-    { 0, 0 }
-};
-
-static const char *lookup_alias(const char *cmd) {
-    for (int i = 0; aliases[i].cmd; i++) {
-        if (str_eq(cmd, aliases[i].cmd)) return aliases[i].prog;
-    }
-    return 0;
-}
-
 static void str_cpy(char *d, const char *s) { while ((*d++ = *s++)); }
 
-/* Current working directory */
 static char cwd[256] = "/";
 
-/* Build absolute path from cwd + relative */
 static void resolve(const char *arg, char *out, int outsz) {
-    if (!arg || !arg[0]) {
-        str_cpy(out, cwd);
-        return;
-    }
-    if (arg[0] == '/') {
-        /* Absolute */
-        int i = 0;
-        while (arg[i] && i < outsz - 1) { out[i] = arg[i]; i++; }
-        out[i] = '\0';
-        return;
-    }
-    /* Relative: cwd + "/" + arg */
+    if (!arg || !arg[0]) { str_cpy(out, cwd); return; }
+    if (arg[0] == '/') { int i = 0; while (arg[i] && i < outsz-1) { out[i]=arg[i]; i++; } out[i]='\0'; return; }
     int ci = 0;
-    while (cwd[ci] && ci < outsz - 2) { out[ci] = cwd[ci]; ci++; }
-    if (ci > 1) out[ci++] = '/'; /* add / unless cwd is just "/" */
+    while (cwd[ci] && ci < outsz-2) { out[ci]=cwd[ci]; ci++; }
+    if (ci > 1) out[ci++] = '/';
     int ai = 0;
-    while (arg[ai] && ci < outsz - 1) { out[ci++] = arg[ai++]; }
+    while (arg[ai] && ci < outsz-1) { out[ci++]=arg[ai++]; }
     out[ci] = '\0';
 }
 
-/* Pack a path string into seL4 message registers for FS IPC */
-static int pack_path(const char *path) {
-    int pl = str_len(path);
+/* ── Alias table ── */
+struct alias { const char *cmd; const char *prog; int raw; };
+static const struct alias aliases[] = {
+    { "cat",      "gnu_cat",        0 },
+    { "ls",       "posix_ls",       0 },
+    { "wc",       "posix_wc",       0 },
+    { "head",     "posix_head",     0 },
+    { "uname",    "posix_uname",    0 },
+    { "echo",     "posix_echo",     1 },
+    { "ps",       "posix_ps",       0 },
+    { "grep",     "posix_grep",     1 },
+    { "sort",     "posix_sort",     0 },
+    { "id",       "posix_id",       0 },
+    { "whoami",   "posix_whoami",   0 },
+    { "date",     "posix_date",     0 },
+    { "env",      "posix_env",      0 },
+    { "yes",      "posix_yes",      1 },
+    { "basename", "posix_basename", 0 },
+    { "dirname",  "posix_dirname",  0 },
+    { "true",     "posix_true",     0 },
+    { "false",    "posix_false",    0 },
+    { "pwd",      "posix_pwd",      0 },
+    { "mkdir",    "posix_mkdir",    0 },
+    { "touch",    "posix_touch",    0 },
+    { "rm",       "posix_rm",       0 },
+    { "help",     "posix_help",     0 },
+    { 0, 0, 0 }
+};
+
+static const struct alias *lookup_alias(const char *cmd) {
+    for (int i = 0; aliases[i].cmd; i++)
+        if (str_eq(cmd, aliases[i].cmd)) return &aliases[i];
+    return 0;
+}
+
+/* ── Exec ── */
+static int do_exec(const char *cmdline) {
+    if (!exec_ep) return -1;
+    int pl = str_len(cmdline);
     seL4_SetMR(0, (seL4_Word)pl);
-    int mr_idx = 1;
-    seL4_Word w = 0;
+    int mr = 1; seL4_Word w = 0;
     for (int i = 0; i < pl; i++) {
-        w |= ((seL4_Word)(uint8_t)path[i]) << ((i % 8) * 8);
-        if (i % 8 == 7 || i == pl - 1) {
-            seL4_SetMR(mr_idx++, w);
-            w = 0;
+        w |= ((seL4_Word)(uint8_t)cmdline[i]) << ((i % 8) * 8);
+        if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
+    }
+    seL4_MessageInfo_t reply = seL4_Call(exec_ep, seL4_MessageInfo_new(EXEC_RUN, 0, 0, mr));
+    return (int)(long)seL4_GetMR(0);
+}
+
+static int exec_cmd(const char *prog, const char *args, int raw) {
+    char buf[512];
+    int bi = 0;
+    const char *p = prog;
+    while (*p && bi < 500) buf[bi++] = *p++;
+    if (args) {
+        const char *a = args;
+        while (*a && bi < 500) {
+            buf[bi++] = ' ';
+            const char *start = a;
+            while (*a && *a != ' ') a++;
+            int alen = (int)(a - start);
+            if (!raw && start[0] != '/' && start[0] != '-') {
+                char word[128], abs[256];
+                int wi = 0;
+                while (wi < alen && wi < 127) { word[wi]=start[wi]; wi++; }
+                word[wi] = '\0';
+                resolve(word, abs, sizeof(abs));
+                const char *q = abs;
+                while (*q && bi < 500) buf[bi++] = *q++;
+            } else {
+                for (int i = 0; i < alen && bi < 500; i++) buf[bi++] = start[i];
+            }
+            while (*a == ' ') a++;
         }
     }
-    return mr_idx;
+    buf[bi] = '\0';
+    return do_exec(buf);
 }
 
-/* Unpack reply data from MRs as chars */
-static void unpack_reply(seL4_MessageInfo_t reply) {
-    seL4_Word total = seL4_GetMR(0);
-    if (total == 0) return;
-    int mrs = (int)seL4_MessageInfo_get_length(reply) - 1;
-    for (int i = 0; i < mrs; i++) {
-        seL4_Word rw = seL4_GetMR(i + 1);
-        for (int j = 0; j < 8 && (int)(i * 8 + j) < (int)total; j++) {
-            ser_putc((char)((rw >> (j * 8)) & 0xFF));
-        }
-    }
-}
-
-/* Read file into buffer via FS IPC */
-static int fs_read(const char *fpath, char *buf, int bufsz) {
-    if (!fs_ep) return -1;
-    char abs[256];
-    resolve(fpath, abs, sizeof(abs));
-    int mrs = pack_path(abs);
-    seL4_MessageInfo_t reply = seL4_Call(fs_ep, seL4_MessageInfo_new(FS_CAT, 0, 0, mrs));
-    seL4_Word total = seL4_GetMR(0);
-    if (total == 0) return 0;
-    int rmrs = (int)seL4_MessageInfo_get_length(reply) - 1;
-    int got = 0;
-    for (int i = 0; i < rmrs && got < bufsz - 1; i++) {
-        seL4_Word rw = seL4_GetMR(i + 1);
-        for (int j = 0; j < 8 && got < (int)total && got < bufsz - 1; j++)
-            buf[got++] = (char)((rw >> (j * 8)) & 0xFF);
-    }
-    buf[got] = '\0';
-    return got;
-}
-
-static void put_dec(unsigned long v) {
-    char tmp[20]; int ti = 0;
-    if (v == 0) { ser_putc('0'); return; }
-    while (v) { tmp[ti++] = '0' + v % 10; v /= 10; }
-    while (ti--) ser_putc(tmp[ti]);
-}
-
-static void cmd_wc(const char *arg) {
-    if (!arg) { ser_puts("Usage: wc <file>\n"); return; }
-    char buf[4096];
-    int n = fs_read(arg, buf, sizeof(buf));
-    if (n <= 0) { ser_puts("wc: "); ser_puts(arg); ser_puts(": No such file\n"); return; }
-    int lines = 0, words = 0, in_word = 0;
-    for (int i = 0; i < n; i++) {
-        if (buf[i] == '\n') lines++;
-        if (buf[i] == ' ' || buf[i] == '\n' || buf[i] == '\t') in_word = 0;
-        else if (!in_word) { in_word = 1; words++; }
-    }
-    put_dec(lines); ser_putc(' ');
-    put_dec(words); ser_putc(' ');
-    put_dec(n); ser_putc(' ');
-    ser_puts(arg); ser_putc('\n');
-}
-
-static void cmd_head(const char *arg) {
-    if (!arg) { ser_puts("Usage: head <file>\n"); return; }
-    char buf[4096];
-    int n = fs_read(arg, buf, sizeof(buf));
-    if (n <= 0) { ser_puts("head: "); ser_puts(arg); ser_puts(": No such file\n"); return; }
-    int lines = 0;
-    for (int i = 0; i < n && lines < 10; i++) {
-        ser_putc(buf[i]);
-        if (buf[i] == '\n') lines++;
-    }
-}
-
-static void cmd_ls(const char *arg) {
-    if (!fs_ep) { ser_puts("No filesystem\n"); return; }
-    char path[256];
-    resolve(arg, path, sizeof(path));
-    int mrs = pack_path(path);
-    seL4_MessageInfo_t reply = seL4_Call(fs_ep, seL4_MessageInfo_new(FS_LS, 0, 0, mrs));
-    seL4_Word total = seL4_GetMR(0);
-    if (total == 0) {
-        ser_puts("ls: cannot access '");
-        ser_puts(path);
-        ser_puts("'\n");
-        return;
-    }
-    unpack_reply(reply);
-}
-
-static void cmd_cat(const char *arg) {
-    if (!fs_ep) { ser_puts("No filesystem\n"); return; }
-    char path[256];
-    resolve(arg, path, sizeof(path));
-    int mrs = pack_path(path);
-    seL4_MessageInfo_t reply = seL4_Call(fs_ep, seL4_MessageInfo_new(FS_CAT, 0, 0, mrs));
-    seL4_Word total = seL4_GetMR(0);
-    if (total == 0) {
-        ser_puts("cat: ");
-        ser_puts(path);
-        ser_puts(": No such file\n");
-        return;
-    }
-    unpack_reply(reply);
-}
-
-static void cmd_cd(const char *arg) {
-    if (!arg || !arg[0]) {
-        str_cpy(cwd, "/");
-        return;
-    }
-    /* Handle ".." specially */
-    if (str_eq(arg, "..")) {
-        int len = str_len(cwd);
-        if (len <= 1) return; /* already at / */
-        len--; /* skip trailing char */
-        while (len > 0 && cwd[len] != '/') len--;
-        if (len == 0) len = 1; /* keep root / */
-        cwd[len] = '\0';
-        return;
-    }
-    char path[256];
-    resolve(arg, path, sizeof(path));
-
-    /* Verify it's a directory by trying ls */
-    if (fs_ep) {
-        int mrs = pack_path(path);
-        seL4_MessageInfo_t reply = seL4_Call(fs_ep, seL4_MessageInfo_new(FS_LS, 0, 0, mrs));
-        if (seL4_GetMR(0) == 0) {
-            ser_puts("cd: ");
-            ser_puts(path);
-            ser_puts(": Not a directory\n");
-            return;
-        }
-    }
-    str_cpy(cwd, path);
-    /* Normalize trailing slash */
-    int len = str_len(cwd);
-    if (len > 1 && cwd[len - 1] == '/') cwd[len - 1] = '\0';
-}
-
-#define LINE_MAX 128
+/* ── Line reader ── */
+#define LINE_MAX 256
 static char line[LINE_MAX];
-
 static void read_line(int *len) {
     *len = 0;
     while (*len < LINE_MAX - 1) {
@@ -263,169 +136,62 @@ static void read_line(int *len) {
         if (c < 0) continue;
         if (c == '\r' || c == '\n') { ser_putc('\n'); break; }
         if ((c == 0x7f || c == '\b') && *len > 0) {
-            (*len)--;
-            ser_putc('\b'); ser_putc(' '); ser_putc('\b');
-            continue;
+            (*len)--; ser_putc('\b'); ser_putc(' '); ser_putc('\b'); continue;
         }
-        if (c >= 0x20 && c < 127) {
-            line[*len] = (char)c;
-            (*len)++;
-            ser_putc((char)c);
-        }
+        if (c >= 0x20 && c < 127) { line[*len] = (char)c; (*len)++; ser_putc((char)c); }
     }
     line[*len] = '\0';
 }
 
+/* ── Main ── */
 int main(int argc, char *argv[]) {
-    serial_ep = 0; fs_ep = 0;
+    serial_ep = 0; fs_ep = 0; exec_ep = 0;
     if (argc > 0) serial_ep = (seL4_CPtr)parse_num(argv[0]);
     if (argc > 1) fs_ep = (seL4_CPtr)parse_num(argv[1]);
     if (argc > 2) exec_ep = (seL4_CPtr)parse_num(argv[2]);
 
-    ser_puts("\n");
-    ser_puts("============================================\n");
-    ser_puts("  AIOS 0.4.x Shell\n");
-    if (fs_ep) ser_puts("  Filesystem: ext2\n");
+    ser_puts("\n============================================\n");
+    ser_puts("  AIOS 0.4.x miniShell\n");
     ser_puts("============================================\n\n");
 
-
     while (1) {
-        ser_puts(cwd);
-        ser_puts(" $ ");
-        int len;
-        read_line(&len);
+        ser_puts(cwd); ser_puts(" $ ");
+        int len; read_line(&len);
         if (len == 0) continue;
 
-        /* Parse command + arg */
         char *arg = 0;
         for (int i = 0; i < len; i++) {
-            if (line[i] == ' ') {
-                line[i] = '\0';
-                arg = line + i + 1;
-                break;
-            }
+            if (line[i] == ' ') { line[i] = '\0'; arg = line + i + 1; break; }
         }
 
-        if (str_eq(line, "help")) {
-            ser_puts("Commands: ls, cat, cd, pwd, wc, head, echo, uname, sysinfo, exit\n");
-            
-        } else if (str_eq(line, "ls")) {
-            cmd_ls(arg);
-        } else if (str_eq(line, "cat")) {
-            if (!arg) ser_puts("Usage: cat <file>\n");
-            else cmd_cat(arg);
-        } else if (str_eq(line, "cd")) {
-            cmd_cd(arg);
-        } else if (str_eq(line, "mkdir")) {
-            if (!arg) { ser_puts("Usage: mkdir <dir>\n"); }
-            else if (fs_ep) {
+        /* Only true builtins: cd, exit */
+        if (str_eq(line, "cd")) {
+            if (!arg || !arg[0]) { str_cpy(cwd, "/"); }
+            else if (str_eq(arg, "..")) {
+                int l = str_len(cwd);
+                if (l > 1) { l--; while (l > 0 && cwd[l] != '/') l--; if (l == 0) l = 1; cwd[l] = '\0'; }
+            } else {
                 char path[256]; resolve(arg, path, sizeof(path));
-                int mrs = pack_path(path);
-                seL4_MessageInfo_t reply = seL4_Call(fs_ep,
-                    seL4_MessageInfo_new(14 /* FS_MKDIR */, 0, 0, mrs));
-                if ((int)(long)seL4_GetMR(0) != 0)
-                    { ser_puts("mkdir: failed\n"); }
+                str_cpy(cwd, path);
+                int l = str_len(cwd);
+                if (l > 1 && cwd[l-1] == '/') cwd[l-1] = '\0';
             }
-        } else if (str_eq(line, "touch")) {
-            if (!arg) { ser_puts("Usage: touch <file>\n"); }
-            else if (fs_ep) {
-                char path[256]; resolve(arg, path, sizeof(path));
-                int mrs = pack_path(path);
-                /* Send empty write */
-                seL4_SetMR(mrs, 0); /* data_len = 0 */
-                seL4_MessageInfo_t reply = seL4_Call(fs_ep,
-                    seL4_MessageInfo_new(15 /* FS_WRITE_FILE */, 0, 0, mrs + 1));
-                if ((int)(long)seL4_GetMR(0) != 0)
-                    { ser_puts("touch: failed\n"); }
-            }
-        } else if (str_eq(line, "rm")) {
-            if (!arg) { ser_puts("Usage: rm <file>\n"); }
-            else if (fs_ep) {
-                char path[256]; resolve(arg, path, sizeof(path));
-                int mrs = pack_path(path);
-                seL4_MessageInfo_t reply = seL4_Call(fs_ep,
-                    seL4_MessageInfo_new(16 /* FS_UNLINK */, 0, 0, mrs));
-                if ((int)(long)seL4_GetMR(0) != 0)
-                    { ser_puts("rm: failed\n"); }
-            }
-        } else if (str_eq(line, "pwd")) {
-            ser_puts(cwd);
-            ser_putc('\n');
-        } else if (str_eq(line, "wc")) {
-            cmd_wc(arg);
-        } else if (str_eq(line, "head")) {
-            cmd_head(arg);
-        } else if (str_eq(line, "hello")) {
-            ser_puts("Hello from AIOS 0.4.x!\n");
-        } else if (str_eq(line, "uname")) {
-            ser_puts("AIOS 0.4.x aarch64 seL4/bare 4-core SMP\n");
-        } else if (str_eq(line, "echo")) {
-            if (arg) { ser_puts(arg); ser_putc('\n'); }
-            else ser_putc('\n');
         } else if (str_eq(line, "exit")) {
             ser_puts("Goodbye.\n");
             return 0;
-        } else if (exec_ep) {
-            /* Check aliases: "cat foo" → "posix_cat foo" */
-            const char *alias = lookup_alias(line);
-            if (alias) {
-                /* Build: "posix_cat /absolute/path" */
-                char exec_buf[LINE_MAX + 256];
-                int ei = 0;
-                const char *a = alias;
-                while (*a && ei < LINE_MAX + 250) exec_buf[ei++] = *a++;
-                if (arg) {
-                    exec_buf[ei++] = ' ';
-                    if (arg[0] != '/' && arg[0] != '-') {
-                        /* Relative path — prepend CWD */
-                        char abs[256];
-                        resolve(arg, abs, sizeof(abs));
-                        const char *p = abs;
-                        while (*p && ei < LINE_MAX + 250) exec_buf[ei++] = *p++;
-                    } else {
-                        const char *p = arg;
-                        while (*p && ei < LINE_MAX + 250) exec_buf[ei++] = *p++;
-                    }
-                }
-                exec_buf[ei] = '\0';
-                /* Send aliased command */
-                int pl = ei;
-                seL4_SetMR(0, (seL4_Word)pl);
-                int mr = 1;
-                seL4_Word w = 0;
-                for (int i = 0; i < pl; i++) {
-                    w |= ((seL4_Word)(uint8_t)exec_buf[i]) << ((i % 8) * 8);
-                    if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
-                }
-                seL4_MessageInfo_t reply = seL4_Call(exec_ep,
-                    seL4_MessageInfo_new(EXEC_RUN, 0, 0, mr));
-                int ret = (int)(long)seL4_GetMR(0);
-                if (ret != 0) {
-                    ser_puts(line);
-                    ser_puts(": command not found\n");
+        } else {
+            /* Alias or direct exec */
+            const struct alias *al = lookup_alias(line);
+            if (al) {
+                if (exec_cmd(al->prog, arg, al->raw) != 0) {
+                    ser_puts(line); ser_puts(": command not found\n");
                 }
             } else {
-                /* Direct exec — restore full command line */
-                if (arg && arg > line) { *(arg - 1) = ' '; }
-                int pl = str_len(line);
-            seL4_SetMR(0, (seL4_Word)pl);
-            int mr = 1;
-            seL4_Word w = 0;
-            for (int i = 0; i < pl; i++) {
-                w |= ((seL4_Word)(uint8_t)line[i]) << ((i % 8) * 8);
-                if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
+                if (arg) *(arg - 1) = ' ';
+                if (do_exec(line) != 0) {
+                    ser_puts(line); ser_puts(": command not found\n");
+                }
             }
-            seL4_MessageInfo_t reply = seL4_Call(exec_ep,
-                seL4_MessageInfo_new(EXEC_RUN, 0, 0, mr));
-            int ret = (int)(long)seL4_GetMR(0);
-            if (ret != 0) {
-                ser_puts(line);
-                ser_puts(": command not found\n");
-            }
-            }
-        } else {
-            ser_puts(line);
-            ser_puts(": command not found\n");
         }
     }
     return 0;
