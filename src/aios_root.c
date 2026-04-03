@@ -490,18 +490,23 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         seL4_CPtr child_thread = sel4utils_copy_cap_to_process(
             proc, &vka, te_dest.capPtr);
 
-        char s_ser[16], s_fs[16], s_thread[16];
+        seL4_CPtr child_auth = sel4utils_copy_cap_to_process(
+            proc, &vka, auth_ep_cap);
+
+        char s_ser[16], s_fs[16], s_thread[16], s_auth[16];
         snprintf(s_ser, 16, "%lu", (unsigned long)child_ser);
         snprintf(s_fs, 16, "%lu", (unsigned long)child_fs);
         snprintf(s_thread, 16, "%lu", (unsigned long)child_thread);
+        snprintf(s_auth, 16, "%lu", (unsigned long)child_auth);
 
         /* Build argv array */
-        #define MAX_EXEC_ARGS 8
+        #define MAX_EXEC_ARGS 12
         char *child_argv[MAX_EXEC_ARGS];
         int child_argc = 0;
         child_argv[child_argc++] = s_ser;
         child_argv[child_argc++] = s_fs;
         child_argv[child_argc++] = s_thread;
+        child_argv[child_argc++] = s_auth;
         /* Pass CWD from shell (encoded in exec_args after \x01 separator) */
         static char cwd_buf[256];
         cwd_buf[0] = '/'; cwd_buf[1] = 0;
@@ -1127,6 +1132,8 @@ int main(int argc, char *argv[]) {
                     printf("[auth] /etc/passwd not found, using defaults\n");
                 uint32_t root_session = aios_auth_login_root();
                 (void)root_session;
+                printf("[boot] Auth: %d users, root session 0x%x\n",
+                       auth_loaded > 0 ? auth_loaded : 2, root_session);
                 printf("[boot] Filesystems mounted\n");
             } else {
                 printf("[fs] ext2 init failed: %d\n", fs_err);

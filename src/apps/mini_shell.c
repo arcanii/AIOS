@@ -40,6 +40,15 @@ static int str_eq(const char *a, const char *b) {
 }
 static int str_len(const char *s) { int n = 0; while (s[n]) n++; return n; }
 static void str_cpy(char *d, const char *s) { while ((*d++ = *s++)); }
+static int uint_to_dec(uint32_t v, char *buf) {
+    if (v == 0) { buf[0] = '0'; buf[1] = 0; return 1; }
+    char tmp[12]; int ti = 0;
+    while (v) { tmp[ti++] = '0' + v % 10; v /= 10; }
+    int len = ti;
+    while (ti--) *buf++ = tmp[ti];
+    *buf = 0;
+    return len;
+}
 
 /* ── Environment ── */
 #define ENV_MAX 16
@@ -355,9 +364,16 @@ login_gate:
                     p = arg;
                     while (*p && ci < 500) cmd[ci++] = *p++;
                 }
-                /* Append CWD marker */
+                /* Append CWD marker: CWD=uid:gid:/path */
                 cmd[ci++] = ' ';
                 cmd[ci++] = 'C'; cmd[ci++] = 'W'; cmd[ci++] = 'D'; cmd[ci++] = '=';
+                char uid_dec[12], gid_dec[12];
+                uint_to_dec(session_uid, uid_dec);
+                uint_to_dec(session_gid, gid_dec);
+                for (int x = 0; uid_dec[x] && ci < 500; x++) cmd[ci++] = uid_dec[x];
+                cmd[ci++] = ':';
+                for (int x = 0; gid_dec[x] && ci < 500; x++) cmd[ci++] = gid_dec[x];
+                cmd[ci++] = ':';
                 const char *cw = cwd;
                 while (*cw && ci < 500) cmd[ci++] = *cw++;
                 cmd[ci] = '\0';

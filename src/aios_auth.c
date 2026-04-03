@@ -635,8 +635,10 @@ static void handle_get_user(void) {
         if (users[i].active && users[i].uid == uid) {
             seL4_SetMR(0, AIOS_AUTH_OK);
             seL4_SetMR(1, (seL4_Word)users[i].gid);
-            int last = pack_string(2, users[i].username);
-            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, last));
+            int mr = pack_string(2, users[i].username);
+            mr = pack_string(mr, users[i].home);
+            mr = pack_string(mr, users[i].shell);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, mr));
             return;
         }
     }

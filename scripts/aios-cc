@@ -98,6 +98,8 @@ LDFLAGS=(
     -Wl,--wrap=pthread_mutex_lock
     -Wl,--wrap=pthread_mutex_unlock
     -Wl,--wrap=pthread_mutex_destroy
+    -Wl,--wrap=getpwuid
+    -Wl,--wrap=getpwnam
     -Wl,-umuslcsys_init_muslc
 )
 
@@ -165,12 +167,17 @@ else
         exit 1
     fi
 
+    # Per-process temp dir (safe for parallel builds)
+    AIOS_TMPDIR="/tmp/aios_cc_$$"
+    mkdir -p "$AIOS_TMPDIR"
+    trap "rm -rf $AIOS_TMPDIR" EXIT
+
     # Compile sources to .o
     OBJS=()
     for src in "${SOURCES[@]}"; do
-        obj="/tmp/aios_$(echo ${src} | tr "/" "_" | sed "s/.c$//").o"
+        obj="$AIOS_TMPDIR/$(echo ${src} | tr "/" "_" | sed "s/.c$//").o"
         ${CC} ${SYSROOT} "${INCLUDES[@]}" "${CFLAGS[@]}" -c "$src" -o "$obj"
-        if [ $? -ne 0 ]; then exit 1; fi
+        if [ $? -ne 0 ]; then rm -rf "$AIOS_TMPDIR"; exit 1; fi
         OBJS+=("$obj")
     done
 

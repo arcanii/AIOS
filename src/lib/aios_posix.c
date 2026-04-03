@@ -26,15 +26,20 @@
 #include <sys/time.h>
 #include <time.h>
 #include <pthread.h>
+#include <pwd.h>
+#include <stdio.h>
 
 static seL4_CPtr ser_ep = 0;
 static seL4_CPtr fs_ep_cap = 0;
 static seL4_CPtr thread_ep = 0;
+static seL4_CPtr auth_ep = 0;
 static int fetch_stat(const char *path, uint32_t *mode, uint32_t *size);
 
 /* Resolve relative path against CWD */
 
 static char aios_cwd[256] = "/";
+static uint32_t aios_uid = 0;
+static uint32_t aios_gid = 0;
 
 static void resolve_path(const char *pathname, char *out, int outsz) {
     if (pathname[0] == '/') {
@@ -744,10 +749,10 @@ static long aios_sys_getppid(va_list ap) {
     return 0;
 }
 
-static long aios_sys_getuid(va_list ap) { (void)ap; return 0; }
-static long aios_sys_geteuid(va_list ap) { (void)ap; return 0; }
-static long aios_sys_getgid(va_list ap) { (void)ap; return 0; }
-static long aios_sys_getegid(va_list ap) { (void)ap; return 0; }
+static long aios_sys_getuid(va_list ap) { (void)ap; return (long)aios_uid; }
+static long aios_sys_geteuid(va_list ap) { (void)ap; return (long)aios_uid; }
+static long aios_sys_getgid(va_list ap) { (void)ap; return (long)aios_gid; }
+static long aios_sys_getegid(va_list ap) { (void)ap; return (long)aios_gid; }
 
 static long aios_sys_uname(va_list ap) {
     struct utsname *buf = va_arg(ap, struct utsname *);
@@ -910,6 +915,81 @@ static long aios_sys_getdents64(va_list ap) {
         copied += reclen;
     }
     return copied;
+}
+
+/* ── getpwuid / getpwnam via auth_ep IPC ── */
+static struct passwd _pw_buf;
+static char _pw_name[32];
+static char _pw_dir[64];
+static char _pw_shell[64];
+
+/* Unpack a string from MRs starting at given index, return next MR index */
+static int _unpack_mr_string(int start_mr, char *buf, int maxlen) {
+    seL4_Word slen = seL4_GetMR(start_mr);
+    int len = (int)slen;
+    if (len > maxlen - 1) len = maxlen - 1;
+    int mr = start_mr + 1;
+    for (int i = 0; i < len; i++) {
+        if (i % 8 == 0 && i > 0) mr++;
+        buf[i] = (char)((seL4_GetMR(mr) >> ((i % 8) * 8)) & 0xFF);
+    }
+    buf[len] = '\0';
+    return start_mr + 1 + (len + 7) / 8;
+}
+
+struct passwd *__wrap_getpwuid(uid_t uid) {
+    if (!auth_ep) {
+        /* Fallback: return minimal entry from stored uid */
+        _pw_buf.pw_uid = aios_uid;
+        _pw_buf.pw_gid = aios_gid;
+        _pw_buf.pw_name = "root";
+        _pw_buf.pw_passwd = "x";
+        _pw_buf.pw_gecos = "";
+        _pw_buf.pw_dir = "/";
+        _pw_buf.pw_shell = "/bin/sh";
+        return &_pw_buf;
+    }
+
+    seL4_SetMR(0, (seL4_Word)uid);
+    seL4_Call(auth_ep, seL4_MessageInfo_new(51, 0, 0, 1));
+
+    if (seL4_GetMR(0) != 0) return NULL;
+
+    _pw_buf.pw_uid = uid;
+    _pw_buf.pw_gid = (gid_t)seL4_GetMR(1);
+    int mr = _unpack_mr_string(2, _pw_name, 32);
+    mr = _unpack_mr_string(mr, _pw_dir, 64);
+    _unpack_mr_string(mr, _pw_shell, 64);
+
+    _pw_buf.pw_name = _pw_name;
+    _pw_buf.pw_passwd = "x";
+    _pw_buf.pw_gecos = _pw_name;
+    _pw_buf.pw_dir = _pw_dir;
+    _pw_buf.pw_shell = _pw_shell;
+    return &_pw_buf;
+}
+
+struct passwd *__wrap_getpwnam(const char *name) {
+    /* Simple approach: try uid 0 and 1000 (common defaults) */
+    /* A proper implementation would need a NAME_LOOKUP IPC */
+    struct passwd *pw;
+    pw = __wrap_getpwuid(0);
+    if (pw && pw->pw_name[0]) {
+        int match = 1;
+        const char *a = pw->pw_name, *b = name;
+        while (*a && *b && *a == *b) { a++; b++; }
+        if (*a == *b) return pw;
+    }
+    for (uid_t uid = 1000; uid < 1016; uid++) {
+        pw = __wrap_getpwuid(uid);
+        if (pw && pw->pw_name[0]) {
+            int match = 1;
+            const char *a = pw->pw_name, *b = name;
+            while (*a && *b && *a == *b) { a++; b++; }
+            if (*a == *b) return pw;
+        }
+    }
+    return NULL;
 }
 
 /* ── pthreads (IPC to thread_server + userspace spinlocks) ── */
@@ -1103,19 +1183,35 @@ static long _auto_parse(const char *s) {
 int __real_main(int argc, char **argv);
 
 int __wrap_main(int argc, char **argv) {
-    /* argv layout: [serial_ep, fs_ep, thread_ep, CWD, progname, arg1, ...] */
-    seL4_CPtr serial = 0, fs = 0, thr = 0;
+    /* argv layout: [serial_ep, fs_ep, thread_ep, auth_ep, CWD, progname, arg1, ...] */
+    seL4_CPtr serial = 0, fs = 0, thr = 0, ath = 0;
     if (argc > 0 && argv[0]) serial = (seL4_CPtr)_auto_parse(argv[0]);
     if (argc > 1 && argv[1]) fs = (seL4_CPtr)_auto_parse(argv[1]);
     if (argc > 2 && argv[2]) thr = (seL4_CPtr)_auto_parse(argv[2]);
+    if (argc > 3 && argv[3]) ath = (seL4_CPtr)_auto_parse(argv[3]);
     thread_ep = thr;
+    auth_ep = ath;
     aios_init(serial, fs);
 
-    /* Set CWD from argv[3] */
-    if (argc > 3 && argv[3] && argv[3][0] == '/') {
-        aios_set_cwd(argv[3]);
+    /* Parse uid:gid:/path from argv[4] */
+    if (argc > 4 && argv[4]) {
+        const char *s = argv[4];
+        if (s[0] >= '0' && s[0] <= '9') {
+            /* Format: uid:gid:/path */
+            uint32_t uid = 0;
+            while (*s >= '0' && *s <= '9') { uid = uid * 10 + (*s - '0'); s++; }
+            if (*s == ':') s++;
+            uint32_t gid = 0;
+            while (*s >= '0' && *s <= '9') { gid = gid * 10 + (*s - '0'); s++; }
+            if (*s == ':') s++;
+            aios_uid = uid;
+            aios_gid = gid;
+            if (*s == '/') aios_set_cwd(s);
+        } else if (s[0] == '/') {
+            aios_set_cwd(s);
+        }
     }
 
-    /* Strip 4 args (ser, fs, thread, cwd): real main sees [progname, arg1, ...] */
-    return __real_main(argc - 4, argv + 4);
+    /* Strip 5 args (ser, fs, thread, auth, cwd): real main sees [progname, arg1, ...] */
+    return __real_main(argc - 5, argv + 5);
 }
