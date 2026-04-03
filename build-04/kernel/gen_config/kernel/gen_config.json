@@ -155,7 +155,7 @@
     "CTZ_64": false,
     "CLZ_NO_BUILTIN": false,
     "CTZ_NO_BUILTIN": false,
-    "EXPORT_PCNT_USER": false,
+    "EXPORT_PCNT_USER": true,
     "EXPORT_VCNT_USER": false,
     "EXPORT_PTMR_USER": false,
     "EXPORT_VTMR_USER": false,

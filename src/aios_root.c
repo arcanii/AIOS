@@ -199,7 +199,6 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
 
         int elf_size = vfs_read(elf_path, elf_buf, sizeof(elf_buf));
         if (elf_size <= 0) {
-            /* Not found in /bin — report error */
             seL4_SetMR(0, (seL4_Word)-1);
             seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
             vka_free_object(&vka, &child_fault_ep);

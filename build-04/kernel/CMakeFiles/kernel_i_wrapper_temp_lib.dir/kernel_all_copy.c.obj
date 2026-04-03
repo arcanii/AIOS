@@ -184,7 +184,7 @@
 /* disabled: CONFIG_CTZ_64 */
 /* disabled: CONFIG_CLZ_NO_BUILTIN */
 /* disabled: CONFIG_CTZ_NO_BUILTIN */
-/* disabled: CONFIG_EXPORT_PCNT_USER */
+
 /* disabled: CONFIG_EXPORT_VCNT_USER */
 /* disabled: CONFIG_EXPORT_PTMR_USER */
 /* disabled: CONFIG_EXPORT_VTMR_USER */
@@ -13552,13 +13552,15 @@ static void check_export_pmu(void)
 static void check_export_arch_timer(void)
 {
     uint32_t val = 0;
+
+    val |= (1ul << (0));
 # 46 "/Users/bryan/Desktop/github_repos/AIOS/kernel/src/arch/arm/armv/armv8-a/64/user_access.c"
     do { word_t _v = val; __asm__ volatile("msr " "CNTKCTL_EL1" ",%x0" :: "r" (_v)); }while(0);
 
 
     val = 0;
 
-
+    val |= (1ul << (0));
 
 
 

@@ -155,7 +155,14 @@ int main(int argc, char *argv[]) {
         } else {
             /* Everything else → exec from /bin/ */
             int raw = is_raw_cmd(line);
-            int ret = exec_cmd(line, arg, raw);
+            /* If no args, pass CWD for commands that need it */
+            char *effective_arg = arg;
+            char cwd_arg[256];
+            if (!arg && (str_eq(line, "ls") || str_eq(line, "pwd"))) {
+                str_cpy(cwd_arg, cwd);
+                effective_arg = cwd_arg;
+            }
+            int ret = exec_cmd(line, effective_arg, raw);
             if (ret != 0) {
                 ser_puts(line);
                 ser_puts(": command not found\n");

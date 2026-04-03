@@ -216,6 +216,7 @@ class Ext2Builder:
         # Install ELF binaries to /bin
         if elf_dir:
             installed = 0
+            installed_names = set()
             for elf_path in sorted(glob.glob(os.path.join(elf_dir, '*'))):
                 name = os.path.basename(elf_path)
                 # Skip non-ELF files and system services
@@ -233,15 +234,13 @@ class Ext2Builder:
                     continue
                 with open(elf_path, 'rb') as f:
                     elf_data = f.read()
-                # Strip posix_ and gnu_ prefixes for cleaner names
-                display_name = name
-                if display_name.startswith('posix_'):
-                    display_name = display_name[6:]
-                elif display_name.startswith('gnu_'):
-                    display_name = display_name[4:]
-                self.mkfile(bin_ino, display_name, elf_data)
+                # Install with original name
+                clean = name
+                if name.startswith("posix_"): clean = name[6:]
+                elif name.startswith("gnu_"): clean = name[4:]
+                self.mkfile(bin_ino, clean, elf_data)
                 installed += 1
-                print(f'  /bin/{display_name} ({len(elf_data)} bytes)')
+                print(f'  /bin/{clean} ({len(elf_data)} bytes)')
             print(f'  Installed {installed} programs to /bin')
 
         with open(path, 'wb') as f:

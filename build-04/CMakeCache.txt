@@ -372,7 +372,7 @@ KernelArmDisableWFIWFETraps:BOOL=OFF
 // access to physical counter and counter     frequency registers
 // of the generic timer.     WARNING: selecting this option opens
 // a timing     channel
-KernelArmExportPCNTUser:BOOL=OFF
+KernelArmExportPCNTUser:BOOL=ON
 
 //PL0 access to PMU.     Grant user access to Performance Monitoring
 // Unit.     WARNING: While useful for evaluating performance,
