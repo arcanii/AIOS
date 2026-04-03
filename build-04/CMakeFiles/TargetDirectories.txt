@@ -71,6 +71,7 @@
 /Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/posix_uname.dir
 /Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/posix_ls.dir
 /Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/posix_ps.dir
+/Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/posix_nice.dir
 /Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/aios_root.dir
 /Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/rootserver_image.dir
 /Users/bryan/Desktop/github_repos/AIOS/build-04/projects/aios/CMakeFiles/edit_cache.dir

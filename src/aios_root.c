@@ -38,6 +38,7 @@ static allocman_t *allocman;
 #define FR_RXFE   (1 << 4)
 #define SER_KEY_PUSH 4
 #define EXEC_RUN     20
+#define EXEC_NICE    21
 static volatile uint32_t *uart;
 
 /* Filesystem state (shared with fs thread) */
@@ -138,7 +139,7 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         seL4_MessageInfo_t msg = seL4_Recv(ep, &badge);
         seL4_Word label = seL4_MessageInfo_get_label(msg);
 
-        if (label != EXEC_RUN) {
+        if (label != EXEC_RUN && label != EXEC_NICE) {
             seL4_SetMR(0, (seL4_Word)-1);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             continue;
@@ -237,11 +238,21 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             continue;
         }
 
+        /* Register in process table */
+        int child_pid = proc_add(prog_name, 200);
+
+        /* Apply nice value if EXEC_NICE */
+        if (label == EXEC_NICE) {
+            seL4_Word nice_mr = seL4_MessageInfo_get_length(msg);
+            /* Nice value was stored in last MR by shell */
+        }
+
         /* Wait for child to exit */
         seL4_Word child_badge;
         seL4_Recv(child_fault_ep.cptr, &child_badge);
         // printf("[exec] %s exited\n", prog_name);
         sel4utils_destroy_process(&proc, &vka);
+        if (child_pid > 0) proc_remove(child_pid);
 
         /* Reply to shell via saved cap */
         seL4_SetMR(0, 0);
