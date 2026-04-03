@@ -252,6 +252,11 @@ int main(int argc, char *argv[]) {
                     p = arg;
                     while (*p && ci < 500) cmd[ci++] = *p++;
                 }
+                /* Append CWD marker */
+                cmd[ci++] = ' ';
+                cmd[ci++] = 'C'; cmd[ci++] = 'W'; cmd[ci++] = 'D'; cmd[ci++] = '=';
+                const char *cw = cwd;
+                while (*cw && ci < 500) cmd[ci++] = *cw++;
                 cmd[ci] = '\0';
                 do_exec(cmd);
             } else {

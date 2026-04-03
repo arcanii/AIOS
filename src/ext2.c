@@ -347,40 +347,56 @@ int ext2_write_block(ext2_ctx_t *ctx, uint32_t block, const void *buf) {
     return write_block(ctx, block, buf);
 }
 
-/* Allocate a free block from group 0 bitmap */
+/* Allocate a free block — scan all block groups via BGDT */
 int ext2_alloc_block(ext2_ctx_t *ctx) {
-    /* Read block bitmap (block 3 for group 0 with 1K blocks) */
-    uint8_t bmp[1024];
-    uint32_t bmp_block = ctx->first_data_block + 2; /* block bitmap */
-    if (read_block(ctx, bmp_block, bmp) != 0) return -1;
+    uint8_t bgdt_buf[1024];
+    /* BGDT is at block 2 (for 1K block size) */
+    if (read_block(ctx, ctx->first_data_block + 1, bgdt_buf) != 0) return -1;
 
-    /* Find first free bit */
-    for (int byte = 0; byte < (int)ctx->block_size; byte++) {
-        if (bmp[byte] == 0xFF) continue;
-        for (int bit = 0; bit < 8; bit++) {
-            if (!(bmp[byte] & (1 << bit))) {
-                bmp[byte] |= (1 << bit);
-                write_block(ctx, bmp_block, bmp);
-                return (byte * 8 + bit) + 1; /* blocks are 1-based */
+    /* Calculate number of groups */
+    uint32_t total_blocks;
+    uint8_t sb_buf[1024];
+    if (read_block(ctx, ctx->first_data_block, sb_buf) != 0) return -1;
+    total_blocks = rd32(sb_buf + 4);
+    int num_groups = (total_blocks + ctx->blocks_per_group - 1) / ctx->blocks_per_group;
+
+    for (int g = 0; g < num_groups && g < 32; g++) {
+        uint32_t bb_block = rd32(bgdt_buf + g * 32 + 0); /* bg_block_bitmap */
+        uint32_t group_start = (g == 0) ? 1 : g * ctx->blocks_per_group;
+
+        uint8_t bmp[1024];
+        if (read_block(ctx, bb_block, bmp) != 0) continue;
+
+        for (int byte = 0; byte < (int)ctx->block_size; byte++) {
+            if (bmp[byte] == 0xFF) continue;
+            for (int bit = 0; bit < 8; bit++) {
+                if (!(bmp[byte] & (1 << bit))) {
+                    bmp[byte] |= (1 << bit);
+                    write_block(ctx, bb_block, bmp);
+                    return group_start + byte * 8 + bit;
+                }
             }
         }
     }
-    return -1; /* no free blocks */
+    return -1;
 }
 
-/* Allocate a free inode from group 0 bitmap */
+/* Allocate a free inode — scan group 0 (all inodes in group 0 for now) */
 int ext2_alloc_inode(ext2_ctx_t *ctx) {
+    uint8_t bgdt_buf[1024];
+    if (read_block(ctx, ctx->first_data_block + 1, bgdt_buf) != 0) return -1;
+    uint32_t ib_block = rd32(bgdt_buf + 4); /* group 0 inode bitmap */
+
     uint8_t bmp[1024];
-    uint32_t bmp_block = ctx->first_data_block + 3; /* inode bitmap */
-    if (read_block(ctx, bmp_block, bmp) != 0) return -1;
+    if (read_block(ctx, ib_block, bmp) != 0) return -1;
 
     for (int byte = 0; byte < (int)ctx->block_size; byte++) {
         if (bmp[byte] == 0xFF) continue;
         for (int bit = 0; bit < 8; bit++) {
             if (!(bmp[byte] & (1 << bit))) {
                 bmp[byte] |= (1 << bit);
-                write_block(ctx, bmp_block, bmp);
-                return (byte * 8 + bit) + 1; /* inodes are 1-based */
+                write_block(ctx, ib_block, bmp);
+                return (byte * 8 + bit) + 1;
             }
         }
     }

@@ -160,7 +160,7 @@ else
     # Compile sources to .o
     OBJS=()
     for src in "${SOURCES[@]}"; do
-        obj="/tmp/aios_$(basename ${src} .c).o"
+        obj="/tmp/aios_$(echo ${src} | tr "/" "_" | sed "s/.c$//").o"
         ${CC} ${SYSROOT} "${INCLUDES[@]}" "${CFLAGS[@]}" -c "$src" -o "$obj"
         if [ $? -ne 0 ]; then exit 1; fi
         OBJS+=("$obj")

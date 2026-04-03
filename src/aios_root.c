@@ -255,7 +255,27 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         int child_argc = 0;
         child_argv[child_argc++] = s_ser;
         child_argv[child_argc++] = s_fs;
-        child_argv[child_argc++] = prog_name;  /* argv[0] for real main */
+        /* Pass CWD from shell (encoded in exec_args after \x01 separator) */
+        static char cwd_buf[256];
+        cwd_buf[0] = '/'; cwd_buf[1] = 0;
+        /* Check if last arg is CWD=xxx */
+        if (exec_args) {
+            char *cwd_marker = exec_args;
+            char *last_space = 0;
+            for (char *p = exec_args; *p; p++)
+                if (*p == ' ') last_space = p;
+            char *check = last_space ? last_space + 1 : exec_args;
+            if (check[0] == 'C' && check[1] == 'W' && check[2] == 'D' && check[3] == '=') {
+                int ci = 0;
+                char *v = check + 4;
+                while (*v && ci < 255) cwd_buf[ci++] = *v++;
+                cwd_buf[ci] = 0;
+                if (last_space) *last_space = 0; /* strip CWD from args */
+                else exec_args = 0;
+            }
+        }
+        child_argv[child_argc++] = cwd_buf;
+        child_argv[child_argc++] = prog_name;
 
         /* Split exec_args by spaces */
         if (exec_args) {

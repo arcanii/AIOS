@@ -28,7 +28,33 @@
 
 static seL4_CPtr ser_ep = 0;
 static seL4_CPtr fs_ep_cap = 0;
+static int fetch_stat(const char *path, uint32_t *mode, uint32_t *size);
+
+/* Resolve relative path against CWD */
+
 static char aios_cwd[256] = "/";
+
+static void resolve_path(const char *pathname, char *out, int outsz) {
+    if (pathname[0] == '/') {
+        int i = 0;
+        while (pathname[i] && i < outsz - 1) { out[i] = pathname[i]; i++; }
+        out[i] = 0;
+        return;
+    }
+    int ci = 0;
+    while (aios_cwd[ci] && ci < outsz - 2) { out[ci] = aios_cwd[ci]; ci++; }
+    if (pathname[0] == '.' && pathname[1] == 0) {
+        out[ci] = 0;
+        return;
+    }
+    if (pathname[0] == '.' && pathname[1] == '/') {
+        pathname += 2;
+    }
+    if (ci > 1) out[ci++] = '/';
+    while (*pathname && ci < outsz - 1) out[ci++] = *pathname++;
+    out[ci] = 0;
+}
+
 
 seL4_CPtr aios_get_serial_ep(void) { return ser_ep; }
 seL4_CPtr aios_get_fs_ep(void) { return fs_ep_cap; }
@@ -205,7 +231,9 @@ static long aios_sys_open(va_list ap) {
     f->is_dir = 0;
 
     if (is_dir) {
-        int n = fetch_dir_as_getdents(pathname, f->data, sizeof(f->data));
+        char res_path[256];
+        resolve_path(pathname, res_path, sizeof(res_path));
+        int n = fetch_dir_as_getdents(res_path, f->data, sizeof(f->data));
         if (n < 0) return -ENOENT;
         f->active = 1;
         f->is_dir = 1;
@@ -213,12 +241,14 @@ static long aios_sys_open(va_list ap) {
         f->pos = 0;
         str_copy(f->path, pathname, sizeof(f->path));
     } else {
-        int n = fetch_file(pathname, f->data, sizeof(f->data));
+        char res_path[256];
+        resolve_path(pathname, res_path, sizeof(res_path));
+        int n = fetch_file(res_path, f->data, sizeof(f->data));
         if (n < 0) return -ENOENT;
         f->active = 1;
         f->size = n;
         f->pos = 0;
-        str_copy(f->path, pathname, sizeof(f->path));
+        str_copy(f->path, res_path, sizeof(f->path));
     }
     return AIOS_FD_BASE + idx;
 }
@@ -233,7 +263,53 @@ static long aios_sys_openat(va_list ap) {
     if (!fs_ep_cap) return -ENOENT;
 
     int is_dir = (flags & 040000) != 0;
-    flags &= ~(040000 | 02000000 | 0100000);
+    int is_creat = (flags & 0100) != 0;
+    int is_wronly = ((flags & 3) == 1);
+    int is_rdwr = ((flags & 3) == 2);
+    flags &= ~(040000 | 02000000 | 0100000 | 0100 | 01000 | 02000);
+
+    /* O_CREAT — create file via IPC if it doesn't exist */
+    if (is_creat && fs_ep_cap) {
+        /* Resolve path */
+        char resolved[256];
+        const char *p = pathname;
+        if (p[0] != '/') {
+            int ci = 0;
+            while (aios_cwd[ci] && ci < 250) { resolved[ci] = aios_cwd[ci]; ci++; }
+            if (ci > 1) resolved[ci++] = '/';
+            while (*p && ci < 255) resolved[ci++] = *p++;
+            resolved[ci] = 0;
+            p = resolved;
+        }
+        /* Check if file exists */
+        uint32_t m, s;
+        if (fetch_stat(p, &m, &s) != 0) {
+            /* Doesn't exist — create via IPC */
+            int pl = str_len(p);
+            seL4_SetMR(0, (seL4_Word)pl);
+            int mr = 1;
+            seL4_Word w = 0;
+            for (int i = 0; i < pl; i++) {
+                w |= ((seL4_Word)(uint8_t)p[i]) << ((i % 8) * 8);
+                if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
+            }
+            seL4_SetMR(mr, 0); /* data_len = 0 */
+            seL4_Call(fs_ep_cap,
+                seL4_MessageInfo_new(15 /* FS_WRITE_FILE */, 0, 0, mr + 1));
+        }
+        /* If write-only, return a dummy fd */
+        if (is_wronly || is_rdwr) {
+            int idx = aios_fd_alloc();
+            if (idx < 0) return -EMFILE;
+            aios_fd_t *f = &aios_fds[idx];
+            f->active = 1;
+            f->is_dir = 0;
+            f->size = 0;
+            f->pos = 0;
+            str_copy(f->path, pathname, sizeof(f->path));
+            return AIOS_FD_BASE + idx;
+        }
+    }
 
     int idx = aios_fd_alloc();
     if (idx < 0) return -EMFILE;
@@ -241,21 +317,23 @@ static long aios_sys_openat(va_list ap) {
     aios_fd_t *f = &aios_fds[idx];
     f->is_dir = 0;
 
+    char res_path[256];
+    resolve_path(pathname, res_path, sizeof(res_path));
     if (is_dir) {
-        int n = fetch_dir_as_getdents(pathname, f->data, sizeof(f->data));
+        int n = fetch_dir_as_getdents(res_path, f->data, sizeof(f->data));
         if (n < 0) return -ENOENT;
         f->active = 1;
         f->is_dir = 1;
         f->size = n;
         f->pos = 0;
-        str_copy(f->path, pathname, sizeof(f->path));
+        str_copy(f->path, res_path, sizeof(f->path));
     } else {
-        int n = fetch_file(pathname, f->data, sizeof(f->data));
+        int n = fetch_file(res_path, f->data, sizeof(f->data));
         if (n < 0) return -ENOENT;
         f->active = 1;
         f->size = n;
         f->pos = 0;
-        str_copy(f->path, pathname, sizeof(f->path));
+        str_copy(f->path, res_path, sizeof(f->path));
     }
     return AIOS_FD_BASE + idx;
 }
@@ -515,6 +593,115 @@ static long aios_sys_exit_group(va_list ap) {
     *null = 0;
     __builtin_unreachable();
     return 0;
+}
+
+
+/* mkdir via IPC to fs_thread */
+static long aios_sys_mkdirat(va_list ap) {
+    int dirfd = va_arg(ap, int);
+    const char *pathname = va_arg(ap, const char *);
+    int mode = va_arg(ap, int);
+    (void)dirfd; (void)mode;
+    if (!fs_ep_cap) return -ENOSYS;
+
+    /* Resolve relative path */
+    char resolved[256];
+    const char *p = pathname;
+    if (p[0] != '/') {
+        int ci = 0;
+        while (aios_cwd[ci] && ci < 250) { resolved[ci] = aios_cwd[ci]; ci++; }
+        if (ci > 1) resolved[ci++] = '/';
+        while (*p && ci < 255) resolved[ci++] = *p++;
+        resolved[ci] = 0;
+        p = resolved;
+    }
+
+    int pl = str_len(p);
+    seL4_SetMR(0, (seL4_Word)pl);
+    int mr = 1;
+    seL4_Word w = 0;
+    for (int i = 0; i < pl; i++) {
+        w |= ((seL4_Word)(uint8_t)p[i]) << ((i % 8) * 8);
+        if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
+    }
+    seL4_MessageInfo_t reply = seL4_Call(fs_ep_cap,
+        seL4_MessageInfo_new(14 /* FS_MKDIR */, 0, 0, mr));
+    return ((int)(long)seL4_GetMR(0) == 0) ? 0 : -EIO;
+}
+
+static long aios_sys_utimensat(va_list ap) {
+    /* Stub — ignore timestamps for now */
+    (void)ap;
+    return 0;
+}
+
+static long aios_sys_umask(va_list ap) {
+    int mask = va_arg(ap, int);
+    (void)mask;
+    return 022; /* return old umask */
+}
+
+/* unlinkat — rm uses this */
+static long aios_sys_unlinkat(va_list ap) {
+    int dirfd = va_arg(ap, int);
+    const char *pathname = va_arg(ap, const char *);
+    int flags = va_arg(ap, int);
+    (void)dirfd; (void)flags;
+    if (!fs_ep_cap) return -ENOSYS;
+
+    char resolved[256];
+    const char *p = pathname;
+    if (p[0] != '/') {
+        int ci = 0;
+        while (aios_cwd[ci] && ci < 250) { resolved[ci] = aios_cwd[ci]; ci++; }
+        if (ci > 1) resolved[ci++] = '/';
+        while (*p && ci < 255) resolved[ci++] = *p++;
+        resolved[ci] = 0;
+        p = resolved;
+    }
+
+    int pl = str_len(p);
+    seL4_SetMR(0, (seL4_Word)pl);
+    int mr = 1;
+    seL4_Word w = 0;
+    for (int i = 0; i < pl; i++) {
+        w |= ((seL4_Word)(uint8_t)p[i]) << ((i % 8) * 8);
+        if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
+    }
+    seL4_MessageInfo_t reply = seL4_Call(fs_ep_cap,
+        seL4_MessageInfo_new(16 /* FS_UNLINK */, 0, 0, mr));
+    return ((int)(long)seL4_GetMR(0) == 0) ? 0 : -EIO;
+}
+
+/* creat — cp uses open with O_CREAT */
+static long aios_sys_openat_creat(const char *pathname, int flags, int mode) {
+    if (!fs_ep_cap) return -ENOSYS;
+
+    /* If creating, write empty file first */
+    if (flags & 0100) { /* O_CREAT = 0100 */
+        char resolved[256];
+        const char *p = pathname;
+        if (p[0] != '/') {
+            int ci = 0;
+            while (aios_cwd[ci] && ci < 250) { resolved[ci] = aios_cwd[ci]; ci++; }
+            if (ci > 1) resolved[ci++] = '/';
+            while (*p && ci < 255) resolved[ci++] = *p++;
+            resolved[ci] = 0;
+            p = resolved;
+        }
+        int pl = str_len(p);
+        seL4_SetMR(0, (seL4_Word)pl);
+        int mr = 1;
+        seL4_Word w = 0;
+        for (int i = 0; i < pl; i++) {
+            w |= ((seL4_Word)(uint8_t)p[i]) << ((i % 8) * 8);
+            if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
+        }
+        seL4_SetMR(mr, 0); /* data_len = 0 */
+        seL4_Call(fs_ep_cap,
+            seL4_MessageInfo_new(15 /* FS_WRITE_FILE */, 0, 0, mr + 1));
+    }
+    return -ENOSYS; /* Let normal open handle reading */
 }
 
 static long aios_sys_chdir(va_list ap) {
@@ -782,6 +969,18 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
 
     /* Easy POSIX stubs */
     muslcsys_install_syscall(__NR_exit, aios_sys_exit);
+#ifdef __NR_mkdirat
+    muslcsys_install_syscall(__NR_mkdirat, aios_sys_mkdirat);
+#endif
+#ifdef __NR_utimensat
+    muslcsys_install_syscall(__NR_utimensat, aios_sys_utimensat);
+#endif
+#ifdef __NR_umask
+    muslcsys_install_syscall(__NR_umask, aios_sys_umask);
+#endif
+#ifdef __NR_unlinkat
+    muslcsys_install_syscall(__NR_unlinkat, aios_sys_unlinkat);
+#endif
     muslcsys_install_syscall(__NR_exit_group, aios_sys_exit_group);
     muslcsys_install_syscall(__NR_chdir, aios_sys_chdir);
     muslcsys_install_syscall(__NR_getcwd, aios_sys_getcwd);
@@ -823,12 +1022,17 @@ static long _auto_parse(const char *s) {
 int __real_main(int argc, char **argv);
 
 int __wrap_main(int argc, char **argv) {
-    /* argv layout: [serial_ep, fs_ep, progname, arg1, arg2, ...] */
+    /* argv layout: [serial_ep, fs_ep, CWD, progname, arg1, arg2, ...] */
     seL4_CPtr serial = 0, fs = 0;
     if (argc > 0 && argv[0]) serial = (seL4_CPtr)_auto_parse(argv[0]);
     if (argc > 1 && argv[1]) fs = (seL4_CPtr)_auto_parse(argv[1]);
     aios_init(serial, fs);
 
-    /* Strip 2 cap args: real main sees [progname, arg1, arg2, ...] */
-    return __real_main(argc - 2, argv + 2);
+    /* Set CWD from argv[2] */
+    if (argc > 2 && argv[2] && argv[2][0] == '/') {
+        aios_set_cwd(argv[2]);
+    }
+
+    /* Strip 3 args (ser, fs, cwd): real main sees [progname, arg1, ...] */
+    return __real_main(argc - 3, argv + 3);
 }
