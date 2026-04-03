@@ -2,7 +2,7 @@
  * AIOS 0.4.x miniShell — thin exec launcher
  *
  * Builtins: cd, exit
- * Everything else → exec (alias or direct CPIO name)
+ * Everything else → exec from /bin/ via PATH
  *
  * argv[0] = serial_ep, argv[1] = fs_ep, argv[2] = exec_ep
  */
@@ -47,42 +47,7 @@ static void resolve(const char *arg, char *out, int outsz) {
     out[ci] = '\0';
 }
 
-/* ── Alias table ── */
-struct alias { const char *cmd; const char *prog; int raw; };
-static const struct alias aliases[] = {
-    { "cat",      "gnu_cat",        0 },
-    { "ls",       "posix_ls",       0 },
-    { "wc",       "posix_wc",       0 },
-    { "head",     "posix_head",     0 },
-    { "uname",    "posix_uname",    0 },
-    { "echo",     "posix_echo",     1 },
-    { "ps",       "posix_ps",       0 },
-    { "grep",     "posix_grep",     1 },
-    { "sort",     "posix_sort",     0 },
-    { "id",       "posix_id",       0 },
-    { "whoami",   "posix_whoami",   0 },
-    { "date",     "posix_date",     0 },
-    { "env",      "posix_env",      0 },
-    { "yes",      "posix_yes",      1 },
-    { "basename", "posix_basename", 0 },
-    { "dirname",  "posix_dirname",  0 },
-    { "true",     "posix_true",     0 },
-    { "false",    "posix_false",    0 },
-    { "pwd",      "posix_pwd",      0 },
-    { "mkdir",    "posix_mkdir",    0 },
-    { "touch",    "posix_touch",    0 },
-    { "rm",       "posix_rm",       0 },
-    { "help",     "posix_help",     0 },
-    { 0, 0, 0 }
-};
-
-static const struct alias *lookup_alias(const char *cmd) {
-    for (int i = 0; aliases[i].cmd; i++)
-        if (str_eq(cmd, aliases[i].cmd)) return &aliases[i];
-    return 0;
-}
-
-/* ── Exec ── */
+/* Send command to exec_thread */
 static int do_exec(const char *cmdline) {
     if (!exec_ep) return -1;
     int pl = str_len(cmdline);
@@ -92,14 +57,16 @@ static int do_exec(const char *cmdline) {
         w |= ((seL4_Word)(uint8_t)cmdline[i]) << ((i % 8) * 8);
         if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
     }
-    seL4_MessageInfo_t reply = seL4_Call(exec_ep, seL4_MessageInfo_new(EXEC_RUN, 0, 0, mr));
+    seL4_MessageInfo_t reply = seL4_Call(exec_ep,
+        seL4_MessageInfo_new(EXEC_RUN, 0, 0, mr));
     return (int)(long)seL4_GetMR(0);
 }
 
-static int exec_cmd(const char *prog, const char *args, int raw) {
+/* Build exec command: "name arg1 arg2" with args resolved */
+static int exec_cmd(const char *name, const char *args, int raw_args) {
     char buf[512];
     int bi = 0;
-    const char *p = prog;
+    const char *p = name;
     while (*p && bi < 500) buf[bi++] = *p++;
     if (args) {
         const char *a = args;
@@ -108,7 +75,7 @@ static int exec_cmd(const char *prog, const char *args, int raw) {
             const char *start = a;
             while (*a && *a != ' ') a++;
             int alen = (int)(a - start);
-            if (!raw && start[0] != '/' && start[0] != '-') {
+            if (!raw_args && start[0] != '/' && start[0] != '-') {
                 char word[128], abs[256];
                 int wi = 0;
                 while (wi < alen && wi < 127) { word[wi]=start[wi]; wi++; }
@@ -126,7 +93,13 @@ static int exec_cmd(const char *prog, const char *args, int raw) {
     return do_exec(buf);
 }
 
-/* ── Line reader ── */
+/* Commands where first arg is NOT a path (e.g., pattern for grep) */
+static int is_raw_cmd(const char *cmd) {
+    return str_eq(cmd, "echo") || str_eq(cmd, "grep") ||
+           str_eq(cmd, "yes");
+}
+
+/* Line reader */
 #define LINE_MAX 256
 static char line[LINE_MAX];
 static void read_line(int *len) {
@@ -143,7 +116,6 @@ static void read_line(int *len) {
     line[*len] = '\0';
 }
 
-/* ── Main ── */
 int main(int argc, char *argv[]) {
     serial_ep = 0; fs_ep = 0; exec_ep = 0;
     if (argc > 0) serial_ep = (seL4_CPtr)parse_num(argv[0]);
@@ -159,12 +131,13 @@ int main(int argc, char *argv[]) {
         int len; read_line(&len);
         if (len == 0) continue;
 
+        /* Split command + args */
         char *arg = 0;
         for (int i = 0; i < len; i++) {
             if (line[i] == ' ') { line[i] = '\0'; arg = line + i + 1; break; }
         }
 
-        /* Only true builtins: cd, exit */
+        /* Builtins: cd, exit */
         if (str_eq(line, "cd")) {
             if (!arg || !arg[0]) { str_cpy(cwd, "/"); }
             else if (str_eq(arg, "..")) {
@@ -180,17 +153,12 @@ int main(int argc, char *argv[]) {
             ser_puts("Goodbye.\n");
             return 0;
         } else {
-            /* Alias or direct exec */
-            const struct alias *al = lookup_alias(line);
-            if (al) {
-                if (exec_cmd(al->prog, arg, al->raw) != 0) {
-                    ser_puts(line); ser_puts(": command not found\n");
-                }
-            } else {
-                if (arg) *(arg - 1) = ' ';
-                if (do_exec(line) != 0) {
-                    ser_puts(line); ser_puts(": command not found\n");
-                }
+            /* Everything else → exec from /bin/ */
+            int raw = is_raw_cmd(line);
+            int ret = exec_cmd(line, arg, raw);
+            if (ret != 0) {
+                ser_puts(line);
+                ser_puts(": command not found\n");
             }
         }
     }

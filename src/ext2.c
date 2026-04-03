@@ -92,6 +92,42 @@ int ext2_list_dir(ext2_ctx_t *ctx, uint32_t dir_ino, char *buf, int bufsize) {
     return written;
 }
 
+/* Get the Nth data block of an inode (handles direct + single indirect) */
+static int ext2_get_block_num(ext2_ctx_t *ctx, struct ext2_inode *inode, int index) {
+    int ptrs_per_block = (int)(ctx->block_size / 4);
+
+    /* Direct blocks: 0-11 */
+    if (index < 12) {
+        return (int)inode->i_block[index];
+    }
+
+    /* Single indirect: 12 .. 12+ptrs_per_block-1 */
+    index -= 12;
+    if (index < ptrs_per_block) {
+        uint32_t ind_block = inode->i_block[12];
+        if (!ind_block) return 0;
+        uint8_t ind_buf[1024];
+        if (read_block(ctx, ind_block, ind_buf) != 0) return 0;
+        return (int)rd32(ind_buf + index * 4);
+    }
+
+    /* Double indirect: ptrs_per_block .. ptrs_per_block + ptrs^2 - 1 */
+    index -= ptrs_per_block;
+    if (index < ptrs_per_block * ptrs_per_block) {
+        uint32_t dind_block = inode->i_block[13];
+        if (!dind_block) return 0;
+        uint8_t dind_buf[1024];
+        if (read_block(ctx, dind_block, dind_buf) != 0) return 0;
+        uint32_t ind_block = rd32(dind_buf + (index / ptrs_per_block) * 4);
+        if (!ind_block) return 0;
+        uint8_t ind_buf[1024];
+        if (read_block(ctx, ind_block, ind_buf) != 0) return 0;
+        return (int)rd32(ind_buf + (index % ptrs_per_block) * 4);
+    }
+
+    return 0; /* triple indirect not supported */
+}
+
 int ext2_read_file(ext2_ctx_t *ctx, uint32_t ino, char *buf, int bufsize) {
     struct ext2_inode inode;
     if (ext2_read_inode(ctx, ino, &inode) != 0) return -1;
@@ -100,12 +136,16 @@ int ext2_read_file(ext2_ctx_t *ctx, uint32_t ino, char *buf, int bufsize) {
     if (size > bufsize - 1) size = bufsize - 1;
 
     int copied = 0;
-    for (int bi = 0; bi < 12 && inode.i_block[bi] && copied < size; bi++) {
+    int block_idx = 0;
+    while (copied < size) {
+        int blk_num = ext2_get_block_num(ctx, &inode, block_idx);
+        if (blk_num == 0) break;
         uint8_t blk[1024];
-        if (read_block(ctx, inode.i_block[bi], blk) != 0) return -2;
+        if (read_block(ctx, blk_num, blk) != 0) return -2;
         int chunk = size - copied;
         if (chunk > (int)ctx->block_size) chunk = (int)ctx->block_size;
         for (int i = 0; i < chunk; i++) buf[copied++] = blk[i];
+        block_idx++;
     }
     buf[copied] = '\0';
     return copied;

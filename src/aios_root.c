@@ -22,6 +22,8 @@
 #include "aios/ext2.h"
 #include "aios/vfs.h"
 #include "aios/procfs.h"
+#include <elf/elf.h>
+#include <sel4utils/elf.h>
 
 #define ALLOCATOR_STATIC_POOL_SIZE (BIT(seL4_PageBits) * 800)
 static char allocator_mem_pool[ALLOCATOR_STATIC_POOL_SIZE];
@@ -184,13 +186,38 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         }
 
         sel4utils_process_t proc;
-        /* Pass caps: serial_ep, fs_ep. Pass args string as extra argv. */
-        seL4_CPtr exec_caps[2] = { serial_ep.cptr, fs_ep_cap };
-        seL4_CPtr exec_slots[2];
 
-        /* Build argv: [serial_ep_str, fs_ep_str, arg1, arg2, ...] */
+        /* Read ELF from disk: /bin/<prog_name> */
+        static char elf_buf[256 * 1024]; /* 256KB buffer for ELF */
+        char elf_path[160];
+        int epi = 0;
+        const char *prefix = "/bin/";
+        while (*prefix) elf_path[epi++] = *prefix++;
+        const char *pn = prog_name;
+        while (*pn && epi < 158) elf_path[epi++] = *pn++;
+        elf_path[epi] = '\0';
+
+        int elf_size = vfs_read(elf_path, elf_buf, sizeof(elf_buf));
+        if (elf_size <= 0) {
+            /* Not found in /bin — report error */
+            seL4_SetMR(0, (seL4_Word)-1);
+            seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
+            vka_free_object(&vka, &child_fault_ep);
+            continue;
+        }
+
+        /* Parse ELF */
+        elf_t elf;
+        if (elf_newFile(elf_buf, elf_size, &elf) != 0) {
+            printf("[exec] Invalid ELF: %s\n", elf_path);
+            seL4_SetMR(0, (seL4_Word)-1);
+            seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
+            vka_free_object(&vka, &child_fault_ep);
+            continue;
+        }
+
+        /* Configure process WITHOUT is_elf — we load manually */
         sel4utils_process_config_t pconfig = process_config_new(&simple);
-        pconfig = process_config_elf(pconfig, prog_name, true);
         pconfig = process_config_create_cnode(pconfig, 12);
         pconfig = process_config_create_vspace(pconfig, NULL, 0);
         pconfig = process_config_priority(pconfig, 200);
@@ -199,11 +226,24 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
 
         err = sel4utils_configure_process_custom(&proc, &vka, &vspace, pconfig);
         if (err) {
-            /* configure failed silently */
             seL4_SetMR(0, (seL4_Word)-1);
             seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
+            vka_free_object(&vka, &child_fault_ep);
             continue;
         }
+
+        /* Load ELF into child's VSpace */
+        proc.entry_point = sel4utils_elf_load(
+            &proc.vspace, &vspace, &vka, &vka, &elf);
+        if (proc.entry_point == NULL) {
+            printf("[exec] ELF load failed: %s\n", elf_path);
+            sel4utils_destroy_process(&proc, &vka);
+            seL4_SetMR(0, (seL4_Word)-1);
+            seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
+            vka_free_object(&vka, &child_fault_ep);
+            continue;
+        }
+        proc.sysinfo = sel4utils_elf_get_vsyscall(&elf);
 
         seL4_CPtr child_ser = sel4utils_copy_cap_to_process(&proc, &vka, serial_ep.cptr);
         seL4_CPtr child_fs = sel4utils_copy_cap_to_process(&proc, &vka, fs_ep_cap);
