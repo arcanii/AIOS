@@ -35,6 +35,7 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_ep);
 
 /* Read one char from serial via IPC */
 int aios_getchar(void);
+void aios_set_cwd(const char *path);
 
 /* Get endpoints */
 seL4_CPtr aios_get_serial_ep(void);

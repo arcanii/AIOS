@@ -19,6 +19,9 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <sys/utsname.h>
+#include <sys/time.h>
+#include <time.h>
 
 static seL4_CPtr ser_ep = 0;
 static seL4_CPtr fs_ep_cap = 0;
@@ -343,6 +346,185 @@ static long aios_sys_fstatat(va_list ap) {
     return 0;
 }
 
+/* ── Easy POSIX stubs ── */
+
+static char aios_cwd[256] = "/";
+static char *aios_env[] = {
+    "HOME=/",
+    "PATH=/bin",
+    "USER=root",
+    "SHELL=/bin/sh",
+    "TERM=vt100",
+    NULL
+};
+
+/* Set CWD (called by shell before exec if needed) */
+void aios_set_cwd(const char *path) {
+    int i = 0;
+    while (path[i] && i < 255) { aios_cwd[i] = path[i]; i++; }
+    aios_cwd[i] = '\0';
+}
+
+static long aios_sys_getcwd(va_list ap) {
+    char *buf = va_arg(ap, char *);
+    size_t size = va_arg(ap, size_t);
+    int len = str_len(aios_cwd);
+    if ((int)size <= len) return -ERANGE;
+    for (int i = 0; i <= len; i++) buf[i] = aios_cwd[i];
+    return (long)buf;
+}
+
+static long aios_sys_getpid(va_list ap) {
+    (void)ap;
+    return 1; /* TODO: get real PID from proc_table */
+}
+
+static long aios_sys_getppid(va_list ap) {
+    (void)ap;
+    return 0;
+}
+
+static long aios_sys_getuid(va_list ap) { (void)ap; return 0; }
+static long aios_sys_geteuid(va_list ap) { (void)ap; return 0; }
+static long aios_sys_getgid(va_list ap) { (void)ap; return 0; }
+static long aios_sys_getegid(va_list ap) { (void)ap; return 0; }
+
+static long aios_sys_uname(va_list ap) {
+    struct utsname *buf = va_arg(ap, struct utsname *);
+    /* Zero then fill */
+    char *p = (char *)buf;
+    for (int i = 0; i < (int)sizeof(struct utsname); i++) p[i] = 0;
+
+    const char *s = "AIOS";
+    for (int i = 0; s[i]; i++) buf->sysname[i] = s[i];
+    s = "aios";
+    for (int i = 0; s[i]; i++) buf->nodename[i] = s[i];
+    s = "0.4.17";
+    for (int i = 0; s[i]; i++) buf->release[i] = s[i];
+    s = "seL4 15.0.0 SMP";
+    for (int i = 0; s[i]; i++) buf->version[i] = s[i];
+    s = "aarch64";
+    for (int i = 0; s[i]; i++) buf->machine[i] = s[i];
+    return 0;
+}
+
+static long aios_sys_ioctl(va_list ap) {
+    int fd = va_arg(ap, int);
+    int req = va_arg(ap, int);
+    (void)fd; (void)req;
+    /* Stub: return 0 for stdout ioctls (TIOCGWINSZ etc.) */
+    if (fd <= 2) return 0;
+    return -ENOTTY;
+}
+
+static long aios_sys_fcntl(va_list ap) {
+    int fd = va_arg(ap, int);
+    int cmd = va_arg(ap, int);
+    (void)fd;
+    if (cmd == 1) return 0;  /* F_GETFD */
+    if (cmd == 2) return 0;  /* F_SETFD */
+    if (cmd == 3) return 2;  /* F_GETFL: O_RDWR */
+    if (cmd == 4) return 0;  /* F_SETFL */
+    return -EINVAL;
+}
+
+static long aios_sys_dup(va_list ap) {
+    int oldfd = va_arg(ap, int);
+    if (oldfd < 3) {
+        /* dup stdin/stdout/stderr — allocate new aios fd pointing to same */
+        int idx = aios_fd_alloc();
+        if (idx < 0) return -EMFILE;
+        aios_fds[idx].active = 1;
+        aios_fds[idx].size = 0;
+        aios_fds[idx].pos = 0;
+        return AIOS_FD_BASE + idx;
+    }
+    if (oldfd >= AIOS_FD_BASE && oldfd < AIOS_FD_BASE + AIOS_MAX_FDS) {
+        aios_fd_t *src = &aios_fds[oldfd - AIOS_FD_BASE];
+        if (!src->active) return -EBADF;
+        int idx = aios_fd_alloc();
+        if (idx < 0) return -EMFILE;
+        aios_fd_t *dst = &aios_fds[idx];
+        *dst = *src;
+        return AIOS_FD_BASE + idx;
+    }
+    return -EBADF;
+}
+
+static long aios_sys_dup3(va_list ap) {
+    int oldfd = va_arg(ap, int);
+    int newfd = va_arg(ap, int);
+    int flags = va_arg(ap, int);
+    (void)oldfd; (void)newfd; (void)flags;
+    /* Minimal stub */
+    return -EINVAL;
+}
+
+static long aios_sys_access(va_list ap) {
+    const char *pathname = va_arg(ap, const char *);
+    int mode = va_arg(ap, int);
+    (void)mode;
+    uint32_t m, s;
+    if (fetch_stat(pathname, &m, &s) == 0) return 0;
+    return -ENOENT;
+}
+
+static long aios_sys_faccessat(va_list ap) {
+    int dirfd = va_arg(ap, int);
+    const char *pathname = va_arg(ap, const char *);
+    int mode = va_arg(ap, int);
+    (void)dirfd; (void)mode;
+    uint32_t m, s;
+    if (fetch_stat(pathname, &m, &s) == 0) return 0;
+    return -ENOENT;
+}
+
+static long aios_sys_clock_gettime(va_list ap) {
+    int clk_id = va_arg(ap, int);
+    struct timespec *tp = va_arg(ap, struct timespec *);
+    (void)clk_id;
+    /* Read ARM counter */
+    uint64_t cnt, freq;
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(cnt));
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+    if (freq == 0) freq = 62500000;
+    tp->tv_sec = (long)(cnt / freq);
+    tp->tv_nsec = (long)((cnt % freq) * 1000000000ULL / freq);
+    return 0;
+}
+
+static long aios_sys_gettimeofday(va_list ap) {
+    struct timeval *tv = va_arg(ap, struct timeval *);
+    void *tz = va_arg(ap, void *);
+    (void)tz;
+    uint64_t cnt, freq;
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(cnt));
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+    if (freq == 0) freq = 62500000;
+    tv->tv_sec = (long)(cnt / freq);
+    tv->tv_usec = (long)((cnt % freq) * 1000000ULL / freq);
+    return 0;
+}
+
+static long aios_sys_nanosleep(va_list ap) {
+    const struct timespec *req = va_arg(ap, const struct timespec *);
+    struct timespec *rem = va_arg(ap, struct timespec *);
+    /* Busy-wait using ARM counter */
+    uint64_t freq;
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+    if (freq == 0) freq = 62500000;
+    uint64_t target;
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(target));
+    target += (uint64_t)req->tv_sec * freq + (uint64_t)req->tv_nsec * freq / 1000000000ULL;
+    uint64_t now;
+    do {
+        seL4_Yield();
+        __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
+    } while (now < target);
+    if (rem) { rem->tv_sec = 0; rem->tv_nsec = 0; }
+    return 0;
+}
+
 /* ── Init ── */
 void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     ser_ep = serial_ep;
@@ -375,4 +557,27 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
 #ifdef __NR_newfstatat
     muslcsys_install_syscall(__NR_newfstatat, aios_sys_fstatat);
 #endif
+
+    /* Easy POSIX stubs */
+    muslcsys_install_syscall(__NR_getcwd, aios_sys_getcwd);
+    muslcsys_install_syscall(__NR_getpid, aios_sys_getpid);
+    muslcsys_install_syscall(__NR_getppid, aios_sys_getppid);
+    muslcsys_install_syscall(__NR_getuid, aios_sys_getuid);
+    muslcsys_install_syscall(__NR_geteuid, aios_sys_geteuid);
+    muslcsys_install_syscall(__NR_getgid, aios_sys_getgid);
+    muslcsys_install_syscall(__NR_getegid, aios_sys_getegid);
+    muslcsys_install_syscall(__NR_uname, aios_sys_uname);
+    muslcsys_install_syscall(__NR_ioctl, aios_sys_ioctl);
+    muslcsys_install_syscall(__NR_fcntl, aios_sys_fcntl);
+#ifdef __NR_dup
+    muslcsys_install_syscall(__NR_dup, aios_sys_dup);
+#endif
+    muslcsys_install_syscall(__NR_dup3, aios_sys_dup3);
+#ifdef __NR_access
+    muslcsys_install_syscall(__NR_access, aios_sys_access);
+#endif
+    muslcsys_install_syscall(__NR_faccessat, aios_sys_faccessat);
+    muslcsys_install_syscall(__NR_clock_gettime, aios_sys_clock_gettime);
+    muslcsys_install_syscall(__NR_gettimeofday, aios_sys_gettimeofday);
+    muslcsys_install_syscall(__NR_nanosleep, aios_sys_nanosleep);
 }
