@@ -25,9 +25,11 @@
 #include <sys/utsname.h>
 #include <sys/time.h>
 #include <time.h>
+#include <pthread.h>
 
 static seL4_CPtr ser_ep = 0;
 static seL4_CPtr fs_ep_cap = 0;
+static seL4_CPtr thread_ep = 0;
 static int fetch_stat(const char *path, uint32_t *mode, uint32_t *size);
 
 /* Resolve relative path against CWD */
@@ -910,6 +912,79 @@ static long aios_sys_getdents64(va_list ap) {
     return copied;
 }
 
+/* ── pthreads (IPC to thread_server + userspace spinlocks) ── */
+
+int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
+                          void *(*start_routine)(void *), void *arg) {
+    (void)attr;
+    if (!thread_ep) return 11; /* EAGAIN — no thread server */
+
+    seL4_SetMR(0, (seL4_Word)(uintptr_t)start_routine);
+    seL4_SetMR(1, (seL4_Word)(uintptr_t)arg);
+    seL4_MessageInfo_t reply = seL4_Call(thread_ep,
+        seL4_MessageInfo_new(AIOS_THREAD_CREATE, 0, 0, 2));
+
+    seL4_Word tid = seL4_GetMR(0);
+    if ((long)tid <= 0) return 11; /* EAGAIN */
+    if (thread) *thread = (pthread_t)tid;
+    return 0;
+}
+
+int __wrap_pthread_join(pthread_t th, void **retval) {
+    if (!thread_ep) return 3; /* ESRCH */
+
+    seL4_SetMR(0, (seL4_Word)th);
+    seL4_Call(thread_ep,
+        seL4_MessageInfo_new(AIOS_THREAD_JOIN, 0, 0, 1));
+
+    if (retval) *retval = NULL;
+    return (int)(long)seL4_GetMR(0);
+}
+
+void __wrap_pthread_exit(void *retval) {
+    (void)retval;
+    /* Trigger VM fault — thread_server catches on fault ep */
+    volatile int *null_ptr = (volatile int *)0;
+    *null_ptr = 0;
+    __builtin_unreachable();
+}
+
+int __wrap_pthread_detach(pthread_t th) {
+    (void)th;
+    return 0; /* stub — detached threads still cleaned up on process exit */
+}
+
+int __wrap_pthread_mutex_init(pthread_mutex_t *mutex,
+                               const pthread_mutexattr_t *attr) {
+    (void)attr;
+    if (!mutex) return 22; /* EINVAL */
+    /* Zero the struct — __lock is the first int field */
+    char *p = (char *)mutex;
+    for (int i = 0; i < (int)sizeof(pthread_mutex_t); i++) p[i] = 0;
+    return 0;
+}
+
+int __wrap_pthread_mutex_lock(pthread_mutex_t *mutex) {
+    if (!mutex) return 22;
+    volatile int *lock = (volatile int *)mutex;
+    while (__atomic_test_and_set(lock, __ATOMIC_ACQUIRE)) {
+        seL4_Yield(); /* yield to avoid burning CPU at equal priority */
+    }
+    return 0;
+}
+
+int __wrap_pthread_mutex_unlock(pthread_mutex_t *mutex) {
+    if (!mutex) return 22;
+    volatile int *lock = (volatile int *)mutex;
+    __atomic_clear(lock, __ATOMIC_RELEASE);
+    return 0;
+}
+
+int __wrap_pthread_mutex_destroy(pthread_mutex_t *mutex) {
+    (void)mutex;
+    return 0;
+}
+
 /* ── Init ── */
 /* Environment variables */
 static char *aios_envp[] = {
@@ -1007,6 +1082,12 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     muslcsys_install_syscall(__NR_getdents64, aios_sys_getdents64);
 }
 
+void aios_init_full(seL4_CPtr serial_ep_arg, seL4_CPtr fs_ep_arg,
+                     seL4_CPtr thread_ep_arg) {
+    thread_ep = thread_ep_arg;
+    aios_init(serial_ep_arg, fs_ep_arg);
+}
+
 
 /* __wrap_main: intercepts main() to strip cap args from argv.
  * exec_thread passes: argv[0]=serial_ep, argv[1]=fs_ep, argv[2..]=real args
@@ -1022,17 +1103,19 @@ static long _auto_parse(const char *s) {
 int __real_main(int argc, char **argv);
 
 int __wrap_main(int argc, char **argv) {
-    /* argv layout: [serial_ep, fs_ep, CWD, progname, arg1, arg2, ...] */
-    seL4_CPtr serial = 0, fs = 0;
+    /* argv layout: [serial_ep, fs_ep, thread_ep, CWD, progname, arg1, ...] */
+    seL4_CPtr serial = 0, fs = 0, thr = 0;
     if (argc > 0 && argv[0]) serial = (seL4_CPtr)_auto_parse(argv[0]);
     if (argc > 1 && argv[1]) fs = (seL4_CPtr)_auto_parse(argv[1]);
+    if (argc > 2 && argv[2]) thr = (seL4_CPtr)_auto_parse(argv[2]);
+    thread_ep = thr;
     aios_init(serial, fs);
 
-    /* Set CWD from argv[2] */
-    if (argc > 2 && argv[2] && argv[2][0] == '/') {
-        aios_set_cwd(argv[2]);
+    /* Set CWD from argv[3] */
+    if (argc > 3 && argv[3] && argv[3][0] == '/') {
+        aios_set_cwd(argv[3]);
     }
 
-    /* Strip 3 args (ser, fs, cwd): real main sees [progname, arg1, ...] */
-    return __real_main(argc - 3, argv + 3);
+    /* Strip 4 args (ser, fs, thread, cwd): real main sees [progname, arg1, ...] */
+    return __real_main(argc - 4, argv + 4);
 }

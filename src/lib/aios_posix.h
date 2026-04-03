@@ -6,23 +6,21 @@
 /*
  * AIOS POSIX Shim
  *
- * Links into child programs. After init, printf/scanf work via IPC.
- *
- * Usage:
- *   int main(int argc, char *argv[]) {
- *       AIOS_INIT(argc, argv);   // one line, done
- *       printf("Hello!\n");      // goes through IPC
- *   }
- *
  * Exec thread passes caps as argv:
  *   argv[0] = serial_ep
- *   argv[1] = fs_ep (if available)
+ *   argv[1] = fs_ep
+ *   argv[2] = thread_ep
+ *   argv[3] = CWD
+ *   argv[4..] = real program args
  */
 
+/* Serial IPC labels */
 #define AIOS_SER_PUTC     1
 #define AIOS_SER_GETC     2
 #define AIOS_SER_PUTS     3
 #define AIOS_SER_KEY_PUSH 4
+
+/* Filesystem IPC labels */
 #define AIOS_FS_LS       10
 #define AIOS_FS_CAT      11
 #define AIOS_FS_STAT     12
@@ -30,18 +28,24 @@
 #define AIOS_FS_READ     14
 #define AIOS_FS_CLOSE    15
 
+/* Exec IPC labels */
+#define AIOS_EXEC_RUN    20
+#define AIOS_EXEC_NICE   21
+
+/* Thread IPC labels */
+#define AIOS_THREAD_CREATE  30
+#define AIOS_THREAD_JOIN    31
+
 /* Initialize shim with endpoint caps */
 void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_ep);
+void aios_init_full(seL4_CPtr serial_ep, seL4_CPtr fs_ep, seL4_CPtr thread_ep);
 
-/* Read one char from serial via IPC */
 int aios_getchar(void);
 void aios_set_cwd(const char *path);
 
-/* Get endpoints */
 seL4_CPtr aios_get_serial_ep(void);
 seL4_CPtr aios_get_fs_ep(void);
 
-/* Parse a decimal number from string */
 static inline long _aios_parse(const char *s) {
     if (!s) return 0;
     long v = 0;
@@ -49,7 +53,6 @@ static inline long _aios_parse(const char *s) {
     return v;
 }
 
-/* One-liner init macro */
 #define AIOS_INIT(argc, argv) \
     aios_init( \
         (argc) > 0 ? (seL4_CPtr)_aios_parse((argv)[0]) : 0, \

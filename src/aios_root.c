@@ -24,6 +24,7 @@
 #include "aios/procfs.h"
 #include <elf/elf.h>
 #include <sel4utils/elf.h>
+#include <sel4utils/api.h>
 
 #define ALLOCATOR_STATIC_POOL_SIZE (BIT(seL4_PageBits) * 800)
 static char allocator_mem_pool[ALLOCATOR_STATIC_POOL_SIZE];
@@ -42,6 +43,35 @@ static allocman_t *allocman;
 #define EXEC_RUN     20
 #define EXEC_NICE    21
 static volatile uint32_t *uart;
+
+/* ── Thread management ── */
+#define THREAD_CREATE    30
+#define THREAD_JOIN      31
+#define MAX_ACTIVE_PROCS  8
+#define MAX_THREADS_PER_PROC 8
+#define THREAD_STACK_PAGES   4
+
+typedef struct {
+    int active;
+    int tid;
+    vka_object_t tcb;
+    vka_object_t fault_ep;
+    vka_object_t ipc_frame;
+    vka_object_t stack_frames[THREAD_STACK_PAGES];
+    int exited;
+} aios_thread_t;
+
+typedef struct {
+    int active;
+    int pid;
+    sel4utils_process_t proc;
+    vka_object_t fault_ep;
+    int num_threads;
+    aios_thread_t threads[MAX_THREADS_PER_PROC];
+} active_proc_t;
+
+static active_proc_t active_procs[MAX_ACTIVE_PROCS];
+static seL4_CPtr thread_ep_cap;
 
 /* Filesystem state (shared with fs thread) */
 static ext2_ctx_t ext2;
@@ -120,6 +150,194 @@ static void worker_thread(void *arg0, void *arg1, void *ipc_buf) {
     while (1) seL4_Yield();
 }
 
+/* ── Create a thread inside a child process's VSpace ── */
+static int create_child_thread(int proc_idx, seL4_Word entry, seL4_Word arg,
+                                int *out_tid) {
+    active_proc_t *ap = &active_procs[proc_idx];
+    if (!ap->active) return -1;
+
+    int tidx = -1;
+    for (int i = 0; i < MAX_THREADS_PER_PROC; i++) {
+        if (!ap->threads[i].active) { tidx = i; break; }
+    }
+    if (tidx < 0) return -1;
+    aios_thread_t *t = &ap->threads[tidx];
+
+    /* 1. Allocate TCB */
+    if (vka_alloc_tcb(&vka, &t->tcb)) return -1;
+
+    /* 2. Allocate fault endpoint for this thread */
+    if (vka_alloc_endpoint(&vka, &t->fault_ep)) goto fail_tcb;
+
+    /* 3. Allocate IPC buffer frame */
+    if (vka_alloc_frame(&vka, seL4_PageBits, &t->ipc_frame)) goto fail_fault;
+
+    /* 4. Map IPC buffer into child's VSpace */
+    void *ipc_addr = vspace_map_pages(&ap->proc.vspace,
+        &t->ipc_frame.cptr, NULL, seL4_AllRights, 1, seL4_PageBits, 0);
+    if (!ipc_addr) goto fail_ipc;
+
+    /* 6. Allocate and map stack (16 KB) */
+    seL4_CPtr stack_caps[THREAD_STACK_PAGES];
+    for (int i = 0; i < THREAD_STACK_PAGES; i++) {
+        if (vka_alloc_frame(&vka, seL4_PageBits, &t->stack_frames[i])) {
+            for (int j = 0; j < i; j++)
+                vka_free_object(&vka, &t->stack_frames[j]);
+            goto fail_ipc;
+        }
+        stack_caps[i] = t->stack_frames[i].cptr;
+    }
+    void *stack_base = vspace_map_pages(&ap->proc.vspace,
+        stack_caps, NULL, seL4_AllRights,
+        THREAD_STACK_PAGES, seL4_PageBits, 0);
+    if (!stack_base) {
+        for (int i = 0; i < THREAD_STACK_PAGES; i++)
+            vka_free_object(&vka, &t->stack_frames[i]);
+        goto fail_ipc;
+    }
+
+    /* 7. Configure TCB: child's CSpace + VSpace */
+    /*
+     * fault_ep is a RAW CPtr stored in the TCB — kernel resolves it
+     * from the THREAD's CSpace at fault time, not root's.
+     * So copy the fault ep cap into the child's CSpace.
+     * We keep the root-side cap for Recv in thread_server.
+     */
+    seL4_CPtr child_fault_cap = sel4utils_copy_cap_to_process(
+        &ap->proc, &vka, t->fault_ep.cptr);
+    if (child_fault_cap == 0) {
+        printf("[thread] Failed to copy fault ep to child\n");
+        goto fail_stack;
+    }
+    seL4_Word cspace_data = api_make_guard_skip_word(seL4_WordBits - 12);
+    int err = seL4_TCB_Configure(t->tcb.cptr,
+        child_fault_cap,                      /* fault ep CPtr in CHILD's CSpace */
+        ap->proc.cspace.cptr,                /* child CNode cap */
+        cspace_data,                          /* 12-bit CNode guard */
+        vspace_get_root(&ap->proc.vspace),    /* child PGD */
+        seL4_NilData,
+        (seL4_Word)ipc_addr,                  /* IPC buf vaddr in child */
+        t->ipc_frame.cptr);                   /* IPC buf frame (kernel resolves from caller) */
+    if (err) {
+        printf("[thread] TCB_Configure failed: %d\n", err);
+        goto fail_stack;
+    }
+
+    /* 8. Priority — same as everything else */
+    seL4_TCB_SetPriority(t->tcb.cptr, seL4_CapInitThreadTCB, 200);
+
+    /* 9. Set registers and start */
+    seL4_UserContext regs;
+    int nregs = sizeof(regs) / sizeof(seL4_Word);
+    for (int i = 0; i < nregs; i++) ((seL4_Word *)&regs)[i] = 0;
+    regs.pc  = entry;
+    regs.sp  = (seL4_Word)stack_base + THREAD_STACK_PAGES * BIT(seL4_PageBits);
+    regs.x0  = arg;
+    regs.x30 = 0;   /* LR=0: return from fn triggers VM fault (clean exit) */
+    err = seL4_TCB_WriteRegisters(t->tcb.cptr, 1 /* resume */,
+                                   0, nregs, &regs);
+    if (err) {
+        printf("[thread] WriteRegisters failed: %d\n", err);
+        goto fail_stack;
+    }
+
+    /* 10. Record */
+    t->active = 1;
+    t->tid = tidx + 1;  /* 1-based */
+    t->exited = 0;
+    ap->num_threads++;
+    *out_tid = t->tid;
+    return 0;
+
+fail_stack:
+    for (int i = 0; i < THREAD_STACK_PAGES; i++)
+        vka_free_object(&vka, &t->stack_frames[i]);
+fail_ipc:
+    vka_free_object(&vka, &t->ipc_frame);
+fail_fault:
+    vka_free_object(&vka, &t->fault_ep);
+fail_tcb:
+    vka_free_object(&vka, &t->tcb);
+    return -1;
+}
+
+/* ── Thread server — handles THREAD_CREATE / THREAD_JOIN IPC ── */
+static void thread_server_fn(void *arg0, void *arg1, void *ipc_buf) {
+    seL4_CPtr ep = (seL4_CPtr)(uintptr_t)arg0;
+    (void)arg1; (void)ipc_buf;
+
+    cspacepath_t reply_path;
+    int err = vka_cspace_alloc_path(&vka, &reply_path);
+    if (err) { printf("[thread_srv] FATAL: no reply slot\n"); return; }
+    seL4_CPtr reply_slot = reply_path.capPtr;
+
+    while (1) {
+        seL4_Word badge;
+        seL4_MessageInfo_t msg = seL4_Recv(ep, &badge);
+        seL4_Word label = seL4_MessageInfo_get_label(msg);
+        int proc_idx = (int)badge - 1;  /* badge = proc_idx + 1 */
+
+        if (proc_idx < 0 || proc_idx >= MAX_ACTIVE_PROCS
+            || !active_procs[proc_idx].active) {
+            seL4_SetMR(0, (seL4_Word)-1);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            continue;
+        }
+
+        switch (label) {
+        case THREAD_CREATE: {
+            seL4_Word entry_addr = seL4_GetMR(0);
+            seL4_Word thread_arg = seL4_GetMR(1);
+            int tid = 0;
+            int ret = create_child_thread(proc_idx, entry_addr,
+                                           thread_arg, &tid);
+            seL4_SetMR(0, ret == 0 ? (seL4_Word)tid : (seL4_Word)-1);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        case THREAD_JOIN: {
+            seL4_Word tid = seL4_GetMR(0);
+            active_proc_t *ap = &active_procs[proc_idx];
+            int tidx = (int)tid - 1;
+            if (tidx < 0 || tidx >= MAX_THREADS_PER_PROC
+                || !ap->threads[tidx].active) {
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+
+            /* Save reply cap, block on thread's fault ep */
+            seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                              reply_slot, seL4_WordBits);
+            seL4_CNode_SaveCaller(seL4_CapInitThreadCNode,
+                                   reply_slot, seL4_WordBits);
+
+            aios_thread_t *t = &ap->threads[tidx];
+            seL4_Word child_badge;
+            seL4_Recv(t->fault_ep.cptr, &child_badge);
+
+            /* Thread exited — clean up kernel objects */
+            vka_free_object(&vka, &t->tcb);
+            vka_free_object(&vka, &t->fault_ep);
+            vka_free_object(&vka, &t->ipc_frame);
+            for (int i = 0; i < THREAD_STACK_PAGES; i++)
+                vka_free_object(&vka, &t->stack_frames[i]);
+            t->active = 0;
+            t->exited = 1;
+            ap->num_threads--;
+
+            seL4_SetMR(0, 0);
+            seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        default:
+            seL4_SetMR(0, (seL4_Word)-1);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+    }
+}
+
 /* Exec thread — spawns processes on behalf of shell */
 static vka_object_t exec_reply_cap_obj;
 
@@ -185,7 +403,19 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             continue;
         }
 
-        sel4utils_process_t proc;
+        /* Allocate active_procs slot */
+        int ap_idx = -1;
+        for (int i = 0; i < MAX_ACTIVE_PROCS; i++) {
+            if (!active_procs[i].active) { ap_idx = i; break; }
+        }
+        if (ap_idx < 0) {
+            seL4_SetMR(0, (seL4_Word)-1);
+            seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
+            vka_free_object(&vka, &child_fault_ep);
+            continue;
+        }
+        active_proc_t *ap = &active_procs[ap_idx];
+        sel4utils_process_t *proc = &ap->proc;
 
         /* Read ELF from disk — shell sends full path */
         static char elf_buf[1024 * 1024];
@@ -221,7 +451,7 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         pconfig = process_config_auth(pconfig, simple_get_tcb(&simple));
         pconfig = process_config_fault_endpoint(pconfig, child_fault_ep);
 
-        err = sel4utils_configure_process_custom(&proc, &vka, &vspace, pconfig);
+        err = sel4utils_configure_process_custom(proc, &vka, &vspace, pconfig);
         if (err) {
             seL4_SetMR(0, (seL4_Word)-1);
             seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
@@ -230,24 +460,35 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         }
 
         /* Load ELF into child's VSpace */
-        proc.entry_point = sel4utils_elf_load(
-            &proc.vspace, &vspace, &vka, &vka, &elf);
-        if (proc.entry_point == NULL) {
+        proc->entry_point = sel4utils_elf_load(
+            &proc->vspace, &vspace, &vka, &vka, &elf);
+        if (proc->entry_point == NULL) {
             printf("[exec] ELF load failed: %s\n", elf_path);
-            sel4utils_destroy_process(&proc, &vka);
+            sel4utils_destroy_process(proc, &vka);
             seL4_SetMR(0, (seL4_Word)-1);
             seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
             vka_free_object(&vka, &child_fault_ep);
             continue;
         }
-        proc.sysinfo = sel4utils_elf_get_vsyscall(&elf);
+        proc->sysinfo = sel4utils_elf_get_vsyscall(&elf);
 
-        seL4_CPtr child_ser = sel4utils_copy_cap_to_process(&proc, &vka, serial_ep.cptr);
-        seL4_CPtr child_fs = sel4utils_copy_cap_to_process(&proc, &vka, fs_ep_cap);
+        seL4_CPtr child_ser = sel4utils_copy_cap_to_process(proc, &vka, serial_ep.cptr);
+        seL4_CPtr child_fs = sel4utils_copy_cap_to_process(proc, &vka, fs_ep_cap);
 
-        char s_ser[16], s_fs[16];
+        /* Mint badged thread_ep (badge = ap_idx + 1) and copy to child */
+        cspacepath_t te_src, te_dest;
+        vka_cspace_make_path(&vka, thread_ep_cap, &te_src);
+        vka_cspace_alloc_path(&vka, &te_dest);
+        seL4_CNode_Mint(te_dest.root, te_dest.capPtr, te_dest.capDepth,
+            te_src.root, te_src.capPtr, te_src.capDepth,
+            seL4_AllRights, (seL4_Word)(ap_idx + 1));
+        seL4_CPtr child_thread = sel4utils_copy_cap_to_process(
+            proc, &vka, te_dest.capPtr);
+
+        char s_ser[16], s_fs[16], s_thread[16];
         snprintf(s_ser, 16, "%lu", (unsigned long)child_ser);
         snprintf(s_fs, 16, "%lu", (unsigned long)child_fs);
+        snprintf(s_thread, 16, "%lu", (unsigned long)child_thread);
 
         /* Build argv array */
         #define MAX_EXEC_ARGS 8
@@ -255,6 +496,7 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         int child_argc = 0;
         child_argv[child_argc++] = s_ser;
         child_argv[child_argc++] = s_fs;
+        child_argv[child_argc++] = s_thread;
         /* Pass CWD from shell (encoded in exec_args after \x01 separator) */
         static char cwd_buf[256];
         cwd_buf[0] = '/'; cwd_buf[1] = 0;
@@ -289,7 +531,7 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
         }
 
-        err = sel4utils_spawn_process_v(&proc, &vka, &vspace,
+        err = sel4utils_spawn_process_v(proc, &vka, &vspace,
                                          child_argc, child_argv, 1);
         if (err) {
             /* spawn failed silently */
@@ -298,8 +540,14 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             continue;
         }
 
-        /* Register in process table */
+        /* Register in active_procs + process table */
+        ap->active = 1;
+        ap->fault_ep = child_fault_ep;
+        ap->num_threads = 0;
+        for (int ti = 0; ti < MAX_THREADS_PER_PROC; ti++)
+            ap->threads[ti].active = 0;
         int child_pid = proc_add(prog_name, 200);
+        ap->pid = child_pid;
 
         /* Apply nice value if EXEC_NICE */
         if (label == EXEC_NICE) {
@@ -310,9 +558,25 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         /* Wait for child to exit */
         seL4_Word child_badge;
         seL4_Recv(child_fault_ep.cptr, &child_badge);
-        // printf("[exec] %s exited\n", prog_name);
-        sel4utils_destroy_process(&proc, &vka);
+
+        /* Clean up any remaining threads */
+        for (int ti = 0; ti < MAX_THREADS_PER_PROC; ti++) {
+            aios_thread_t *ct = &ap->threads[ti];
+            if (ct->active) {
+                vka_free_object(&vka, &ct->tcb);
+                vka_free_object(&vka, &ct->fault_ep);
+                vka_free_object(&vka, &ct->ipc_frame);
+                for (int si = 0; si < THREAD_STACK_PAGES; si++)
+                    vka_free_object(&vka, &ct->stack_frames[si]);
+                ct->active = 0;
+            }
+        }
+        sel4utils_destroy_process(proc, &vka);
         vka_free_object(&vka, &child_fault_ep);
+        /* Free badged thread_ep — must delete cap before freeing slot */
+        seL4_CNode_Delete(seL4_CapInitThreadCNode, te_dest.capPtr, seL4_WordBits);
+        vka_cspace_free(&vka, te_dest.capPtr);
+        ap->active = 0;
         if (child_pid > 0) proc_remove(child_pid);
 
         /* Reply to shell via saved cap */
@@ -658,6 +922,9 @@ int main(int argc, char *argv[]) {
     printf("[boot] All subsystems OK\n\n");
 
     /* Register system processes */
+    /* Clear active process table */
+    for (int i = 0; i < MAX_ACTIVE_PROCS; i++) active_procs[i].active = 0;
+
     proc_add("root", 200);
 
 
@@ -841,6 +1108,7 @@ int main(int argc, char *argv[]) {
                 vfs_mount("/proc", &procfs_ops, NULL);
                 proc_add("fs_thread", 200);
                 proc_add("exec_thread", 200);
+                proc_add("thread_server", 200);
                 printf("[boot] Filesystems mounted\n");
             } else {
                 printf("[fs] ext2 init failed: %d\n", fs_err);
@@ -861,6 +1129,11 @@ skip_blk:
     vka_object_t exec_ep_obj;
     vka_alloc_endpoint(&vka, &exec_ep_obj);
     seL4_CPtr exec_ep_cap = exec_ep_obj.cptr;
+
+    /* Thread server endpoint */
+    vka_object_t thread_ep_obj;
+    vka_alloc_endpoint(&vka, &thread_ep_obj);
+    thread_ep_cap = thread_ep_obj.cptr;
     {
         sel4utils_thread_t fs_thread;
         error = sel4utils_configure_thread(&vka, &vspace, &vspace, 0,
@@ -885,6 +1158,20 @@ skip_blk:
                 (sel4utils_thread_entry_fn)exec_thread_fn,
                 (void *)(uintptr_t)exec_ep_cap, NULL, 1);
             /* quiet */
+        }
+    }
+
+    /* Start thread server */
+    {
+        sel4utils_thread_t tsrv_thread;
+        error = sel4utils_configure_thread(&vka, &vspace, &vspace, 0,
+            simple_get_cnode(&simple), seL4_NilData, &tsrv_thread);
+        if (!error) {
+            seL4_TCB_SetPriority(tsrv_thread.tcb.cptr,
+                                  simple_get_tcb(&simple), 200);
+            sel4utils_start_thread(&tsrv_thread,
+                (sel4utils_thread_entry_fn)thread_server_fn,
+                (void *)(uintptr_t)thread_ep_cap, NULL, 1);
         }
     }
 
