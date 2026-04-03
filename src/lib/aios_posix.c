@@ -662,9 +662,24 @@ static long aios_sys_getdents64(va_list ap) {
 }
 
 /* ── Init ── */
+/* Environment variables */
+static char *aios_envp[] = {
+    "HOME=/",
+    "PATH=/bin",
+    "USER=root",
+    "SHELL=/bin/sh",
+    "TERM=vt100",
+    "HOSTNAME=aios",
+    NULL
+};
+
 void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     ser_ep = serial_ep;
     fs_ep_cap = fs_endpoint;
+
+    /* Set libc environ */
+    extern char **environ;
+    environ = aios_envp;
 
     /* Clear fd table */
     for (int i = 0; i < AIOS_MAX_FDS; i++) aios_fds[i].active = 0;

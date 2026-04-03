@@ -187,12 +187,10 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
 
         sel4utils_process_t proc;
 
-        /* Read ELF from disk: /bin/<prog_name> */
-        static char elf_buf[256 * 1024]; /* 256KB buffer for ELF */
+        /* Read ELF from disk — shell sends full path */
+        static char elf_buf[256 * 1024];
         char elf_path[160];
         int epi = 0;
-        const char *prefix = "/bin/";
-        while (*prefix) elf_path[epi++] = *prefix++;
         const char *pn = prog_name;
         while (*pn && epi < 158) elf_path[epi++] = *pn++;
         elf_path[epi] = '\0';
@@ -533,6 +531,54 @@ static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             int ret = vfs_unlink(rm_path);
             seL4_SetMR(0, (seL4_Word)(ret >= 0 ? 0 : -1));
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        case FS_UNAME: {
+            /* Return system info packed in MRs:
+             * MR0-1: sysname (16 bytes)
+             * MR2-3: nodename (16 bytes)  
+             * MR4-5: release (16 bytes)
+             * MR6-7: version (16 bytes)
+             * MR8-9: machine (16 bytes) */
+            char info[80];
+            for (int i = 0; i < 80; i++) info[i] = 0;
+            
+            /* sysname */
+            const char *s = "AIOS";
+            for (int i = 0; s[i] && i < 15; i++) info[i] = s[i];
+            
+            /* nodename — read from ext2 /etc/hostname */
+            char hname[16];
+            for (int i = 0; i < 16; i++) hname[i] = 0;
+            int hlen = vfs_read("/etc/hostname", hname, 15);
+            if (hlen > 0) {
+                /* Strip trailing newline */
+                if (hname[hlen-1] == '\n') hname[hlen-1] = 0;
+            } else {
+                hname[0] = 'a'; hname[1] = 'i'; hname[2] = 'o'; hname[3] = 's';
+            }
+            for (int i = 0; i < 16; i++) info[16 + i] = hname[i];
+            
+            /* release */
+            s = AIOS_VERSION_STR;
+            for (int i = 0; s[i] && i < 15; i++) info[32 + i] = s[i];
+            
+            /* version — seL4 + build info */
+            const char *ver = "seL4 15.0.0 SMP #" _AIOS_XSTR(AIOS_BUILD_NUMBER);
+            for (int i = 0; ver[i] && i < 15; i++) info[48 + i] = ver[i];
+            
+            /* machine */
+            s = "aarch64";
+            for (int i = 0; s[i] && i < 15; i++) info[64 + i] = s[i];
+            
+            /* Pack into MRs (8 bytes per MR) */
+            for (int i = 0; i < 10; i++) {
+                seL4_Word w = 0;
+                for (int j = 0; j < 8; j++)
+                    w |= ((seL4_Word)(uint8_t)info[i*8 + j]) << (j * 8);
+                seL4_SetMR(i, w);
+            }
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 10));
             break;
         }
         default:

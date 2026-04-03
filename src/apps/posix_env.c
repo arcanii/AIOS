@@ -1,11 +1,13 @@
+/* POSIX env — print environment variables */
 #include <stdio.h>
-#include "aios_posix.h"
+#include <stdlib.h>
+
+extern char **environ;
+
 int main(int argc, char *argv[]) {
-    AIOS_INIT(argc, argv);
-    printf("HOME=/\n");
-    printf("PATH=/bin\n");
-    printf("USER=root\n");
-    printf("SHELL=/bin/sh\n");
-    printf("TERM=vt100\n");
+    if (environ) {
+        for (char **e = environ; *e; e++)
+            printf("%s\n", *e);
+    }
     return 0;
 }

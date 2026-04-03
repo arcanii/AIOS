@@ -213,34 +213,26 @@ class Ext2Builder:
         self.mkfile(etc_ino, 'fstab', '/dev/vda  /     ext2  defaults  0 1\nproc      /proc proc  defaults  0 0\n')
         self.mkfile(etc_ino, 'services.conf', '# AIOS services\nserial_server=enabled\nfs_server=enabled\nexec_server=enabled\n')
 
-        # Install ELF binaries to /bin
+        # Install ELF binaries to /bin (original names, no stripping)
         if elf_dir:
             installed = 0
-            installed_names = set()
             for elf_path in sorted(glob.glob(os.path.join(elf_dir, '*'))):
                 name = os.path.basename(elf_path)
-                # Skip non-ELF files and system services
                 if name.startswith('CMake') or name.endswith('.o') or name.endswith('.a'):
                     continue
                 if name in ('aios_root', 'apps_cpio.o'):
                     continue
-                # Skip directories
                 if os.path.isdir(elf_path):
                     continue
-                # Check it's an ELF
                 with open(elf_path, 'rb') as f:
                     magic = f.read(4)
                 if magic != b'\x7fELF':
                     continue
                 with open(elf_path, 'rb') as f:
                     elf_data = f.read()
-                # Install with original name
-                clean = name
-                if name.startswith("posix_"): clean = name[6:]
-                elif name.startswith("gnu_"): clean = name[4:]
-                self.mkfile(bin_ino, clean, elf_data)
+                self.mkfile(bin_ino, name, elf_data)
                 installed += 1
-                print(f'  /bin/{clean} ({len(elf_data)} bytes)')
+                print(f'  /bin/{name} ({len(elf_data)} bytes)')
             print(f'  Installed {installed} programs to /bin')
 
         with open(path, 'wb') as f:
