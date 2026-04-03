@@ -13,7 +13,9 @@
 #define SER_GETC 2
 #define FS_STAT  12
 #define EXEC_RUN 20
-#define AUTH_LOGIN 40
+#define AUTH_LOGIN  40
+#define AUTH_SU     48
+#define AUTH_PASSWD 47
 
 static seL4_CPtr serial_ep, fs_ep, exec_ep, auth_ep;
 static uint32_t session_token = 0;
@@ -21,6 +23,14 @@ static uint32_t session_uid = 0;
 static uint32_t session_gid = 0;
 static char session_user[32] = "???";
 static char session_home[64] = "/";
+
+/* su stack — save/restore previous identity */
+#define SU_STACK_MAX 4
+static struct {
+    uint32_t uid, gid, token;
+    char user[32];
+} su_stack[SU_STACK_MAX];
+static int su_depth = 0;
 
 static void ser_putc(char c) {
     seL4_SetMR(0, (seL4_Word)c);
@@ -174,19 +184,72 @@ static int do_exec(const char *cmdline) {
     return (int)(long)seL4_GetMR(0);
 }
 
-/* ── Line reader ── */
+/* ── Line editor with cursor movement ── */
 #define LINE_MAX 256
 static char line[LINE_MAX];
+
+/* ESC sequence state machine: 0=normal, 1=got ESC, 2=got ESC[ */
 static void read_line(int *len) {
+    int cursor = 0;  /* cursor position within line */
+    int esc_state = 0;
     *len = 0;
+
     while (*len < LINE_MAX - 1) {
         int c = ser_getc();
         if (c < 0) continue;
-        if (c == '\r' || c == '\n') { ser_putc('\n'); break; }
-        if ((c == 0x7f || c == '\b') && *len > 0) {
-            (*len)--; ser_putc('\b'); ser_putc(' '); ser_putc('\b'); continue;
+
+        /* ESC sequence state machine */
+        if (esc_state == 1) {
+            esc_state = (c == '[') ? 2 : 0;
+            if (esc_state == 0 && c != 0x1b) goto normal;
+            continue;
         }
-        if (c >= 0x20 && c < 127) { line[*len] = (char)c; (*len)++; ser_putc((char)c); }
+        if (esc_state == 2) {
+            esc_state = 0;
+            if (c == 'D' && cursor > 0) {
+                /* LEFT */
+                cursor--;
+                ser_puts("\033[D");
+            } else if (c == 'C' && cursor < *len) {
+                /* RIGHT */
+                cursor++;
+                ser_puts("\033[C");
+            }
+            /* UP/DOWN (A/B) — silently ignore */
+            continue;
+        }
+        if (c == 0x1b) { esc_state = 1; continue; }
+
+normal:
+        if (c == '\r' || c == '\n') { ser_putc('\n'); break; }
+
+        if ((c == 0x7f || c == '\b') && cursor > 0) {
+            /* Delete char before cursor */
+            cursor--;
+            for (int i = cursor; i < *len - 1; i++) line[i] = line[i + 1];
+            (*len)--;
+            /* Redraw from cursor: move back, print rest, space over old last, reposition */
+            ser_puts("\033[D");
+            for (int i = cursor; i < *len; i++) ser_putc(line[i]);
+            ser_putc(' ');
+            /* Move cursor back to position */
+            int back = *len - cursor + 1;
+            for (int i = 0; i < back; i++) ser_puts("\033[D");
+            continue;
+        }
+
+        if (c >= 0x20 && c < 127) {
+            /* Insert char at cursor */
+            for (int i = *len; i > cursor; i--) line[i] = line[i - 1];
+            line[cursor] = (char)c;
+            (*len)++;
+            /* Print from cursor to end */
+            for (int i = cursor; i < *len; i++) ser_putc(line[i]);
+            cursor++;
+            /* Move cursor back to position */
+            int back = *len - cursor;
+            for (int i = 0; i < back; i++) ser_puts("\033[D");
+        }
     }
     line[*len] = '\0';
 }
@@ -201,6 +264,12 @@ static void read_password(char *buf, int max) {
         if ((c == 0x7f || c == '\b') && len > 0) {
             len--; ser_putc('\b'); ser_putc(' '); ser_putc('\b'); continue;
         }
+        if (c == 0x1b) {
+            int c2 = ser_getc();
+            if (c2 == '[') { ser_getc(); }
+            continue;
+        }
+        if (c == 0x1b) { int c2 = ser_getc(); if (c2 == '[') ser_getc(); continue; }
         if (c >= 0x20 && c < 127) { buf[len++] = (char)c; ser_putc('*'); }
     }
     buf[len] = '\0';
@@ -227,6 +296,12 @@ static int do_login(void) {
             if ((c == 0x7f || c == '\b') && ulen > 0) {
                 ulen--; ser_putc('\b'); ser_putc(' '); ser_putc('\b'); continue;
             }
+            if (c == 0x1b) {
+                int c2 = ser_getc();
+                if (c2 == '[') { ser_getc(); }
+                continue;
+            }
+            if (c == 0x1b) { int c2 = ser_getc(); if (c2 == '[') ser_getc(); continue; }
             if (c >= 0x20 && c < 127) { username[ulen++] = (char)c; ser_putc((char)c); }
         }
         username[ulen] = '\0';
@@ -333,8 +408,19 @@ login_gate:
             }
             env_set("PWD", cwd);
         } else if (str_eq(line, "exit") || str_eq(line, "logout")) {
-            ser_puts("Goodbye, "); ser_puts(session_user); ser_puts("\n");
-            goto login_gate;
+            if (su_depth > 0) {
+                /* Pop su stack — return to previous identity */
+                su_depth--;
+                session_uid = su_stack[su_depth].uid;
+                session_gid = su_stack[su_depth].gid;
+                session_token = su_stack[su_depth].token;
+                str_cpy(session_user, su_stack[su_depth].user);
+                env_set("USER", session_user);
+                ser_puts("Returned to "); ser_puts(session_user); ser_puts("\n");
+            } else {
+                ser_puts("Goodbye, "); ser_puts(session_user); ser_puts("\n");
+                goto login_gate;
+            }
         } else if (str_eq(line, "export")) {
             /* export VAR=value */
             if (arg) {
@@ -349,6 +435,129 @@ login_gate:
                     val[vi] = '\0';
                     env_set(key, val);
                 }
+            }
+        } else if (str_eq(line, "su")) {
+            /* su [username] — switch user */
+            char su_user[32];
+            char su_pass[64];
+            if (arg && arg[0]) {
+                int i = 0;
+                while (arg[i] && i < 31) { su_user[i] = arg[i]; i++; }
+                su_user[i] = '\0';
+            } else {
+                /* Default: su to root */
+                su_user[0] = 'r'; su_user[1] = 'o'; su_user[2] = 'o';
+                su_user[3] = 't'; su_user[4] = '\0';
+            }
+            /* Root doesn't need a password for su */
+            if (session_uid == 0) {
+                su_pass[0] = '\0';
+            } else {
+                ser_puts("Password: ");
+                read_password(su_pass, 64);
+            }
+
+            if (auth_ep) {
+                /* Pack: MR0=token, then username, then password */
+                int mr = 0;
+                seL4_SetMR(mr++, (seL4_Word)session_token);
+                /* Pack username */
+                int ulen = str_len(su_user);
+                seL4_SetMR(mr++, (seL4_Word)ulen);
+                seL4_Word w = 0;
+                for (int i = 0; i < ulen; i++) {
+                    w |= ((seL4_Word)(uint8_t)su_user[i]) << ((i % 8) * 8);
+                    if (i % 8 == 7 || i == ulen - 1) { seL4_SetMR(mr++, w); w = 0; }
+                }
+                /* Pack password */
+                int plen = str_len(su_pass);
+                seL4_SetMR(mr++, (seL4_Word)plen);
+                w = 0;
+                for (int i = 0; i < plen; i++) {
+                    w |= ((seL4_Word)(uint8_t)su_pass[i]) << ((i % 8) * 8);
+                    if (i % 8 == 7 || i == plen - 1) { seL4_SetMR(mr++, w); w = 0; }
+                }
+                /* Clear password */
+                for (int i = 0; i < 64; i++) su_pass[i] = 0;
+
+                seL4_MessageInfo_t reply = seL4_Call(auth_ep,
+                    seL4_MessageInfo_new(AUTH_SU, 0, 0, mr));
+                uint32_t status = (uint32_t)seL4_GetMR(0);
+                if (status == 0) {
+                    /* Push current identity to su stack */
+                    if (su_depth < SU_STACK_MAX) {
+                        su_stack[su_depth].uid = session_uid;
+                        su_stack[su_depth].gid = session_gid;
+                        su_stack[su_depth].token = session_token;
+                        str_cpy(su_stack[su_depth].user, session_user);
+                        su_depth++;
+                    }
+                    session_uid = (uint32_t)seL4_GetMR(1);
+                    session_gid = (uint32_t)seL4_GetMR(2);
+                    str_cpy(session_user, su_user);
+                    env_set("USER", session_user);
+                    ser_puts("Switched to "); ser_puts(session_user); ser_puts("\n");
+                } else {
+                    ser_puts("su: authentication failure\n");
+                }
+            } else {
+                ser_puts("su: no auth server\n");
+            }
+        } else if (str_eq(line, "passwd")) {
+            /* passwd [username] — change password */
+            char pw_user[32];
+            if (arg && arg[0]) {
+                int i = 0;
+                while (arg[i] && i < 31) { pw_user[i] = arg[i]; i++; }
+                pw_user[i] = '\0';
+            } else {
+                str_cpy(pw_user, session_user);
+            }
+            /* Only root can change other users' passwords */
+            if (session_uid != 0 && !str_eq(pw_user, session_user)) {
+                ser_puts("passwd: permission denied\n");
+            } else if (auth_ep) {
+                char new_pass[64], confirm[64];
+                ser_puts("New password: ");
+                read_password(new_pass, 64);
+                ser_puts("Confirm password: ");
+                read_password(confirm, 64);
+
+                if (!str_eq(new_pass, confirm)) {
+                    ser_puts("passwd: passwords don't match\n");
+                    for (int i = 0; i < 64; i++) { new_pass[i] = 0; confirm[i] = 0; }
+                } else {
+                    /* Pack: MR0=token, then username, then password */
+                    int mr = 0;
+                    seL4_SetMR(mr++, (seL4_Word)session_token);
+                    int ulen = str_len(pw_user);
+                    seL4_SetMR(mr++, (seL4_Word)ulen);
+                    seL4_Word w = 0;
+                    for (int i = 0; i < ulen; i++) {
+                        w |= ((seL4_Word)(uint8_t)pw_user[i]) << ((i % 8) * 8);
+                        if (i % 8 == 7 || i == ulen - 1) { seL4_SetMR(mr++, w); w = 0; }
+                    }
+                    int plen = str_len(new_pass);
+                    seL4_SetMR(mr++, (seL4_Word)plen);
+                    w = 0;
+                    for (int i = 0; i < plen; i++) {
+                        w |= ((seL4_Word)(uint8_t)new_pass[i]) << ((i % 8) * 8);
+                        if (i % 8 == 7 || i == plen - 1) { seL4_SetMR(mr++, w); w = 0; }
+                    }
+                    for (int i = 0; i < 64; i++) { new_pass[i] = 0; confirm[i] = 0; }
+
+                    seL4_MessageInfo_t reply = seL4_Call(auth_ep,
+                        seL4_MessageInfo_new(AUTH_PASSWD, 0, 0, mr));
+                    uint32_t status = (uint32_t)seL4_GetMR(0);
+                    if (status == 0) {
+                        ser_puts("passwd: password updated for ");
+                        ser_puts(pw_user); ser_puts("\n");
+                    } else {
+                        ser_puts("passwd: failed\n");
+                    }
+                }
+            } else {
+                ser_puts("passwd: no auth server\n");
             }
         } else {
             /* ── Search PATH and exec ── */

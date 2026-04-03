@@ -65,6 +65,7 @@ static void resolve_path(const char *pathname, char *out, int outsz) {
 
 seL4_CPtr aios_get_serial_ep(void) { return ser_ep; }
 seL4_CPtr aios_get_fs_ep(void) { return fs_ep_cap; }
+seL4_CPtr aios_get_auth_ep(void) { return auth_ep; }
 
 /* ── Simple fd table for ext2 files ── */
 #define AIOS_MAX_FDS 32

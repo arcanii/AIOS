@@ -68,6 +68,8 @@ typedef struct {
 typedef struct {
     int active;
     int pid;
+    uint32_t uid;
+    uint32_t gid;
     sel4utils_process_t proc;
     vka_object_t fault_ep;
     int num_threads;
@@ -478,7 +480,15 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         proc->sysinfo = sel4utils_elf_get_vsyscall(&elf);
 
         seL4_CPtr child_ser = sel4utils_copy_cap_to_process(proc, &vka, serial_ep.cptr);
-        seL4_CPtr child_fs = sel4utils_copy_cap_to_process(proc, &vka, fs_ep_cap);
+        /* Mint badged fs_ep (badge = ap_idx + 1) for permission checks */
+        cspacepath_t fs_src, fs_dest;
+        vka_cspace_make_path(&vka, fs_ep_cap, &fs_src);
+        vka_cspace_alloc_path(&vka, &fs_dest);
+        seL4_CNode_Mint(fs_dest.root, fs_dest.capPtr, fs_dest.capDepth,
+            fs_src.root, fs_src.capPtr, fs_src.capDepth,
+            seL4_AllRights, (seL4_Word)(ap_idx + 1));
+        seL4_CPtr child_fs = sel4utils_copy_cap_to_process(
+            proc, &vka, fs_dest.capPtr);
 
         /* Mint badged thread_ep (badge = ap_idx + 1) and copy to child */
         cspacepath_t te_src, te_dest;
@@ -518,9 +528,22 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
                 if (*p == ' ') last_space = p;
             char *check = last_space ? last_space + 1 : exec_args;
             if (check[0] == 'C' && check[1] == 'W' && check[2] == 'D' && check[3] == '=') {
-                int ci = 0;
                 char *v = check + 4;
-                while (*v && ci < 255) cwd_buf[ci++] = *v++;
+                /* Parse uid:gid:/path format */
+                uint32_t _cwd_uid = 0, _cwd_gid = 0;
+                if (*v >= '0' && *v <= '9') {
+                    while (*v >= '0' && *v <= '9') { _cwd_uid = _cwd_uid * 10 + (*v - '0'); v++; }
+                    if (*v == ':') v++;
+                    while (*v >= '0' && *v <= '9') { _cwd_gid = _cwd_gid * 10 + (*v - '0'); v++; }
+                    if (*v == ':') v++;
+                }
+                /* Store uid/gid for later (used by active_procs) */
+                cwd_buf[252] = (char)(_cwd_uid & 0xFF);
+                cwd_buf[253] = (char)((_cwd_uid >> 8) & 0xFF);
+                cwd_buf[254] = (char)(_cwd_gid & 0xFF);
+                cwd_buf[255] = (char)((_cwd_gid >> 8) & 0xFF);
+                int ci = 0;
+                while (*v && ci < 251) cwd_buf[ci++] = *v++;
                 cwd_buf[ci] = 0;
                 if (last_space) *last_space = 0; /* strip CWD from args */
                 else exec_args = 0;
@@ -552,6 +575,8 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
 
         /* Register in active_procs + process table */
         ap->active = 1;
+        ap->uid = (uint32_t)(uint8_t)cwd_buf[252] | ((uint32_t)(uint8_t)cwd_buf[253] << 8);
+        ap->gid = (uint32_t)(uint8_t)cwd_buf[254] | ((uint32_t)(uint8_t)cwd_buf[255] << 8);
         ap->fault_ep = child_fault_ep;
         ap->num_threads = 0;
         for (int ti = 0; ti < MAX_THREADS_PER_PROC; ti++)
@@ -682,6 +707,35 @@ static int blk_write_sector(uint64_t sector, const void *buf) {
 }
 
 
+/* ── File permission check ── */
+static int fs_check_write_perm(int badge) {
+    if (badge == 0) return 1;  /* unbadged = internal (root) */
+    int idx = badge - 1;
+    if (idx < 0 || idx >= MAX_ACTIVE_PROCS) return 0;
+    if (!active_procs[idx].active) return 0;
+    return (active_procs[idx].uid == 0);  /* only root can write */
+}
+
+static int fs_check_path_write(int badge, const char *path) {
+    /* DEBUG PERM */
+    if (badge > 0) {
+        int idx = badge - 1;
+        printf("[fs] PERM CHECK: badge=%d uid=%u path=%s\n",
+               badge, active_procs[idx].active ? active_procs[idx].uid : 9999, path);
+    }
+    if (fs_check_write_perm(badge)) return 1;
+    /* Non-root: deny writes to /etc/ */
+    if (path[0] == '/' && path[1] == 'e' && path[2] == 't' &&
+        path[3] == 'c' && (path[4] == '/' || path[4] == '\0'))
+        return 0;
+    /* Non-root: deny writes to /bin/ */
+    if (path[0] == '/' && path[1] == 'b' && path[2] == 'i' &&
+        path[3] == 'n' && (path[4] == '/' || path[4] == '\0'))
+        return 0;
+    /* Allow other writes */
+    return 1;
+}
+
 /* Filesystem IPC thread — runs in root task VSpace */
 static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
     seL4_CPtr ep = (seL4_CPtr)(uintptr_t)arg0;
@@ -694,6 +748,7 @@ static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         seL4_Word badge;
         seL4_MessageInfo_t msg = seL4_Recv(ep, &badge);
         seL4_Word label = seL4_MessageInfo_get_label(msg);
+        int fs_badge = (int)badge;
 
         switch (label) {
         case FS_LS: {
@@ -783,6 +838,11 @@ static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
                 mk_path[i] = (char)((seL4_GetMR(mk_mr) >> ((i % 8) * 8)) & 0xFF);
             }
             mk_path[mkpl] = '\0';
+            if (!fs_check_path_write(fs_badge, mk_path)) {
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
             int ret = vfs_mkdir(mk_path);
             seL4_SetMR(0, (seL4_Word)(ret >= 0 ? 0 : -1));
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
@@ -791,6 +851,20 @@ static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         case FS_WRITE_FILE: {
             /* MR0=path_len, MR1..=path, then data_len + data */
             seL4_Word path_len = seL4_GetMR(0);
+            char wr_path_pre[128];
+            /* Peek at path for permission check */
+            int wrpl_pre = (path_len > 127) ? 127 : (int)path_len;
+            int wr_mr_pre = 1;
+            for (int i = 0; i < wrpl_pre; i++) {
+                if (i % 8 == 0 && i > 0) wr_mr_pre++;
+                wr_path_pre[i] = (char)((seL4_GetMR(wr_mr_pre) >> ((i % 8) * 8)) & 0xFF);
+            }
+            wr_path_pre[wrpl_pre] = '\0';
+            if (!fs_check_path_write(fs_badge, wr_path_pre)) {
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
             char wr_path[128];
             int wrpl = (path_len > 127) ? 127 : (int)path_len;
             int wr_mr = 1;
@@ -823,6 +897,11 @@ static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
                 rm_path[i] = (char)((seL4_GetMR(rm_mr) >> ((i % 8) * 8)) & 0xFF);
             }
             rm_path[rmpl] = '\0';
+            if (!fs_check_path_write(fs_badge, rm_path)) {
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
             int ret = vfs_unlink(rm_path);
             seL4_SetMR(0, (seL4_Word)(ret >= 0 ? 0 : -1));
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
