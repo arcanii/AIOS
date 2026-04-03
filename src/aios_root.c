@@ -25,6 +25,7 @@
 #define LOG_MODULE "root"
 #define LOG_LEVEL LOG_LEVEL_DEBUG
 #include "aios/aios_log.h"
+#include "aios/aios_auth.h"
 #include <elf/elf.h>
 #include <sel4utils/elf.h>
 #include <sel4utils/api.h>
@@ -75,6 +76,7 @@ typedef struct {
 
 static active_proc_t active_procs[MAX_ACTIVE_PROCS];
 static seL4_CPtr thread_ep_cap;
+static seL4_CPtr auth_ep_cap;
 
 /* Filesystem state (shared with fs thread) */
 static ext2_ctx_t ext2;
@@ -1143,6 +1145,11 @@ skip_blk:
     vka_object_t thread_ep_obj;
     vka_alloc_endpoint(&vka, &thread_ep_obj);
     thread_ep_cap = thread_ep_obj.cptr;
+
+    /* Auth server endpoint */
+    vka_object_t auth_ep_obj;
+    vka_alloc_endpoint(&vka, &auth_ep_obj);
+    auth_ep_cap = auth_ep_obj.cptr;
     {
         sel4utils_thread_t fs_thread;
         error = sel4utils_configure_thread(&vka, &vspace, &vspace, 0,
@@ -1182,6 +1189,22 @@ skip_blk:
             sel4utils_start_thread(&tsrv_thread,
                 (sel4utils_thread_entry_fn)thread_server_fn,
                 (void *)(uintptr_t)thread_ep_cap, NULL, 1);
+        }
+    }
+
+    /* Start auth server */
+    {
+        sel4utils_thread_t auth_thread;
+        error = sel4utils_configure_thread(&vka, &vspace, &vspace, 0,
+            simple_get_cnode(&simple), seL4_NilData, &auth_thread);
+        if (!error) {
+            seL4_TCB_SetPriority(auth_thread.tcb.cptr,
+                                  simple_get_tcb(&simple), 200);
+            AIOS_LOG_INFO("Auth server started");
+            sel4utils_start_thread(&auth_thread,
+                (sel4utils_thread_entry_fn)aios_auth_thread_fn,
+                (void *)(uintptr_t)auth_ep_cap, NULL, 1);
+            proc_add("auth_server", 200);
         }
     }
 
