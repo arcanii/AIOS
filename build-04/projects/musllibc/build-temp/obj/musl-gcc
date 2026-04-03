@@ -1,2 +1,0 @@
-#!/bin/sh
-exec "${REALGCC:-/opt/homebrew/bin/aarch64-linux-gnu-gcc}" "$@" -specs "/Users/bryan/Desktop/github_repos/AIOS/build-04/projects/musllibc/build-temp/stage/lib/musl-gcc.specs"

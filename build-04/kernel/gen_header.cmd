@@ -1,1 +1,0 @@
-regen /Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/gen_headers/plat/machine/devices_gen.h /Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/kernel.dtb;/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/hardware.yml;/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/hardware_schema.yml;/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/hardware_gen.py
