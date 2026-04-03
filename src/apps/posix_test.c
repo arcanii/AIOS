@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <string.h>
+#include <dirent.h>
 #include <sys/utsname.h>
 #include <sys/time.h>
 #include <time.h>
@@ -91,6 +92,23 @@ int main(int argc, char *argv[]) {
         close(fd2);
         close(fd);
     }
+
+    /* opendir/readdir */
+    printf("\n[opendir/readdir]\n");
+    DIR *dir = opendir("/etc");
+    TEST("opendir /etc", dir != NULL);
+    if (dir) {
+        struct dirent *de;
+        int count = 0;
+        while ((de = readdir(dir)) != NULL) count++;
+        TEST("readdir count > 0", count > 0);
+        printf("  entries in /etc: %d\n", count);
+        closedir(dir);
+        TEST("closedir", 1);
+    }
+
+    dir = opendir("/nonexist");
+    TEST("opendir nonexist", dir == NULL);
 
     /* Summary */
     printf("\n=== Results: %d/%d passed ===\n", pass, pass + fail);

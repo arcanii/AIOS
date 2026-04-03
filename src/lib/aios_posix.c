@@ -15,6 +15,9 @@
 #include <stdint.h>
 #include <stdarg.h>
 #include <bits/syscall.h>
+#ifndef __NR_getdents64
+#define __NR_getdents64 61
+#endif
 #include <muslcsys/vsyscall.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -35,6 +38,7 @@ seL4_CPtr aios_get_fs_ep(void) { return fs_ep_cap; }
 
 typedef struct {
     int active;
+    int is_dir;
     char path[128];
     char data[4096];
     int size;
@@ -103,26 +107,118 @@ int aios_getchar(void) {
 
 /* ── Syscall overrides ── */
 
+/* Fetch directory listing from fs_thread, format as getdents buffer */
+static int fetch_dir_as_getdents(const char *path, char *buf, int bufsz) {
+    if (!fs_ep_cap) return -1;
+    /* First get raw listing "d name\n- name\n..." */
+    char raw[4096];
+    int pl = str_len(path);
+    seL4_SetMR(0, (seL4_Word)pl);
+    int mr = 1;
+    seL4_Word w = 0;
+    for (int i = 0; i < pl; i++) {
+        w |= ((seL4_Word)(uint8_t)path[i]) << ((i % 8) * 8);
+        if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
+    }
+    seL4_MessageInfo_t reply = seL4_Call(fs_ep_cap,
+        seL4_MessageInfo_new(10 /* FS_LS */, 0, 0, mr));
+    seL4_Word total = seL4_GetMR(0);
+    if (total == 0) return -1;
+
+    int rmrs = (int)seL4_MessageInfo_get_length(reply) - 1;
+    int got = 0;
+    for (int i = 0; i < rmrs && got < 4095; i++) {
+        seL4_Word rw = seL4_GetMR(i + 1);
+        for (int j = 0; j < 8 && got < (int)total && got < 4095; j++)
+            raw[got++] = (char)((rw >> (j * 8)) & 0xFF);
+    }
+    raw[got] = '\0';
+
+    /* Parse "d name\n" or "- name\n" lines into struct dirent format */
+    /* struct dirent: d_ino(8) d_off(8) d_reclen(2) d_type(1) d_name[256] */
+    int pos = 0;  /* position in raw */
+    int out = 0;  /* position in buf */
+    uint64_t fake_ino = 100;
+    uint64_t d_off_counter = 0;
+
+    while (pos < got && out < bufsz - 280) {
+        char type_ch = raw[pos];
+        if (type_ch != 'd' && type_ch != '-') break;
+        pos += 2; /* skip "d " or "- " */
+
+        /* Extract name */
+        char name[256];
+        int nl = 0;
+        while (pos < got && raw[pos] != '\n' && nl < 255) {
+            name[nl++] = raw[pos++];
+        }
+        name[nl] = '\0';
+        if (pos < got && raw[pos] == '\n') pos++;
+
+        /* Build dirent */
+        int reclen = (8 + 8 + 2 + 1 + nl + 1 + 7) & ~7; /* align to 8 */
+        if (reclen < 24) reclen = 24;
+        if (out + reclen > bufsz) break;
+
+        d_off_counter += reclen;
+        uint8_t d_type = (type_ch == 'd') ? 4 : 8; /* DT_DIR=4, DT_REG=8 */
+
+        /* d_ino (8 bytes) */
+        uint64_t ino = fake_ino++;
+        for (int i = 0; i < 8; i++) buf[out + i] = (char)((ino >> (i*8)) & 0xFF);
+        /* d_off (8 bytes) */
+        for (int i = 0; i < 8; i++) buf[out + 8 + i] = (char)((d_off_counter >> (i*8)) & 0xFF);
+        /* d_reclen (2 bytes) */
+        buf[out + 16] = (char)(reclen & 0xFF);
+        buf[out + 17] = (char)((reclen >> 8) & 0xFF);
+        /* d_type (1 byte) */
+        buf[out + 18] = (char)d_type;
+        /* d_name */
+        for (int i = 0; i < nl; i++) buf[out + 19 + i] = name[i];
+        buf[out + 19 + nl] = '\0';
+        /* Zero padding */
+        for (int i = 19 + nl + 1; i < reclen; i++) buf[out + i] = 0;
+
+        out += reclen;
+    }
+    return out;
+}
+
 static long aios_sys_open(va_list ap) {
     const char *pathname = va_arg(ap, const char *);
     int flags = va_arg(ap, int);
-    va_arg(ap, int); /* mode — unused */
+    va_arg(ap, int); /* mode */
 
     if (!fs_ep_cap) return -ENOENT;
-    if (flags != O_RDONLY && flags != (O_RDONLY | O_LARGEFILE))
-        return -EINVAL;
+
+    int is_dir = (flags & 040000) != 0; /* O_DIRECTORY = 0200000 */
+    int rdonly = ((flags & 3) == 0); /* O_RDONLY */
+    flags &= ~(040000 | 02000000 | 0100000); /* strip O_DIRECTORY, O_CLOEXEC, O_LARGEFILE */
+
+    if (!rdonly && !is_dir) return -EINVAL;
 
     int idx = aios_fd_alloc();
     if (idx < 0) return -EMFILE;
 
     aios_fd_t *f = &aios_fds[idx];
-    int n = fetch_file(pathname, f->data, sizeof(f->data));
-    if (n < 0) return -ENOENT;
+    f->is_dir = 0;
 
-    f->active = 1;
-    f->size = n;
-    f->pos = 0;
-    str_copy(f->path, pathname, sizeof(f->path));
+    if (is_dir) {
+        int n = fetch_dir_as_getdents(pathname, f->data, sizeof(f->data));
+        if (n < 0) return -ENOENT;
+        f->active = 1;
+        f->is_dir = 1;
+        f->size = n;
+        f->pos = 0;
+        str_copy(f->path, pathname, sizeof(f->path));
+    } else {
+        int n = fetch_file(pathname, f->data, sizeof(f->data));
+        if (n < 0) return -ENOENT;
+        f->active = 1;
+        f->size = n;
+        f->pos = 0;
+        str_copy(f->path, pathname, sizeof(f->path));
+    }
     return AIOS_FD_BASE + idx;
 }
 
@@ -134,20 +230,32 @@ static long aios_sys_openat(va_list ap) {
     (void)dirfd; (void)mode;
 
     if (!fs_ep_cap) return -ENOENT;
-    if (flags != O_RDONLY && flags != (O_RDONLY | O_LARGEFILE))
-        return -EINVAL;
+
+    int is_dir = (flags & 040000) != 0;
+    flags &= ~(040000 | 02000000 | 0100000);
 
     int idx = aios_fd_alloc();
     if (idx < 0) return -EMFILE;
 
     aios_fd_t *f = &aios_fds[idx];
-    int n = fetch_file(pathname, f->data, sizeof(f->data));
-    if (n < 0) return -ENOENT;
+    f->is_dir = 0;
 
-    f->active = 1;
-    f->size = n;
-    f->pos = 0;
-    str_copy(f->path, pathname, sizeof(f->path));
+    if (is_dir) {
+        int n = fetch_dir_as_getdents(pathname, f->data, sizeof(f->data));
+        if (n < 0) return -ENOENT;
+        f->active = 1;
+        f->is_dir = 1;
+        f->size = n;
+        f->pos = 0;
+        str_copy(f->path, pathname, sizeof(f->path));
+    } else {
+        int n = fetch_file(pathname, f->data, sizeof(f->data));
+        if (n < 0) return -ENOENT;
+        f->active = 1;
+        f->size = n;
+        f->pos = 0;
+        str_copy(f->path, pathname, sizeof(f->path));
+    }
     return AIOS_FD_BASE + idx;
 }
 
@@ -511,6 +619,35 @@ static long aios_sys_nanosleep(va_list ap) {
     return 0;
 }
 
+/* ── getdents64 — directory reading ── */
+static long aios_sys_getdents64(va_list ap) {
+    int fd = va_arg(ap, int);
+    void *dirp = va_arg(ap, void *);
+    size_t count = va_arg(ap, size_t);
+
+    if (fd < AIOS_FD_BASE || fd >= AIOS_FD_BASE + AIOS_MAX_FDS)
+        return -EBADF;
+
+    aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
+    if (!f->active || !f->is_dir) return -ENOTDIR;
+
+    int avail = f->size - f->pos;
+    if (avail <= 0) return 0;
+
+    /* Copy dirent records that fit */
+    int copied = 0;
+    char *out = (char *)dirp;
+    while (f->pos < f->size && copied + 24 <= (int)count) {
+        /* Read reclen from current position */
+        uint16_t reclen = (uint8_t)f->data[f->pos + 16] | ((uint8_t)f->data[f->pos + 17] << 8);
+        if (reclen == 0 || copied + reclen > (int)count) break;
+        for (int i = 0; i < reclen; i++) out[copied + i] = f->data[f->pos + i];
+        f->pos += reclen;
+        copied += reclen;
+    }
+    return copied;
+}
+
 /* ── Init ── */
 void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     ser_ep = serial_ep;
@@ -566,4 +703,5 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     muslcsys_install_syscall(__NR_clock_gettime, aios_sys_clock_gettime);
     muslcsys_install_syscall(__NR_gettimeofday, aios_sys_gettimeofday);
     muslcsys_install_syscall(__NR_nanosleep, aios_sys_nanosleep);
+    muslcsys_install_syscall(__NR_getdents64, aios_sys_getdents64);
 }
