@@ -1,4 +1,5 @@
 #include "aios/procfs.h"
+#include "aios/aios_log.h"
 #include <stdio.h>
 
 proc_entry_t proc_table[PROC_MAX];
@@ -62,8 +63,9 @@ static int procfs_list(void *ctx, uint32_t ino, char *buf, int bufsize) {
     (void)ctx; (void)ino;
     int w = 0;
     /* List virtual files */
-    const char *entries[] = { "d .\n", "d ..\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n" };
-    for (int i = 0; i < 6 && w < bufsize - 1; i++) {
+    const char *entries[] = { "d .\n", "d ..\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n" };
+    for (int i = 0; i < 7 && w < bufsize - 1; i++) {
+    
         const char *e = entries[i];
         while (*e && w < bufsize - 1) buf[w++] = *e++;
     }
@@ -139,9 +141,37 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
             for (int j = 0; j < li && w < bufsize - 1; j++) buf[w++] = line[j];
         }
     } else if (path[0] == 'u') {
-        /* /proc/uptime — fake for now */
-        const char *up = "0.00 0.00\n";
-        while (*up && w < bufsize - 1) buf[w++] = *up++;
+        /* /proc/uptime */
+        uint64_t cnt, freq;
+        __asm__ volatile("mrs %0, cntpct_el0" : "=r"(cnt));
+        __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+        if (freq == 0) freq = 62500000;
+        unsigned long secs = (unsigned long)(cnt / freq);
+        unsigned long frac = (unsigned long)((cnt % freq) * 100 / freq);
+        char ubuf[32];
+        int ui = 0;
+        /* Format: secs.xx secs.xx */
+        unsigned long s = secs;
+        char tmp[20]; int ti = 0;
+        if (s == 0) ubuf[ui++] = '0';
+        else { while (s) { tmp[ti++] = '0' + s % 10; s /= 10; } while (ti--) ubuf[ui++] = tmp[ti]; }
+        ubuf[ui++] = '.';
+        ubuf[ui++] = '0' + (frac / 10);
+        ubuf[ui++] = '0' + (frac % 10);
+        ubuf[ui++] = ' ';
+        /* idle time = same for now */
+        s = secs; ti = 0;
+        if (s == 0) ubuf[ui++] = '0';
+        else { while (s) { tmp[ti++] = '0' + s % 10; s /= 10; } while (ti--) ubuf[ui++] = tmp[ti]; }
+        ubuf[ui++] = '.';
+        ubuf[ui++] = '0' + (frac / 10);
+        ubuf[ui++] = '0' + (frac % 10);
+        ubuf[ui++] = '\n';
+        ubuf[ui] = 0;
+        for (int i = 0; i < ui && w < bufsize - 1; i++) buf[w++] = ubuf[i];
+    } else if (path[0] == 'l' && path[1] == 'o') {
+        /* /proc/log — kernel log ring buffer */
+        w = aios_log_read(buf, bufsize);
     } else {
         return -1;
     }

@@ -61,6 +61,7 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/ext2.c
     ${AIOS_ROOT}/src/vfs.c
     ${AIOS_ROOT}/src/procfs.c
+    ${AIOS_ROOT}/src/aios_log.c
     apps_cpio.o
 )
 target_link_libraries(aios_root

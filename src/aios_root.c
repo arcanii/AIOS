@@ -22,6 +22,9 @@
 #include "aios/ext2.h"
 #include "aios/vfs.h"
 #include "aios/procfs.h"
+#define LOG_MODULE "root"
+#define LOG_LEVEL LOG_LEVEL_DEBUG
+#include "aios/aios_log.h"
 #include <elf/elf.h>
 #include <sel4utils/elf.h>
 #include <sel4utils/api.h>
@@ -894,6 +897,9 @@ int main(int argc, char *argv[]) {
         simple_get_pd(&simple), &vka, info);
     if (error) { printf("FATAL: vspace: %d\n", error); return -1; }
 
+    /* Init kernel log */
+    aios_log_init();
+
     /* Map UART */
     uart = NULL;
     {
@@ -919,6 +925,8 @@ int main(int argc, char *argv[]) {
     }
     printf("[boot] RAM: %d MB, UART: %s\n",
            total_mem / (1024 * 1024), uart ? "OK" : "no");
+    AIOS_LOG_INFO_V("RAM available: ", total_mem / (1024 * 1024));
+    AIOS_LOG_INFO("All subsystems OK");
     printf("[boot] All subsystems OK\n\n");
 
     /* Register system processes */
@@ -1109,6 +1117,7 @@ int main(int argc, char *argv[]) {
                 proc_add("fs_thread", 200);
                 proc_add("exec_thread", 200);
                 proc_add("thread_server", 200);
+                LOG_INFO("ext2 + procfs mounted");
                 printf("[boot] Filesystems mounted\n");
             } else {
                 printf("[fs] ext2 init failed: %d\n", fs_err);
@@ -1169,6 +1178,7 @@ skip_blk:
         if (!error) {
             seL4_TCB_SetPriority(tsrv_thread.tcb.cptr,
                                   simple_get_tcb(&simple), 200);
+            LOG_INFO("Thread server started");
             sel4utils_start_thread(&tsrv_thread,
                 (sel4utils_thread_entry_fn)thread_server_fn,
                 (void *)(uintptr_t)thread_ep_cap, NULL, 1);
