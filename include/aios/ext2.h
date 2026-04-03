@@ -99,4 +99,9 @@ int ext2_list_dir(ext2_ctx_t *ctx, uint32_t dir_ino, char *buf, int bufsize);
 int ext2_read_file(ext2_ctx_t *ctx, uint32_t ino, char *buf, int bufsize);
 int ext2_resolve_path(ext2_ctx_t *ctx, const char *path, uint32_t *out_ino);
 
+
+/* VFS adapter */
+#include "aios/vfs.h"
+extern fs_ops_t ext2_fs_ops;
+
 #endif

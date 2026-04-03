@@ -1,4 +1,5 @@
-#include "ext2.h"
+#include "aios/ext2.h"
+#include "aios/vfs.h"
 #include <stdio.h>
 
 /* Read uint16/uint32 from raw buffer (little-endian) */
@@ -160,3 +161,38 @@ int ext2_resolve_path(ext2_ctx_t *ctx, const char *path, uint32_t *out_ino) {
     *out_ino = ino;
     return 0;
 }
+
+/* ── VFS adapter ── */
+static int ext2_vfs_list(void *ctx, uint32_t dir_ino, char *buf, int bufsize) {
+    return ext2_list_dir((ext2_ctx_t *)ctx, dir_ino, buf, bufsize);
+}
+
+static int ext2_vfs_read(void *ctx, const char *path, char *buf, int bufsize) {
+    ext2_ctx_t *e = (ext2_ctx_t *)ctx;
+    uint32_t ino;
+    if (ext2_resolve_path(e, path, &ino) != 0) return -1;
+    return ext2_read_file(e, ino, buf, bufsize);
+}
+
+static int ext2_vfs_stat(void *ctx, const char *path, uint32_t *mode, uint32_t *size) {
+    ext2_ctx_t *e = (ext2_ctx_t *)ctx;
+    uint32_t ino;
+    if (path[0] == '/' && path[1] == '\0') ino = 2;
+    else if (ext2_resolve_path(e, path, &ino) != 0) return -1;
+    struct ext2_inode inode;
+    if (ext2_read_inode(e, ino, &inode) != 0) return -1;
+    *mode = inode.i_mode;
+    *size = inode.i_size;
+    return 0;
+}
+
+static int ext2_vfs_resolve(void *ctx, const char *path, uint32_t *ino) {
+    return ext2_resolve_path((ext2_ctx_t *)ctx, path, ino);
+}
+
+fs_ops_t ext2_fs_ops = {
+    .fs_list = ext2_vfs_list,
+    .fs_read = ext2_vfs_read,
+    .fs_stat = ext2_vfs_stat,
+    .fs_resolve = ext2_vfs_resolve,
+};

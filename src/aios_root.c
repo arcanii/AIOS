@@ -19,7 +19,9 @@
 #include <utils/util.h>
 #include <vka/capops.h>
 #include "virtio.h"
-#include "ext2.h"
+#include "aios/ext2.h"
+#include "aios/vfs.h"
+#include "aios/procfs.h"
 
 #define ALLOCATOR_STATIC_POOL_SIZE (BIT(seL4_PageBits) * 400)
 static char allocator_mem_pool[ALLOCATOR_STATIC_POOL_SIZE];
@@ -292,6 +294,7 @@ static int blk_read_sector(uint64_t sector, void *buf) {
 static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
     seL4_CPtr ep = (seL4_CPtr)(uintptr_t)arg0;
     static char fs_buf[4096];
+    (void)ep; /* used below in Recv */
 
     /* quiet */
 
@@ -302,7 +305,6 @@ static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
 
         switch (label) {
         case FS_LS: {
-            /* MR0 = path length, MR1.. = path string (like CAT) */
             seL4_Word path_len = seL4_GetMR(0);
             char ls_path[128];
             int lpl = (path_len > 127) ? 127 : (int)path_len;
@@ -312,14 +314,10 @@ static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
                 ls_path[i] = (char)((seL4_GetMR(ls_mr) >> ((i % 8) * 8)) & 0xFF);
             }
             ls_path[lpl] = '\0';
+            if (lpl == 0) { ls_path[0] = '/'; ls_path[1] = '\0'; }
 
-            uint32_t ino = EXT2_ROOT_INO;
-            if (lpl > 0 && !(lpl == 1 && ls_path[0] == '/')) {
-                if (ext2_resolve_path(&ext2, ls_path, &ino) != 0) {
-                    ino = 0; /* will return empty */
-                }
-            }
-            int len = (ino > 0) ? ext2_list_dir(&ext2, ino, fs_buf, sizeof(fs_buf)) : 0;
+            int len = vfs_list(ls_path, fs_buf, sizeof(fs_buf));
+            if (len < 0) len = 0;
             if (len < 0) len = 0;
             /* Return dir listing in MRs (pack 8 chars per MR) */
             int mrs = (len + 7) / 8;
@@ -335,7 +333,6 @@ static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             break;
         }
         case FS_CAT: {
-            /* MR0..MRn = path string packed in MRs */
             seL4_Word path_len = seL4_GetMR(0);
             char path[128];
             int pl = (path_len > 127) ? 127 : (int)path_len;
@@ -346,14 +343,7 @@ static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
             path[pl] = '\0';
 
-            uint32_t ino;
-            int ret = ext2_resolve_path(&ext2, path, &ino);
-            if (ret != 0) {
-                seL4_SetMR(0, 0);
-                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
-                break;
-            }
-            int len = ext2_read_file(&ext2, ino, fs_buf, sizeof(fs_buf));
+            int len = vfs_read(path, fs_buf, sizeof(fs_buf));
             if (len < 0) len = 0;
             int mrs = (len + 7) / 8;
             if (mrs > (int)seL4_MsgMaxLength - 1) mrs = seL4_MsgMaxLength - 1;
@@ -378,22 +368,12 @@ static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
             st_path[spl] = '\0';
 
-            uint32_t ino = EXT2_ROOT_INO;
-            int found = 0;
-            if (spl == 0 || (spl == 1 && st_path[0] == '/')) {
-                found = 1;
-            } else if (ext2_resolve_path(&ext2, st_path, &ino) == 0) {
-                found = 1;
-            }
-
-            if (found) {
-                struct ext2_inode inode;
-                ext2_read_inode(&ext2, ino, &inode);
-                /* MR0=found, MR1=mode, MR2=size, MR3=inode */
+            uint32_t mode, size;
+            if (vfs_stat(st_path, &mode, &size) == 0) {
                 seL4_SetMR(0, 1);
-                seL4_SetMR(1, (seL4_Word)inode.i_mode);
-                seL4_SetMR(2, (seL4_Word)inode.i_size);
-                seL4_SetMR(3, (seL4_Word)ino);
+                seL4_SetMR(1, (seL4_Word)mode);
+                seL4_SetMR(2, (seL4_Word)size);
+                seL4_SetMR(3, 0);
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 4));
             } else {
                 seL4_SetMR(0, 0);
@@ -455,6 +435,10 @@ int main(int argc, char *argv[]) {
     printf("[boot] RAM: %d MB, UART: %s\n",
            total_mem / (1024 * 1024), uart ? "OK" : "no");
     printf("[boot] All subsystems OK\n\n");
+
+    /* Register system processes */
+    proc_add("root", 200);
+
 
     /* Set root to priority 200 for round-robin with children */
     seL4_TCB_SetPriority(seL4_CapInitThreadTCB,
@@ -633,9 +617,15 @@ int main(int argc, char *argv[]) {
             blk_dma_pa = dma_pa;
 
             /* Init ext2 */
+            vfs_init();
+            proc_init();
             int fs_err = ext2_init(&ext2, blk_read_sector);
             if (fs_err == 0) {
-                printf("[boot] ext2 filesystem mounted\n");
+                vfs_mount("/", &ext2_fs_ops, &ext2);
+                vfs_mount("/proc", &procfs_ops, NULL);
+                proc_add("fs_thread", 200);
+                proc_add("exec_thread", 200);
+                printf("[boot] Filesystems mounted\n");
             } else {
                 printf("[fs] ext2 init failed: %d\n", fs_err);
             }
@@ -691,12 +681,14 @@ skip_blk:
         error = spawn_with_args("serial_server", 200, &serial_proc,
                                 &fault_ep, 1, caps, slots);
         if (error) { printf("[proc] serial FAILED\n"); goto idle; }
+        proc_add("serial_server", 200);
 
         seL4_CPtr sh_caps[3] = { serial_ep.cptr, fs_ep_cap, exec_ep_cap };
         seL4_CPtr sh_slots[3];
         error = spawn_with_args("mini_shell", 200, &shell_proc,
                                 &fault_ep, 3, sh_caps, sh_slots);
         if (error) { printf("[proc] shell FAILED\n"); goto idle; }
+        proc_add("mini_shell", 200);
         /* quiet */
     }
 

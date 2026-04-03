@@ -52,6 +52,7 @@ static const struct alias aliases[] = {
     { "head",  "posix_head" },
     { "uname", "posix_uname" },
     { "echo",  "posix_echo" },
+    { "ps",    "posix_ps" },
     { 0, 0 }
 };
 
@@ -325,15 +326,23 @@ int main(int argc, char *argv[]) {
             /* Check aliases: "cat foo" → "posix_cat foo" */
             const char *alias = lookup_alias(line);
             if (alias) {
-                /* Build: "posix_cat foo" */
-                char exec_buf[LINE_MAX + 32];
+                /* Build: "posix_cat /absolute/path" */
+                char exec_buf[LINE_MAX + 256];
                 int ei = 0;
                 const char *a = alias;
-                while (*a && ei < LINE_MAX + 30) exec_buf[ei++] = *a++;
+                while (*a && ei < LINE_MAX + 250) exec_buf[ei++] = *a++;
                 if (arg) {
                     exec_buf[ei++] = ' ';
-                    const char *p = arg;
-                    while (*p && ei < LINE_MAX + 30) exec_buf[ei++] = *p++;
+                    if (arg[0] != '/' && arg[0] != '-') {
+                        /* Relative path — prepend CWD */
+                        char abs[256];
+                        resolve(arg, abs, sizeof(abs));
+                        const char *p = abs;
+                        while (*p && ei < LINE_MAX + 250) exec_buf[ei++] = *p++;
+                    } else {
+                        const char *p = arg;
+                        while (*p && ei < LINE_MAX + 250) exec_buf[ei++] = *p++;
+                    }
                 }
                 exec_buf[ei] = '\0';
                 /* Send aliased command */
