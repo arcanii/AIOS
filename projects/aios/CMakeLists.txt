@@ -24,6 +24,7 @@ macro(AiosPosixApp name)
 endmacro()
 
 # System services
+AiosChildApp(auth_server)
 AiosChildApp(hello_child)
 AiosChildApp(echo_server)
 AiosChildApp(serial_server)
@@ -43,7 +44,7 @@ AiosPosixApp(posix_touch)
 AiosPosixApp(posix_mkdir)
 
 # Boot services only in CPIO (launched before filesystem)
-set(BOOT_APPS serial_server mini_shell)
+set(BOOT_APPS serial_server auth_server mini_shell)
 set(CPIO_FILES "")
 foreach(app ${BOOT_APPS})
     if(CPIO_FILES)
@@ -62,7 +63,6 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/vfs.c
     ${AIOS_ROOT}/src/procfs.c
     ${AIOS_ROOT}/src/aios_log.c
-    ${AIOS_ROOT}/src/aios_auth.c
     apps_cpio.o
 )
 target_link_libraries(aios_root

@@ -25,7 +25,6 @@
 #define LOG_MODULE "root"
 #define LOG_LEVEL LOG_LEVEL_DEBUG
 #include "aios/aios_log.h"
-#include "aios/aios_auth.h"
 #include <elf/elf.h>
 #include <sel4utils/elf.h>
 #include <sel4utils/api.h>
@@ -529,19 +528,22 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             char *check = last_space ? last_space + 1 : exec_args;
             if (check[0] == 'C' && check[1] == 'W' && check[2] == 'D' && check[3] == '=') {
                 char *v = check + 4;
-                /* Parse uid:gid:/path format */
+                /* Parse uid:gid for active_procs, but keep full string for child */
                 uint32_t _cwd_uid = 0, _cwd_gid = 0;
-                if (*v >= '0' && *v <= '9') {
-                    while (*v >= '0' && *v <= '9') { _cwd_uid = _cwd_uid * 10 + (*v - '0'); v++; }
-                    if (*v == ':') v++;
-                    while (*v >= '0' && *v <= '9') { _cwd_gid = _cwd_gid * 10 + (*v - '0'); v++; }
-                    if (*v == ':') v++;
+                {
+                    const char *p = v;
+                    if (*p >= '0' && *p <= '9') {
+                        while (*p >= '0' && *p <= '9') { _cwd_uid = _cwd_uid * 10 + (*p - '0'); p++; }
+                        if (*p == ':') p++;
+                        while (*p >= '0' && *p <= '9') { _cwd_gid = _cwd_gid * 10 + (*p - '0'); p++; }
+                    }
                 }
-                /* Store uid/gid for later (used by active_procs) */
+                /* Store uid/gid for active_procs lookup */
                 cwd_buf[252] = (char)(_cwd_uid & 0xFF);
                 cwd_buf[253] = (char)((_cwd_uid >> 8) & 0xFF);
                 cwd_buf[254] = (char)(_cwd_gid & 0xFF);
                 cwd_buf[255] = (char)((_cwd_gid >> 8) & 0xFF);
+                /* Copy FULL string (uid:gid:/path) so child can parse it too */
                 int ci = 0;
                 while (*v && ci < 251) cwd_buf[ci++] = *v++;
                 cwd_buf[ci] = 0;
@@ -1204,15 +1206,7 @@ int main(int argc, char *argv[]) {
                 proc_add("exec_thread", 200);
                 proc_add("thread_server", 200);
                 LOG_INFO("ext2 + procfs mounted");
-                /* Init auth: load users + auto-login root */
-                aios_auth_init();
-                int auth_loaded = aios_auth_load_passwd();
-                if (auth_loaded < 0)
-                    printf("[auth] /etc/passwd not found, using defaults\n");
-                uint32_t root_session = aios_auth_login_root();
-                (void)root_session;
-                printf("[boot] Auth: %d users, root session 0x%x\n",
-                       auth_loaded > 0 ? auth_loaded : 2, root_session);
+
                 printf("[boot] Filesystems mounted\n");
             } else {
                 printf("[fs] ext2 init failed: %d\n", fs_err);
@@ -1285,21 +1279,7 @@ skip_blk:
         }
     }
 
-    /* Start auth server */
-    {
-        sel4utils_thread_t auth_thread;
-        error = sel4utils_configure_thread(&vka, &vspace, &vspace, 0,
-            simple_get_cnode(&simple), seL4_NilData, &auth_thread);
-        if (!error) {
-            seL4_TCB_SetPriority(auth_thread.tcb.cptr,
-                                  simple_get_tcb(&simple), 200);
-            AIOS_LOG_INFO("Auth server started");
-            sel4utils_start_thread(&auth_thread,
-                (sel4utils_thread_entry_fn)aios_auth_thread_fn,
-                (void *)(uintptr_t)auth_ep_cap, NULL, 1);
-            proc_add("auth_server", 200);
-        }
-    }
+
 
     /* quiet */
     {
@@ -1311,6 +1291,35 @@ skip_blk:
                                 &fault_ep, 1, caps, slots);
         if (error) { printf("[proc] serial FAILED\n"); goto idle; }
         proc_add("serial_server", 200);
+
+        /* Spawn auth_server as isolated process */
+        sel4utils_process_t auth_proc;
+        seL4_CPtr auth_caps[2] = { serial_ep.cptr, auth_ep_cap };
+        seL4_CPtr auth_slots[2];
+        error = spawn_with_args("auth_server", 200, &auth_proc,
+                                &fault_ep, 2, auth_caps, auth_slots);
+        if (error) { printf("[proc] auth FAILED\n"); goto idle; }
+        proc_add("auth_server", 200);
+
+        /* Send /etc/passwd to auth_server via IPC */
+        {
+            static char pw_buf[4096];
+            int pw_len = vfs_read("/etc/passwd", pw_buf, sizeof(pw_buf) - 1);
+            if (pw_len > 0) {
+                pw_buf[pw_len] = '\0';
+                seL4_SetMR(0, (seL4_Word)pw_len);
+                int mr = 1;
+                seL4_Word w = 0;
+                for (int i = 0; i < pw_len; i++) {
+                    w |= ((seL4_Word)(uint8_t)pw_buf[i]) << ((i % 8) * 8);
+                    if (i % 8 == 7 || i == pw_len - 1) { seL4_SetMR(mr++, w); w = 0; }
+                }
+                seL4_Call(auth_ep_cap, seL4_MessageInfo_new(52, 0, 0, mr));
+            } else {
+                printf("[boot] /etc/passwd not found, using defaults\n");
+            }
+        }
+        printf("[boot] Auth: isolated process\n");
 
         seL4_CPtr sh_caps[4] = { serial_ep.cptr, fs_ep_cap, exec_ep_cap, auth_ep_cap };
         seL4_CPtr sh_slots[4];

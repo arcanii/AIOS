@@ -22,7 +22,8 @@
 #define AIOS_AUTH_SU          48
 #define AIOS_AUTH_GROUPS      49
 #define AIOS_AUTH_USERMOD     50
-#define AIOS_AUTH_GET_USER    51  /* lookup uid → username, home, shell */
+#define AIOS_AUTH_GET_USER    51
+#define AIOS_AUTH_LOAD_PASSWD 52  /* lookup uid → username, home, shell */
 
 /* ── Access modes for CHECK_FILE ── */
 #define AIOS_ACCESS_READ   0x04
