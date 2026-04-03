@@ -25,10 +25,12 @@ AiosChildApp(mini_shell)
 AiosChildApp(crash_test)
 AiosChildApp(blk_test)
 AiosChildApp(sysinfo)
+AiosChildApp(aios_cat)
 target_link_libraries(sysinfo aios_posix)
+target_link_libraries(aios_cat aios_posix)
 
 MakeCPIO(apps_cpio.o
-    "$<TARGET_FILE:hello_child>;$<TARGET_FILE:echo_server>;$<TARGET_FILE:serial_server>;$<TARGET_FILE:mini_shell>;$<TARGET_FILE:crash_test>;$<TARGET_FILE:blk_test>;$<TARGET_FILE:sysinfo>"
+    "$<TARGET_FILE:hello_child>;$<TARGET_FILE:echo_server>;$<TARGET_FILE:serial_server>;$<TARGET_FILE:mini_shell>;$<TARGET_FILE:crash_test>;$<TARGET_FILE:blk_test>;$<TARGET_FILE:sysinfo>;$<TARGET_FILE:aios_cat>"
 )
 
 add_executable(aios_root ${AIOS_ROOT}/src/aios_root.c ${AIOS_ROOT}/src/ext2.c apps_cpio.o)

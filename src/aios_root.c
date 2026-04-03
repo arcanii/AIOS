@@ -158,7 +158,17 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         seL4_CNode_SaveCaller(seL4_CapInitThreadCNode, reply_slot,
                                seL4_WordBits);
 
-        printf("[exec] Running: %s\n", prog_name);
+        /* Split "name arg1 arg2" into prog_name + args */
+        char *exec_args = 0;
+        for (int i = 0; i < nl; i++) {
+            if (prog_name[i] == ' ') {
+                prog_name[i] = '\0';
+                exec_args = prog_name + i + 1;
+                break;
+            }
+        }
+        printf("[exec] Running: %s%s%s\n", prog_name,
+               exec_args ? " " : "", exec_args ? exec_args : "");
 
         /* Create a local fault ep */
         vka_object_t child_fault_ep;
@@ -171,10 +181,55 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         }
 
         sel4utils_process_t proc;
-        seL4_CPtr exec_caps[1] = { serial_ep.cptr };
-        seL4_CPtr exec_slots[1];
-        err = spawn_with_args(prog_name, 200, &proc, &child_fault_ep,
-                              1, exec_caps, exec_slots);
+        /* Pass caps: serial_ep, fs_ep. Pass args string as extra argv. */
+        seL4_CPtr exec_caps[2] = { serial_ep.cptr, fs_ep_cap };
+        seL4_CPtr exec_slots[2];
+
+        /* Build argv: [serial_ep_str, fs_ep_str, arg1, arg2, ...] */
+        sel4utils_process_config_t pconfig = process_config_new(&simple);
+        pconfig = process_config_elf(pconfig, prog_name, true);
+        pconfig = process_config_create_cnode(pconfig, 12);
+        pconfig = process_config_create_vspace(pconfig, NULL, 0);
+        pconfig = process_config_priority(pconfig, 200);
+        pconfig = process_config_auth(pconfig, simple_get_tcb(&simple));
+        pconfig = process_config_fault_endpoint(pconfig, child_fault_ep);
+
+        err = sel4utils_configure_process_custom(&proc, &vka, &vspace, pconfig);
+        if (err) {
+            printf("[exec] Failed to configure %s: %d\n", prog_name, err);
+            seL4_SetMR(0, (seL4_Word)-1);
+            seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
+            continue;
+        }
+
+        seL4_CPtr child_ser = sel4utils_copy_cap_to_process(&proc, &vka, serial_ep.cptr);
+        seL4_CPtr child_fs = sel4utils_copy_cap_to_process(&proc, &vka, fs_ep_cap);
+
+        char s_ser[16], s_fs[16];
+        snprintf(s_ser, 16, "%lu", (unsigned long)child_ser);
+        snprintf(s_fs, 16, "%lu", (unsigned long)child_fs);
+
+        /* Build argv array */
+        #define MAX_EXEC_ARGS 8
+        char *child_argv[MAX_EXEC_ARGS];
+        int child_argc = 0;
+        child_argv[child_argc++] = s_ser;
+        child_argv[child_argc++] = s_fs;
+
+        /* Split exec_args by spaces */
+        if (exec_args) {
+            char *p = exec_args;
+            while (*p && child_argc < MAX_EXEC_ARGS) {
+                while (*p == ' ') p++;
+                if (!*p) break;
+                child_argv[child_argc++] = p;
+                while (*p && *p != ' ') p++;
+                if (*p) { *p = '\0'; p++; }
+            }
+        }
+
+        err = sel4utils_spawn_process_v(&proc, &vka, &vspace,
+                                         child_argc, child_argv, 1);
         if (err) {
             printf("[exec] Failed to spawn %s: %d\n", prog_name, err);
             seL4_SetMR(0, (seL4_Word)-1);

@@ -1,8 +1,5 @@
 /*
  * AIOS POSIX Shim — routes libc I/O through seL4 IPC
- *
- * Uses sel4muslcsys_register_stdio_write_fn() hook for stdout/stderr.
- * Provides aios_getchar() for stdin until we hook muslc's read path.
  */
 #include "aios_posix.h"
 #include <arch_stdio.h>
@@ -16,10 +13,6 @@ static seL4_CPtr fs_ep_cap = 0;
 seL4_CPtr aios_get_serial_ep(void) { return ser_ep; }
 seL4_CPtr aios_get_fs_ep(void) { return fs_ep_cap; }
 
-/*
- * Write buffer via IPC to serial_server.
- * Registered as the stdio write function.
- */
 static size_t aios_stdio_write(void *data, size_t count)
 {
     if (!ser_ep) return count;
@@ -31,10 +24,6 @@ static size_t aios_stdio_write(void *data, size_t count)
     return count;
 }
 
-/*
- * Read one char from serial_server via IPC.
- * Call this directly or use for future stdin hook.
- */
 int aios_getchar(void)
 {
     if (!ser_ep) return -1;

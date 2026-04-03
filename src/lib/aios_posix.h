@@ -6,17 +6,19 @@
 /*
  * AIOS POSIX Shim
  *
- * Call aios_init() at the start of main() to route
- * stdio through IPC to serial_server, and file I/O
- * through IPC to fs_server.
+ * Links into child programs. After init, printf/scanf work via IPC.
  *
- * After init, standard POSIX calls work:
- *   printf()     → IPC PUTS to serial_server
- *   read(0,...)  → IPC GETC to serial_server
- *   open()       → IPC to fs_server (planned)
+ * Usage:
+ *   int main(int argc, char *argv[]) {
+ *       AIOS_INIT(argc, argv);   // one line, done
+ *       printf("Hello!\n");      // goes through IPC
+ *   }
+ *
+ * Exec thread passes caps as argv:
+ *   argv[0] = serial_ep
+ *   argv[1] = fs_ep (if available)
  */
 
-/* IPC protocol labels (must match serial_server + fs_thread) */
 #define AIOS_SER_PUTC     1
 #define AIOS_SER_GETC     2
 #define AIOS_SER_PUTS     3
@@ -24,20 +26,33 @@
 #define AIOS_FS_LS       10
 #define AIOS_FS_CAT      11
 #define AIOS_FS_STAT     12
+#define AIOS_FS_OPEN     13
+#define AIOS_FS_READ     14
+#define AIOS_FS_CLOSE    15
 
-/* Initialize POSIX shim with endpoint caps.
- * serial_ep: endpoint to serial_server (for stdin/stdout/stderr)
- * fs_ep:     endpoint to fs_thread (for open/read/close), 0 if none
- */
+/* Initialize shim with endpoint caps */
 void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_ep);
-
-/* Get the serial endpoint (for manual IPC if needed) */
-seL4_CPtr aios_get_serial_ep(void);
-
-/* Get the fs endpoint */
-seL4_CPtr aios_get_fs_ep(void);
 
 /* Read one char from serial via IPC */
 int aios_getchar(void);
+
+/* Get endpoints */
+seL4_CPtr aios_get_serial_ep(void);
+seL4_CPtr aios_get_fs_ep(void);
+
+/* Parse a decimal number from string */
+static inline long _aios_parse(const char *s) {
+    if (!s) return 0;
+    long v = 0;
+    while (*s >= '0' && *s <= '9') { v = v * 10 + (*s - '0'); s++; }
+    return v;
+}
+
+/* One-liner init macro */
+#define AIOS_INIT(argc, argv) \
+    aios_init( \
+        (argc) > 0 ? (seL4_CPtr)_aios_parse((argv)[0]) : 0, \
+        (argc) > 1 ? (seL4_CPtr)_aios_parse((argv)[1]) : 0  \
+    )
 
 #endif

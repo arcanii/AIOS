@@ -302,6 +302,8 @@ int main(int argc, char *argv[]) {
             ser_puts("Goodbye.\n");
             return 0;
         } else if (exec_ep) {
+            /* Restore the null back to space so exec gets full command */
+            if (arg && arg > line) { *(arg - 1) = ' '; }
             int pl = str_len(line);
             seL4_SetMR(0, (seL4_Word)pl);
             int mr = 1;
