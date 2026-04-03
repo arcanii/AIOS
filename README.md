@@ -1,217 +1,247 @@
-# Open Aries (AIOS)
+# AIOS — Open Aries
 
-A microkernel operating system built on [seL4](https://sel4.systems/), targeting AArch64 with true process isolation, kernel-scheduled threads, and SMP parallelism across 4 cores.
+A microkernel operating system built on seL4, targeting AArch64.
 
-```
-  ___                      _         _
- / _ \ _ __   ___ _ __    / \   _ __(_) ___  ___
-| | | | '_ \ / _ \ '_ \  / _ \ | '__| |/ _ \/ __|
-| |_| | |_) |  __/ | | |/ ___ \| |  | |  __/\__ \
- \___/| .__/ \___|_| |_/_/   \_\_|  |_|\___||___/
-      |_|
-```
+## Vision
 
-## Status
+AIOS is a research operating system exploring AI-native development on a formally verified microkernel. External AI (Claude, etc.) generates and reviews code, which is compiled and deployed to AIOS. The long-term goal is self-hosted development within AIOS itself.
 
-**v0.4.5** — Experimental / Research
+Security is a first-class design concern — seL4's capability-based isolation provides the foundation.
 
-Built directly on bare seL4 15.0.0 (no Microkit). Every process gets its own hardware-isolated address space, capability set, and kernel-scheduled threads.
+This is in an experimental/research phase. Collaborators welcome.
 
-### What Works
+**AI Development Study**: This project serves as a study in AI-assisted OS development, currently using Claude Opus 4.6.
 
-- 4-core SMP (AArch64, QEMU virt, cortex-a53)
-- Hardware memory isolation (MMU-enforced VSpaces per process)
-- Kernel-scheduled threads (real seL4 TCBs with priority + affinity)
-- IPC-based service architecture (endpoints, badged caps)
-- Process lifecycle (spawn, run, fault/exit, cleanup, respawn)
-- Fault containment (NULL deref caught as VM fault, system survives)
-- Interactive shell with UART keyboard input
-- 5/5 built-in test suite
+## Current State (v0.4.29)
 
-### Test Suite
+AIOS boots on QEMU (aarch64, Cortex-A53, 4-core SMP) and provides a Unix-like environment:
 
-| Test | Description | Status |
-|------|-------------|--------|
-| Process spawn | Child in own VSpace + TCB | PASS |
-| IPC echo | 5 round-trips, val+1 verified | PASS |
-| Multi-threading + SMP | 4 TCBs pinned to 4 cores, shared counter | PASS |
-| Process isolation | NULL deref caught as VM fault at 0x0 | PASS |
-| Crash survival | New process spawns after crash | PASS |
+- **94 programs** in `/bin/`, loaded from ext2 filesystem on disk
+- **79 sbase (suckless) Unix tools**: ls, cat, head, wc, sort, grep, sed, find, cp, rm, mkdir, touch, date, cal, seq, tr, and more
+- **POSIX syscall shim**: 40+ syscalls (open, read, write, close, stat, opendir, getdents, uname, getpid, clock_gettime, ...)
+- **ext2 filesystem**: read/write, indirect blocks, multi-group allocation
+- **VFS layer**: mount points (/ for ext2, /proc for procfs)
+- **Process management**: isolated VSpaces, fault recovery, process table
+- **ELF-from-disk loading**: programs read from ext2, loaded into new address spaces
+- **Cross-compiler**: any POSIX C program compiles with `./scripts/aios-cc` and runs unmodified
 
-This is a research project exploring AI-assisted OS development. External AI (Claude) generates and reviews code.
+### What It Looks Like
 
-## Quick Start
+    ============================================
+      AIOS 0.4.x miniShell
+    ============================================
 
-### Prerequisites
-
-- macOS (Apple Silicon) or Linux (x86-64)
-- `aarch64-linux-gnu-gcc` (GCC 15 tested)
-- `qemu-system-aarch64` (v7+)
-- `cmake` (3.16+), `ninja`
-- Python 3.9+ with: `pyyaml pyfdt jinja2 ply lxml pyelftools`
-- GNU `cpio` (macOS: `brew install cpio`)
-
-### Install Dependencies (macOS)
-
-```bash
-brew install aarch64-linux-gnu-gcc qemu cmake ninja cpio
-pip3 install pyyaml pyfdt jinja2 ply lxml pyelftools --break-system-packages
-```
-
-### Clone and Set Up
-
-```bash
-git clone https://github.com/arcanii/AIOS.git
-cd AIOS
-git checkout v0.4.x
-
-# Clone seL4 ecosystem into deps/
-mkdir -p deps && cd deps
-git clone https://github.com/seL4/seL4.git kernel
-git clone https://github.com/seL4/seL4_libs.git
-git clone https://github.com/seL4/sel4runtime.git
-git clone https://github.com/seL4/seL4_tools.git
-git clone https://github.com/seL4/util_libs.git
-git clone https://github.com/seL4/musllibc.git
-cd ..
-
-# Create required symlinks
-ln -s deps/kernel kernel
-mkdir -p tools/seL4 projects
-ln -s ../../deps/seL4_tools/cmake-tool tools/seL4/cmake-tool
-ln -s ../deps/seL4_libs projects/seL4_libs
-ln -s ../deps/sel4runtime projects/sel4runtime
-ln -s ../deps/seL4_tools projects/seL4_tools
-ln -s ../deps/util_libs projects/util_libs
-ln -s ../deps/musllibc projects/musllibc
-
-# Apply GCC 15 musl patch (see docs/patches/musl-gcc15.md)
-sed -i '' 's/visibility push(protected)/visibility push(default)/' deps/musllibc/src/internal/vis.h
-sed -i '' 's/visibility("protected")/visibility("default")/' deps/musllibc/src/internal/stdio_impl.h
-```
-
-### Build
-
-```bash
-mkdir build-04 && cd build-04
-cmake -G Ninja \
-    -DCMAKE_TOOLCHAIN_FILE=../deps/kernel/gcc.cmake \
-    -DCROSS_COMPILER_PREFIX=aarch64-linux-gnu- \
-    ..
-ninja
-```
-
-### Run
-
-```bash
-qemu-system-aarch64 \
-    -machine virt,virtualization=on \
-    -cpu cortex-a53 -smp 4 \
-    -m 2G \
-    -nographic \
-    -serial mon:stdio \
-    -kernel build-04/images/aios_root-image-arm-qemu-arm-virt
-```
-
-Exit QEMU: `Ctrl-A X`
-
-### Expected Output
-
-```
-Core 1 is up with logic id 1
-Core 2 is up with logic id 2
-Core 3 is up with logic id 3
-
---- Test 1: Process spawn ---
-[test1] PASS: child spawned and exited
-
---- Test 2: IPC echo ---
-[test2] PASS: 5 IPC round-trips correct
-
---- Test 3: Multi-threading + SMP (4 TCBs, 4 cores) ---
-[test3] PASS: 4 threads, counter=4
-[test3] Cores used: 0 1 2 3
-
---- Test 4: Process isolation ---
-[test4] Caught VM fault at address 0x0
-[test4] PASS: crash contained! System still alive.
-
---- Test 5: Crash doesn't kill other processes ---
-[test5] PASS: new process ran after crash
-
-  Test Results: 5/5 passed
-
-$ hello
-Hello from AIOS 0.4.x!
-```
+    / $ ls
+    bin  dev  etc  hello.txt  home  proc  sbin  tmp  var
+    / $ ls -l /etc
+    -rwxr-xr-x    1 root     0                72 Jan 01 00:00 fstab
+    -rwxr-xr-x    1 root     0                 5 Jan 01 00:00 hostname
+    -rwxr-xr-x    1 root     0               347 Jan 01 00:00 motd
+    -rwxr-xr-x    1 root     0                30 Jan 01 00:00 passwd
+    / $ cat /etc/hostname
+    aios
+    / $ date
+    Thu Jan  1 00:02:17 GMT 1970
+    / $ find /etc
+    /etc
+    /etc/fstab
+    /etc/hostname
+    /etc/motd
+    /etc/passwd
+    /etc/services.conf
+    / $ md5sum /etc/hostname
+    a0725f97be8260e3ce6a5d28db43c089  /etc/hostname
+    / $ cal
+        January 1970
+    Su Mo Tu We Th Fr Sa
+                 1  2  3
+     4  5  6  7  8  9 10
+    11 12 13 14 15 16 17
+    18 19 20 21 22 23 24
+    25 26 27 28 29 30 31
 
 ## Architecture
 
-```
-seL4 15.0.0 kernel (AArch64, 4 cores, EL2 hypervisor)
-│
-└── aios_root (root task)
-    ├── UART poller (PL011 at 0x9000000)
-    ├── Process server (spawn/cleanup/fault handling)
-    ├── Thread manager (TCBs with priority + core affinity)
-    │
-    ├── serial_server (VSpace B) ── IPC ── seL4_DebugPutChar
-    ├── mini_shell (VSpace C) ── IPC ── serial_server
-    ├── echo_server (VSpace D) ── IPC ── root task
-    ├── hello_child (VSpace E) ── runs, exits
-    └── crash_test (VSpace F) ── NULL deref → VM fault → contained
-```
+    ┌─────────────────────────────────────────────────┐
+    │                 User Programs                    │
+    │  ls, cat, grep, find, sed, sort, cp, rm, ...    │
+    │  (79 sbase tools + 9 AIOS programs)             │
+    ├─────────────────────────────────────────────────┤
+    │              POSIX Syscall Shim                  │
+    │  open/read/write/close/stat/opendir/uname/...   │
+    │  (40+ syscalls via muslcsys_install_syscall)     │
+    ├─────────────────────────────────────────────────┤
+    │           miniShell (PATH, env, CWD)             │
+    ├──────────┬──────────┬──────────┬────────────────┤
+    │ serial   │    fs    │   exec   │    procfs      │
+    │ server   │  thread  │  thread  │   (/proc)      │
+    │ (UART)   │  (VFS)   │ (ELF    │                 │
+    │          │          │  loader) │                 │
+    ├──────────┴──────────┴──────────┴────────────────┤
+    │              VFS (Virtual Filesystem)            │
+    │         /  →  ext2     /proc  →  procfs          │
+    ├─────────────────────────────────────────────────┤
+    │    ext2 Driver          │    virtio-blk Driver   │
+    │  (read/write, indirect  │    (DMA, legacy v1)    │
+    │   blocks, multi-group)  │                        │
+    ├─────────────────────────┴────────────────────────┤
+    │                seL4 Microkernel                   │
+    │  Capabilities, VSpaces, IPC Endpoints, SMP (4)   │
+    │  EL2 Hypervisor Mode, ARM Generic Timer          │
+    ├─────────────────────────────────────────────────┤
+    │          QEMU virt (Cortex-A53 x4, 2GB)          │
+    └─────────────────────────────────────────────────┘
 
-Each process has its own VSpace (page table), CSpace (capabilities), and TCB (kernel thread). A crash in one process cannot affect any other.
+## Building
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full technical details.
+### Prerequisites
 
-## Project Structure
+- macOS (Apple Silicon) or Linux
+- aarch64-linux-gnu-gcc cross-compiler
+- CMake, Ninja
+- Python 3
+- QEMU (qemu-system-aarch64)
 
-```
-AIOS/
-├── src/
-│   ├── aios_root.c           # Root task: boot, process server, tests, shell
-│   └── apps/                  # Child processes (each gets own VSpace)
-│       ├── hello_child.c      # Simple test process
-│       ├── echo_server.c      # IPC echo service
-│       ├── serial_server.c    # Serial I/O via IPC
-│       ├── mini_shell.c       # Interactive shell
-│       └── crash_test.c       # Deliberate fault (isolation test)
-├── projects/aios/
-│   └── CMakeLists.txt         # Build: child apps + CPIO + root task
-├── deps/                      # seL4 ecosystem (gitignored)
-│   ├── kernel -> seL4
-│   ├── seL4_libs/
-│   ├── sel4runtime/
-│   ├── seL4_tools/
-│   ├── util_libs/
-│   └── musllibc/
-├── docs/
-│   ├── ARCHITECTURE.md        # Technical architecture
-│   ├── AI_BRIEFING.md         # Context doc for AI assistants
-│   ├── DESIGN_0.4.md          # Original design document
-│   └── patches/musl-gcc15.md  # GCC 15 musllibc patch
-├── ref/v03x/                  # Archived 0.3.x codebase
-├── CMakeLists.txt             # Top-level (includes seL4 build)
-├── settings.cmake             # Platform config
-└── LICENSE                    # MIT
-```
+On macOS:
 
-## Version History
+    brew install aarch64-unknown-linux-gnu cmake ninja qemu python3 gnu-sed
+    echo 'export PATH="/opt/homebrew/opt/gnu-sed/libexec/gnubin:$PATH"' >> ~/.zshrc
 
-| Version | Milestone |
-|---------|-----------|
-| 0.3.x | Microkit-based, user-space kernel in sandbox PD, 42/42 tests |
-| 0.4.0 | Bare seL4 root task boots |
-| 0.4.1 | First isolated child process (own VSpace + TCB) |
-| 0.4.2 | IPC endpoints, serial server, mini shell |
-| 0.4.3 | Real multi-threading (4 seL4 TCBs) |
-| 0.4.4 | 5/5 test suite, crash isolation verified |
-| 0.4.5 | SMP — 4 cores, thread affinity, hypervisor mode |
+### Build
 
-## Contributing
+    # Build kernel + root task + programs
+    cd AIOS
+    rm -rf build-04 && mkdir build-04 && cd build-04
+    cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=../deps/kernel/gcc.cmake \
+        -DCROSS_COMPILER_PREFIX=aarch64-linux-gnu- ..
+    ninja
+    cd ..
 
-Experimental/research phase. Collaborators welcome.
+    # Create disk image with rootfs and programs
+    python3 scripts/mkdisk.py disk/disk_ext2.img 128 \
+        --rootfs disk/rootfs \
+        --install-elfs build-04/sbase \
+        --install-elfs build-04/projects/aios/
 
-MIT License — see [LICENSE](LICENSE)
+### Boot
+
+    qemu-system-aarch64 \
+        -machine virt,virtualization=on \
+        -cpu cortex-a53 -smp 4 -m 2G \
+        -nographic -serial mon:stdio \
+        -drive file=disk/disk_ext2.img,format=raw,if=none,id=hd0 \
+        -device virtio-blk-device,drive=hd0 \
+        -kernel build-04/images/aios_root-image-arm-qemu-arm-virt
+
+### Cross-Compile Your Own Programs
+
+Any standard POSIX C program can run on AIOS with no modifications:
+
+    // hello.c — no AIOS-specific code needed
+    #include <stdio.h>
+    #include <unistd.h>
+
+    int main(int argc, char *argv[]) {
+        printf("Hello from AIOS!\n");
+        printf("PID: %d, UID: %d\n", getpid(), getuid());
+        return 0;
+    }
+
+    ./scripts/aios-cc hello.c -o build-04/sbase/hello
+
+## Programs Available
+
+### sbase Unix Tools (79)
+
+| Category | Commands |
+|----------|----------|
+| Files | cat, cp, mv, rm, ln, mkdir, rmdir, touch, chmod, chown, chgrp |
+| Text | head, tail, wc, sort, uniq, cut, paste, fold, expand, tr, rev, nl, comm, join |
+| Search | grep, find, strings |
+| Info | ls, du, date, cal, uname, hostname, whoami, logname, tty, printenv, env |
+| Crypto | md5sum, sha256sum, sha512sum, cksum |
+| Stream | tee, sed, dd, split, seq |
+| Misc | echo, yes, true, false, basename, dirname, pwd, sleep, expr, dc, test, printf |
+| System | kill, nice, nohup, sync, which, xargs |
+
+### AIOS-Specific Programs (9)
+
+| Program | Purpose |
+|---------|---------|
+| sysinfo | System information display |
+| posix_test | POSIX compliance test suite (26 tests) |
+| posix_ps | Process status (reads /proc/status) |
+| posix_id | UID/GID display |
+| posix_help | Command listing |
+| posix_mkdir | mkdir via filesystem IPC |
+| posix_touch | touch via filesystem IPC |
+| posix_rm | rm via filesystem IPC |
+| posix_nice | Nice value placeholder |
+
+## POSIX Compliance
+
+26/26 tests pass covering:
+
+- File I/O: open, read, write, lseek, close
+- Stat: fstat, fstatat
+- Identity: getpid, getppid, getuid, geteuid, getgid, getegid
+- System: uname (via kernel IPC)
+- Filesystem: getcwd, opendir, readdir, closedir
+- Time: clock_gettime (ARM generic timer), gettimeofday
+- Access: access (exists + nonexist)
+- Descriptors: dup
+
+Run `posix_test` in the shell to verify.
+
+## Design History
+
+| Phase | Status |
+|-------|--------|
+| 0.1.x | Initial experiments — abandoned |
+| 0.2.x | Monolithic design — hit scaling wall |
+| 0.3.x | Microkit/PD-based — redesigned for seL4 idioms |
+| 0.4.x | **Current** — sel4utils processes, POSIX shim, Unix tools |
+
+### 0.4.x Version History
+
+| Version | Feature |
+|---------|---------|
+| v0.4.5 | SMP verified (4 cores via PSCI/SMC) |
+| v0.4.6 | virtio-blk driver (legacy v1, DMA) |
+| v0.4.7-8 | ext2 filesystem reader + shell navigation |
+| v0.4.9 | Exec from shell (CPIO) |
+| v0.4.10-11 | POSIX shim (printf, open/read/write/close via IPC) |
+| v0.4.12-14 | POSIX programs + Unix-like shell |
+| v0.4.15-16 | VFS + procfs + process lifecycle |
+| v0.4.17-18 | 34 syscalls + getdents64 (opendir/readdir) |
+| v0.4.19 | ext2 write support (mkdir, touch, rm) |
+| v0.4.20-21 | Auto-init + miniShell + 30 programs |
+| v0.4.22-24 | ELF-from-disk loader + PATH search + env vars |
+| v0.4.25 | aios-cc cross-compiler wrapper |
+| v0.4.26-27 | 37 sbase tools + __wrap_main + sbase ls |
+| v0.4.28 | Crash recovery (exit via VM fault) |
+| v0.4.29 | CWD propagation + 79 sbase tools + 94 programs |
+
+## Roadmap
+
+- [ ] Shell piping and redirection
+- [ ] More POSIX syscalls (pipe, dup2, symlink, chmod at runtime)
+- [ ] Dynamic ELF buffer (>1MB programs)
+- [ ] virtio-net + TCP/IP networking
+- [ ] Process niceness (runtime priority adjustment)
+- [ ] Self-hosted development tools
+- [ ] AI integration within the OS
+
+## Documentation
+
+- `docs/AI_BRIEFING.md` — Complete technical briefing for AI assistants
+- `docs/LEARNINGS.md` — Hard-won debugging knowledge
+- `docs/ARCHITECTURE.md` — System architecture
+- `docs/DESIGN_0.4.md` — 0.4.x design decisions
+- `docs/patches/` — Documented dependency patches
+
+## License
+
+MIT License. See LICENSE file.
+
+Copyright (c) 2025-2026 AIOS Project
