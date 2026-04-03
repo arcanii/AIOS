@@ -44,7 +44,7 @@ DeclareRootserver(aios_root)
 # Auto-increment build number before compiling root task
 add_custom_command(
     TARGET aios_root PRE_BUILD
-    COMMAND bash ${AIOS_ROOT}/bump-build.sh
+    COMMAND bash ${AIOS_ROOT}/scripts/bump-build.sh
     WORKING_DIRECTORY ${AIOS_ROOT}
     COMMENT "Incrementing build number"
 )

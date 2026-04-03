@@ -191,6 +191,16 @@ static void cmd_cd(const char *arg) {
         str_cpy(cwd, "/");
         return;
     }
+    /* Handle ".." specially */
+    if (str_eq(arg, "..")) {
+        int len = str_len(cwd);
+        if (len <= 1) return; /* already at / */
+        len--; /* skip trailing char */
+        while (len > 0 && cwd[len] != '/') len--;
+        if (len == 0) len = 1; /* keep root / */
+        cwd[len] = '\0';
+        return;
+    }
     char path[256];
     resolve(arg, path, sizeof(path));
 
