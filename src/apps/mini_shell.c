@@ -305,6 +305,38 @@ int main(int argc, char *argv[]) {
             else cmd_cat(arg);
         } else if (str_eq(line, "cd")) {
             cmd_cd(arg);
+        } else if (str_eq(line, "mkdir")) {
+            if (!arg) { ser_puts("Usage: mkdir <dir>\n"); }
+            else if (fs_ep) {
+                char path[256]; resolve(arg, path, sizeof(path));
+                int mrs = pack_path(path);
+                seL4_MessageInfo_t reply = seL4_Call(fs_ep,
+                    seL4_MessageInfo_new(14 /* FS_MKDIR */, 0, 0, mrs));
+                if ((int)(long)seL4_GetMR(0) != 0)
+                    { ser_puts("mkdir: failed\n"); }
+            }
+        } else if (str_eq(line, "touch")) {
+            if (!arg) { ser_puts("Usage: touch <file>\n"); }
+            else if (fs_ep) {
+                char path[256]; resolve(arg, path, sizeof(path));
+                int mrs = pack_path(path);
+                /* Send empty write */
+                seL4_SetMR(mrs, 0); /* data_len = 0 */
+                seL4_MessageInfo_t reply = seL4_Call(fs_ep,
+                    seL4_MessageInfo_new(15 /* FS_WRITE_FILE */, 0, 0, mrs + 1));
+                if ((int)(long)seL4_GetMR(0) != 0)
+                    { ser_puts("touch: failed\n"); }
+            }
+        } else if (str_eq(line, "rm")) {
+            if (!arg) { ser_puts("Usage: rm <file>\n"); }
+            else if (fs_ep) {
+                char path[256]; resolve(arg, path, sizeof(path));
+                int mrs = pack_path(path);
+                seL4_MessageInfo_t reply = seL4_Call(fs_ep,
+                    seL4_MessageInfo_new(16 /* FS_UNLINK */, 0, 0, mrs));
+                if ((int)(long)seL4_GetMR(0) != 0)
+                    { ser_puts("rm: failed\n"); }
+            }
         } else if (str_eq(line, "pwd")) {
             ser_puts(cwd);
             ser_putc('\n');

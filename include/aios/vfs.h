@@ -9,6 +9,9 @@ typedef struct {
     int (*fs_read)(void *ctx, const char *path, char *buf, int bufsize);
     int (*fs_stat)(void *ctx, const char *path, uint32_t *mode, uint32_t *size);
     int (*fs_resolve)(void *ctx, const char *path, uint32_t *ino);
+    int (*fs_mkdir)(void *ctx, const char *path);
+    int (*fs_create)(void *ctx, const char *path, const void *data, int len);
+    int (*fs_unlink)(void *ctx, const char *path);
 } fs_ops_t;
 
 /* Mount entry */
@@ -32,5 +35,8 @@ int vfs_mount(const char *path, fs_ops_t *ops, void *ctx);
 int vfs_list(const char *path, char *buf, int bufsize);
 int vfs_read(const char *path, char *buf, int bufsize);
 int vfs_stat(const char *path, uint32_t *mode, uint32_t *size);
+int vfs_mkdir(const char *path);
+int vfs_create(const char *path, const void *data, int len);
+int vfs_unlink(const char *path);
 
 #endif

@@ -125,3 +125,36 @@ int vfs_stat(const char *path, uint32_t *mode, uint32_t *size) {
         return m->ops->fs_stat(m->ctx, sub_path, mode, size);
     }
 }
+
+int vfs_mkdir(const char *path) {
+    const char *remainder;
+    mount_entry_t *m = find_mount(path, &remainder);
+    if (!m || !m->ops->fs_mkdir) return -1;
+    if (m->path_len == 1) return m->ops->fs_mkdir(m->ctx, path);
+    char sub[256]; sub[0] = '/'; int i = 1;
+    while (remainder[i-1] && i < 255) { sub[i] = remainder[i-1]; i++; }
+    sub[i] = '\0';
+    return m->ops->fs_mkdir(m->ctx, sub);
+}
+
+int vfs_create(const char *path, const void *data, int len) {
+    const char *remainder;
+    mount_entry_t *m = find_mount(path, &remainder);
+    if (!m || !m->ops->fs_create) return -1;
+    if (m->path_len == 1) return m->ops->fs_create(m->ctx, path, data, len);
+    char sub[256]; sub[0] = '/'; int i = 1;
+    while (remainder[i-1] && i < 255) { sub[i] = remainder[i-1]; i++; }
+    sub[i] = '\0';
+    return m->ops->fs_create(m->ctx, sub, data, len);
+}
+
+int vfs_unlink(const char *path) {
+    const char *remainder;
+    mount_entry_t *m = find_mount(path, &remainder);
+    if (!m || !m->ops->fs_unlink) return -1;
+    if (m->path_len == 1) return m->ops->fs_unlink(m->ctx, path);
+    char sub[256]; sub[0] = '/'; int i = 1;
+    while (remainder[i-1] && i < 255) { sub[i] = remainder[i-1]; i++; }
+    sub[i] = '\0';
+    return m->ops->fs_unlink(m->ctx, sub);
+}

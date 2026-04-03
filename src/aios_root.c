@@ -50,6 +50,7 @@ static seL4_CPtr fs_ep_cap;
 static vka_object_t serial_ep;
 
 static int blk_read_sector(uint64_t sector, void *buf);
+static int blk_write_sector(uint64_t sector, const void *buf);
 static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf);
 
 /* Spawn a process with endpoint caps passed via argv */
@@ -301,6 +302,52 @@ static int blk_read_sector(uint64_t sector, void *buf) {
     return 0;
 }
 
+/* Write a 512-byte sector via virtio-blk */
+static int blk_write_sector(uint64_t sector, const void *buf) {
+    struct virtq_desc  *desc  = (struct virtq_desc *)(blk_dma);
+    struct virtq_avail *avail = (struct virtq_avail *)(blk_dma + 0x100);
+    struct virtq_used  *used  = (struct virtq_used  *)(blk_dma + 0x1000);
+    struct virtio_blk_req *req = (struct virtio_blk_req *)(blk_dma + 0x2000);
+    uint64_t req_pa = blk_dma_pa + 0x2000;
+
+    req->type = VIRTIO_BLK_T_OUT;
+    req->reserved = 0;
+    req->sector = sector;
+    req->status = 0xFF;
+
+    /* Copy data into request buffer */
+    const uint8_t *src = (const uint8_t *)buf;
+    for (int i = 0; i < 512; i++) req->data[i] = src[i];
+
+    /* Descriptor 0: header (device reads) */
+    desc[0].addr = req_pa; desc[0].len = 16;
+    desc[0].flags = VIRTQ_DESC_F_NEXT; desc[0].next = 1;
+    /* Descriptor 1: data (device reads — NOT VIRTQ_DESC_F_WRITE) */
+    desc[1].addr = req_pa + 16; desc[1].len = 512;
+    desc[1].flags = VIRTQ_DESC_F_NEXT; desc[1].next = 2;
+    /* Descriptor 2: status (device writes) */
+    desc[2].addr = req_pa + 16 + 512; desc[2].len = 1;
+    desc[2].flags = VIRTQ_DESC_F_WRITE; desc[2].next = 0;
+
+    __asm__ volatile("dmb sy" ::: "memory");
+    avail->ring[avail->idx % 16] = 0;
+    __asm__ volatile("dmb sy" ::: "memory");
+    avail->idx += 1;
+    __asm__ volatile("dmb sy" ::: "memory");
+    blk_vio[VIRTIO_MMIO_QUEUE_NOTIFY / 4] = 0;
+
+    uint16_t last = used->idx;
+    for (int t = 0; t < 10000000; t++) {
+        __asm__ volatile("dmb sy" ::: "memory");
+        if (used->idx != last) break;
+    }
+    blk_vio[VIRTIO_MMIO_INTERRUPT_ACK / 4] = blk_vio[VIRTIO_MMIO_INTERRUPT_STATUS / 4];
+
+    if (used->idx == last || req->status != 0) return -1;
+    return 0;
+}
+
+
 /* Filesystem IPC thread — runs in root task VSpace */
 static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
     seL4_CPtr ep = (seL4_CPtr)(uintptr_t)arg0;
@@ -390,6 +437,61 @@ static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
                 seL4_SetMR(0, 0);
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             }
+            break;
+        }
+        case FS_MKDIR: {
+            seL4_Word path_len = seL4_GetMR(0);
+            char mk_path[128];
+            int mkpl = (path_len > 127) ? 127 : (int)path_len;
+            int mk_mr = 1;
+            for (int i = 0; i < mkpl; i++) {
+                if (i % 8 == 0 && i > 0) mk_mr++;
+                mk_path[i] = (char)((seL4_GetMR(mk_mr) >> ((i % 8) * 8)) & 0xFF);
+            }
+            mk_path[mkpl] = '\0';
+            int ret = vfs_mkdir(mk_path);
+            seL4_SetMR(0, (seL4_Word)(ret >= 0 ? 0 : -1));
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        case FS_WRITE_FILE: {
+            /* MR0=path_len, MR1..=path, then data_len + data */
+            seL4_Word path_len = seL4_GetMR(0);
+            char wr_path[128];
+            int wrpl = (path_len > 127) ? 127 : (int)path_len;
+            int wr_mr = 1;
+            for (int i = 0; i < wrpl; i++) {
+                if (i % 8 == 0 && i > 0) wr_mr++;
+                wr_path[i] = (char)((seL4_GetMR(wr_mr) >> ((i % 8) * 8)) & 0xFF);
+            }
+            wr_path[wrpl] = '\0';
+            wr_mr++;
+            seL4_Word data_len = seL4_GetMR(wr_mr++);
+            char wr_data[512];
+            int dl = (data_len > 511) ? 511 : (int)data_len;
+            for (int i = 0; i < dl; i++) {
+                if (i % 8 == 0 && i > 0) wr_mr++;
+                wr_data[i] = (char)((seL4_GetMR(wr_mr) >> ((i % 8) * 8)) & 0xFF);
+            }
+            wr_data[dl] = '\0';
+            int ret = vfs_create(wr_path, wr_data, dl);
+            seL4_SetMR(0, (seL4_Word)(ret >= 0 ? 0 : -1));
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        case FS_UNLINK: {
+            seL4_Word path_len = seL4_GetMR(0);
+            char rm_path[128];
+            int rmpl = (path_len > 127) ? 127 : (int)path_len;
+            int rm_mr = 1;
+            for (int i = 0; i < rmpl; i++) {
+                if (i % 8 == 0 && i > 0) rm_mr++;
+                rm_path[i] = (char)((seL4_GetMR(rm_mr) >> ((i % 8) * 8)) & 0xFF);
+            }
+            rm_path[rmpl] = '\0';
+            int ret = vfs_unlink(rm_path);
+            seL4_SetMR(0, (seL4_Word)(ret >= 0 ? 0 : -1));
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }
         default:
@@ -632,6 +734,7 @@ int main(int argc, char *argv[]) {
             proc_init();
             int fs_err = ext2_init(&ext2, blk_read_sector);
             if (fs_err == 0) {
+                ext2_init_write(&ext2, blk_write_sector);
                 vfs_mount("/", &ext2_fs_ops, &ext2);
                 vfs_mount("/proc", &procfs_ops, NULL);
                 proc_add("fs_thread", 200);

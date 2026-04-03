@@ -77,9 +77,13 @@ struct __attribute__((packed)) ext2_dir_entry {
 #define FS_LS   10
 #define FS_CAT  11
 #define FS_STAT 12
+#define FS_MKDIR 14
+#define FS_WRITE_FILE 15
+#define FS_UNLINK 16
 
 /* Block read function type (provided by caller) */
 typedef int (*blk_read_fn)(uint64_t sector, void *buf);
+typedef int (*blk_write_fn)(uint64_t sector, const void *buf);
 
 /* ext2 context */
 typedef struct {
@@ -89,6 +93,7 @@ typedef struct {
     uint32_t inode_table_block;
     uint32_t blocks_per_group;
     uint32_t first_data_block;
+    blk_write_fn write_sector;
 } ext2_ctx_t;
 
 int ext2_init(ext2_ctx_t *ctx, blk_read_fn read);
@@ -98,6 +103,15 @@ int ext2_lookup(ext2_ctx_t *ctx, uint32_t dir_ino, const char *name, uint32_t *o
 int ext2_list_dir(ext2_ctx_t *ctx, uint32_t dir_ino, char *buf, int bufsize);
 int ext2_read_file(ext2_ctx_t *ctx, uint32_t ino, char *buf, int bufsize);
 int ext2_resolve_path(ext2_ctx_t *ctx, const char *path, uint32_t *out_ino);
+
+/* Write operations */
+int ext2_init_write(ext2_ctx_t *ctx, blk_write_fn write);
+int ext2_write_block(ext2_ctx_t *ctx, uint32_t block, const void *buf);
+int ext2_alloc_block(ext2_ctx_t *ctx);
+int ext2_alloc_inode(ext2_ctx_t *ctx);
+int ext2_mkdir(ext2_ctx_t *ctx, uint32_t parent_ino, const char *name);
+int ext2_create_file(ext2_ctx_t *ctx, uint32_t parent_ino, const char *name, const void *data, int len);
+int ext2_unlink(ext2_ctx_t *ctx, uint32_t parent_ino, const char *name);
 
 
 /* VFS adapter */

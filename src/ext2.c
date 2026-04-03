@@ -190,9 +190,362 @@ static int ext2_vfs_resolve(void *ctx, const char *path, uint32_t *ino) {
     return ext2_resolve_path((ext2_ctx_t *)ctx, path, ino);
 }
 
+static int ext2_vfs_mkdir(void *ctx, const char *path) {
+    ext2_ctx_t *e = (ext2_ctx_t *)ctx;
+    /* Split path into parent + name */
+    const char *p = path;
+    if (*p == '/') p++;
+    /* Find last / */
+    const char *last_slash = 0;
+    for (const char *s = p; *s; s++) if (*s == '/') last_slash = s;
+
+    uint32_t parent_ino = 2; /* root */
+    char name[64];
+    if (last_slash) {
+        /* Resolve parent path */
+        char parent[256];
+        int pi = 0;
+        while (p + pi < last_slash && pi < 255) { parent[pi] = p[pi]; pi++; }
+        parent[pi] = '\0';
+        if (ext2_resolve_path(e, parent, &parent_ino) != 0) return -1;
+        const char *n = last_slash + 1;
+        int ni = 0;
+        while (n[ni] && ni < 63) { name[ni] = n[ni]; ni++; }
+        name[ni] = '\0';
+    } else {
+        int ni = 0;
+        while (p[ni] && ni < 63) { name[ni] = p[ni]; ni++; }
+        name[ni] = '\0';
+    }
+    return ext2_mkdir(e, parent_ino, name);
+}
+
+static int ext2_vfs_create(void *ctx, const char *path, const void *data, int len) {
+    ext2_ctx_t *e = (ext2_ctx_t *)ctx;
+    const char *p = path;
+    if (*p == '/') p++;
+    const char *last_slash = 0;
+    for (const char *s = p; *s; s++) if (*s == '/') last_slash = s;
+
+    uint32_t parent_ino = 2;
+    char name[64];
+    if (last_slash) {
+        char parent[256];
+        int pi = 0;
+        while (p + pi < last_slash && pi < 255) { parent[pi] = p[pi]; pi++; }
+        parent[pi] = '\0';
+        if (ext2_resolve_path(e, parent, &parent_ino) != 0) return -1;
+        const char *n = last_slash + 1;
+        int ni = 0;
+        while (n[ni] && ni < 63) { name[ni] = n[ni]; ni++; }
+        name[ni] = '\0';
+    } else {
+        int ni = 0;
+        while (p[ni] && ni < 63) { name[ni] = p[ni]; ni++; }
+        name[ni] = '\0';
+    }
+    return ext2_create_file(e, parent_ino, name, data, len);
+}
+
+static int ext2_vfs_unlink(void *ctx, const char *path) {
+    ext2_ctx_t *e = (ext2_ctx_t *)ctx;
+    const char *p = path;
+    if (*p == '/') p++;
+    const char *last_slash = 0;
+    for (const char *s = p; *s; s++) if (*s == '/') last_slash = s;
+
+    uint32_t parent_ino = 2;
+    char name[64];
+    if (last_slash) {
+        char parent[256];
+        int pi = 0;
+        while (p + pi < last_slash && pi < 255) { parent[pi] = p[pi]; pi++; }
+        parent[pi] = '\0';
+        if (ext2_resolve_path(e, parent, &parent_ino) != 0) return -1;
+        const char *n = last_slash + 1;
+        int ni = 0;
+        while (n[ni] && ni < 63) { name[ni] = n[ni]; ni++; }
+        name[ni] = '\0';
+    } else {
+        int ni = 0;
+        while (p[ni] && ni < 63) { name[ni] = p[ni]; ni++; }
+        name[ni] = '\0';
+    }
+    return ext2_unlink(e, parent_ino, name);
+}
+
 fs_ops_t ext2_fs_ops = {
     .fs_list = ext2_vfs_list,
     .fs_read = ext2_vfs_read,
     .fs_stat = ext2_vfs_stat,
     .fs_resolve = ext2_vfs_resolve,
+    .fs_mkdir = ext2_vfs_mkdir,
+    .fs_create = ext2_vfs_create,
+    .fs_unlink = ext2_vfs_unlink,
 };
+
+
+/* ── Write support ── */
+
+int ext2_init_write(ext2_ctx_t *ctx, blk_write_fn write) {
+    ctx->write_sector = write;
+    return 0;
+}
+
+static int write_block(ext2_ctx_t *ctx, uint32_t block, const void *buf) {
+    if (!ctx->write_sector) return -1;
+    int sectors = ctx->block_size / 512;
+    const uint8_t *p = (const uint8_t *)buf;
+    for (int i = 0; i < sectors; i++) {
+        if (ctx->write_sector((uint64_t)block * sectors + i, p + i * 512) != 0)
+            return -1;
+    }
+    return 0;
+}
+
+int ext2_write_block(ext2_ctx_t *ctx, uint32_t block, const void *buf) {
+    return write_block(ctx, block, buf);
+}
+
+/* Allocate a free block from group 0 bitmap */
+int ext2_alloc_block(ext2_ctx_t *ctx) {
+    /* Read block bitmap (block 3 for group 0 with 1K blocks) */
+    uint8_t bmp[1024];
+    uint32_t bmp_block = ctx->first_data_block + 2; /* block bitmap */
+    if (read_block(ctx, bmp_block, bmp) != 0) return -1;
+
+    /* Find first free bit */
+    for (int byte = 0; byte < (int)ctx->block_size; byte++) {
+        if (bmp[byte] == 0xFF) continue;
+        for (int bit = 0; bit < 8; bit++) {
+            if (!(bmp[byte] & (1 << bit))) {
+                bmp[byte] |= (1 << bit);
+                write_block(ctx, bmp_block, bmp);
+                return (byte * 8 + bit) + 1; /* blocks are 1-based */
+            }
+        }
+    }
+    return -1; /* no free blocks */
+}
+
+/* Allocate a free inode from group 0 bitmap */
+int ext2_alloc_inode(ext2_ctx_t *ctx) {
+    uint8_t bmp[1024];
+    uint32_t bmp_block = ctx->first_data_block + 3; /* inode bitmap */
+    if (read_block(ctx, bmp_block, bmp) != 0) return -1;
+
+    for (int byte = 0; byte < (int)ctx->block_size; byte++) {
+        if (bmp[byte] == 0xFF) continue;
+        for (int bit = 0; bit < 8; bit++) {
+            if (!(bmp[byte] & (1 << bit))) {
+                bmp[byte] |= (1 << bit);
+                write_block(ctx, bmp_block, bmp);
+                return (byte * 8 + bit) + 1; /* inodes are 1-based */
+            }
+        }
+    }
+    return -1;
+}
+
+/* Write an inode to disk */
+static int write_inode(ext2_ctx_t *ctx, uint32_t ino, struct ext2_inode *inode) {
+    uint32_t idx = ino - 1;
+    uint32_t inode_size = 128;
+    uint32_t inodes_per_block = ctx->block_size / inode_size;
+    uint32_t block = ctx->inode_table_block + idx / inodes_per_block;
+    uint32_t offset = (idx % inodes_per_block) * inode_size;
+
+    uint8_t blk[1024];
+    if (read_block(ctx, block, blk) != 0) return -1;
+
+    uint8_t *dst = blk + offset;
+    uint8_t *src = (uint8_t *)inode;
+    for (int i = 0; i < (int)sizeof(struct ext2_inode); i++) dst[i] = src[i];
+
+    return write_block(ctx, block, blk);
+}
+
+/* Add a directory entry to a directory */
+static int add_dir_entry(ext2_ctx_t *ctx, uint32_t dir_ino, const char *name,
+                         uint32_t child_ino, uint8_t ftype) {
+    struct ext2_inode dir_inode;
+    if (ext2_read_inode(ctx, dir_ino, &dir_inode) != 0) return -1;
+    if (!(dir_inode.i_mode & 0x4000)) return -2; /* not a dir */
+
+    int name_len = 0;
+    while (name[name_len]) name_len++;
+    int need = 8 + ((name_len + 3) & ~3);
+
+    /* Walk directory blocks looking for space */
+    for (int bi = 0; bi < 12 && dir_inode.i_block[bi]; bi++) {
+        uint8_t blk[1024];
+        if (read_block(ctx, dir_inode.i_block[bi], blk) != 0) return -3;
+
+        int off = 0;
+        while (off < (int)ctx->block_size) {
+            uint16_t rec_len = rd16(blk + off + 4);
+            if (rec_len == 0) break;
+
+            uint8_t d_name_len = blk[off + 6];
+            int actual = 8 + ((d_name_len + 3) & ~3);
+            int slack = (int)rec_len - actual;
+
+            if (slack >= need) {
+                /* Split this entry */
+                /* Shrink current entry */
+                blk[off + 4] = (uint8_t)(actual & 0xFF);
+                blk[off + 5] = (uint8_t)((actual >> 8) & 0xFF);
+
+                /* Write new entry in slack space */
+                int new_off = off + actual;
+                int new_rec = (int)rec_len - actual;
+
+                /* child inode */
+                blk[new_off + 0] = (uint8_t)(child_ino & 0xFF);
+                blk[new_off + 1] = (uint8_t)((child_ino >> 8) & 0xFF);
+                blk[new_off + 2] = (uint8_t)((child_ino >> 16) & 0xFF);
+                blk[new_off + 3] = (uint8_t)((child_ino >> 24) & 0xFF);
+                /* rec_len */
+                blk[new_off + 4] = (uint8_t)(new_rec & 0xFF);
+                blk[new_off + 5] = (uint8_t)((new_rec >> 8) & 0xFF);
+                /* name_len */
+                blk[new_off + 6] = (uint8_t)name_len;
+                /* file_type */
+                blk[new_off + 7] = ftype;
+                /* name */
+                for (int i = 0; i < name_len; i++)
+                    blk[new_off + 8 + i] = (uint8_t)name[i];
+
+                write_block(ctx, dir_inode.i_block[bi], blk);
+                return 0;
+            }
+            off += rec_len;
+        }
+    }
+    return -4; /* no space */
+}
+
+int ext2_mkdir(ext2_ctx_t *ctx, uint32_t parent_ino, const char *name) {
+    int new_ino = ext2_alloc_inode(ctx);
+    if (new_ino < 0) return -1;
+    int new_blk = ext2_alloc_block(ctx);
+    if (new_blk < 0) return -2;
+
+    /* Initialize directory inode */
+    struct ext2_inode inode;
+    uint8_t *p = (uint8_t *)&inode;
+    for (int i = 0; i < (int)sizeof(inode); i++) p[i] = 0;
+    inode.i_mode = 0x41ED; /* drwxr-xr-x */
+    inode.i_size = ctx->block_size;
+    inode.i_links_count = 2;
+    inode.i_blocks = ctx->block_size / 512;
+    inode.i_block[0] = new_blk;
+    write_inode(ctx, new_ino, &inode);
+
+    /* Initialize directory data with . and .. */
+    uint8_t dir_data[1024];
+    for (int i = 0; i < (int)ctx->block_size; i++) dir_data[i] = 0;
+
+    int pos = 0;
+    /* . entry */
+    dir_data[pos+0] = new_ino & 0xFF; dir_data[pos+1] = (new_ino>>8) & 0xFF;
+    dir_data[pos+2] = (new_ino>>16) & 0xFF; dir_data[pos+3] = (new_ino>>24) & 0xFF;
+    dir_data[pos+4] = 12; dir_data[pos+5] = 0; /* rec_len=12 */
+    dir_data[pos+6] = 1; dir_data[pos+7] = 2; /* name_len=1, type=dir */
+    dir_data[pos+8] = '.';
+    pos += 12;
+
+    /* .. entry (takes rest of block) */
+    int rest = ctx->block_size - pos;
+    dir_data[pos+0] = parent_ino & 0xFF; dir_data[pos+1] = (parent_ino>>8) & 0xFF;
+    dir_data[pos+2] = (parent_ino>>16) & 0xFF; dir_data[pos+3] = (parent_ino>>24) & 0xFF;
+    dir_data[pos+4] = rest & 0xFF; dir_data[pos+5] = (rest>>8) & 0xFF;
+    dir_data[pos+6] = 2; dir_data[pos+7] = 2;
+    dir_data[pos+8] = '.'; dir_data[pos+9] = '.';
+
+    write_block(ctx, new_blk, dir_data);
+
+    /* Add entry in parent */
+    add_dir_entry(ctx, parent_ino, name, new_ino, 2);
+
+    return new_ino;
+}
+
+int ext2_create_file(ext2_ctx_t *ctx, uint32_t parent_ino, const char *name,
+                     const void *data, int len) {
+    int new_ino = ext2_alloc_inode(ctx);
+    if (new_ino < 0) return -1;
+    int new_blk = ext2_alloc_block(ctx);
+    if (new_blk < 0) return -2;
+
+    /* Write file data */
+    uint8_t blk_data[1024];
+    for (int i = 0; i < (int)ctx->block_size; i++) blk_data[i] = 0;
+    int copy_len = len < (int)ctx->block_size ? len : (int)ctx->block_size;
+    const uint8_t *src = (const uint8_t *)data;
+    for (int i = 0; i < copy_len; i++) blk_data[i] = src[i];
+    write_block(ctx, new_blk, blk_data);
+
+    /* Create inode */
+    struct ext2_inode inode;
+    uint8_t *p = (uint8_t *)&inode;
+    for (int i = 0; i < (int)sizeof(inode); i++) p[i] = 0;
+    inode.i_mode = 0x81A4; /* -rw-r--r-- */
+    inode.i_size = len;
+    inode.i_links_count = 1;
+    inode.i_blocks = ctx->block_size / 512;
+    inode.i_block[0] = new_blk;
+    write_inode(ctx, new_ino, &inode);
+
+    /* Add to parent directory */
+    add_dir_entry(ctx, parent_ino, name, new_ino, 1);
+
+    return new_ino;
+}
+
+int ext2_unlink(ext2_ctx_t *ctx, uint32_t parent_ino, const char *name) {
+    struct ext2_inode dir_inode;
+    if (ext2_read_inode(ctx, parent_ino, &dir_inode) != 0) return -1;
+
+    int name_len = 0;
+    while (name[name_len]) name_len++;
+
+    for (int bi = 0; bi < 12 && dir_inode.i_block[bi]; bi++) {
+        uint8_t blk[1024];
+        if (read_block(ctx, dir_inode.i_block[bi], blk) != 0) return -2;
+
+        int off = 0, prev_off = -1;
+        while (off < (int)ctx->block_size) {
+            uint32_t d_ino = rd32(blk + off);
+            uint16_t rec_len = rd16(blk + off + 4);
+            uint8_t d_name_len = blk[off + 6];
+            if (rec_len == 0) break;
+
+            if (d_ino && d_name_len == name_len) {
+                int match = 1;
+                for (int i = 0; i < name_len; i++) {
+                    if (blk[off + 8 + i] != (uint8_t)name[i]) { match = 0; break; }
+                }
+                if (match) {
+                    if (prev_off >= 0) {
+                        /* Merge with previous entry */
+                        uint16_t prev_rec = rd16(blk + prev_off + 4);
+                        prev_rec += rec_len;
+                        blk[prev_off + 4] = prev_rec & 0xFF;
+                        blk[prev_off + 5] = (prev_rec >> 8) & 0xFF;
+                    } else {
+                        /* Zero the inode number */
+                        blk[off] = 0; blk[off+1] = 0;
+                        blk[off+2] = 0; blk[off+3] = 0;
+                    }
+                    write_block(ctx, dir_inode.i_block[bi], blk);
+                    /* TODO: free inode and data blocks */
+                    return 0;
+                }
+            }
+            prev_off = off;
+            off += rec_len;
+        }
+    }
+    return -3; /* not found */
+}
