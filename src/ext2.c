@@ -24,8 +24,6 @@ int ext2_init(ext2_ctx_t *ctx, blk_read_fn read) {
     if (read(3, sb + 512) != 0) return -1;
 
     uint16_t magic = rd16(sb + 0x38);
-    printf("[ext2] magic=0x%04x blocks=%u inodes=%u\n",
-           magic, rd32(sb + 4), rd32(sb + 0));
     if (magic != EXT2_MAGIC) return -2;
 
     ctx->block_size = 1024 << rd32(sb + 24);
@@ -38,8 +36,6 @@ int ext2_init(ext2_ctx_t *ctx, blk_read_fn read) {
     if (read_block(ctx, ctx->first_data_block + 1, gd) != 0) return -3;
     ctx->inode_table_block = rd32(gd + 8);
 
-    printf("[ext2] block_size=%u inode_table=%u\n",
-           ctx->block_size, ctx->inode_table_block);
     return 0;
 }
 

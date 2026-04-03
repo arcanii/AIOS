@@ -98,6 +98,62 @@ static void unpack_reply(seL4_MessageInfo_t reply) {
     }
 }
 
+/* Read file into buffer via FS IPC */
+static int fs_read(const char *fpath, char *buf, int bufsz) {
+    if (!fs_ep) return -1;
+    char abs[256];
+    resolve(fpath, abs, sizeof(abs));
+    int mrs = pack_path(abs);
+    seL4_MessageInfo_t reply = seL4_Call(fs_ep, seL4_MessageInfo_new(FS_CAT, 0, 0, mrs));
+    seL4_Word total = seL4_GetMR(0);
+    if (total == 0) return 0;
+    int rmrs = (int)seL4_MessageInfo_get_length(reply) - 1;
+    int got = 0;
+    for (int i = 0; i < rmrs && got < bufsz - 1; i++) {
+        seL4_Word rw = seL4_GetMR(i + 1);
+        for (int j = 0; j < 8 && got < (int)total && got < bufsz - 1; j++)
+            buf[got++] = (char)((rw >> (j * 8)) & 0xFF);
+    }
+    buf[got] = '\0';
+    return got;
+}
+
+static void put_dec(unsigned long v) {
+    char tmp[20]; int ti = 0;
+    if (v == 0) { ser_putc('0'); return; }
+    while (v) { tmp[ti++] = '0' + v % 10; v /= 10; }
+    while (ti--) ser_putc(tmp[ti]);
+}
+
+static void cmd_wc(const char *arg) {
+    if (!arg) { ser_puts("Usage: wc <file>\n"); return; }
+    char buf[4096];
+    int n = fs_read(arg, buf, sizeof(buf));
+    if (n <= 0) { ser_puts("wc: "); ser_puts(arg); ser_puts(": No such file\n"); return; }
+    int lines = 0, words = 0, in_word = 0;
+    for (int i = 0; i < n; i++) {
+        if (buf[i] == '\n') lines++;
+        if (buf[i] == ' ' || buf[i] == '\n' || buf[i] == '\t') in_word = 0;
+        else if (!in_word) { in_word = 1; words++; }
+    }
+    put_dec(lines); ser_putc(' ');
+    put_dec(words); ser_putc(' ');
+    put_dec(n); ser_putc(' ');
+    ser_puts(arg); ser_putc('\n');
+}
+
+static void cmd_head(const char *arg) {
+    if (!arg) { ser_puts("Usage: head <file>\n"); return; }
+    char buf[4096];
+    int n = fs_read(arg, buf, sizeof(buf));
+    if (n <= 0) { ser_puts("head: "); ser_puts(arg); ser_puts(": No such file\n"); return; }
+    int lines = 0;
+    for (int i = 0; i < n && lines < 10; i++) {
+        ser_putc(buf[i]);
+        if (buf[i] == '\n') lines++;
+    }
+}
+
 static void cmd_ls(const char *arg) {
     if (!fs_ep) { ser_puts("No filesystem\n"); return; }
     char path[256];
@@ -183,7 +239,6 @@ int main(int argc, char *argv[]) {
     if (argc > 0) serial_ep = (seL4_CPtr)parse_num(argv[0]);
     if (argc > 1) fs_ep = (seL4_CPtr)parse_num(argv[1]);
     if (argc > 2) exec_ep = (seL4_CPtr)parse_num(argv[2]);
-    seL4_DebugPutChar(48 + (char)argc); seL4_DebugPutChar(10);
 
     ser_puts("\n");
     ser_puts("============================================\n");
@@ -210,8 +265,8 @@ int main(int argc, char *argv[]) {
         }
 
         if (str_eq(line, "help")) {
-            ser_puts("Commands: help, ls [path], cat <file>, cd <dir>, pwd,\n");
-            ser_puts("          echo, hello, uname, exit\n");
+            ser_puts("Commands: help, ls, cat, cd, pwd, wc, head, echo, uname, exit\n");
+            
         } else if (str_eq(line, "ls")) {
             cmd_ls(arg);
         } else if (str_eq(line, "cat")) {
@@ -222,6 +277,10 @@ int main(int argc, char *argv[]) {
         } else if (str_eq(line, "pwd")) {
             ser_puts(cwd);
             ser_putc('\n');
+        } else if (str_eq(line, "wc")) {
+            cmd_wc(arg);
+        } else if (str_eq(line, "head")) {
+            cmd_head(arg);
         } else if (str_eq(line, "hello")) {
             ser_puts("Hello from AIOS 0.4.x!\n");
         } else if (str_eq(line, "uname")) {

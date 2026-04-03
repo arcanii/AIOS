@@ -41,12 +41,6 @@ int main(int argc, char *argv[]) {
     if (argc > 0) ep = (seL4_CPtr)parse_num(argv[0]);
     if (argc > 1) kep = (seL4_CPtr)parse_num(argv[1]);
 
-    seL4_DebugPutChar('[');
-    seL4_DebugPutChar('s');
-    seL4_DebugPutChar('e');
-    seL4_DebugPutChar('r');
-    seL4_DebugPutChar(']');
-    seL4_DebugPutChar('\n');
 
     while (1) {
         seL4_Word badge;

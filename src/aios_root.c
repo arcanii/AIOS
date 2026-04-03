@@ -118,7 +118,7 @@ static vka_object_t exec_reply_cap_obj;
 
 static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
     seL4_CPtr ep = (seL4_CPtr)(uintptr_t)arg0;
-    printf("[exec] Thread started on EP %lu\n", (unsigned long)ep);
+    /* quiet */
 
     /* Allocate a slot to save reply caps */
     cspacepath_t reply_path;
@@ -236,7 +236,7 @@ static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
     seL4_CPtr ep = (seL4_CPtr)(uintptr_t)arg0;
     static char fs_buf[4096];
 
-    printf("[fs] Thread started on EP %lu\n", (unsigned long)ep);
+    /* quiet */
 
     while (1) {
         seL4_Word badge;
@@ -370,7 +370,7 @@ int main(int argc, char *argv[]) {
 
 
     /* ========= Filesystem init ========= */
-    printf("[fs] Initializing block device...\n");
+    /* quiet */
     {
         #define VIRTIO_BASE_ADDR 0xa000000UL
         #define VIRTIO_SLOT_SIZE 0x200
@@ -411,7 +411,7 @@ int main(int argc, char *argv[]) {
             goto skip_blk;
         }
         volatile uint32_t *vio = (volatile uint32_t *)((uintptr_t)vio_vaddr + blk_slot * VIRTIO_SLOT_SIZE);
-        printf("[fs] Block device at slot %d\n", blk_slot);
+        /* quiet */
 
         /* Allocate DMA pages via vka */
         vka_object_t dma_frames[4];
@@ -433,9 +433,7 @@ int main(int argc, char *argv[]) {
             dma_paddrs[i] = ga.paddr;
         }
         if (!dma_ok) goto skip_blk;
-        printf("[fs] DMA pages: 0x%lx 0x%lx 0x%lx 0x%lx\n",
-               (unsigned long)dma_paddrs[0], (unsigned long)dma_paddrs[1],
-               (unsigned long)dma_paddrs[2], (unsigned long)dma_paddrs[3]);
+        /* quiet */
 
         /* Check contiguity — virtio legacy needs contiguous phys for virtqueue */
         int contig = 1;
@@ -453,7 +451,7 @@ int main(int argc, char *argv[]) {
             goto skip_blk;
         }
         uint64_t dma_pa = dma_paddrs[0];
-        printf("[fs] DMA at va=%p pa=0x%lx\n", dma_vaddr, (unsigned long)dma_pa);
+        /* quiet */
 
         /* Zero DMA region */
         uint8_t *dma = (uint8_t *)dma_vaddr;
@@ -474,7 +472,7 @@ int main(int argc, char *argv[]) {
         VIO_W(VIRTIO_MMIO_QUEUE_NUM, qsz);
         VIO_W(VIRTIO_MMIO_QUEUE_PFN, (uint32_t)(dma_pa / 4096));
         VIO_W(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK);
-        printf("[fs] virtio init OK (qsz=%u)\n", (unsigned)qsz);
+        /* quiet */
 
         /* Layout: desc at 0, avail at 0x100, used at 0x1000, req at 0x2000 */
         struct virtq_desc  *desc  = (struct virtq_desc *)(dma);
@@ -534,9 +532,8 @@ int main(int argc, char *argv[]) {
 
         /* Check ext2 magic at offset 0x38 in superblock */
         uint16_t ext2_magic = req->data[0x38] | (req->data[0x39] << 8);
-        printf("[fs] ext2 magic: 0x%04x\n", ext2_magic);
         if (ext2_magic == 0xEF53) {
-            printf("[fs] PASS: ext2 superblock found!\n");
+            /* quiet */
     
             /* Save virtio state for fs thread */
             blk_vio = vio;
@@ -546,7 +543,7 @@ int main(int argc, char *argv[]) {
             /* Init ext2 */
             int fs_err = ext2_init(&ext2, blk_read_sector);
             if (fs_err == 0) {
-                printf("[fs] ext2 filesystem mounted\n");
+                printf("[boot] ext2 filesystem mounted\n");
             } else {
                 printf("[fs] ext2 init failed: %d\n", fs_err);
             }
@@ -575,7 +572,7 @@ skip_blk:
             sel4utils_start_thread(&fs_thread,
                 (sel4utils_thread_entry_fn)fs_thread_fn,
                 (void *)(uintptr_t)fs_ep_cap, NULL, 1);
-            printf("[fs] Filesystem thread started\n");
+            /* quiet */
         }
     }
 
@@ -589,11 +586,11 @@ skip_blk:
             sel4utils_start_thread(&exec_thread,
                 (sel4utils_thread_entry_fn)exec_thread_fn,
                 (void *)(uintptr_t)exec_ep_cap, NULL, 1);
-            printf("[exec] Exec thread started\n");
+            /* quiet */
         }
     }
 
-    printf("[proc] Starting interactive shell...\n");
+    /* quiet */
     {
         sel4utils_process_t serial_proc, shell_proc;
         seL4_CPtr caps[1], slots[1];
@@ -608,7 +605,7 @@ skip_blk:
         error = spawn_with_args("mini_shell", 200, &shell_proc,
                                 &fault_ep, 3, sh_caps, sh_slots);
         if (error) { printf("[proc] shell FAILED\n"); goto idle; }
-        printf("[proc] Shell ready.\n\n");
+        /* quiet */
     }
 
     /* Main loop: keyboard polling + exec requests */
