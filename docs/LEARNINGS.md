@@ -352,3 +352,23 @@ Modular Python builder in `scripts/ext2/builder.py`. Supports:
 
 ### Content Should Not Be Hardcoded
 Early versions hardcoded /etc/motd, /etc/passwd etc. in the Python builder. Now all content lives in `disk/rootfs/` and gets installed via --rootfs flag. Builder only creates the directory skeleton (bin, sbin, etc, home, tmp, dev, var, proc).
+
+## Cross-VSpace Thread Creation (v0.4.30)
+
+### seL4_TCB_Configure Has Mixed Cap Resolution
+Parameters `cspace_root`, `vspace_root`, and `bufferFrame` are resolved from the **caller's** CSpace at configure time. But `fault_ep` is a raw CPtr **stored in the TCB** and resolved from the **thread's own CSpace** at fault time. Passing a root-side slot number for fault_ep causes a cap fault when the thread faults, because the child's 12-bit CSpace doesn't contain that slot.
+
+Solution: copy the fault endpoint into the child's CSpace via `sel4utils_copy_cap_to_process`, pass the child-side slot to TCB_Configure, and Recv on the root-side cap.
+
+### Manual TCB Creation for Child Process Threads
+`sel4utils_configure_thread` cannot create threads in another process's VSpace because it passes the IPC buffer cap from root's CSpace, but the kernel resolves it from root's CSpace (caller). This happens to work. However, fault_ep does NOT work the same way. Full manual setup required:
+1. `vka_alloc_tcb` — allocate TCB
+2. `vka_alloc_endpoint` — fault EP
+3. `vka_alloc_frame` — IPC buffer
+4. `vspace_map_pages(&child_vspace, ...)` — map IPC buffer + stack into child
+5. `sel4utils_copy_cap_to_process` — copy fault EP to child CSpace
+6. `seL4_TCB_Configure(tcb, child_fault_cap, child_cnode, guard, child_pgd, ...)` 
+7. `seL4_TCB_SetPriority` + `seL4_TCB_WriteRegisters` with resume=1
+
+### Mutex Without IPC
+Threads sharing a VSpace can use `__atomic_test_and_set`/`__atomic_clear` for spinlock mutexes. `seL4_Yield()` in the spin loop is essential — at equal priority, without it the spinning thread never yields and other threads starve.
