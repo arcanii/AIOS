@@ -497,6 +497,26 @@ void aios_set_cwd(const char *path) {
 }
 
 
+/* Exit: trigger a page fault so exec_thread catches it cleanly */
+static long aios_sys_exit(va_list ap) {
+    int status = va_arg(ap, int);
+    (void)status;
+    /* Trigger VM fault — exec_thread Recv's on fault ep */
+    volatile int *null = (volatile int *)0;
+    *null = 0;
+    __builtin_unreachable();
+    return 0;
+}
+
+static long aios_sys_exit_group(va_list ap) {
+    int status = va_arg(ap, int);
+    (void)status;
+    volatile int *null = (volatile int *)0;
+    *null = 0;
+    __builtin_unreachable();
+    return 0;
+}
+
 static long aios_sys_chdir(va_list ap) {
     const char *path = va_arg(ap, const char *);
     if (!path) return -ENOENT;
@@ -761,6 +781,8 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     muslcsys_install_syscall(__NR_fstatat, aios_sys_fstatat);
 
     /* Easy POSIX stubs */
+    muslcsys_install_syscall(__NR_exit, aios_sys_exit);
+    muslcsys_install_syscall(__NR_exit_group, aios_sys_exit_group);
     muslcsys_install_syscall(__NR_chdir, aios_sys_chdir);
     muslcsys_install_syscall(__NR_getcwd, aios_sys_getcwd);
     muslcsys_install_syscall(__NR_getpid, aios_sys_getpid);

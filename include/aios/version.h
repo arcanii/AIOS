@@ -3,7 +3,7 @@
 
 #define AIOS_VERSION_MAJOR  0
 #define AIOS_VERSION_MINOR  4
-#define AIOS_VERSION_PATCH  27
+#define AIOS_VERSION_PATCH  28
 
 /* Build number — auto-generated, do NOT edit by hand */
 #include "build_number.h"
