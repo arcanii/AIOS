@@ -1,1 +1,0 @@
-regen /Users/bryan/Desktop/github_repos/AIOS/build-04/kernel/kernel.dtb /Users/bryan/Desktop/github_repos/AIOS/build-04/qemu-arm-virt.dts;/Users/bryan/Desktop/github_repos/AIOS/kernel/src/plat/qemu-arm-virt/overlay-qemu-arm-virt.dts;/Users/bryan/Desktop/github_repos/AIOS/kernel/src/plat/qemu-arm-virt/overlay-reserve-vm-memory.dts
