@@ -7,7 +7,7 @@
 - **Repository**: https://github.com/arcanii/AIOS
 - **Branch**: main
 - **Developer**: Bryan
-- **Current Version**: v0.4.29
+- **Current Version**: v0.4.35
 
 ## Development Environment
 
@@ -74,7 +74,11 @@ This allows the user to report "Script B failed" without ambiguity.
         -DCROSS_COMPILER_PREFIX=aarch64-linux-gnu- ..
     ninja
 
-### Rebuild sbase (after aios_posix changes)
+### Rebuild sbase (parallel builder)
+
+    python3 scripts/build_sbase.py [--clean] [--jobs N]
+
+### Rebuild sbase (manual, after aios_posix changes)
 
     cd ~/Desktop/github_repos/AIOS
     SBASE=~/Desktop/github_repos/sbase
@@ -124,20 +128,25 @@ This allows the user to report "Script B failed" without ambiguity.
 
     AIOS/
     ├── src/
-    │   ├── aios_root.c          # Root task: boot, drivers, exec_thread, fs_thread
+    │   ├── aios_root.c          # Root task: boot, drivers, exec/fs/thread/auth servers
+    │   ├── aios_auth.c          # Auth server: SHA-3-512, user DB, sessions, permissions
+    │   ├── aios_log.c           # Kernel log: 16KB ring buffer + serial echo
     │   ├── ext2.c               # ext2 filesystem (read + write + indirect blocks)
     │   ├── vfs.c                # Virtual filesystem switch (mount dispatch)
-    │   ├── procfs.c             # /proc virtual filesystem
+    │   ├── procfs.c             # /proc: version, uptime, status, mounts, log
     │   ├── lib/
-    │   │   ├── aios_posix.c     # POSIX syscall shim (40+ syscalls)
-    │   │   └── aios_posix.h     # POSIX shim header + AIOS_INIT macro
-    │   └── apps/                # AIOS-specific programs (9 remaining)
+    │   │   ├── aios_posix.c     # POSIX shim (40+ syscalls + pthreads + getpwuid)
+    │   │   └── aios_posix.h     # POSIX shim header + IPC labels
+    │   └── apps/                # AIOS programs + test_threads
     ├── include/aios/
     │   ├── version.h, build_number.h, ext2.h, vfs.h, procfs.h
+    │   ├── aios_auth.h          # Auth protocol: IPC labels, user/session types
+    │   ├── aios_log.h           # Log macros: AIOS_LOG_INFO/WARN/ERROR/DEBUG
     ├── scripts/
     │   ├── mkdisk.py            # Disk image CLI
     │   ├── ext2/builder.py      # ext2 image builder (multi-group, indirect blocks)
-    │   ├── aios-cc              # Cross-compiler wrapper
+    │   ├── aios-cc              # Cross-compiler wrapper (per-PID temp dirs, --wrap flags)
+    │   ├── build_sbase.py       # Parallel sbase builder (16 jobs, progress bar)
     │   ├── bump-patch.sh, bump-minor.sh, bump-build.sh, version.sh
     │   └── posix_audit.py       # POSIX compliance audit
     ├── disk/
@@ -161,8 +170,10 @@ This allows the user to report "Script B failed" without ambiguity.
 1. ELF-loader loads kernel + root task
 2. Root task initializes: allocator, SMP, virtio-blk, ext2, VFS
 3. VFS mounts: / (ext2) and /proc (procfs)
-4. Spawns serial_server + mini_shell from CPIO
-5. Starts fs_thread + exec_thread
+4. Auth init: load /etc/passwd (SHA-3-512), auto-login root
+5. Starts fs_thread + exec_thread + thread_server + auth_server
+6. Spawns serial_server + mini_shell from CPIO
+7. mini_shell presents login prompt, authenticates via auth IPC
 
 ### Process Model
 
@@ -184,8 +195,10 @@ This allows the user to report "Script B failed" without ambiguity.
 ### POSIX Shim (aios_posix.c)
 
 - __wrap_main: intercepts main(), strips cap args, inits shim
-- argv from exec: [serial_ep, fs_ep, CWD, progname, arg1, ...]
+- argv from exec: [serial_ep, fs_ep, thread_ep, auth_ep, CWD, progname, arg1, ...]
+- CWD format: uid:gid:/path (encodes session identity)
 - Programs see clean POSIX argv: [progname, arg1, ...]
+- --wrap flags: main, pthread_create/join/exit/detach, pthread_mutex_*, getpwuid, getpwnam
 - 40+ syscalls overridden via muslcsys_install_syscall()
 - resolve_path() handles relative paths against CWD
 - Environment variables set via environ pointer
@@ -195,9 +208,14 @@ This allows the user to report "Script B failed" without ambiguity.
     SER_PUTC=1, SER_GETC=2
     FS_LS=10, FS_CAT=11, FS_STAT=12
     FS_MKDIR=14, FS_WRITE_FILE=15, FS_UNLINK=16, FS_UNAME=17
-    EXEC_RUN=20
+    EXEC_RUN=20, EXEC_NICE=21
+    THREAD_CREATE=30, THREAD_JOIN=31
+    AUTH_LOGIN=40, AUTH_LOGOUT=41, AUTH_WHOAMI=42, AUTH_CHECK_FILE=43
+    AUTH_CHECK_KILL=44, AUTH_CHECK_PRIV=45, AUTH_USERADD=46
+    AUTH_PASSWD=47, AUTH_SU=48, AUTH_GROUPS=49, AUTH_USERMOD=50
+    AUTH_GET_USER=51
 
-### Implemented Syscalls (40+)
+### Implemented Syscalls (50+)
 
 File I/O: open, openat (O_CREAT), read, readv, write, writev, close, lseek
 Directories: getdents64, chdir, mkdirat, unlinkat
@@ -271,3 +289,9 @@ Memory: mmap, munmap, brk, madvise (from muslcsys)
 | v0.4.27 | sbase ls + chdir + fstatat fix |
 | v0.4.28 | Crash recovery (exit via VM fault) |
 | v0.4.29 | CWD propagation + 79 sbase tools + path resolution |
+| v0.4.30 | pthreads: create, join, mutex (manual TCB in child VSpaces) |
+| v0.4.31 | AIOS_LOG: 16KB ring buffer + serial echo + /proc/log + /proc/uptime |
+| v0.4.32 | Auth server: SHA-3-512 (Keccak), user DB, sessions, /etc/passwd |
+| v0.4.33 | Login prompt: password masking, 3 retries, logout |
+| v0.4.34 | uid/gid propagation + getpwuid via auth IPC |
+| v0.4.35 | su/passwd + file permissions + line editor + parallel sbase builder |

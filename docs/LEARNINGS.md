@@ -372,3 +372,34 @@ Solution: copy the fault endpoint into the child's CSpace via `sel4utils_copy_ca
 
 ### Mutex Without IPC
 Threads sharing a VSpace can use `__atomic_test_and_set`/`__atomic_clear` for spinlock mutexes. `seL4_Yield()` in the spin loop is essential — at equal priority, without it the spinning thread never yields and other threads starve.
+
+
+## Parallel Build Safety (v0.4.36)
+
+### Per-PID Temp Directories for aios-cc
+When running multiple aios-cc instances in parallel (e.g., build_sbase.py with 16 jobs), all instances write object files to `/tmp/aios_*.o`. If two processes compile the same source file (e.g., `libutil/cp.c`), they clobber each other's `.o` file. Fix: each aios-cc invocation uses `/tmp/aios_cc_$$` (PID-scoped temp dir) with a trap to clean up on exit.
+
+## Auth Server (v0.4.32-35)
+
+### SHA-3-512 vs SHA-256
+SHA-3 (Keccak) uses sponge construction, not Merkle-Damgård. No length extension attacks. 128-char hex hashes (64 bytes). The `passhash` field needs 129 bytes. Self-contained implementation: ~100 lines of C for Keccak-f[1600] + absorb/squeeze.
+
+### /etc/passwd Loading Order
+`aios_auth_load_passwd()` must be called AFTER VFS mounts are complete. It zeros the user database before parsing — if `vfs_read` fails, the database is empty. The `aios_auth_init()` call sets defaults BEFORE load_passwd, so defaults survive if the file isn't found.
+
+### Auth IPC Must Be Called From Root Threads, Not Main
+Log macros defined in `aios_auth.c` with `LOG_MODULE "auth"` compile correctly but the `printf` used by `AIOS_LOG_*` requires the serial to be initialized. Auth init must happen after UART mapping and serial endpoint creation.
+
+### Badge-Based Permission Enforcement
+Each child process gets a minted (badged) copy of fs_ep. Badge = active_procs index + 1. fs_thread extracts the badge from `seL4_Recv`, looks up uid from `active_procs[badge-1].uid`. Badge 0 = unbadged = internal root-side caller = always allowed.
+
+### CWD Marker Carries uid:gid
+Format: `CWD=uid:gid:/path`. exec_thread parses uid:gid before the path, stores in `active_procs[].uid/gid`. The child's `__wrap_main` also parses it for `getuid()`/`getgid()`. This avoids adding more argv entries.
+
+## Shell (v0.4.35)
+
+### su Stack
+Shell maintains a 4-deep stack of (uid, gid, token, username). `su` pushes current identity, switches to target. `exit` pops — if stack empty, returns to login prompt. This matches Unix behavior where nested su sessions unwind with exit.
+
+### Line Editor Escape Sequences
+Arrow keys send 3-byte ANSI sequences: ESC `[` A/B/C/D. A state machine (0=normal, 1=got ESC, 2=got ESC[) processes them. Left/right move cursor; up/down are silently consumed. Insert at cursor requires redrawing from cursor to end of line, then repositioning cursor with ESC[D sequences.

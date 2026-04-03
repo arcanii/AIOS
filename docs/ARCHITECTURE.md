@@ -186,16 +186,33 @@ qemu-system-aarch64 -machine virt,virtualization=on \
     -kernel build-04/images/aios_root-image-arm-qemu-arm-virt
 ```
 
+## New Subsystems (v0.4.30-35)
+
+### Thread Server (v0.4.30)
+Handles THREAD_CREATE/THREAD_JOIN IPC. Creates threads in child VSpaces via manual TCB setup: allocates TCB + fault EP + IPC buffer + stack, copies fault EP into child CSpace, configures via seL4_TCB_Configure, sets registers via WriteRegisters. Mutex via userspace spinlock + seL4_Yield.
+
+### Kernel Log (v0.4.31)
+16KB ring buffer in root VSpace. AIOS_LOG_INFO/WARN/ERROR/DEBUG macros with HH:MM:SS timestamps. Serial echo for real-time output. /proc/log for dmesg-style access. Per-module LOG_MODULE tagging.
+
+### Auth Server (v0.4.32-35)
+SHA-3-512 (Keccak) password hashing. 16-user database loaded from /etc/passwd at boot. Session-based access control (4 concurrent sessions). IPC commands: LOGIN, LOGOUT, WHOAMI, CHECK_FILE, CHECK_KILL, CHECK_PRIV, USERADD, PASSWD, SU, GROUPS, USERMOD, GET_USER.
+
+### File Permission Enforcement (v0.4.35)
+fs_ep minted per-process with badge = active_procs index. fs_thread extracts badge, looks up uid. Non-root denied write/mkdir/unlink on /etc/ and /bin/. Extensible to full Unix permission model.
+
+### Login Flow (v0.4.33-35)
+mini_shell presents "AIOS login:" prompt. Password masked with asterisks. 3 attempts before reset. Successful login sets session uid/gid/token. su/exit maintain 4-deep identity stack.
+
 ## Known Limitations
 
 - Non-MCS scheduler (MCS sched context setup fails — deferred)
-- No filesystem yet (ext2/virtio-blk port pending from 0.3.x)
-- Shell commands are built-in only (no ELF loading from disk)
 - UART TX via seL4_DebugPutChar (avoids kernel contention)
 - UART RX polling (no interrupt-driven input)
 - No fork() (spawn only)
 - Process priority is static (no runtime nice/renice)
 - Single QEMU platform (no real hardware tested)
+- Auth runs as thread in root VSpace (not yet isolated)
+- pthread_join blocks thread_server (one join at a time)
 
 ## Comparison with 0.3.x
 
