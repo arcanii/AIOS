@@ -35,6 +35,7 @@ AiosChildApp(posix_echo)
 AiosChildApp(posix_wc)
 AiosChildApp(posix_head)
 AiosChildApp(posix_uname)
+AiosChildApp(posix_ls)
 
 target_link_libraries(sysinfo aios_posix)
 target_link_libraries(aios_cat aios_posix)
@@ -44,9 +45,10 @@ target_link_libraries(posix_echo aios_posix)
 target_link_libraries(posix_wc aios_posix)
 target_link_libraries(posix_head aios_posix)
 target_link_libraries(posix_uname aios_posix)
+target_link_libraries(posix_ls aios_posix)
 
 MakeCPIO(apps_cpio.o
-    "$<TARGET_FILE:hello_child>;$<TARGET_FILE:echo_server>;$<TARGET_FILE:serial_server>;$<TARGET_FILE:mini_shell>;$<TARGET_FILE:crash_test>;$<TARGET_FILE:blk_test>;$<TARGET_FILE:sysinfo>;$<TARGET_FILE:aios_cat>;$<TARGET_FILE:posix_test>;$<TARGET_FILE:posix_cat>;$<TARGET_FILE:posix_echo>;$<TARGET_FILE:posix_wc>;$<TARGET_FILE:posix_head>;$<TARGET_FILE:posix_uname>"
+    "$<TARGET_FILE:hello_child>;$<TARGET_FILE:echo_server>;$<TARGET_FILE:serial_server>;$<TARGET_FILE:mini_shell>;$<TARGET_FILE:crash_test>;$<TARGET_FILE:blk_test>;$<TARGET_FILE:sysinfo>;$<TARGET_FILE:aios_cat>;$<TARGET_FILE:posix_test>;$<TARGET_FILE:posix_cat>;$<TARGET_FILE:posix_echo>;$<TARGET_FILE:posix_wc>;$<TARGET_FILE:posix_head>;$<TARGET_FILE:posix_uname>;$<TARGET_FILE:posix_ls>"
 )
 
 add_executable(aios_root ${AIOS_ROOT}/src/aios_root.c ${AIOS_ROOT}/src/ext2.c apps_cpio.o)

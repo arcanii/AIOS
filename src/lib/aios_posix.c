@@ -18,6 +18,7 @@
 #include <muslcsys/vsyscall.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <sys/stat.h>
 
 static seL4_CPtr ser_ep = 0;
 static seL4_CPtr fs_ep_cap = 0;
@@ -276,6 +277,72 @@ static long aios_sys_readv(va_list ap) {
     return total;
 }
 
+/* ── stat/fstat via IPC ── */
+static long aios_sys_fstat(va_list ap) {
+    int fd = va_arg(ap, int);
+    struct stat *st = va_arg(ap, struct stat *);
+
+    /* Zero the struct */
+    char *p = (char *)st;
+    for (int i = 0; i < (int)sizeof(struct stat); i++) p[i] = 0;
+
+    /* stdout/stderr/stdin */
+    if (fd < 3) {
+        st->st_mode = 0020666; /* char device */
+        st->st_blksize = 4096;
+        return 0;
+    }
+
+    /* aios fds */
+    if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
+        aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
+        if (!f->active) return -EBADF;
+        st->st_mode = 0100644; /* regular file */
+        st->st_size = f->size;
+        st->st_blksize = 4096;
+        return 0;
+    }
+    return -EBADF;
+}
+
+static int fetch_stat(const char *path, uint32_t *mode, uint32_t *size) {
+    if (!fs_ep_cap) return -1;
+    int pl = str_len(path);
+    seL4_SetMR(0, (seL4_Word)pl);
+    int mr = 1;
+    seL4_Word w = 0;
+    for (int i = 0; i < pl; i++) {
+        w |= ((seL4_Word)(uint8_t)path[i]) << ((i % 8) * 8);
+        if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
+    }
+    seL4_MessageInfo_t reply = seL4_Call(fs_ep_cap,
+        seL4_MessageInfo_new(12 /* FS_STAT */, 0, 0, mr));
+    if (seL4_GetMR(0) == 0) return -1;
+    *mode = (uint32_t)seL4_GetMR(1);
+    *size = (uint32_t)seL4_GetMR(2);
+    return 0;
+}
+
+static long aios_sys_fstatat(va_list ap) {
+    int dirfd = va_arg(ap, int);
+    const char *pathname = va_arg(ap, const char *);
+    struct stat *st = va_arg(ap, struct stat *);
+    int flags = va_arg(ap, int);
+    (void)dirfd; (void)flags;
+
+    char *p = (char *)st;
+    for (int i = 0; i < (int)sizeof(struct stat); i++) p[i] = 0;
+
+    uint32_t mode, size;
+    if (fetch_stat(pathname, &mode, &size) != 0) return -ENOENT;
+
+    st->st_mode = mode;
+    st->st_size = size;
+    st->st_blksize = 4096;
+    st->st_nlink = 1;
+    return 0;
+}
+
 /* ── Init ── */
 void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     ser_ep = serial_ep;
@@ -301,5 +368,11 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
 #endif
 #ifdef __NR_lseek
     muslcsys_install_syscall(__NR_lseek, aios_sys_lseek);
+#endif
+#ifdef __NR_fstat
+    muslcsys_install_syscall(__NR_fstat, aios_sys_fstat);
+#endif
+#ifdef __NR_newfstatat
+    muslcsys_install_syscall(__NR_newfstatat, aios_sys_fstatat);
 #endif
 }

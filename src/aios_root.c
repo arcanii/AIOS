@@ -167,8 +167,6 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
                 break;
             }
         }
-        printf("[exec] Running: %s%s%s\n", prog_name,
-               exec_args ? " " : "", exec_args ? exec_args : "");
 
         /* Create a local fault ep */
         vka_object_t child_fault_ep;
@@ -240,7 +238,7 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         /* Wait for child to exit */
         seL4_Word child_badge;
         seL4_Recv(child_fault_ep.cptr, &child_badge);
-        printf("[exec] %s exited\n", prog_name);
+        // printf("[exec] %s exited\n", prog_name);
         sel4utils_destroy_process(&proc, &vka);
 
         /* Reply to shell via saved cap */
@@ -367,6 +365,40 @@ static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
                 seL4_SetMR(i + 1, w);
             }
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, mrs + 1));
+            break;
+        }
+        case FS_STAT: {
+            seL4_Word path_len = seL4_GetMR(0);
+            char st_path[128];
+            int spl = (path_len > 127) ? 127 : (int)path_len;
+            int st_mr = 1;
+            for (int i = 0; i < spl; i++) {
+                if (i % 8 == 0 && i > 0) st_mr++;
+                st_path[i] = (char)((seL4_GetMR(st_mr) >> ((i % 8) * 8)) & 0xFF);
+            }
+            st_path[spl] = '\0';
+
+            uint32_t ino = EXT2_ROOT_INO;
+            int found = 0;
+            if (spl == 0 || (spl == 1 && st_path[0] == '/')) {
+                found = 1;
+            } else if (ext2_resolve_path(&ext2, st_path, &ino) == 0) {
+                found = 1;
+            }
+
+            if (found) {
+                struct ext2_inode inode;
+                ext2_read_inode(&ext2, ino, &inode);
+                /* MR0=found, MR1=mode, MR2=size, MR3=inode */
+                seL4_SetMR(0, 1);
+                seL4_SetMR(1, (seL4_Word)inode.i_mode);
+                seL4_SetMR(2, (seL4_Word)inode.i_size);
+                seL4_SetMR(3, (seL4_Word)ino);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 4));
+            } else {
+                seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            }
             break;
         }
         default:
