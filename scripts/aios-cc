@@ -1,0 +1,176 @@
+#!/bin/bash
+# AIOS Cross-Compiler Wrapper
+# Compiles standalone C programs for AIOS
+#
+# Usage: ./scripts/aios-cc source.c -o output_name
+#        ./scripts/aios-cc -c source.c -o source.o  (compile only)
+
+AIOS_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+BUILD="${AIOS_ROOT}/build-04"
+CC=aarch64-linux-gnu-gcc
+
+# Sysroot
+SYSROOT="--sysroot=${BUILD}"
+
+# Include paths
+INCLUDES=(
+    -I${BUILD}/projects/musllibc/build-temp/stage/include
+    -I${AIOS_ROOT}/src/lib
+    -I${AIOS_ROOT}/include
+    -I${AIOS_ROOT}/kernel/libsel4/include
+    -I${AIOS_ROOT}/kernel/libsel4/arch_include/arm
+    -I${AIOS_ROOT}/kernel/libsel4/sel4_arch_include/aarch64
+    -I${AIOS_ROOT}/kernel/libsel4/sel4_plat_include/qemu-arm-virt
+    -I${AIOS_ROOT}/kernel/libsel4/mode_include/64
+    -I${BUILD}/libsel4/include
+    -I${BUILD}/libsel4/arch_include/arm
+    -I${BUILD}/libsel4/sel4_arch_include/aarch64
+    -I${BUILD}/libsel4/autoconf
+    -I${BUILD}/kernel/gen_config
+    -I${BUILD}/libsel4/gen_config
+    -I${AIOS_ROOT}/projects/seL4_libs/libsel4muslcsys/include
+    -I${BUILD}/projects/seL4_libs/libsel4muslcsys/gen_config
+    -I${AIOS_ROOT}/projects/sel4runtime/include
+    -I${AIOS_ROOT}/projects/sel4runtime/include/mode/64
+    -I${AIOS_ROOT}/projects/sel4runtime/include/arch/arm
+    -I${AIOS_ROOT}/projects/sel4runtime/include/sel4_arch/aarch64
+    -I${AIOS_ROOT}/projects/util_libs/libutils/include
+    -I${AIOS_ROOT}/projects/util_libs/libutils/arch_include/arm
+    -I${BUILD}/projects/util_libs/libutils/gen_config
+    -I${AIOS_ROOT}/projects/seL4_libs/libsel4utils/include
+    -I${AIOS_ROOT}/projects/seL4_libs/libsel4utils/sel4_arch_include/aarch64
+    -I${AIOS_ROOT}/projects/seL4_libs/libsel4utils/arch_include/arm
+    -I${BUILD}/projects/seL4_libs/libsel4utils/gen_config
+    -I${AIOS_ROOT}/projects/seL4_libs/libsel4vspace/include
+    -I${AIOS_ROOT}/projects/seL4_libs/libsel4vspace/arch_include/arm
+    -I${AIOS_ROOT}/projects/seL4_libs/libsel4vka/include
+    -I${AIOS_ROOT}/projects/seL4_libs/libsel4vka/sel4_arch_include/aarch64
+    -I${AIOS_ROOT}/projects/seL4_libs/libsel4vka/arch_include/arm
+    -I${BUILD}/projects/seL4_libs/libsel4vka/gen_config
+    -I${AIOS_ROOT}/projects/seL4_libs/libsel4debug/include
+    -I${AIOS_ROOT}/projects/seL4_libs/libsel4debug/arch_include/arm
+    -I${AIOS_ROOT}/projects/seL4_libs/libsel4debug/sel4_arch_include/aarch64
+    -I${AIOS_ROOT}/projects/seL4_libs/libsel4simple/include
+    -I${AIOS_ROOT}/projects/seL4_libs/libsel4simple/arch_include/arm
+    -I${AIOS_ROOT}/projects/seL4_libs/libsel4simple-default/include
+    -I${AIOS_ROOT}/projects/seL4_libs/libsel4platsupport/include
+    -I${AIOS_ROOT}/projects/seL4_libs/libsel4platsupport/arch_include/arm
+    -I${AIOS_ROOT}/projects/seL4_libs/libsel4platsupport/plat_include/qemu-arm-virt
+    -I${AIOS_ROOT}/projects/util_libs/libplatsupport/include
+    -I${AIOS_ROOT}/projects/util_libs/libplatsupport/plat_include/qemu-arm-virt
+    -I${AIOS_ROOT}/projects/util_libs/libplatsupport/sel4_arch_include/aarch64
+    -I${AIOS_ROOT}/projects/util_libs/libplatsupport/arch_include/arm
+    -I${AIOS_ROOT}/projects/util_libs/libfdt/include
+    -I${AIOS_ROOT}/projects/util_libs/libfdt/.
+    -I${BUILD}/projects/util_libs/libplatsupport/gen_config
+    -I${AIOS_ROOT}/projects/util_libs/libelf/include
+    -I${AIOS_ROOT}/projects/util_libs/libcpio/include
+    -I${AIOS_ROOT}/projects/seL4_libs/libsel4allocman/include
+    -I${AIOS_ROOT}/projects/seL4_libs/libsel4allocman/sel4_arch/aarch64
+    -I${AIOS_ROOT}/projects/seL4_libs/libsel4allocman/arch/arm
+)
+
+# Compile flags
+CFLAGS=(
+    -fvisibility=default
+    -march=armv8-a
+    -D__KERNEL_64__
+    -std=gnu11
+    -nostdinc
+    -fno-pic -fno-pie
+    -fno-stack-protector
+    -fno-asynchronous-unwind-tables
+    -ftls-model=local-exec
+    -mstrict-align
+    -mno-outline-atomics
+)
+
+# Link flags
+LDFLAGS=(
+    -static -nostdlib
+    -z max-page-size=0x1000
+    -Wl,-u,aios_init
+    -Wl,-umuslcsys_init_muslc
+)
+
+# CRT objects
+CRT_BEGIN="${BUILD}/lib/crt0.o ${BUILD}/lib/crti.o"
+CRT_END="${BUILD}/lib/crtn.o"
+GCC_CRT_BEGIN="$(${CC} -print-file-name=crtbegin.o)"
+GCC_CRT_END="$(${CC} -print-file-name=crtend.o)"
+
+# Libraries
+LIBS=(
+    -Wl,--start-group
+    -lgcc -lgcc_eh
+    ${BUILD}/projects/sel4runtime/libsel4runtime.a
+    ${BUILD}/libsel4/libsel4.a
+    ${BUILD}/projects/seL4_libs/libsel4muslcsys/libsel4muslcsys.a
+    ${BUILD}/projects/seL4_libs/libsel4platsupport/libsel4platsupport.a
+    ${BUILD}/projects/seL4_libs/libsel4utils/libsel4utils.a
+    ${BUILD}/projects/seL4_libs/libsel4simple/libsel4simple.a
+    ${BUILD}/projects/seL4_libs/libsel4simple-default/libsel4simple-default.a
+    ${BUILD}/projects/seL4_libs/libsel4vka/libsel4vka.a
+    ${BUILD}/projects/seL4_libs/libsel4allocman/libsel4allocman.a
+    ${BUILD}/projects/aios/libaios_posix.a
+    ${BUILD}/projects/seL4_libs/libsel4muslcsys/libsel4muslcsys.a
+    ${BUILD}/projects/seL4_libs/libsel4utils/libsel4utils.a
+    ${BUILD}/projects/seL4_libs/libsel4platsupport/libsel4platsupport.a
+    ${BUILD}/projects/sel4runtime/libsel4runtime.a
+    ${BUILD}/projects/seL4_libs/libsel4simple-default/libsel4simple-default.a
+    ${BUILD}/projects/util_libs/libplatsupport/libplatsupport.a
+    ${BUILD}/projects/util_libs/libfdt/libfdt.a
+    -Wl,--undefined=arm_gic_ptr,--undefined=tegra_ictlr_ptr,--undefined=arm_gicv3_ptr,--undefined=fsl_avic_ptr,--undefined=ti_omap3_ptr
+    ${BUILD}/projects/seL4_libs/libsel4simple/libsel4simple.a
+    ${BUILD}/projects/seL4_libs/libsel4vspace/libsel4vspace.a
+    ${BUILD}/projects/seL4_libs/libsel4vka/libsel4vka.a
+    ${BUILD}/projects/seL4_libs/libsel4debug/libsel4debug.a
+    ${BUILD}/libsel4/libsel4.a
+    ${BUILD}/projects/util_libs/libelf/libelf.a
+    -Wl,-u -Wl,__vsyscall_ptr
+    ${BUILD}/projects/util_libs/libcpio/libcpio.a
+    ${BUILD}/projects/util_libs/libutils/libutils.a
+    ${BUILD}/projects/musllibc/build-temp/stage/lib/libc.a
+    -Wl,--end-group
+)
+
+# Detect mode: compile-only (-c) or full link
+if echo "$@" | grep -q "\-c"; then
+    # Compile only
+    exec ${CC} ${SYSROOT} "${INCLUDES[@]}" "${CFLAGS[@]}" "$@"
+else
+    # Find source files and output
+    SOURCES=()
+    OUTPUT=""
+    EXTRA=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -o) OUTPUT="$2"; shift 2 ;;
+            *.c) SOURCES+=("$1"); shift ;;
+            *.o) EXTRA+=("$1"); shift ;;
+            *) EXTRA+=("$1"); shift ;;
+        esac
+    done
+
+    if [ -z "$OUTPUT" ]; then
+        echo "Usage: aios-cc source.c -o output" >&2
+        exit 1
+    fi
+
+    # Compile sources to .o
+    OBJS=()
+    for src in "${SOURCES[@]}"; do
+        obj="/tmp/aios_$(basename ${src} .c).o"
+        ${CC} ${SYSROOT} "${INCLUDES[@]}" "${CFLAGS[@]}" -c "$src" -o "$obj"
+        if [ $? -ne 0 ]; then exit 1; fi
+        OBJS+=("$obj")
+    done
+
+    # Link
+    exec ${CC} ${SYSROOT} "${CFLAGS[@]}" "${LDFLAGS[@]}" \
+        ${CRT_BEGIN} ${GCC_CRT_BEGIN} \
+        "${OBJS[@]}" "${EXTRA[@]}" \
+        "${LIBS[@]}" \
+        ${GCC_CRT_END} ${CRT_END} \
+        -o "$OUTPUT"
+fi
