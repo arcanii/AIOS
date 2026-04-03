@@ -1,0 +1,1 @@
+Hello from AIOS ext2 filesystem!

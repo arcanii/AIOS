@@ -20,7 +20,7 @@ endmacro()
 macro(AiosPosixApp name)
     AiosChildApp(${name})
     target_link_libraries(${name} aios_posix)
-    target_link_options(${name} PRIVATE -Wl,-u,aios_init)
+    target_link_options(${name} PRIVATE -Wl,--wrap=main)
 endmacro()
 
 # System services

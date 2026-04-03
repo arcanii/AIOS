@@ -89,7 +89,7 @@ CFLAGS=(
 LDFLAGS=(
     -static -nostdlib
     -z max-page-size=0x1000
-    -Wl,-u,aios_init
+    -Wl,--wrap=main
     -Wl,-umuslcsys_init_muslc
 )
 

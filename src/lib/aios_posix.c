@@ -11,7 +11,6 @@
 #include "aios_posix.h"
 #include <arch_stdio.h>
 #include <sel4/sel4.h>
-#include <sel4runtime.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdarg.h>
@@ -674,6 +673,8 @@ static char *aios_envp[] = {
 };
 
 void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
+    /* Skip if already initialized (e.g. by __wrap_main) */
+    if (ser_ep && serial_ep == 0) return;
     ser_ep = serial_ep;
     fs_ep_cap = fs_endpoint;
 
@@ -735,10 +736,9 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
 }
 
 
-/* Auto-init: constructor runs before main().
- * Reads argc/argv from sel4runtime and calls aios_init().
- * Programs linking aios_posix get POSIX I/O automatically —
- * no AIOS_INIT() call needed.
+/* __wrap_main: intercepts main() to strip cap args from argv.
+ * exec_thread passes: argv[0]=serial_ep, argv[1]=fs_ep, argv[2..]=real args
+ * We init the POSIX shim, then call real main with clean argv.
  */
 static long _auto_parse(const char *s) {
     if (!s) return 0;
@@ -747,12 +747,15 @@ static long _auto_parse(const char *s) {
     return v;
 }
 
-__attribute__((constructor(200)))
-static void aios_auto_init(void) {
-    int argc = sel4runtime_argc();
-    char const *const *argv = sel4runtime_argv();
+int __real_main(int argc, char **argv);
+
+int __wrap_main(int argc, char **argv) {
+    /* argv layout: [serial_ep, fs_ep, progname, arg1, arg2, ...] */
     seL4_CPtr serial = 0, fs = 0;
     if (argc > 0 && argv[0]) serial = (seL4_CPtr)_auto_parse(argv[0]);
     if (argc > 1 && argv[1]) fs = (seL4_CPtr)_auto_parse(argv[1]);
-    if (serial) aios_init(serial, fs);
+    aios_init(serial, fs);
+
+    /* Strip 2 cap args: real main sees [progname, arg1, arg2, ...] */
+    return __real_main(argc - 2, argv + 2);
 }

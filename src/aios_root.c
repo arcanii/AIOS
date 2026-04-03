@@ -188,7 +188,7 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         sel4utils_process_t proc;
 
         /* Read ELF from disk — shell sends full path */
-        static char elf_buf[256 * 1024];
+        static char elf_buf[1024 * 1024];
         char elf_path[160];
         int epi = 0;
         const char *pn = prog_name;
@@ -255,6 +255,7 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         int child_argc = 0;
         child_argv[child_argc++] = s_ser;
         child_argv[child_argc++] = s_fs;
+        child_argv[child_argc++] = prog_name;  /* argv[0] for real main */
 
         /* Split exec_args by spaces */
         if (exec_args) {
