@@ -28,6 +28,7 @@
 
 static seL4_CPtr ser_ep = 0;
 static seL4_CPtr fs_ep_cap = 0;
+static char aios_cwd[256] = "/";
 
 seL4_CPtr aios_get_serial_ep(void) { return ser_ep; }
 seL4_CPtr aios_get_fs_ep(void) { return fs_ep_cap; }
@@ -444,8 +445,32 @@ static long aios_sys_fstatat(va_list ap) {
     char *p = (char *)st;
     for (int i = 0; i < (int)sizeof(struct stat); i++) p[i] = 0;
 
+    /* Resolve relative paths using CWD */
+    char resolved[256];
+    const char *lookup = pathname;
+    if (pathname[0] != '/') {
+        /* Relative path — prepend CWD */
+        int ci = 0;
+        while (aios_cwd[ci] && ci < 250) { resolved[ci] = aios_cwd[ci]; ci++; }
+        if (ci > 1) resolved[ci++] = '/';
+        if (pathname[0] == '.' && pathname[1] == 0) {
+            /* just "." — use CWD as-is */
+            resolved[ci] = 0;
+            if (ci > 1) resolved[ci-1] = 0; /* strip trailing / */
+        } else if (pathname[0] == '.' && pathname[1] == '/') {
+            const char *s = pathname + 2;
+            while (*s && ci < 255) resolved[ci++] = *s++;
+            resolved[ci] = 0;
+        } else {
+            const char *s = pathname;
+            while (*s && ci < 255) resolved[ci++] = *s++;
+            resolved[ci] = 0;
+        }
+        lookup = resolved;
+    }
+
     uint32_t mode, size;
-    if (fetch_stat(pathname, &mode, &size) != 0) return -ENOENT;
+    if (fetch_stat(lookup, &mode, &size) != 0) return -ENOENT;
 
     st->st_mode = mode;
     st->st_size = size;
@@ -455,8 +480,6 @@ static long aios_sys_fstatat(va_list ap) {
 }
 
 /* ── Easy POSIX stubs ── */
-
-static char aios_cwd[256] = "/";
 static char *aios_env[] = {
     "HOME=/",
     "PATH=/bin",
@@ -471,6 +494,26 @@ void aios_set_cwd(const char *path) {
     int i = 0;
     while (path[i] && i < 255) { aios_cwd[i] = path[i]; i++; }
     aios_cwd[i] = '\0';
+}
+
+
+static long aios_sys_chdir(va_list ap) {
+    const char *path = va_arg(ap, const char *);
+    if (!path) return -ENOENT;
+    if (path[0] == '/') {
+        aios_set_cwd(path);
+    } else if (path[0] == '.' && path[1] == 0) {
+        /* stay */
+    } else {
+        char resolved[256];
+        int ci = 0;
+        while (aios_cwd[ci] && ci < 250) { resolved[ci] = aios_cwd[ci]; ci++; }
+        if (ci > 1) resolved[ci++] = '/';
+        while (*path && ci < 255) resolved[ci++] = *path++;
+        resolved[ci] = 0;
+        aios_set_cwd(resolved);
+    }
+    return 0;
 }
 
 static long aios_sys_getcwd(va_list ap) {
@@ -682,6 +725,14 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     extern char **environ;
     environ = aios_envp;
 
+    /* Set CWD from PWD env if available */
+    for (int i = 0; aios_envp[i]; i++) {
+        if (aios_envp[i][0]=='.' && aios_envp[i][1]=='.' && aios_envp[i][2]=='.' && aios_envp[i][3]=='.') {
+            aios_set_cwd(aios_envp[i] + 4);
+            break;
+        }
+    }
+
     /* Clear fd table */
     for (int i = 0; i < AIOS_MAX_FDS; i++) aios_fds[i].active = 0;
 
@@ -706,11 +757,11 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
 #ifdef __NR_fstat
     muslcsys_install_syscall(__NR_fstat, aios_sys_fstat);
 #endif
-#ifdef __NR_newfstatat
-    muslcsys_install_syscall(__NR_newfstatat, aios_sys_fstatat);
-#endif
+/* fstatat on aarch64 */
+    muslcsys_install_syscall(__NR_fstatat, aios_sys_fstatat);
 
     /* Easy POSIX stubs */
+    muslcsys_install_syscall(__NR_chdir, aios_sys_chdir);
     muslcsys_install_syscall(__NR_getcwd, aios_sys_getcwd);
     muslcsys_install_syscall(__NR_getpid, aios_sys_getpid);
     muslcsys_install_syscall(__NR_getppid, aios_sys_getppid);

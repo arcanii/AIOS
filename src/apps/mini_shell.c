@@ -219,6 +219,7 @@ int main(int argc, char *argv[]) {
                 int l = str_len(cwd);
                 if (l > 1 && cwd[l-1] == '/') cwd[l-1] = '\0';
             }
+            env_set("PWD", cwd);
         } else if (str_eq(line, "exit")) {
             ser_puts("Goodbye.\n");
             return 0;

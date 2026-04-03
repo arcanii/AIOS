@@ -177,3 +177,8 @@ vm fault on data at address 0x0 with status 0x93800007
 in thread 0xffffff... "rootserver" at address 0x4031dc
 ```
 Use `aarch64-linux-gnu-addr2line` to find the source line.
+
+## ELF Loader Buffer (v0.4.26)
+The exec_thread uses a static 1MB buffer for reading ELFs from disk before loading.
+This limits programs to ~1MB. For larger tools (e.g., gcc, python), need dynamic
+allocation via vka_alloc_frame pages. Track this for v0.5.x.
