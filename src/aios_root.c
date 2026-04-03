@@ -1120,6 +1120,13 @@ int main(int argc, char *argv[]) {
                 proc_add("exec_thread", 200);
                 proc_add("thread_server", 200);
                 LOG_INFO("ext2 + procfs mounted");
+                /* Init auth: load users + auto-login root */
+                aios_auth_init();
+                int auth_loaded = aios_auth_load_passwd();
+                if (auth_loaded < 0)
+                    printf("[auth] /etc/passwd not found, using defaults\n");
+                uint32_t root_session = aios_auth_login_root();
+                (void)root_session;
                 printf("[boot] Filesystems mounted\n");
             } else {
                 printf("[fs] ext2 init failed: %d\n", fs_err);
@@ -1219,10 +1226,10 @@ skip_blk:
         if (error) { printf("[proc] serial FAILED\n"); goto idle; }
         proc_add("serial_server", 200);
 
-        seL4_CPtr sh_caps[3] = { serial_ep.cptr, fs_ep_cap, exec_ep_cap };
-        seL4_CPtr sh_slots[3];
+        seL4_CPtr sh_caps[4] = { serial_ep.cptr, fs_ep_cap, exec_ep_cap, auth_ep_cap };
+        seL4_CPtr sh_slots[4];
         error = spawn_with_args("mini_shell", 200, &shell_proc,
-                                &fault_ep, 3, sh_caps, sh_slots);
+                                &fault_ep, 4, sh_caps, sh_slots);
         if (error) { printf("[proc] shell FAILED\n"); goto idle; }
         proc_add("mini_shell", 200);
         /* quiet */

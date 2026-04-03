@@ -13,8 +13,14 @@
 #define SER_GETC 2
 #define FS_STAT  12
 #define EXEC_RUN 20
+#define AUTH_LOGIN 40
 
-static seL4_CPtr serial_ep, fs_ep, exec_ep;
+static seL4_CPtr serial_ep, fs_ep, exec_ep, auth_ep;
+static uint32_t session_token = 0;
+static uint32_t session_uid = 0;
+static uint32_t session_gid = 0;
+static char session_user[32] = "???";
+static char session_home[64] = "/";
 
 static void ser_putc(char c) {
     seL4_SetMR(0, (seL4_Word)c);
@@ -176,12 +182,94 @@ static void read_line(int *len) {
     line[*len] = '\0';
 }
 
+/* ── Login ── */
+static void read_password(char *buf, int max) {
+    int len = 0;
+    while (len < max - 1) {
+        int c = ser_getc();
+        if (c < 0) continue;
+        if (c == '\r' || c == '\n') { ser_putc('\n'); break; }
+        if ((c == 0x7f || c == '\b') && len > 0) {
+            len--; ser_putc('\b'); ser_putc(' '); ser_putc('\b'); continue;
+        }
+        if (c >= 0x20 && c < 127) { buf[len++] = (char)c; ser_putc('*'); }
+    }
+    buf[len] = '\0';
+}
+
+static int do_login(void) {
+    if (!auth_ep) {
+        /* No auth server — auto-login as root */
+        str_cpy(session_user, "root");
+        str_cpy(session_home, "/");
+        session_uid = 0; session_gid = 0; session_token = 1;
+        return 1;
+    }
+
+    for (int attempt = 0; attempt < 3; attempt++) {
+        char username[32], password[64];
+
+        ser_puts("\nAIOS login: ");
+        int ulen = 0;
+        while (ulen < 31) {
+            int c = ser_getc();
+            if (c < 0) continue;
+            if (c == '\r' || c == '\n') { ser_putc('\n'); break; }
+            if ((c == 0x7f || c == '\b') && ulen > 0) {
+                ulen--; ser_putc('\b'); ser_putc(' '); ser_putc('\b'); continue;
+            }
+            if (c >= 0x20 && c < 127) { username[ulen++] = (char)c; ser_putc((char)c); }
+        }
+        username[ulen] = '\0';
+        if (ulen == 0) continue;
+
+        ser_puts("Password: ");
+        read_password(password, 64);
+
+        /* Pack username into MRs */
+        int mr = 0;
+        seL4_SetMR(mr++, (seL4_Word)ulen);
+        seL4_Word w = 0;
+        for (int i = 0; i < ulen; i++) {
+            w |= ((seL4_Word)(uint8_t)username[i]) << ((i % 8) * 8);
+            if (i % 8 == 7 || i == ulen - 1) { seL4_SetMR(mr++, w); w = 0; }
+        }
+
+        /* Pack password into MRs */
+        int plen = str_len(password);
+        seL4_SetMR(mr++, (seL4_Word)plen);
+        w = 0;
+        for (int i = 0; i < plen; i++) {
+            w |= ((seL4_Word)(uint8_t)password[i]) << ((i % 8) * 8);
+            if (i % 8 == 7 || i == plen - 1) { seL4_SetMR(mr++, w); w = 0; }
+        }
+
+        /* Clear password from stack */
+        for (int i = 0; i < 64; i++) password[i] = 0;
+
+        seL4_MessageInfo_t reply = seL4_Call(auth_ep,
+            seL4_MessageInfo_new(AUTH_LOGIN, 0, 0, mr));
+        uint32_t status = (uint32_t)seL4_GetMR(0);
+
+        if (status == 0) {
+            session_uid = (uint32_t)seL4_GetMR(1);
+            session_gid = (uint32_t)seL4_GetMR(2);
+            session_token = (uint32_t)seL4_GetMR(3);
+            str_cpy(session_user, username);
+            return 1;
+        }
+        ser_puts("Login incorrect\n");
+    }
+    return 0;
+}
+
 /* ── Main ── */
 int main(int argc, char *argv[]) {
     serial_ep = 0; fs_ep = 0; exec_ep = 0;
     if (argc > 0) serial_ep = (seL4_CPtr)parse_num(argv[0]);
     if (argc > 1) fs_ep = (seL4_CPtr)parse_num(argv[1]);
     if (argc > 2) exec_ep = (seL4_CPtr)parse_num(argv[2]);
+    if (argc > 3) auth_ep = (seL4_CPtr)parse_num(argv[3]);
 
     /* Default environment */
     env_set("PATH", "/bin");
@@ -191,8 +279,23 @@ int main(int argc, char *argv[]) {
     env_set("TERM", "vt100");
 
     ser_puts("\n============================================\n");
-    ser_puts("  AIOS 0.4.x miniShell\n");
-    ser_puts("============================================\n\n");
+    ser_puts("  AIOS 0.4.x\n");
+    ser_puts("============================================\n");
+
+login_gate:
+    session_token = 0;
+    if (!do_login()) {
+        ser_puts("Too many failed attempts.\n");
+        goto login_gate;
+    }
+
+    /* Set env from session */
+    env_set("USER", session_user);
+    env_set("HOME", session_home);
+    str_cpy(cwd, session_home);
+    env_set("PWD", cwd);
+
+    ser_puts("\nWelcome, "); ser_puts(session_user); ser_puts("\n\n");
 
     while (1) {
         ser_puts(cwd); ser_puts(" $ ");
@@ -220,9 +323,9 @@ int main(int argc, char *argv[]) {
                 if (l > 1 && cwd[l-1] == '/') cwd[l-1] = '\0';
             }
             env_set("PWD", cwd);
-        } else if (str_eq(line, "exit")) {
-            ser_puts("Goodbye.\n");
-            return 0;
+        } else if (str_eq(line, "exit") || str_eq(line, "logout")) {
+            ser_puts("Goodbye, "); ser_puts(session_user); ser_puts("\n");
+            goto login_gate;
         } else if (str_eq(line, "export")) {
             /* export VAR=value */
             if (arg) {
