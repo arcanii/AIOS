@@ -602,45 +602,39 @@ int main(int argc, char *argv[]) {
         volatile uint32_t *vio = (volatile uint32_t *)((uintptr_t)vio_vaddr + blk_slot * VIRTIO_SLOT_SIZE);
         /* quiet */
 
-        /* Allocate DMA pages via vka */
-        vka_object_t dma_frames[4];
+        /* Allocate 16K contiguous DMA via single untyped */
+        vka_object_t dma_ut;
+        error = vka_alloc_untyped(&vka, 14, &dma_ut); /* 2^14 = 16K */
+        if (error) {
+            printf("[fs] DMA untyped alloc failed: %d\n", error);
+            goto skip_blk;
+        }
+
+        /* Retype untyped into 4 contiguous frames */
         seL4_CPtr dma_caps[4];
-        uint64_t dma_paddrs[4];
-        int dma_ok = 1;
         for (int i = 0; i < 4; i++) {
-            error = vka_alloc_frame(&vka, seL4_PageBits, &dma_frames[i]);
-            if (error) {
-                printf("[fs] DMA frame %d alloc failed: %d\n", i, error);
-                dma_ok = 0; break;
-            }
-            dma_caps[i] = dma_frames[i].cptr;
-            seL4_ARM_Page_GetAddress_t ga = seL4_ARM_Page_GetAddress(dma_caps[i]);
-            if (ga.error) {
-                printf("[fs] GetAddress %d failed\n", i);
-                dma_ok = 0; break;
-            }
-            dma_paddrs[i] = ga.paddr;
-        }
-        if (!dma_ok) goto skip_blk;
-        /* quiet */
-
-        /* Check contiguity — virtio legacy needs contiguous phys for virtqueue */
-        int contig = 1;
-        for (int i = 1; i < 4; i++) {
-            if (dma_paddrs[i] != dma_paddrs[0] + i * 0x1000) { contig = 0; break; }
-        }
-        if (!contig) {
-            printf("[fs] WARNING: DMA pages not contiguous, using page 0 only\n");
+            seL4_CPtr slot;
+            error = vka_cspace_alloc(&vka, &slot);
+            if (error) { printf("[fs] DMA cslot alloc failed\n"); goto skip_blk; }
+            error = seL4_Untyped_Retype(dma_ut.cptr,
+                seL4_ARM_SmallPageObject, seL4_PageBits,
+                seL4_CapInitThreadCNode, 0, 0, slot, 1);
+            if (error) { printf("[fs] DMA retype %d failed: %d\n", i, error); goto skip_blk; }
+            dma_caps[i] = slot;
         }
 
+        /* Map DMA pages */
         void *dma_vaddr = vspace_map_pages(&vspace, dma_caps, NULL,
             seL4_AllRights, 4, seL4_PageBits, 0);
         if (!dma_vaddr) {
             printf("[fs] DMA map failed\n");
             goto skip_blk;
         }
-        uint64_t dma_pa = dma_paddrs[0];
-        /* quiet */
+
+        /* Get physical address — contiguous guaranteed by single untyped */
+        seL4_ARM_Page_GetAddress_t ga = seL4_ARM_Page_GetAddress(dma_caps[0]);
+        if (ga.error) { printf("[fs] DMA GetAddress failed\n"); goto skip_blk; }
+        uint64_t dma_pa = ga.paddr;
 
         /* Zero DMA region */
         uint8_t *dma = (uint8_t *)dma_vaddr;

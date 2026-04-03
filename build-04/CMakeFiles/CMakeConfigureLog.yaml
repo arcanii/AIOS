@@ -20,6 +20,7 @@ events:
     names:
       - "uname"
     candidate_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -36,6 +37,7 @@ events:
       - "/opt/pmk/env/global/bin/"
       - "/Library/Apple/usr/bin/"
     searched_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/uname"
       - "/opt/homebrew/opt/cpio/bin/uname"
       - "/opt/homebrew/opt/openjdk/bin/uname"
       - "/opt/homebrew/bin/uname"
@@ -45,6 +47,9 @@ events:
     found: "/usr/bin/uname"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -80,6 +85,7 @@ events:
     names:
       - "ccache"
     candidate_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -96,11 +102,15 @@ events:
       - "/opt/pmk/env/global/bin/"
       - "/Library/Apple/usr/bin/"
     searched_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/ccache"
       - "/opt/homebrew/opt/cpio/bin/ccache"
       - "/opt/homebrew/opt/openjdk/bin/ccache"
     found: "/opt/homebrew/bin/ccache"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -146,6 +156,7 @@ events:
       - "ninja"
       - "samu"
     candidate_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -162,6 +173,9 @@ events:
       - "/opt/pmk/env/global/bin/"
       - "/Library/Apple/usr/bin/"
     searched_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/ninja-build"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/ninja"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/samu"
       - "/opt/homebrew/opt/cpio/bin/ninja-build"
       - "/opt/homebrew/opt/cpio/bin/ninja"
       - "/opt/homebrew/opt/cpio/bin/samu"
@@ -172,6 +186,9 @@ events:
     found: "/opt/homebrew/bin/ninja"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -210,6 +227,7 @@ events:
     names:
       - "aarch64-linux-gnu-gcc"
     candidate_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -226,11 +244,15 @@ events:
       - "/opt/pmk/env/global/bin/"
       - "/Library/Apple/usr/bin/"
     searched_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/aarch64-linux-gnu-gcc"
       - "/opt/homebrew/opt/cpio/bin/aarch64-linux-gnu-gcc"
       - "/opt/homebrew/opt/openjdk/bin/aarch64-linux-gnu-gcc"
     found: "/opt/homebrew/bin/aarch64-linux-gnu-gcc"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -281,6 +303,9 @@ events:
     found: "/opt/homebrew/share/cmake/Modules/CMakeCCompilerId.c.in"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -348,6 +373,7 @@ events:
       - "ar"
     candidate_directories:
       - "/opt/homebrew/bin/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/sbin/"
@@ -365,6 +391,9 @@ events:
     found: "/opt/homebrew/bin/aarch64-linux-gnu-ar"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -408,6 +437,7 @@ events:
       - "ranlib"
     candidate_directories:
       - "/opt/homebrew/bin/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/sbin/"
@@ -425,6 +455,9 @@ events:
     found: "/opt/homebrew/bin/aarch64-linux-gnu-ranlib"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -468,6 +501,7 @@ events:
       - "strip"
     candidate_directories:
       - "/opt/homebrew/bin/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/sbin/"
@@ -485,6 +519,9 @@ events:
     found: "/opt/homebrew/bin/aarch64-linux-gnu-strip"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -528,6 +565,7 @@ events:
       - "ld"
     candidate_directories:
       - "/opt/homebrew/bin/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/sbin/"
@@ -545,6 +583,9 @@ events:
     found: "/opt/homebrew/bin/aarch64-linux-gnu-ld"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -588,6 +629,7 @@ events:
       - "nm"
     candidate_directories:
       - "/opt/homebrew/bin/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/sbin/"
@@ -605,6 +647,9 @@ events:
     found: "/opt/homebrew/bin/aarch64-linux-gnu-nm"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -648,6 +693,7 @@ events:
       - "objdump"
     candidate_directories:
       - "/opt/homebrew/bin/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/sbin/"
@@ -665,6 +711,9 @@ events:
     found: "/opt/homebrew/bin/aarch64-linux-gnu-objdump"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -708,6 +757,7 @@ events:
       - "objcopy"
     candidate_directories:
       - "/opt/homebrew/bin/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/sbin/"
@@ -725,6 +775,9 @@ events:
     found: "/opt/homebrew/bin/aarch64-linux-gnu-objcopy"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -768,6 +821,7 @@ events:
       - "readelf"
     candidate_directories:
       - "/opt/homebrew/bin/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/sbin/"
@@ -785,6 +839,9 @@ events:
     found: "/opt/homebrew/bin/aarch64-linux-gnu-readelf"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -828,6 +885,7 @@ events:
       - "dlltool"
     candidate_directories:
       - "/opt/homebrew/bin/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/sbin/"
@@ -844,6 +902,7 @@ events:
       - "/Library/Apple/usr/bin/"
     searched_directories:
       - "/opt/homebrew/bin/aarch64-linux-gnu-dlltool"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/aarch64-linux-gnu-dlltool"
       - "/opt/homebrew/opt/cpio/bin/aarch64-linux-gnu-dlltool"
       - "/opt/homebrew/opt/openjdk/bin/aarch64-linux-gnu-dlltool"
       - "/opt/homebrew/sbin/aarch64-linux-gnu-dlltool"
@@ -859,6 +918,7 @@ events:
       - "/opt/pmk/env/global/bin/aarch64-linux-gnu-dlltool"
       - "/Library/Apple/usr/bin/aarch64-linux-gnu-dlltool"
       - "/opt/homebrew/bin/dlltool"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/dlltool"
       - "/opt/homebrew/opt/cpio/bin/dlltool"
       - "/opt/homebrew/opt/openjdk/bin/dlltool"
       - "/opt/homebrew/sbin/dlltool"
@@ -876,6 +936,9 @@ events:
     found: false
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -919,6 +982,7 @@ events:
       - "addr2line"
     candidate_directories:
       - "/opt/homebrew/bin/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/sbin/"
@@ -936,6 +1000,9 @@ events:
     found: "/opt/homebrew/bin/aarch64-linux-gnu-addr2line"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -979,6 +1046,7 @@ events:
       - "tapi"
     candidate_directories:
       - "/opt/homebrew/bin/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/sbin/"
@@ -995,6 +1063,7 @@ events:
       - "/Library/Apple/usr/bin/"
     searched_directories:
       - "/opt/homebrew/bin/aarch64-linux-gnu-tapi"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/aarch64-linux-gnu-tapi"
       - "/opt/homebrew/opt/cpio/bin/aarch64-linux-gnu-tapi"
       - "/opt/homebrew/opt/openjdk/bin/aarch64-linux-gnu-tapi"
       - "/opt/homebrew/sbin/aarch64-linux-gnu-tapi"
@@ -1010,6 +1079,7 @@ events:
       - "/opt/pmk/env/global/bin/aarch64-linux-gnu-tapi"
       - "/Library/Apple/usr/bin/aarch64-linux-gnu-tapi"
       - "/opt/homebrew/bin/tapi"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/tapi"
       - "/opt/homebrew/opt/cpio/bin/tapi"
       - "/opt/homebrew/opt/openjdk/bin/tapi"
       - "/opt/homebrew/sbin/tapi"
@@ -1027,6 +1097,9 @@ events:
     found: false
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -1072,6 +1145,7 @@ events:
       - "aarch64-linux-gnu-gcc-ar"
     candidate_directories:
       - "/opt/homebrew/bin/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/sbin/"
@@ -1088,6 +1162,7 @@ events:
       - "/Library/Apple/usr/bin/"
     searched_directories:
       - "/opt/homebrew/bin/aarch64-linux-gnu-gcc-ar-15.2"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/aarch64-linux-gnu-gcc-ar-15.2"
       - "/opt/homebrew/opt/cpio/bin/aarch64-linux-gnu-gcc-ar-15.2"
       - "/opt/homebrew/opt/openjdk/bin/aarch64-linux-gnu-gcc-ar-15.2"
       - "/opt/homebrew/sbin/aarch64-linux-gnu-gcc-ar-15.2"
@@ -1103,6 +1178,7 @@ events:
       - "/opt/pmk/env/global/bin/aarch64-linux-gnu-gcc-ar-15.2"
       - "/Library/Apple/usr/bin/aarch64-linux-gnu-gcc-ar-15.2"
       - "/opt/homebrew/bin/aarch64-linux-gnu-gcc-ar-15"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/aarch64-linux-gnu-gcc-ar-15"
       - "/opt/homebrew/opt/cpio/bin/aarch64-linux-gnu-gcc-ar-15"
       - "/opt/homebrew/opt/openjdk/bin/aarch64-linux-gnu-gcc-ar-15"
       - "/opt/homebrew/sbin/aarch64-linux-gnu-gcc-ar-15"
@@ -1118,6 +1194,7 @@ events:
       - "/opt/pmk/env/global/bin/aarch64-linux-gnu-gcc-ar-15"
       - "/Library/Apple/usr/bin/aarch64-linux-gnu-gcc-ar-15"
       - "/opt/homebrew/bin/aarch64-linux-gnu-gcc-ar15"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/aarch64-linux-gnu-gcc-ar15"
       - "/opt/homebrew/opt/cpio/bin/aarch64-linux-gnu-gcc-ar15"
       - "/opt/homebrew/opt/openjdk/bin/aarch64-linux-gnu-gcc-ar15"
       - "/opt/homebrew/sbin/aarch64-linux-gnu-gcc-ar15"
@@ -1135,6 +1212,9 @@ events:
     found: "/opt/homebrew/bin/aarch64-linux-gnu-gcc-ar"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -1180,6 +1260,7 @@ events:
       - "aarch64-linux-gnu-gcc-ranlib"
     candidate_directories:
       - "/opt/homebrew/bin/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/sbin/"
@@ -1196,6 +1277,7 @@ events:
       - "/Library/Apple/usr/bin/"
     searched_directories:
       - "/opt/homebrew/bin/aarch64-linux-gnu-gcc-ranlib-15.2"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/aarch64-linux-gnu-gcc-ranlib-15.2"
       - "/opt/homebrew/opt/cpio/bin/aarch64-linux-gnu-gcc-ranlib-15.2"
       - "/opt/homebrew/opt/openjdk/bin/aarch64-linux-gnu-gcc-ranlib-15.2"
       - "/opt/homebrew/sbin/aarch64-linux-gnu-gcc-ranlib-15.2"
@@ -1211,6 +1293,7 @@ events:
       - "/opt/pmk/env/global/bin/aarch64-linux-gnu-gcc-ranlib-15.2"
       - "/Library/Apple/usr/bin/aarch64-linux-gnu-gcc-ranlib-15.2"
       - "/opt/homebrew/bin/aarch64-linux-gnu-gcc-ranlib-15"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/aarch64-linux-gnu-gcc-ranlib-15"
       - "/opt/homebrew/opt/cpio/bin/aarch64-linux-gnu-gcc-ranlib-15"
       - "/opt/homebrew/opt/openjdk/bin/aarch64-linux-gnu-gcc-ranlib-15"
       - "/opt/homebrew/sbin/aarch64-linux-gnu-gcc-ranlib-15"
@@ -1226,6 +1309,7 @@ events:
       - "/opt/pmk/env/global/bin/aarch64-linux-gnu-gcc-ranlib-15"
       - "/Library/Apple/usr/bin/aarch64-linux-gnu-gcc-ranlib-15"
       - "/opt/homebrew/bin/aarch64-linux-gnu-gcc-ranlib15"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/aarch64-linux-gnu-gcc-ranlib15"
       - "/opt/homebrew/opt/cpio/bin/aarch64-linux-gnu-gcc-ranlib15"
       - "/opt/homebrew/opt/openjdk/bin/aarch64-linux-gnu-gcc-ranlib15"
       - "/opt/homebrew/sbin/aarch64-linux-gnu-gcc-ranlib15"
@@ -1243,6 +1327,9 @@ events:
     found: "/opt/homebrew/bin/aarch64-linux-gnu-gcc-ranlib"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -1273,8 +1360,8 @@ events:
     checks:
       - "Detecting C compiler ABI info"
     directories:
-      source: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-1jzlDK"
-      binary: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-1jzlDK"
+      source: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-WU1nNf"
+      binary: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-WU1nNf"
     cmakeVariables:
       CMAKE_C_FLAGS: " -fvisibility=default"
       CMAKE_C_FLAGS_DEBUG: "-g"
@@ -1286,10 +1373,10 @@ events:
       variable: "CMAKE_C_ABI_COMPILED"
       cached: true
       stdout: |
-        Change Dir: '/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-1jzlDK'
+        Change Dir: '/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-WU1nNf'
         
-        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_740b7
-        [1/2] /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-gcc --sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-1jzlDK   -fvisibility=default    -v -o CMakeFiles/cmTC_740b7.dir/CMakeCCompilerABI.c.obj -c /opt/homebrew/share/cmake/Modules/CMakeCCompilerABI.c
+        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_9a8cc
+        [1/2] /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-gcc --sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-WU1nNf   -fvisibility=default    -v -o CMakeFiles/cmTC_9a8cc.dir/CMakeCCompilerABI.c.obj -c /opt/homebrew/share/cmake/Modules/CMakeCCompilerABI.c
         Using built-in specs.
         COLLECT_GCC=/opt/homebrew/bin/aarch64-linux-gnu-gcc
         Target: aarch64-unknown-linux-gnu
@@ -1297,17 +1384,17 @@ events:
         Thread model: posix
         Supported LTO compression algorithms: zlib zstd
         gcc version 15.2.0 (GCC) 
-        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-1jzlDK' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_740b7.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_740b7.dir/'
-         /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/cc1 -quiet -v -iprefix /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/ -isysroot /Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-1jzlDK /opt/homebrew/share/cmake/Modules/CMakeCCompilerABI.c -quiet -dumpdir CMakeFiles/cmTC_740b7.dir/ -dumpbase CMakeCCompilerABI.c.c -dumpbase-ext .c -mlittle-endian -mabi=lp64 -version -fdiagnostics-color=always -fvisibility=default -o /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccsVQWhK.s
+        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-WU1nNf' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_9a8cc.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_9a8cc.dir/'
+         /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/cc1 -quiet -v -iprefix /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/ -isysroot /Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-WU1nNf /opt/homebrew/share/cmake/Modules/CMakeCCompilerABI.c -quiet -dumpdir CMakeFiles/cmTC_9a8cc.dir/ -dumpbase CMakeCCompilerABI.c.c -dumpbase-ext .c -mlittle-endian -mabi=lp64 -version -fdiagnostics-color=always -fvisibility=default -o /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccvFfcm3.s
         GNU C23 (GCC) version 15.2.0 (aarch64-unknown-linux-gnu)
         	compiled by GNU C version Apple LLVM 15.0.0 (clang-1500.3.9.4), GMP version 6.2.1, MPFR version 4.2.2, MPC version 1.3.1, isl version isl-0.26-GMP
         
         GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
         ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/include"
-        ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-1jzlDK/Volumes/tools/aarch64-unknown-linux-gnu/aarch64-unknown-linux-gnu/sysroot/include"
+        ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-WU1nNf/Volumes/tools/aarch64-unknown-linux-gnu/aarch64-unknown-linux-gnu/sysroot/include"
         ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/include-fixed"
         ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include"
-        ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-1jzlDK/usr/include"
+        ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-WU1nNf/usr/include"
         #include "..." search starts here:
         #include <...> search starts here:
          /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/include
@@ -1315,13 +1402,13 @@ events:
          /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include
         End of search list.
         Compiler executable checksum: 23096bb7f4e041d5b0da9be678e1e098
-        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-1jzlDK' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_740b7.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_740b7.dir/'
-         /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/as -v -EL -mabi=lp64 -o CMakeFiles/cmTC_740b7.dir/CMakeCCompilerABI.c.obj /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccsVQWhK.s
+        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-WU1nNf' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_9a8cc.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_9a8cc.dir/'
+         /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/as -v -EL -mabi=lp64 -o CMakeFiles/cmTC_9a8cc.dir/CMakeCCompilerABI.c.obj /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccvFfcm3.s
         GNU assembler version 2.45 (aarch64-unknown-linux-gnu) using BFD version (GNU Binutils) 2.45
         COMPILER_PATH=/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/
         LIBRARY_PATH=/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/lib/../lib64/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/lib/
-        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-1jzlDK' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_740b7.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_740b7.dir/CMakeCCompilerABI.c.'
-        [2/2] : && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E rm -f libcmTC_740b7.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ar qc libcmTC_740b7.a  CMakeFiles/cmTC_740b7.dir/CMakeCCompilerABI.c.obj && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ranlib libcmTC_740b7.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E touch libcmTC_740b7.a && :
+        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-WU1nNf' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_9a8cc.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_9a8cc.dir/CMakeCCompilerABI.c.'
+        [2/2] : && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E rm -f libcmTC_9a8cc.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ar qc libcmTC_9a8cc.a  CMakeFiles/cmTC_9a8cc.dir/CMakeCCompilerABI.c.obj && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ranlib libcmTC_9a8cc.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E touch libcmTC_9a8cc.a && :
         
       exitCode: 0
   -
@@ -1358,10 +1445,10 @@ events:
       Parsed C implicit link information:
         link line regex: [^( *|.*[/\\])(ld[0-9]*(|\\.[a-rt-z][a-z]*|\\.s[a-np-z][a-z]*|\\.so[a-z]+)|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
         linker tool regex: [^[ 	]*(->|"|[0-9]+>[ 	-]*Build:[ 	0-9]+ ms[ 	]*)?[ 	]*(([^"]*[/\\])?(ld[0-9]*(|\\.[a-rt-z][a-z]*|\\.s[a-np-z][a-z]*|\\.so[a-z]+)))("|,| |$)]
-        ignore line: [Change Dir: '/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-1jzlDK']
+        ignore line: [Change Dir: '/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-WU1nNf']
         ignore line: []
-        ignore line: [Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_740b7]
-        ignore line: [[1/2] /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-gcc --sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-1jzlDK   -fvisibility=default    -v -o CMakeFiles/cmTC_740b7.dir/CMakeCCompilerABI.c.obj -c /opt/homebrew/share/cmake/Modules/CMakeCCompilerABI.c]
+        ignore line: [Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_9a8cc]
+        ignore line: [[1/2] /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-gcc --sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-WU1nNf   -fvisibility=default    -v -o CMakeFiles/cmTC_9a8cc.dir/CMakeCCompilerABI.c.obj -c /opt/homebrew/share/cmake/Modules/CMakeCCompilerABI.c]
         ignore line: [Using built-in specs.]
         ignore line: [COLLECT_GCC=/opt/homebrew/bin/aarch64-linux-gnu-gcc]
         ignore line: [Target: aarch64-unknown-linux-gnu]
@@ -1369,17 +1456,17 @@ events:
         ignore line: [Thread model: posix]
         ignore line: [Supported LTO compression algorithms: zlib zstd]
         ignore line: [gcc version 15.2.0 (GCC) ]
-        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-1jzlDK' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_740b7.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_740b7.dir/']
-        ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/cc1 -quiet -v -iprefix /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/ -isysroot /Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-1jzlDK /opt/homebrew/share/cmake/Modules/CMakeCCompilerABI.c -quiet -dumpdir CMakeFiles/cmTC_740b7.dir/ -dumpbase CMakeCCompilerABI.c.c -dumpbase-ext .c -mlittle-endian -mabi=lp64 -version -fdiagnostics-color=always -fvisibility=default -o /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccsVQWhK.s]
+        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-WU1nNf' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_9a8cc.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_9a8cc.dir/']
+        ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/cc1 -quiet -v -iprefix /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/ -isysroot /Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-WU1nNf /opt/homebrew/share/cmake/Modules/CMakeCCompilerABI.c -quiet -dumpdir CMakeFiles/cmTC_9a8cc.dir/ -dumpbase CMakeCCompilerABI.c.c -dumpbase-ext .c -mlittle-endian -mabi=lp64 -version -fdiagnostics-color=always -fvisibility=default -o /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccvFfcm3.s]
         ignore line: [GNU C23 (GCC) version 15.2.0 (aarch64-unknown-linux-gnu)]
         ignore line: [	compiled by GNU C version Apple LLVM 15.0.0 (clang-1500.3.9.4)  GMP version 6.2.1  MPFR version 4.2.2  MPC version 1.3.1  isl version isl-0.26-GMP]
         ignore line: []
         ignore line: [GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072]
         ignore line: [ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/include"]
-        ignore line: [ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-1jzlDK/Volumes/tools/aarch64-unknown-linux-gnu/aarch64-unknown-linux-gnu/sysroot/include"]
+        ignore line: [ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-WU1nNf/Volumes/tools/aarch64-unknown-linux-gnu/aarch64-unknown-linux-gnu/sysroot/include"]
         ignore line: [ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/include-fixed"]
         ignore line: [ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include"]
-        ignore line: [ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-1jzlDK/usr/include"]
+        ignore line: [ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-WU1nNf/usr/include"]
         ignore line: [#include "..." search starts here:]
         ignore line: [#include <...> search starts here:]
         ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/include]
@@ -1387,13 +1474,13 @@ events:
         ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include]
         ignore line: [End of search list.]
         ignore line: [Compiler executable checksum: 23096bb7f4e041d5b0da9be678e1e098]
-        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-1jzlDK' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_740b7.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_740b7.dir/']
-        ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/as -v -EL -mabi=lp64 -o CMakeFiles/cmTC_740b7.dir/CMakeCCompilerABI.c.obj /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccsVQWhK.s]
+        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-WU1nNf' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_9a8cc.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_9a8cc.dir/']
+        ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/as -v -EL -mabi=lp64 -o CMakeFiles/cmTC_9a8cc.dir/CMakeCCompilerABI.c.obj /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccvFfcm3.s]
         ignore line: [GNU assembler version 2.45 (aarch64-unknown-linux-gnu) using BFD version (GNU Binutils) 2.45]
         ignore line: [COMPILER_PATH=/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/]
         ignore line: [LIBRARY_PATH=/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/lib/../lib64/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/lib/]
-        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-1jzlDK' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_740b7.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_740b7.dir/CMakeCCompilerABI.c.']
-        ignore line: [[2/2] : && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E rm -f libcmTC_740b7.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ar qc libcmTC_740b7.a  CMakeFiles/cmTC_740b7.dir/CMakeCCompilerABI.c.obj && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ranlib libcmTC_740b7.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E touch libcmTC_740b7.a && :]
+        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-WU1nNf' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_9a8cc.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_9a8cc.dir/CMakeCCompilerABI.c.']
+        ignore line: [[2/2] : && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E rm -f libcmTC_9a8cc.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ar qc libcmTC_9a8cc.a  CMakeFiles/cmTC_9a8cc.dir/CMakeCCompilerABI.c.obj && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ranlib libcmTC_9a8cc.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E touch libcmTC_9a8cc.a && :]
         ignore line: []
         ignore line: []
         implicit libs: []
@@ -1424,6 +1511,7 @@ events:
     names:
       - "aarch64-linux-gnu-g++"
     candidate_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -1440,11 +1528,15 @@ events:
       - "/opt/pmk/env/global/bin/"
       - "/Library/Apple/usr/bin/"
     searched_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/aarch64-linux-gnu-g++"
       - "/opt/homebrew/opt/cpio/bin/aarch64-linux-gnu-g++"
       - "/opt/homebrew/opt/openjdk/bin/aarch64-linux-gnu-g++"
     found: "/opt/homebrew/bin/aarch64-linux-gnu-g++"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -1495,6 +1587,9 @@ events:
     found: "/opt/homebrew/share/cmake/Modules/CMakeCXXCompilerId.cpp.in"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -1564,6 +1659,7 @@ events:
       - "aarch64-linux-gnu-gcc-ar"
     candidate_directories:
       - "/opt/homebrew/bin/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/sbin/"
@@ -1580,6 +1676,7 @@ events:
       - "/Library/Apple/usr/bin/"
     searched_directories:
       - "/opt/homebrew/bin/aarch64-linux-gnu-gcc-ar-15.2"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/aarch64-linux-gnu-gcc-ar-15.2"
       - "/opt/homebrew/opt/cpio/bin/aarch64-linux-gnu-gcc-ar-15.2"
       - "/opt/homebrew/opt/openjdk/bin/aarch64-linux-gnu-gcc-ar-15.2"
       - "/opt/homebrew/sbin/aarch64-linux-gnu-gcc-ar-15.2"
@@ -1595,6 +1692,7 @@ events:
       - "/opt/pmk/env/global/bin/aarch64-linux-gnu-gcc-ar-15.2"
       - "/Library/Apple/usr/bin/aarch64-linux-gnu-gcc-ar-15.2"
       - "/opt/homebrew/bin/aarch64-linux-gnu-gcc-ar-15"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/aarch64-linux-gnu-gcc-ar-15"
       - "/opt/homebrew/opt/cpio/bin/aarch64-linux-gnu-gcc-ar-15"
       - "/opt/homebrew/opt/openjdk/bin/aarch64-linux-gnu-gcc-ar-15"
       - "/opt/homebrew/sbin/aarch64-linux-gnu-gcc-ar-15"
@@ -1610,6 +1708,7 @@ events:
       - "/opt/pmk/env/global/bin/aarch64-linux-gnu-gcc-ar-15"
       - "/Library/Apple/usr/bin/aarch64-linux-gnu-gcc-ar-15"
       - "/opt/homebrew/bin/aarch64-linux-gnu-gcc-ar15"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/aarch64-linux-gnu-gcc-ar15"
       - "/opt/homebrew/opt/cpio/bin/aarch64-linux-gnu-gcc-ar15"
       - "/opt/homebrew/opt/openjdk/bin/aarch64-linux-gnu-gcc-ar15"
       - "/opt/homebrew/sbin/aarch64-linux-gnu-gcc-ar15"
@@ -1627,6 +1726,9 @@ events:
     found: "/opt/homebrew/bin/aarch64-linux-gnu-gcc-ar"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -1672,6 +1774,7 @@ events:
       - "aarch64-linux-gnu-gcc-ranlib"
     candidate_directories:
       - "/opt/homebrew/bin/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/sbin/"
@@ -1688,6 +1791,7 @@ events:
       - "/Library/Apple/usr/bin/"
     searched_directories:
       - "/opt/homebrew/bin/aarch64-linux-gnu-gcc-ranlib-15.2"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/aarch64-linux-gnu-gcc-ranlib-15.2"
       - "/opt/homebrew/opt/cpio/bin/aarch64-linux-gnu-gcc-ranlib-15.2"
       - "/opt/homebrew/opt/openjdk/bin/aarch64-linux-gnu-gcc-ranlib-15.2"
       - "/opt/homebrew/sbin/aarch64-linux-gnu-gcc-ranlib-15.2"
@@ -1703,6 +1807,7 @@ events:
       - "/opt/pmk/env/global/bin/aarch64-linux-gnu-gcc-ranlib-15.2"
       - "/Library/Apple/usr/bin/aarch64-linux-gnu-gcc-ranlib-15.2"
       - "/opt/homebrew/bin/aarch64-linux-gnu-gcc-ranlib-15"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/aarch64-linux-gnu-gcc-ranlib-15"
       - "/opt/homebrew/opt/cpio/bin/aarch64-linux-gnu-gcc-ranlib-15"
       - "/opt/homebrew/opt/openjdk/bin/aarch64-linux-gnu-gcc-ranlib-15"
       - "/opt/homebrew/sbin/aarch64-linux-gnu-gcc-ranlib-15"
@@ -1718,6 +1823,7 @@ events:
       - "/opt/pmk/env/global/bin/aarch64-linux-gnu-gcc-ranlib-15"
       - "/Library/Apple/usr/bin/aarch64-linux-gnu-gcc-ranlib-15"
       - "/opt/homebrew/bin/aarch64-linux-gnu-gcc-ranlib15"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/aarch64-linux-gnu-gcc-ranlib15"
       - "/opt/homebrew/opt/cpio/bin/aarch64-linux-gnu-gcc-ranlib15"
       - "/opt/homebrew/opt/openjdk/bin/aarch64-linux-gnu-gcc-ranlib15"
       - "/opt/homebrew/sbin/aarch64-linux-gnu-gcc-ranlib15"
@@ -1735,6 +1841,9 @@ events:
     found: "/opt/homebrew/bin/aarch64-linux-gnu-gcc-ranlib"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -1765,8 +1874,8 @@ events:
     checks:
       - "Detecting CXX compiler ABI info"
     directories:
-      source: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-oZ9szF"
-      binary: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-oZ9szF"
+      source: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-Jgk4K6"
+      binary: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-Jgk4K6"
     cmakeVariables:
       CMAKE_CXX_FLAGS: ""
       CMAKE_CXX_FLAGS_DEBUG: "-g"
@@ -1780,10 +1889,10 @@ events:
       variable: "CMAKE_CXX_ABI_COMPILED"
       cached: true
       stdout: |
-        Change Dir: '/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-oZ9szF'
+        Change Dir: '/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-Jgk4K6'
         
-        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_28660
-        [1/2] /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-g++ --sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-oZ9szF   -v -o CMakeFiles/cmTC_28660.dir/CMakeCXXCompilerABI.cpp.obj -c /opt/homebrew/share/cmake/Modules/CMakeCXXCompilerABI.cpp
+        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_91af6
+        [1/2] /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-g++ --sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-Jgk4K6   -v -o CMakeFiles/cmTC_91af6.dir/CMakeCXXCompilerABI.cpp.obj -c /opt/homebrew/share/cmake/Modules/CMakeCXXCompilerABI.cpp
         Using built-in specs.
         COLLECT_GCC=/opt/homebrew/bin/aarch64-linux-gnu-g++
         Target: aarch64-unknown-linux-gnu
@@ -1791,8 +1900,8 @@ events:
         Thread model: posix
         Supported LTO compression algorithms: zlib zstd
         gcc version 15.2.0 (GCC) 
-        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-oZ9szF' '-v' '-c' '-o' 'CMakeFiles/cmTC_28660.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_28660.dir/'
-         /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/cc1plus -quiet -v -iprefix /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/ -isysroot /Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-oZ9szF -D_GNU_SOURCE /opt/homebrew/share/cmake/Modules/CMakeCXXCompilerABI.cpp -quiet -dumpdir CMakeFiles/cmTC_28660.dir/ -dumpbase CMakeCXXCompilerABI.cpp.cpp -dumpbase-ext .cpp -mlittle-endian -mabi=lp64 -version -fdiagnostics-color=always -o /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccS8PHJQ.s
+        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-Jgk4K6' '-v' '-c' '-o' 'CMakeFiles/cmTC_91af6.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_91af6.dir/'
+         /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/cc1plus -quiet -v -iprefix /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/ -isysroot /Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-Jgk4K6 -D_GNU_SOURCE /opt/homebrew/share/cmake/Modules/CMakeCXXCompilerABI.cpp -quiet -dumpdir CMakeFiles/cmTC_91af6.dir/ -dumpbase CMakeCXXCompilerABI.cpp.cpp -dumpbase-ext .cpp -mlittle-endian -mabi=lp64 -version -fdiagnostics-color=always -o /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccX4QIGw.s
         GNU C++17 (GCC) version 15.2.0 (aarch64-unknown-linux-gnu)
         	compiled by GNU C version Apple LLVM 15.0.0 (clang-1500.3.9.4), GMP version 6.2.1, MPFR version 4.2.2, MPC version 1.3.1, isl version isl-0.26-GMP
         
@@ -1801,10 +1910,10 @@ events:
         ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include/c++/15.2.0/aarch64-unknown-linux-gnu"
         ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include/c++/15.2.0/backward"
         ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/include"
-        ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-oZ9szF/Volumes/tools/aarch64-unknown-linux-gnu/aarch64-unknown-linux-gnu/sysroot/include"
+        ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-Jgk4K6/Volumes/tools/aarch64-unknown-linux-gnu/aarch64-unknown-linux-gnu/sysroot/include"
         ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/include-fixed"
         ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include"
-        ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-oZ9szF/usr/include"
+        ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-Jgk4K6/usr/include"
         #include "..." search starts here:
         #include <...> search starts here:
          /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include/c++/15.2.0
@@ -1815,13 +1924,13 @@ events:
          /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include
         End of search list.
         Compiler executable checksum: 774936c10a9b001284fdb901352c9154
-        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-oZ9szF' '-v' '-c' '-o' 'CMakeFiles/cmTC_28660.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_28660.dir/'
-         /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/as -v -EL -mabi=lp64 -o CMakeFiles/cmTC_28660.dir/CMakeCXXCompilerABI.cpp.obj /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccS8PHJQ.s
+        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-Jgk4K6' '-v' '-c' '-o' 'CMakeFiles/cmTC_91af6.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_91af6.dir/'
+         /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/as -v -EL -mabi=lp64 -o CMakeFiles/cmTC_91af6.dir/CMakeCXXCompilerABI.cpp.obj /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccX4QIGw.s
         GNU assembler version 2.45 (aarch64-unknown-linux-gnu) using BFD version (GNU Binutils) 2.45
         COMPILER_PATH=/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/
         LIBRARY_PATH=/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/lib/../lib64/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/lib/
-        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-oZ9szF' '-v' '-c' '-o' 'CMakeFiles/cmTC_28660.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_28660.dir/CMakeCXXCompilerABI.cpp.'
-        [2/2] : && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E rm -f libcmTC_28660.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ar qc libcmTC_28660.a  CMakeFiles/cmTC_28660.dir/CMakeCXXCompilerABI.cpp.obj && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ranlib libcmTC_28660.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E touch libcmTC_28660.a && :
+        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-Jgk4K6' '-v' '-c' '-o' 'CMakeFiles/cmTC_91af6.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_91af6.dir/CMakeCXXCompilerABI.cpp.'
+        [2/2] : && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E rm -f libcmTC_91af6.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ar qc libcmTC_91af6.a  CMakeFiles/cmTC_91af6.dir/CMakeCXXCompilerABI.cpp.obj && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ranlib libcmTC_91af6.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E touch libcmTC_91af6.a && :
         
       exitCode: 0
   -
@@ -1864,10 +1973,10 @@ events:
       Parsed CXX implicit link information:
         link line regex: [^( *|.*[/\\])(ld[0-9]*(|\\.[a-rt-z][a-z]*|\\.s[a-np-z][a-z]*|\\.so[a-z]+)|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
         linker tool regex: [^[ 	]*(->|"|[0-9]+>[ 	-]*Build:[ 	0-9]+ ms[ 	]*)?[ 	]*(([^"]*[/\\])?(ld[0-9]*(|\\.[a-rt-z][a-z]*|\\.s[a-np-z][a-z]*|\\.so[a-z]+)))("|,| |$)]
-        ignore line: [Change Dir: '/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-oZ9szF']
+        ignore line: [Change Dir: '/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-Jgk4K6']
         ignore line: []
-        ignore line: [Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_28660]
-        ignore line: [[1/2] /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-g++ --sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-oZ9szF   -v -o CMakeFiles/cmTC_28660.dir/CMakeCXXCompilerABI.cpp.obj -c /opt/homebrew/share/cmake/Modules/CMakeCXXCompilerABI.cpp]
+        ignore line: [Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_91af6]
+        ignore line: [[1/2] /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-g++ --sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-Jgk4K6   -v -o CMakeFiles/cmTC_91af6.dir/CMakeCXXCompilerABI.cpp.obj -c /opt/homebrew/share/cmake/Modules/CMakeCXXCompilerABI.cpp]
         ignore line: [Using built-in specs.]
         ignore line: [COLLECT_GCC=/opt/homebrew/bin/aarch64-linux-gnu-g++]
         ignore line: [Target: aarch64-unknown-linux-gnu]
@@ -1875,8 +1984,8 @@ events:
         ignore line: [Thread model: posix]
         ignore line: [Supported LTO compression algorithms: zlib zstd]
         ignore line: [gcc version 15.2.0 (GCC) ]
-        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-oZ9szF' '-v' '-c' '-o' 'CMakeFiles/cmTC_28660.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_28660.dir/']
-        ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/cc1plus -quiet -v -iprefix /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/ -isysroot /Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-oZ9szF -D_GNU_SOURCE /opt/homebrew/share/cmake/Modules/CMakeCXXCompilerABI.cpp -quiet -dumpdir CMakeFiles/cmTC_28660.dir/ -dumpbase CMakeCXXCompilerABI.cpp.cpp -dumpbase-ext .cpp -mlittle-endian -mabi=lp64 -version -fdiagnostics-color=always -o /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccS8PHJQ.s]
+        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-Jgk4K6' '-v' '-c' '-o' 'CMakeFiles/cmTC_91af6.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_91af6.dir/']
+        ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/cc1plus -quiet -v -iprefix /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/ -isysroot /Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-Jgk4K6 -D_GNU_SOURCE /opt/homebrew/share/cmake/Modules/CMakeCXXCompilerABI.cpp -quiet -dumpdir CMakeFiles/cmTC_91af6.dir/ -dumpbase CMakeCXXCompilerABI.cpp.cpp -dumpbase-ext .cpp -mlittle-endian -mabi=lp64 -version -fdiagnostics-color=always -o /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccX4QIGw.s]
         ignore line: [GNU C++17 (GCC) version 15.2.0 (aarch64-unknown-linux-gnu)]
         ignore line: [	compiled by GNU C version Apple LLVM 15.0.0 (clang-1500.3.9.4)  GMP version 6.2.1  MPFR version 4.2.2  MPC version 1.3.1  isl version isl-0.26-GMP]
         ignore line: []
@@ -1885,10 +1994,10 @@ events:
         ignore line: [ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include/c++/15.2.0/aarch64-unknown-linux-gnu"]
         ignore line: [ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include/c++/15.2.0/backward"]
         ignore line: [ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/include"]
-        ignore line: [ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-oZ9szF/Volumes/tools/aarch64-unknown-linux-gnu/aarch64-unknown-linux-gnu/sysroot/include"]
+        ignore line: [ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-Jgk4K6/Volumes/tools/aarch64-unknown-linux-gnu/aarch64-unknown-linux-gnu/sysroot/include"]
         ignore line: [ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/include-fixed"]
         ignore line: [ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include"]
-        ignore line: [ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-oZ9szF/usr/include"]
+        ignore line: [ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-Jgk4K6/usr/include"]
         ignore line: [#include "..." search starts here:]
         ignore line: [#include <...> search starts here:]
         ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include/c++/15.2.0]
@@ -1899,13 +2008,13 @@ events:
         ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include]
         ignore line: [End of search list.]
         ignore line: [Compiler executable checksum: 774936c10a9b001284fdb901352c9154]
-        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-oZ9szF' '-v' '-c' '-o' 'CMakeFiles/cmTC_28660.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_28660.dir/']
-        ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/as -v -EL -mabi=lp64 -o CMakeFiles/cmTC_28660.dir/CMakeCXXCompilerABI.cpp.obj /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccS8PHJQ.s]
+        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-Jgk4K6' '-v' '-c' '-o' 'CMakeFiles/cmTC_91af6.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_91af6.dir/']
+        ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/as -v -EL -mabi=lp64 -o CMakeFiles/cmTC_91af6.dir/CMakeCXXCompilerABI.cpp.obj /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccX4QIGw.s]
         ignore line: [GNU assembler version 2.45 (aarch64-unknown-linux-gnu) using BFD version (GNU Binutils) 2.45]
         ignore line: [COMPILER_PATH=/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/]
         ignore line: [LIBRARY_PATH=/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/lib/../lib64/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/lib/]
-        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-oZ9szF' '-v' '-c' '-o' 'CMakeFiles/cmTC_28660.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_28660.dir/CMakeCXXCompilerABI.cpp.']
-        ignore line: [[2/2] : && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E rm -f libcmTC_28660.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ar qc libcmTC_28660.a  CMakeFiles/cmTC_28660.dir/CMakeCXXCompilerABI.cpp.obj && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ranlib libcmTC_28660.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E touch libcmTC_28660.a && :]
+        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-Jgk4K6' '-v' '-c' '-o' 'CMakeFiles/cmTC_91af6.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_91af6.dir/CMakeCXXCompilerABI.cpp.']
+        ignore line: [[2/2] : && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E rm -f libcmTC_91af6.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ar qc libcmTC_91af6.a  CMakeFiles/cmTC_91af6.dir/CMakeCXXCompilerABI.cpp.obj && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ranlib libcmTC_91af6.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E touch libcmTC_91af6.a && :]
         ignore line: []
         ignore line: []
         implicit libs: []
@@ -1936,6 +2045,7 @@ events:
     names:
       - "aarch64-linux-gnu-gcc"
     candidate_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -1952,11 +2062,15 @@ events:
       - "/opt/pmk/env/global/bin/"
       - "/Library/Apple/usr/bin/"
     searched_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/aarch64-linux-gnu-gcc"
       - "/opt/homebrew/opt/cpio/bin/aarch64-linux-gnu-gcc"
       - "/opt/homebrew/opt/openjdk/bin/aarch64-linux-gnu-gcc"
     found: "/opt/homebrew/bin/aarch64-linux-gnu-gcc"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -2017,6 +2131,7 @@ events:
       - "aarch64-linux-gnu-gcc-ar"
     candidate_directories:
       - "/opt/homebrew/bin/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/sbin/"
@@ -2033,6 +2148,7 @@ events:
       - "/Library/Apple/usr/bin/"
     searched_directories:
       - "/opt/homebrew/bin/aarch64-linux-gnu-gcc-ar-"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/aarch64-linux-gnu-gcc-ar-"
       - "/opt/homebrew/opt/cpio/bin/aarch64-linux-gnu-gcc-ar-"
       - "/opt/homebrew/opt/openjdk/bin/aarch64-linux-gnu-gcc-ar-"
       - "/opt/homebrew/sbin/aarch64-linux-gnu-gcc-ar-"
@@ -2048,6 +2164,7 @@ events:
       - "/opt/pmk/env/global/bin/aarch64-linux-gnu-gcc-ar-"
       - "/Library/Apple/usr/bin/aarch64-linux-gnu-gcc-ar-"
       - "/opt/homebrew/bin/aarch64-linux-gnu-gcc-ar-"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/aarch64-linux-gnu-gcc-ar-"
       - "/opt/homebrew/opt/cpio/bin/aarch64-linux-gnu-gcc-ar-"
       - "/opt/homebrew/opt/openjdk/bin/aarch64-linux-gnu-gcc-ar-"
       - "/opt/homebrew/sbin/aarch64-linux-gnu-gcc-ar-"
@@ -2065,6 +2182,9 @@ events:
     found: "/opt/homebrew/bin/aarch64-linux-gnu-gcc-ar"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -2110,6 +2230,7 @@ events:
       - "aarch64-linux-gnu-gcc-ranlib"
     candidate_directories:
       - "/opt/homebrew/bin/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/sbin/"
@@ -2126,6 +2247,7 @@ events:
       - "/Library/Apple/usr/bin/"
     searched_directories:
       - "/opt/homebrew/bin/aarch64-linux-gnu-gcc-ranlib-"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/aarch64-linux-gnu-gcc-ranlib-"
       - "/opt/homebrew/opt/cpio/bin/aarch64-linux-gnu-gcc-ranlib-"
       - "/opt/homebrew/opt/openjdk/bin/aarch64-linux-gnu-gcc-ranlib-"
       - "/opt/homebrew/sbin/aarch64-linux-gnu-gcc-ranlib-"
@@ -2141,6 +2263,7 @@ events:
       - "/opt/pmk/env/global/bin/aarch64-linux-gnu-gcc-ranlib-"
       - "/Library/Apple/usr/bin/aarch64-linux-gnu-gcc-ranlib-"
       - "/opt/homebrew/bin/aarch64-linux-gnu-gcc-ranlib-"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/aarch64-linux-gnu-gcc-ranlib-"
       - "/opt/homebrew/opt/cpio/bin/aarch64-linux-gnu-gcc-ranlib-"
       - "/opt/homebrew/opt/openjdk/bin/aarch64-linux-gnu-gcc-ranlib-"
       - "/opt/homebrew/sbin/aarch64-linux-gnu-gcc-ranlib-"
@@ -2158,6 +2281,9 @@ events:
     found: "/opt/homebrew/bin/aarch64-linux-gnu-gcc-ranlib"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -2197,6 +2323,7 @@ events:
     names:
       - "kernel"
     candidate_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -2215,6 +2342,7 @@ events:
       - "/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/"
     searched_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/kernel"
       - "/opt/homebrew/opt/cpio/bin/kernel"
       - "/opt/homebrew/opt/openjdk/bin/kernel"
       - "/opt/homebrew/bin/kernel"
@@ -2234,6 +2362,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/kernel"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -2271,6 +2402,7 @@ events:
     names:
       - "helpers.cmake"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -2288,6 +2420,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Library/Apple/usr/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -2306,6 +2439,7 @@ events:
       - "/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/helpers.cmake"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/helpers.cmake"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/helpers.cmake"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/helpers.cmake"
@@ -2323,6 +2457,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Library/Apple/usr/bin/helpers.cmake"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/helpers.cmake"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/helpers.cmake"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/helpers.cmake"
       - "/opt/homebrew/opt/cpio/bin/helpers.cmake"
       - "/opt/homebrew/opt/openjdk/bin/helpers.cmake"
       - "/opt/homebrew/bin/helpers.cmake"
@@ -2342,6 +2477,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/helpers.cmake"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -2381,6 +2519,7 @@ events:
     names:
       - "flags.cmake"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -2399,6 +2538,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -2418,6 +2558,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/"
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/flags.cmake"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/flags.cmake"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/flags.cmake"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/flags.cmake"
@@ -2436,6 +2577,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/flags.cmake"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/flags.cmake"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/flags.cmake"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/flags.cmake"
       - "/opt/homebrew/opt/cpio/bin/flags.cmake"
       - "/opt/homebrew/opt/openjdk/bin/flags.cmake"
       - "/opt/homebrew/bin/flags.cmake"
@@ -2456,6 +2598,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/flags.cmake"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -2495,6 +2640,7 @@ events:
     names:
       - "cpp_gen.sh"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -2513,6 +2659,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -2532,6 +2679,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/"
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/cpp_gen.sh"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/cpp_gen.sh"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/cpp_gen.sh"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/cpp_gen.sh"
@@ -2550,6 +2698,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/cpp_gen.sh"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/cpp_gen.sh"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/cpp_gen.sh"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/cpp_gen.sh"
       - "/opt/homebrew/opt/cpio/bin/cpp_gen.sh"
       - "/opt/homebrew/opt/openjdk/bin/cpp_gen.sh"
       - "/opt/homebrew/bin/cpp_gen.sh"
@@ -2570,6 +2719,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/cpp_gen.sh"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -2609,6 +2761,7 @@ events:
     names:
       - "circular_includes.py"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -2627,6 +2780,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -2646,6 +2800,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/"
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/circular_includes.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/circular_includes.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/circular_includes.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/circular_includes.py"
@@ -2664,6 +2819,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/circular_includes.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/circular_includes.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/circular_includes.py"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/circular_includes.py"
       - "/opt/homebrew/opt/cpio/bin/circular_includes.py"
       - "/opt/homebrew/opt/openjdk/bin/circular_includes.py"
       - "/opt/homebrew/bin/circular_includes.py"
@@ -2684,6 +2840,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/circular_includes.py"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -2723,6 +2882,7 @@ events:
     names:
       - "config_gen.py"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -2741,6 +2901,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -2760,6 +2921,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/"
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/config_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/config_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/config_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/config_gen.py"
@@ -2778,6 +2940,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/config_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/config_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/config_gen.py"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/config_gen.py"
       - "/opt/homebrew/opt/cpio/bin/config_gen.py"
       - "/opt/homebrew/opt/openjdk/bin/config_gen.py"
       - "/opt/homebrew/bin/config_gen.py"
@@ -2798,6 +2961,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/config_gen.py"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -2837,6 +3003,7 @@ events:
     names:
       - "bitfield_gen.py"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -2855,6 +3022,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -2874,6 +3042,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/"
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/bitfield_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/bitfield_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/bitfield_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/bitfield_gen.py"
@@ -2892,6 +3061,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/bitfield_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/bitfield_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/bitfield_gen.py"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/bitfield_gen.py"
       - "/opt/homebrew/opt/cpio/bin/bitfield_gen.py"
       - "/opt/homebrew/opt/openjdk/bin/bitfield_gen.py"
       - "/opt/homebrew/bin/bitfield_gen.py"
@@ -2912,6 +3082,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/bitfield_gen.py"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -2951,6 +3124,7 @@ events:
     names:
       - "hardware_gen.py"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -2969,6 +3143,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -2988,6 +3163,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/"
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/hardware_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/hardware_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/hardware_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/hardware_gen.py"
@@ -3006,6 +3182,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/hardware_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/hardware_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/hardware_gen.py"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/hardware_gen.py"
       - "/opt/homebrew/opt/cpio/bin/hardware_gen.py"
       - "/opt/homebrew/opt/openjdk/bin/hardware_gen.py"
       - "/opt/homebrew/bin/hardware_gen.py"
@@ -3026,6 +3203,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/hardware_gen.py"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -3065,6 +3245,7 @@ events:
     names:
       - "invocation_header_gen.py"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -3083,6 +3264,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -3102,6 +3284,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/"
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/invocation_header_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/invocation_header_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/invocation_header_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/invocation_header_gen.py"
@@ -3120,6 +3303,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/invocation_header_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/invocation_header_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/invocation_header_gen.py"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/invocation_header_gen.py"
       - "/opt/homebrew/opt/cpio/bin/invocation_header_gen.py"
       - "/opt/homebrew/opt/openjdk/bin/invocation_header_gen.py"
       - "/opt/homebrew/bin/invocation_header_gen.py"
@@ -3140,6 +3324,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/invocation_header_gen.py"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -3179,6 +3366,7 @@ events:
     names:
       - "invocation_json_gen.py"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -3197,6 +3385,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -3216,6 +3405,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/"
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/invocation_json_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/invocation_json_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/invocation_json_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/invocation_json_gen.py"
@@ -3234,6 +3424,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/invocation_json_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/invocation_json_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/invocation_json_gen.py"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/invocation_json_gen.py"
       - "/opt/homebrew/opt/cpio/bin/invocation_json_gen.py"
       - "/opt/homebrew/opt/openjdk/bin/invocation_json_gen.py"
       - "/opt/homebrew/bin/invocation_json_gen.py"
@@ -3254,6 +3445,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/invocation_json_gen.py"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -3293,6 +3487,7 @@ events:
     names:
       - "syscall_header_gen.py"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -3311,6 +3506,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -3330,6 +3526,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/"
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/syscall_header_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/syscall_header_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/syscall_header_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/syscall_header_gen.py"
@@ -3348,6 +3545,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/syscall_header_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/syscall_header_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/syscall_header_gen.py"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/syscall_header_gen.py"
       - "/opt/homebrew/opt/cpio/bin/syscall_header_gen.py"
       - "/opt/homebrew/opt/openjdk/bin/syscall_header_gen.py"
       - "/opt/homebrew/bin/syscall_header_gen.py"
@@ -3368,6 +3566,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/syscall_header_gen.py"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -3407,6 +3608,7 @@ events:
     names:
       - "xmllint.sh"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -3425,6 +3627,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -3444,6 +3647,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/"
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/xmllint.sh"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/xmllint.sh"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/xmllint.sh"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/xmllint.sh"
@@ -3462,6 +3666,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/xmllint.sh"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/xmllint.sh"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/xmllint.sh"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/xmllint.sh"
       - "/opt/homebrew/opt/cpio/bin/xmllint.sh"
       - "/opt/homebrew/opt/openjdk/bin/xmllint.sh"
       - "/opt/homebrew/bin/xmllint.sh"
@@ -3482,6 +3687,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/xmllint.sh"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -3520,6 +3728,7 @@ events:
     names:
       - "umm_types.txt"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -3536,6 +3745,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/pmk/env/global/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Library/Apple/usr/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -3553,6 +3763,7 @@ events:
       - "/Library/Apple/usr/bin/"
       - "/include/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/umm_types.txt"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/umm_types.txt"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/umm_types.txt"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/umm_types.txt"
@@ -3569,6 +3780,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/pmk/env/global/bin/umm_types.txt"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Library/Apple/usr/bin/umm_types.txt"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/umm_types.txt"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/umm_types.txt"
       - "/opt/homebrew/opt/cpio/bin/umm_types.txt"
       - "/opt/homebrew/opt/openjdk/bin/umm_types.txt"
       - "/opt/homebrew/bin/umm_types.txt"
@@ -3588,6 +3800,9 @@ events:
     found: false
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -3626,6 +3841,7 @@ events:
     names:
       - "dtc"
     candidate_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -3642,11 +3858,15 @@ events:
       - "/opt/pmk/env/global/bin/"
       - "/Library/Apple/usr/bin/"
     searched_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/dtc"
       - "/opt/homebrew/opt/cpio/bin/dtc"
       - "/opt/homebrew/opt/openjdk/bin/dtc"
     found: "/opt/homebrew/bin/dtc"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -3685,6 +3905,7 @@ events:
     names:
       - "stat"
     candidate_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -3701,6 +3922,7 @@ events:
       - "/opt/pmk/env/global/bin/"
       - "/Library/Apple/usr/bin/"
     searched_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/stat"
       - "/opt/homebrew/opt/cpio/bin/stat"
       - "/opt/homebrew/opt/openjdk/bin/stat"
       - "/opt/homebrew/bin/stat"
@@ -3710,6 +3932,9 @@ events:
     found: "/usr/bin/stat"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -3751,6 +3976,7 @@ events:
     names:
       - "Holmake"
     candidate_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -3767,6 +3993,7 @@ events:
       - "/opt/pmk/env/global/bin/"
       - "/Library/Apple/usr/bin/"
     searched_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/Holmake"
       - "/opt/homebrew/opt/cpio/bin/Holmake"
       - "/opt/homebrew/opt/openjdk/bin/Holmake"
       - "/opt/homebrew/bin/Holmake"
@@ -3785,6 +4012,9 @@ events:
     found: false
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -3826,6 +4056,7 @@ events:
     names:
       - "cake"
     candidate_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -3842,6 +4073,7 @@ events:
       - "/opt/pmk/env/global/bin/"
       - "/Library/Apple/usr/bin/"
     searched_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/cake"
       - "/opt/homebrew/opt/cpio/bin/cake"
       - "/opt/homebrew/opt/openjdk/bin/cake"
       - "/opt/homebrew/bin/cake"
@@ -3860,6 +4092,9 @@ events:
     found: false
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -3901,6 +4136,7 @@ events:
     names:
       - "buildScript.sml.in"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -3918,6 +4154,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Library/Apple/usr/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -3936,6 +4173,7 @@ events:
       - "/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/buildScript.sml.in"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/buildScript.sml.in"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/buildScript.sml.in"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/buildScript.sml.in"
@@ -3953,6 +4191,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Library/Apple/usr/bin/buildScript.sml.in"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/buildScript.sml.in"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/buildScript.sml.in"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/buildScript.sml.in"
       - "/opt/homebrew/opt/cpio/bin/buildScript.sml.in"
       - "/opt/homebrew/opt/openjdk/bin/buildScript.sml.in"
       - "/opt/homebrew/bin/buildScript.sml.in"
@@ -3972,6 +4211,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/buildScript.sml.in"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -4013,6 +4255,7 @@ events:
     names:
       - "Holmakefile.in"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -4030,6 +4273,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Library/Apple/usr/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -4048,6 +4292,7 @@ events:
       - "/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/Holmakefile.in"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/Holmakefile.in"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/Holmakefile.in"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/Holmakefile.in"
@@ -4065,6 +4310,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Library/Apple/usr/bin/Holmakefile.in"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/Holmakefile.in"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/Holmakefile.in"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/Holmakefile.in"
       - "/opt/homebrew/opt/cpio/bin/Holmakefile.in"
       - "/opt/homebrew/opt/openjdk/bin/Holmakefile.in"
       - "/opt/homebrew/bin/Holmakefile.in"
@@ -4084,6 +4330,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/Holmakefile.in"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -4125,6 +4374,7 @@ events:
     names:
       - "FindPolly.cmake"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -4142,6 +4392,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Library/Apple/usr/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/polly_toolchains/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -4160,6 +4411,7 @@ events:
       - "/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/polly_toolchains/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/FindPolly.cmake"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/FindPolly.cmake"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/FindPolly.cmake"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/FindPolly.cmake"
@@ -4177,6 +4429,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Library/Apple/usr/bin/FindPolly.cmake"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/FindPolly.cmake"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/polly_toolchains/FindPolly.cmake"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/FindPolly.cmake"
       - "/opt/homebrew/opt/cpio/bin/FindPolly.cmake"
       - "/opt/homebrew/opt/openjdk/bin/FindPolly.cmake"
       - "/opt/homebrew/bin/FindPolly.cmake"
@@ -4196,6 +4449,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/polly_toolchains/"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -4237,6 +4493,7 @@ events:
     names:
       - "pkg-config.in"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -4254,6 +4511,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Library/Apple/usr/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -4272,6 +4530,7 @@ events:
       - "/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/pkg-config.in"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/pkg-config.in"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/pkg-config.in"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/pkg-config.in"
@@ -4289,6 +4548,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Library/Apple/usr/bin/pkg-config.in"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/pkg-config.in"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/pkg-config.in"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/pkg-config.in"
       - "/opt/homebrew/opt/cpio/bin/pkg-config.in"
       - "/opt/homebrew/opt/openjdk/bin/pkg-config.in"
       - "/opt/homebrew/bin/pkg-config.in"
@@ -4308,6 +4568,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/pkg-config.in"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -4349,6 +4612,7 @@ events:
     names:
       - "x86_64-sel4-none.json"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -4366,6 +4630,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Library/Apple/usr/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/rust_targets/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -4384,6 +4649,7 @@ events:
       - "/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/rust_targets/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/x86_64-sel4-none.json"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/x86_64-sel4-none.json"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/x86_64-sel4-none.json"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/x86_64-sel4-none.json"
@@ -4401,6 +4667,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Library/Apple/usr/bin/x86_64-sel4-none.json"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/x86_64-sel4-none.json"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/rust_targets/x86_64-sel4-none.json"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/x86_64-sel4-none.json"
       - "/opt/homebrew/opt/cpio/bin/x86_64-sel4-none.json"
       - "/opt/homebrew/opt/openjdk/bin/x86_64-sel4-none.json"
       - "/opt/homebrew/bin/x86_64-sel4-none.json"
@@ -4420,6 +4687,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/rust_targets/"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -4461,6 +4731,7 @@ events:
     names:
       - "sabre.dts"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -4478,6 +4749,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Library/Apple/usr/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/dts/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -4496,6 +4768,7 @@ events:
       - "/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/dts/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/sabre.dts"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/sabre.dts"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/sabre.dts"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/sabre.dts"
@@ -4513,6 +4786,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Library/Apple/usr/bin/sabre.dts"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/sabre.dts"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/dts/sabre.dts"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/sabre.dts"
       - "/opt/homebrew/opt/cpio/bin/sabre.dts"
       - "/opt/homebrew/opt/openjdk/bin/sabre.dts"
       - "/opt/homebrew/bin/sabre.dts"
@@ -4532,6 +4806,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/kernel/tools/dts/"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -4574,6 +4851,7 @@ events:
     names:
       - "simulate.py"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -4592,6 +4870,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/simulate_scripts/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -4611,6 +4890,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/"
       - "/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/simulate_scripts/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/simulate.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/simulate.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/simulate.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/simulate.py"
@@ -4629,6 +4909,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/simulate.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/simulate.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/simulate_scripts/simulate.py"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/simulate.py"
       - "/opt/homebrew/opt/cpio/bin/simulate.py"
       - "/opt/homebrew/opt/openjdk/bin/simulate.py"
       - "/opt/homebrew/bin/simulate.py"
@@ -4649,6 +4930,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/simulate_scripts/simulate.py"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -4691,6 +4975,7 @@ events:
     names:
       - "launch_gdb.py"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -4709,6 +4994,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/simulate_scripts/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -4728,6 +5014,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/"
       - "/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/simulate_scripts/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/launch_gdb.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/launch_gdb.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/launch_gdb.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/launch_gdb.py"
@@ -4746,6 +5033,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/launch_gdb.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/launch_gdb.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/simulate_scripts/launch_gdb.py"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/launch_gdb.py"
       - "/opt/homebrew/opt/cpio/bin/launch_gdb.py"
       - "/opt/homebrew/opt/openjdk/bin/launch_gdb.py"
       - "/opt/homebrew/bin/launch_gdb.py"
@@ -4766,6 +5054,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/simulate_scripts/launch_gdb.py"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -4808,6 +5099,7 @@ events:
     names:
       - "configure_file.cmake"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -4826,6 +5118,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -4845,6 +5138,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/"
       - "/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/configure_file.cmake"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/configure_file.cmake"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/configure_file.cmake"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/configure_file.cmake"
@@ -4863,6 +5157,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/configure_file.cmake"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/configure_file.cmake"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/configure_file.cmake"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/configure_file.cmake"
       - "/opt/homebrew/opt/cpio/bin/configure_file.cmake"
       - "/opt/homebrew/opt/openjdk/bin/configure_file.cmake"
       - "/opt/homebrew/bin/configure_file.cmake"
@@ -4883,6 +5178,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/configure_file.cmake"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -4924,6 +5222,7 @@ events:
     names:
       - "tls_rootserver.lds"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -4941,6 +5240,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Library/Apple/usr/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -4959,6 +5259,7 @@ events:
       - "/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/tls_rootserver.lds"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/tls_rootserver.lds"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/tls_rootserver.lds"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/tls_rootserver.lds"
@@ -4976,6 +5277,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Library/Apple/usr/bin/tls_rootserver.lds"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/tls_rootserver.lds"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/tls_rootserver.lds"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/tls_rootserver.lds"
       - "/opt/homebrew/opt/cpio/bin/tls_rootserver.lds"
       - "/opt/homebrew/opt/openjdk/bin/tls_rootserver.lds"
       - "/opt/homebrew/bin/tls_rootserver.lds"
@@ -4995,6 +5297,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/tls_rootserver.lds"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -5036,6 +5341,7 @@ events:
     names:
       - "make-uimage"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -5053,6 +5359,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Library/Apple/usr/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -5071,6 +5378,7 @@ events:
       - "/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/make-uimage"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/make-uimage"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/make-uimage"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/make-uimage"
@@ -5088,6 +5396,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Library/Apple/usr/bin/make-uimage"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/make-uimage"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/make-uimage"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/make-uimage"
       - "/opt/homebrew/opt/cpio/bin/make-uimage"
       - "/opt/homebrew/opt/openjdk/bin/make-uimage"
       - "/opt/homebrew/bin/make-uimage"
@@ -5107,6 +5416,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/tools/seL4/cmake-tool/helpers/make-uimage"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -5140,8 +5452,8 @@ events:
     checks:
       - "Performing Test compiler_arch_test"
     directories:
-      source: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-sB0KiR"
-      binary: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-sB0KiR"
+      source: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-jxB4a8"
+      binary: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-jxB4a8"
     cmakeVariables:
       CMAKE_CXX_STDLIB_MODULES_JSON: ""
       CMAKE_C_FLAGS: " -fvisibility=default  -march=armv8-a  -D__KERNEL_64__"
@@ -5154,11 +5466,11 @@ events:
       variable: "compiler_arch_test"
       cached: true
       stdout: |
-        Change Dir: '/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-sB0KiR'
+        Change Dir: '/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-jxB4a8'
         
-        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_1fc40
-        [1/2] /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-gcc --sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-sB0KiR -Dcompiler_arch_test  -fvisibility=default  -march=armv8-a  -D__KERNEL_64__  -std=gnu11 -o CMakeFiles/cmTC_1fc40.dir/src.c.obj -c /Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-sB0KiR/src.c
-        [2/2] : && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E rm -f libcmTC_1fc40.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ar qc libcmTC_1fc40.a  CMakeFiles/cmTC_1fc40.dir/src.c.obj && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ranlib libcmTC_1fc40.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E touch libcmTC_1fc40.a && :
+        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_f2088
+        [1/2] /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-gcc --sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-jxB4a8 -Dcompiler_arch_test  -fvisibility=default  -march=armv8-a  -D__KERNEL_64__  -std=gnu11 -o CMakeFiles/cmTC_f2088.dir/src.c.obj -c /Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-jxB4a8/src.c
+        [2/2] : && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E rm -f libcmTC_f2088.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ar qc libcmTC_f2088.a  CMakeFiles/cmTC_f2088.dir/src.c.obj && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ranlib libcmTC_f2088.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E touch libcmTC_f2088.a && :
         
       exitCode: 0
   -
@@ -5180,6 +5492,7 @@ events:
     names:
       - "syscall_stub_gen.py"
     candidate_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/"
@@ -5198,6 +5511,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/libsel4/"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/libsel4/tools/"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -5217,6 +5531,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/libsel4/"
       - "/Users/bryan/Desktop/github_repos/AIOS/kernel/libsel4/tools/"
     searched_directories:
+      - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/gnu-sed/libexec/gnubin/syscall_stub_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/cpio/bin/syscall_stub_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/opt/openjdk/bin/syscall_stub_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/opt/homebrew/bin/syscall_stub_gen.py"
@@ -5235,6 +5550,7 @@ events:
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/include/syscall_stub_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/libsel4/syscall_stub_gen.py"
       - "/Users/bryan/Desktop/github_repos/AIOS/build-04/Users/bryan/Desktop/github_repos/AIOS/kernel/libsel4/tools/syscall_stub_gen.py"
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/syscall_stub_gen.py"
       - "/opt/homebrew/opt/cpio/bin/syscall_stub_gen.py"
       - "/opt/homebrew/opt/openjdk/bin/syscall_stub_gen.py"
       - "/opt/homebrew/bin/syscall_stub_gen.py"
@@ -5255,6 +5571,9 @@ events:
     found: "/Users/bryan/Desktop/github_repos/AIOS/kernel/libsel4/tools/syscall_stub_gen.py"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"
@@ -5293,6 +5612,7 @@ events:
     names:
       - "sysctl"
     candidate_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/"
       - "/opt/homebrew/opt/cpio/bin/"
       - "/opt/homebrew/opt/openjdk/bin/"
       - "/opt/homebrew/bin/"
@@ -5309,6 +5629,7 @@ events:
       - "/opt/pmk/env/global/bin/"
       - "/Library/Apple/usr/bin/"
     searched_directories:
+      - "/opt/homebrew/opt/gnu-sed/libexec/gnubin/sysctl"
       - "/opt/homebrew/opt/cpio/bin/sysctl"
       - "/opt/homebrew/opt/openjdk/bin/sysctl"
       - "/opt/homebrew/bin/sysctl"
@@ -5320,6 +5641,9 @@ events:
     found: "/usr/sbin/sysctl"
     search_context:
       ENV{PATH}:
+        - "/opt/homebrew/opt/gnu-sed/libexec/gnubin"
+        - "/opt/homebrew/opt/cpio/bin"
+        - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/opt/cpio/bin"
         - "/opt/homebrew/opt/openjdk/bin"
         - "/opt/homebrew/bin"

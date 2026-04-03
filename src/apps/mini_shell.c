@@ -53,6 +53,17 @@ static const struct alias aliases[] = {
     { "uname", "posix_uname" },
     { "echo",  "posix_echo" },
     { "ps",    "posix_ps" },
+    { "grep",  "posix_grep" },
+    { "sort",  "posix_sort" },
+    { "id",    "posix_id" },
+    { "whoami","posix_whoami" },
+    { "date",  "posix_date" },
+    { "env",   "posix_env" },
+    { "yes",   "posix_yes" },
+    { "basename","posix_basename" },
+    { "dirname","posix_dirname" },
+    { "true",  "posix_true" },
+    { "false", "posix_false" },
     { 0, 0 }
 };
 
