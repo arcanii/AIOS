@@ -172,7 +172,7 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         vka_object_t child_fault_ep;
         err = vka_alloc_endpoint(&vka, &child_fault_ep);
         if (err) {
-            printf("[exec] Failed to alloc fault ep\n");
+            /* alloc failed silently */
             seL4_SetMR(0, (seL4_Word)-1);
             seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
             continue;
@@ -194,7 +194,7 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
 
         err = sel4utils_configure_process_custom(&proc, &vka, &vspace, pconfig);
         if (err) {
-            printf("[exec] Failed to configure %s: %d\n", prog_name, err);
+            /* configure failed silently */
             seL4_SetMR(0, (seL4_Word)-1);
             seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
             continue;
@@ -229,7 +229,7 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         err = sel4utils_spawn_process_v(&proc, &vka, &vspace,
                                          child_argc, child_argv, 1);
         if (err) {
-            printf("[exec] Failed to spawn %s: %d\n", prog_name, err);
+            /* spawn failed silently */
             seL4_SetMR(0, (seL4_Word)-1);
             seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
             continue;

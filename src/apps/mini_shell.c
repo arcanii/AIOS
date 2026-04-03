@@ -42,6 +42,26 @@ static int str_prefix(const char *s, const char *p) {
     return *p == '\0';
 }
 static int str_len(const char *s) { int n = 0; while (s[n]) n++; return n; }
+
+/* Command aliases — shell command → CPIO program name */
+struct alias { const char *cmd; const char *prog; };
+static const struct alias aliases[] = {
+    { "cat",   "posix_cat" },
+    { "ls",    "posix_ls" },
+    { "wc",    "posix_wc" },
+    { "head",  "posix_head" },
+    { "uname", "posix_uname" },
+    { "echo",  "posix_echo" },
+    { 0, 0 }
+};
+
+static const char *lookup_alias(const char *cmd) {
+    for (int i = 0; aliases[i].cmd; i++) {
+        if (str_eq(cmd, aliases[i].cmd)) return aliases[i].prog;
+    }
+    return 0;
+}
+
 static void str_cpy(char *d, const char *s) { while ((*d++ = *s++)); }
 
 /* Current working directory */
@@ -275,7 +295,7 @@ int main(int argc, char *argv[]) {
         }
 
         if (str_eq(line, "help")) {
-            ser_puts("Commands: help, ls, cat, cd, pwd, wc, head, echo, uname, exit\n");
+            ser_puts("Commands: ls, cat, cd, pwd, wc, head, echo, uname, sysinfo, exit\n");
             
         } else if (str_eq(line, "ls")) {
             cmd_ls(arg);
@@ -302,9 +322,40 @@ int main(int argc, char *argv[]) {
             ser_puts("Goodbye.\n");
             return 0;
         } else if (exec_ep) {
-            /* Restore the null back to space so exec gets full command */
-            if (arg && arg > line) { *(arg - 1) = ' '; }
-            int pl = str_len(line);
+            /* Check aliases: "cat foo" → "posix_cat foo" */
+            const char *alias = lookup_alias(line);
+            if (alias) {
+                /* Build: "posix_cat foo" */
+                char exec_buf[LINE_MAX + 32];
+                int ei = 0;
+                const char *a = alias;
+                while (*a && ei < LINE_MAX + 30) exec_buf[ei++] = *a++;
+                if (arg) {
+                    exec_buf[ei++] = ' ';
+                    const char *p = arg;
+                    while (*p && ei < LINE_MAX + 30) exec_buf[ei++] = *p++;
+                }
+                exec_buf[ei] = '\0';
+                /* Send aliased command */
+                int pl = ei;
+                seL4_SetMR(0, (seL4_Word)pl);
+                int mr = 1;
+                seL4_Word w = 0;
+                for (int i = 0; i < pl; i++) {
+                    w |= ((seL4_Word)(uint8_t)exec_buf[i]) << ((i % 8) * 8);
+                    if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
+                }
+                seL4_MessageInfo_t reply = seL4_Call(exec_ep,
+                    seL4_MessageInfo_new(EXEC_RUN, 0, 0, mr));
+                int ret = (int)(long)seL4_GetMR(0);
+                if (ret != 0) {
+                    ser_puts(line);
+                    ser_puts(": command not found\n");
+                }
+            } else {
+                /* Direct exec — restore full command line */
+                if (arg && arg > line) { *(arg - 1) = ' '; }
+                int pl = str_len(line);
             seL4_SetMR(0, (seL4_Word)pl);
             int mr = 1;
             seL4_Word w = 0;
@@ -318,6 +369,7 @@ int main(int argc, char *argv[]) {
             if (ret != 0) {
                 ser_puts(line);
                 ser_puts(": command not found\n");
+            }
             }
         } else {
             ser_puts(line);

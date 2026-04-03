@@ -1273,8 +1273,8 @@ events:
     checks:
       - "Detecting C compiler ABI info"
     directories:
-      source: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-eAr7eU"
-      binary: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-eAr7eU"
+      source: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-8XnyJu"
+      binary: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-8XnyJu"
     cmakeVariables:
       CMAKE_C_FLAGS: " -fvisibility=default"
       CMAKE_C_FLAGS_DEBUG: "-g"
@@ -1286,10 +1286,10 @@ events:
       variable: "CMAKE_C_ABI_COMPILED"
       cached: true
       stdout: |
-        Change Dir: '/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-eAr7eU'
+        Change Dir: '/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-8XnyJu'
         
-        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_a82c3
-        [1/2] /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-gcc --sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-eAr7eU   -fvisibility=default    -v -o CMakeFiles/cmTC_a82c3.dir/CMakeCCompilerABI.c.obj -c /opt/homebrew/share/cmake/Modules/CMakeCCompilerABI.c
+        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_322a4
+        [1/2] /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-gcc --sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-8XnyJu   -fvisibility=default    -v -o CMakeFiles/cmTC_322a4.dir/CMakeCCompilerABI.c.obj -c /opt/homebrew/share/cmake/Modules/CMakeCCompilerABI.c
         Using built-in specs.
         COLLECT_GCC=/opt/homebrew/bin/aarch64-linux-gnu-gcc
         Target: aarch64-unknown-linux-gnu
@@ -1297,17 +1297,17 @@ events:
         Thread model: posix
         Supported LTO compression algorithms: zlib zstd
         gcc version 15.2.0 (GCC) 
-        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-eAr7eU' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_a82c3.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_a82c3.dir/'
-         /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/cc1 -quiet -v -iprefix /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/ -isysroot /Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-eAr7eU /opt/homebrew/share/cmake/Modules/CMakeCCompilerABI.c -quiet -dumpdir CMakeFiles/cmTC_a82c3.dir/ -dumpbase CMakeCCompilerABI.c.c -dumpbase-ext .c -mlittle-endian -mabi=lp64 -version -fdiagnostics-color=always -fvisibility=default -o /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccNigTpG.s
+        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-8XnyJu' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_322a4.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_322a4.dir/'
+         /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/cc1 -quiet -v -iprefix /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/ -isysroot /Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-8XnyJu /opt/homebrew/share/cmake/Modules/CMakeCCompilerABI.c -quiet -dumpdir CMakeFiles/cmTC_322a4.dir/ -dumpbase CMakeCCompilerABI.c.c -dumpbase-ext .c -mlittle-endian -mabi=lp64 -version -fdiagnostics-color=always -fvisibility=default -o /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccOspiEn.s
         GNU C23 (GCC) version 15.2.0 (aarch64-unknown-linux-gnu)
         	compiled by GNU C version Apple LLVM 15.0.0 (clang-1500.3.9.4), GMP version 6.2.1, MPFR version 4.2.2, MPC version 1.3.1, isl version isl-0.26-GMP
         
         GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
         ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/include"
-        ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-eAr7eU/Volumes/tools/aarch64-unknown-linux-gnu/aarch64-unknown-linux-gnu/sysroot/include"
+        ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-8XnyJu/Volumes/tools/aarch64-unknown-linux-gnu/aarch64-unknown-linux-gnu/sysroot/include"
         ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/include-fixed"
         ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include"
-        ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-eAr7eU/usr/include"
+        ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-8XnyJu/usr/include"
         #include "..." search starts here:
         #include <...> search starts here:
          /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/include
@@ -1315,13 +1315,13 @@ events:
          /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include
         End of search list.
         Compiler executable checksum: 23096bb7f4e041d5b0da9be678e1e098
-        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-eAr7eU' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_a82c3.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_a82c3.dir/'
-         /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/as -v -EL -mabi=lp64 -o CMakeFiles/cmTC_a82c3.dir/CMakeCCompilerABI.c.obj /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccNigTpG.s
+        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-8XnyJu' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_322a4.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_322a4.dir/'
+         /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/as -v -EL -mabi=lp64 -o CMakeFiles/cmTC_322a4.dir/CMakeCCompilerABI.c.obj /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccOspiEn.s
         GNU assembler version 2.45 (aarch64-unknown-linux-gnu) using BFD version (GNU Binutils) 2.45
         COMPILER_PATH=/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/
         LIBRARY_PATH=/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/lib/../lib64/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/lib/
-        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-eAr7eU' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_a82c3.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_a82c3.dir/CMakeCCompilerABI.c.'
-        [2/2] : && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E rm -f libcmTC_a82c3.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ar qc libcmTC_a82c3.a  CMakeFiles/cmTC_a82c3.dir/CMakeCCompilerABI.c.obj && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ranlib libcmTC_a82c3.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E touch libcmTC_a82c3.a && :
+        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-8XnyJu' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_322a4.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_322a4.dir/CMakeCCompilerABI.c.'
+        [2/2] : && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E rm -f libcmTC_322a4.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ar qc libcmTC_322a4.a  CMakeFiles/cmTC_322a4.dir/CMakeCCompilerABI.c.obj && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ranlib libcmTC_322a4.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E touch libcmTC_322a4.a && :
         
       exitCode: 0
   -
@@ -1358,10 +1358,10 @@ events:
       Parsed C implicit link information:
         link line regex: [^( *|.*[/\\])(ld[0-9]*(|\\.[a-rt-z][a-z]*|\\.s[a-np-z][a-z]*|\\.so[a-z]+)|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
         linker tool regex: [^[ 	]*(->|"|[0-9]+>[ 	-]*Build:[ 	0-9]+ ms[ 	]*)?[ 	]*(([^"]*[/\\])?(ld[0-9]*(|\\.[a-rt-z][a-z]*|\\.s[a-np-z][a-z]*|\\.so[a-z]+)))("|,| |$)]
-        ignore line: [Change Dir: '/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-eAr7eU']
+        ignore line: [Change Dir: '/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-8XnyJu']
         ignore line: []
-        ignore line: [Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_a82c3]
-        ignore line: [[1/2] /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-gcc --sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-eAr7eU   -fvisibility=default    -v -o CMakeFiles/cmTC_a82c3.dir/CMakeCCompilerABI.c.obj -c /opt/homebrew/share/cmake/Modules/CMakeCCompilerABI.c]
+        ignore line: [Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_322a4]
+        ignore line: [[1/2] /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-gcc --sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-8XnyJu   -fvisibility=default    -v -o CMakeFiles/cmTC_322a4.dir/CMakeCCompilerABI.c.obj -c /opt/homebrew/share/cmake/Modules/CMakeCCompilerABI.c]
         ignore line: [Using built-in specs.]
         ignore line: [COLLECT_GCC=/opt/homebrew/bin/aarch64-linux-gnu-gcc]
         ignore line: [Target: aarch64-unknown-linux-gnu]
@@ -1369,17 +1369,17 @@ events:
         ignore line: [Thread model: posix]
         ignore line: [Supported LTO compression algorithms: zlib zstd]
         ignore line: [gcc version 15.2.0 (GCC) ]
-        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-eAr7eU' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_a82c3.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_a82c3.dir/']
-        ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/cc1 -quiet -v -iprefix /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/ -isysroot /Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-eAr7eU /opt/homebrew/share/cmake/Modules/CMakeCCompilerABI.c -quiet -dumpdir CMakeFiles/cmTC_a82c3.dir/ -dumpbase CMakeCCompilerABI.c.c -dumpbase-ext .c -mlittle-endian -mabi=lp64 -version -fdiagnostics-color=always -fvisibility=default -o /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccNigTpG.s]
+        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-8XnyJu' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_322a4.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_322a4.dir/']
+        ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/cc1 -quiet -v -iprefix /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/ -isysroot /Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-8XnyJu /opt/homebrew/share/cmake/Modules/CMakeCCompilerABI.c -quiet -dumpdir CMakeFiles/cmTC_322a4.dir/ -dumpbase CMakeCCompilerABI.c.c -dumpbase-ext .c -mlittle-endian -mabi=lp64 -version -fdiagnostics-color=always -fvisibility=default -o /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccOspiEn.s]
         ignore line: [GNU C23 (GCC) version 15.2.0 (aarch64-unknown-linux-gnu)]
         ignore line: [	compiled by GNU C version Apple LLVM 15.0.0 (clang-1500.3.9.4)  GMP version 6.2.1  MPFR version 4.2.2  MPC version 1.3.1  isl version isl-0.26-GMP]
         ignore line: []
         ignore line: [GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072]
         ignore line: [ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/include"]
-        ignore line: [ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-eAr7eU/Volumes/tools/aarch64-unknown-linux-gnu/aarch64-unknown-linux-gnu/sysroot/include"]
+        ignore line: [ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-8XnyJu/Volumes/tools/aarch64-unknown-linux-gnu/aarch64-unknown-linux-gnu/sysroot/include"]
         ignore line: [ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/include-fixed"]
         ignore line: [ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include"]
-        ignore line: [ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-eAr7eU/usr/include"]
+        ignore line: [ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-8XnyJu/usr/include"]
         ignore line: [#include "..." search starts here:]
         ignore line: [#include <...> search starts here:]
         ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/include]
@@ -1387,13 +1387,13 @@ events:
         ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include]
         ignore line: [End of search list.]
         ignore line: [Compiler executable checksum: 23096bb7f4e041d5b0da9be678e1e098]
-        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-eAr7eU' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_a82c3.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_a82c3.dir/']
-        ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/as -v -EL -mabi=lp64 -o CMakeFiles/cmTC_a82c3.dir/CMakeCCompilerABI.c.obj /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccNigTpG.s]
+        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-8XnyJu' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_322a4.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_322a4.dir/']
+        ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/as -v -EL -mabi=lp64 -o CMakeFiles/cmTC_322a4.dir/CMakeCCompilerABI.c.obj /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccOspiEn.s]
         ignore line: [GNU assembler version 2.45 (aarch64-unknown-linux-gnu) using BFD version (GNU Binutils) 2.45]
         ignore line: [COMPILER_PATH=/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/]
         ignore line: [LIBRARY_PATH=/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/lib/../lib64/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/lib/]
-        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-eAr7eU' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_a82c3.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_a82c3.dir/CMakeCCompilerABI.c.']
-        ignore line: [[2/2] : && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E rm -f libcmTC_a82c3.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ar qc libcmTC_a82c3.a  CMakeFiles/cmTC_a82c3.dir/CMakeCCompilerABI.c.obj && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ranlib libcmTC_a82c3.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E touch libcmTC_a82c3.a && :]
+        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-8XnyJu' '-fvisibility=default' '-v' '-c' '-o' 'CMakeFiles/cmTC_322a4.dir/CMakeCCompilerABI.c.obj' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_322a4.dir/CMakeCCompilerABI.c.']
+        ignore line: [[2/2] : && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E rm -f libcmTC_322a4.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ar qc libcmTC_322a4.a  CMakeFiles/cmTC_322a4.dir/CMakeCCompilerABI.c.obj && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ranlib libcmTC_322a4.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E touch libcmTC_322a4.a && :]
         ignore line: []
         ignore line: []
         implicit libs: []
@@ -1765,8 +1765,8 @@ events:
     checks:
       - "Detecting CXX compiler ABI info"
     directories:
-      source: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZseF6Y"
-      binary: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZseF6Y"
+      source: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZSHHB7"
+      binary: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZSHHB7"
     cmakeVariables:
       CMAKE_CXX_FLAGS: ""
       CMAKE_CXX_FLAGS_DEBUG: "-g"
@@ -1780,10 +1780,10 @@ events:
       variable: "CMAKE_CXX_ABI_COMPILED"
       cached: true
       stdout: |
-        Change Dir: '/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZseF6Y'
+        Change Dir: '/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZSHHB7'
         
-        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_0f651
-        [1/2] /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-g++ --sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZseF6Y   -v -o CMakeFiles/cmTC_0f651.dir/CMakeCXXCompilerABI.cpp.obj -c /opt/homebrew/share/cmake/Modules/CMakeCXXCompilerABI.cpp
+        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_75d42
+        [1/2] /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-g++ --sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZSHHB7   -v -o CMakeFiles/cmTC_75d42.dir/CMakeCXXCompilerABI.cpp.obj -c /opt/homebrew/share/cmake/Modules/CMakeCXXCompilerABI.cpp
         Using built-in specs.
         COLLECT_GCC=/opt/homebrew/bin/aarch64-linux-gnu-g++
         Target: aarch64-unknown-linux-gnu
@@ -1791,8 +1791,8 @@ events:
         Thread model: posix
         Supported LTO compression algorithms: zlib zstd
         gcc version 15.2.0 (GCC) 
-        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZseF6Y' '-v' '-c' '-o' 'CMakeFiles/cmTC_0f651.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_0f651.dir/'
-         /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/cc1plus -quiet -v -iprefix /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/ -isysroot /Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZseF6Y -D_GNU_SOURCE /opt/homebrew/share/cmake/Modules/CMakeCXXCompilerABI.cpp -quiet -dumpdir CMakeFiles/cmTC_0f651.dir/ -dumpbase CMakeCXXCompilerABI.cpp.cpp -dumpbase-ext .cpp -mlittle-endian -mabi=lp64 -version -fdiagnostics-color=always -o /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccERGDG0.s
+        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZSHHB7' '-v' '-c' '-o' 'CMakeFiles/cmTC_75d42.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_75d42.dir/'
+         /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/cc1plus -quiet -v -iprefix /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/ -isysroot /Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZSHHB7 -D_GNU_SOURCE /opt/homebrew/share/cmake/Modules/CMakeCXXCompilerABI.cpp -quiet -dumpdir CMakeFiles/cmTC_75d42.dir/ -dumpbase CMakeCXXCompilerABI.cpp.cpp -dumpbase-ext .cpp -mlittle-endian -mabi=lp64 -version -fdiagnostics-color=always -o /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//cc964x4N.s
         GNU C++17 (GCC) version 15.2.0 (aarch64-unknown-linux-gnu)
         	compiled by GNU C version Apple LLVM 15.0.0 (clang-1500.3.9.4), GMP version 6.2.1, MPFR version 4.2.2, MPC version 1.3.1, isl version isl-0.26-GMP
         
@@ -1801,10 +1801,10 @@ events:
         ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include/c++/15.2.0/aarch64-unknown-linux-gnu"
         ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include/c++/15.2.0/backward"
         ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/include"
-        ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZseF6Y/Volumes/tools/aarch64-unknown-linux-gnu/aarch64-unknown-linux-gnu/sysroot/include"
+        ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZSHHB7/Volumes/tools/aarch64-unknown-linux-gnu/aarch64-unknown-linux-gnu/sysroot/include"
         ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/include-fixed"
         ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include"
-        ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZseF6Y/usr/include"
+        ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZSHHB7/usr/include"
         #include "..." search starts here:
         #include <...> search starts here:
          /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include/c++/15.2.0
@@ -1815,13 +1815,13 @@ events:
          /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include
         End of search list.
         Compiler executable checksum: 774936c10a9b001284fdb901352c9154
-        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZseF6Y' '-v' '-c' '-o' 'CMakeFiles/cmTC_0f651.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_0f651.dir/'
-         /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/as -v -EL -mabi=lp64 -o CMakeFiles/cmTC_0f651.dir/CMakeCXXCompilerABI.cpp.obj /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccERGDG0.s
+        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZSHHB7' '-v' '-c' '-o' 'CMakeFiles/cmTC_75d42.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_75d42.dir/'
+         /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/as -v -EL -mabi=lp64 -o CMakeFiles/cmTC_75d42.dir/CMakeCXXCompilerABI.cpp.obj /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//cc964x4N.s
         GNU assembler version 2.45 (aarch64-unknown-linux-gnu) using BFD version (GNU Binutils) 2.45
         COMPILER_PATH=/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/
         LIBRARY_PATH=/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/lib/../lib64/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/lib/
-        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZseF6Y' '-v' '-c' '-o' 'CMakeFiles/cmTC_0f651.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_0f651.dir/CMakeCXXCompilerABI.cpp.'
-        [2/2] : && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E rm -f libcmTC_0f651.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ar qc libcmTC_0f651.a  CMakeFiles/cmTC_0f651.dir/CMakeCXXCompilerABI.cpp.obj && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ranlib libcmTC_0f651.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E touch libcmTC_0f651.a && :
+        COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZSHHB7' '-v' '-c' '-o' 'CMakeFiles/cmTC_75d42.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_75d42.dir/CMakeCXXCompilerABI.cpp.'
+        [2/2] : && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E rm -f libcmTC_75d42.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ar qc libcmTC_75d42.a  CMakeFiles/cmTC_75d42.dir/CMakeCXXCompilerABI.cpp.obj && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ranlib libcmTC_75d42.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E touch libcmTC_75d42.a && :
         
       exitCode: 0
   -
@@ -1864,10 +1864,10 @@ events:
       Parsed CXX implicit link information:
         link line regex: [^( *|.*[/\\])(ld[0-9]*(|\\.[a-rt-z][a-z]*|\\.s[a-np-z][a-z]*|\\.so[a-z]+)|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
         linker tool regex: [^[ 	]*(->|"|[0-9]+>[ 	-]*Build:[ 	0-9]+ ms[ 	]*)?[ 	]*(([^"]*[/\\])?(ld[0-9]*(|\\.[a-rt-z][a-z]*|\\.s[a-np-z][a-z]*|\\.so[a-z]+)))("|,| |$)]
-        ignore line: [Change Dir: '/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZseF6Y']
+        ignore line: [Change Dir: '/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZSHHB7']
         ignore line: []
-        ignore line: [Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_0f651]
-        ignore line: [[1/2] /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-g++ --sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZseF6Y   -v -o CMakeFiles/cmTC_0f651.dir/CMakeCXXCompilerABI.cpp.obj -c /opt/homebrew/share/cmake/Modules/CMakeCXXCompilerABI.cpp]
+        ignore line: [Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_75d42]
+        ignore line: [[1/2] /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-g++ --sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZSHHB7   -v -o CMakeFiles/cmTC_75d42.dir/CMakeCXXCompilerABI.cpp.obj -c /opt/homebrew/share/cmake/Modules/CMakeCXXCompilerABI.cpp]
         ignore line: [Using built-in specs.]
         ignore line: [COLLECT_GCC=/opt/homebrew/bin/aarch64-linux-gnu-g++]
         ignore line: [Target: aarch64-unknown-linux-gnu]
@@ -1875,8 +1875,8 @@ events:
         ignore line: [Thread model: posix]
         ignore line: [Supported LTO compression algorithms: zlib zstd]
         ignore line: [gcc version 15.2.0 (GCC) ]
-        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZseF6Y' '-v' '-c' '-o' 'CMakeFiles/cmTC_0f651.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_0f651.dir/']
-        ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/cc1plus -quiet -v -iprefix /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/ -isysroot /Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZseF6Y -D_GNU_SOURCE /opt/homebrew/share/cmake/Modules/CMakeCXXCompilerABI.cpp -quiet -dumpdir CMakeFiles/cmTC_0f651.dir/ -dumpbase CMakeCXXCompilerABI.cpp.cpp -dumpbase-ext .cpp -mlittle-endian -mabi=lp64 -version -fdiagnostics-color=always -o /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccERGDG0.s]
+        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZSHHB7' '-v' '-c' '-o' 'CMakeFiles/cmTC_75d42.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_75d42.dir/']
+        ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/cc1plus -quiet -v -iprefix /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/ -isysroot /Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZSHHB7 -D_GNU_SOURCE /opt/homebrew/share/cmake/Modules/CMakeCXXCompilerABI.cpp -quiet -dumpdir CMakeFiles/cmTC_75d42.dir/ -dumpbase CMakeCXXCompilerABI.cpp.cpp -dumpbase-ext .cpp -mlittle-endian -mabi=lp64 -version -fdiagnostics-color=always -o /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//cc964x4N.s]
         ignore line: [GNU C++17 (GCC) version 15.2.0 (aarch64-unknown-linux-gnu)]
         ignore line: [	compiled by GNU C version Apple LLVM 15.0.0 (clang-1500.3.9.4)  GMP version 6.2.1  MPFR version 4.2.2  MPC version 1.3.1  isl version isl-0.26-GMP]
         ignore line: []
@@ -1885,10 +1885,10 @@ events:
         ignore line: [ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include/c++/15.2.0/aarch64-unknown-linux-gnu"]
         ignore line: [ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include/c++/15.2.0/backward"]
         ignore line: [ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/include"]
-        ignore line: [ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZseF6Y/Volumes/tools/aarch64-unknown-linux-gnu/aarch64-unknown-linux-gnu/sysroot/include"]
+        ignore line: [ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZSHHB7/Volumes/tools/aarch64-unknown-linux-gnu/aarch64-unknown-linux-gnu/sysroot/include"]
         ignore line: [ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/include-fixed"]
         ignore line: [ignoring duplicate directory "/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/../../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include"]
-        ignore line: [ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZseF6Y/usr/include"]
+        ignore line: [ignoring nonexistent directory "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZSHHB7/usr/include"]
         ignore line: [#include "..." search starts here:]
         ignore line: [#include <...> search starts here:]
         ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include/c++/15.2.0]
@@ -1899,13 +1899,13 @@ events:
         ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/include]
         ignore line: [End of search list.]
         ignore line: [Compiler executable checksum: 774936c10a9b001284fdb901352c9154]
-        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZseF6Y' '-v' '-c' '-o' 'CMakeFiles/cmTC_0f651.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_0f651.dir/']
-        ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/as -v -EL -mabi=lp64 -o CMakeFiles/cmTC_0f651.dir/CMakeCXXCompilerABI.cpp.obj /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//ccERGDG0.s]
+        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZSHHB7' '-v' '-c' '-o' 'CMakeFiles/cmTC_75d42.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_75d42.dir/']
+        ignore line: [ /opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/as -v -EL -mabi=lp64 -o CMakeFiles/cmTC_75d42.dir/CMakeCXXCompilerABI.cpp.obj /var/folders/l6/yghh9z4s7752s3gddrjrczk00000gn/T//cc964x4N.s]
         ignore line: [GNU assembler version 2.45 (aarch64-unknown-linux-gnu) using BFD version (GNU Binutils) 2.45]
         ignore line: [COMPILER_PATH=/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/aarch64-unknown-linux-gnu/15.2.0/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../libexec/gcc/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/bin/]
         ignore line: [LIBRARY_PATH=/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/lib/../lib64/:/opt/homebrew/Cellar/aarch64-unknown-linux-gnu/15.2.0/toolchain/bin/../lib/gcc/aarch64-unknown-linux-gnu/15.2.0/../../../../aarch64-unknown-linux-gnu/lib/]
-        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZseF6Y' '-v' '-c' '-o' 'CMakeFiles/cmTC_0f651.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_0f651.dir/CMakeCXXCompilerABI.cpp.']
-        ignore line: [[2/2] : && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E rm -f libcmTC_0f651.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ar qc libcmTC_0f651.a  CMakeFiles/cmTC_0f651.dir/CMakeCXXCompilerABI.cpp.obj && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ranlib libcmTC_0f651.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E touch libcmTC_0f651.a && :]
+        ignore line: [COLLECT_GCC_OPTIONS='-fdiagnostics-color=always' '--sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ZSHHB7' '-v' '-c' '-o' 'CMakeFiles/cmTC_75d42.dir/CMakeCXXCompilerABI.cpp.obj' '-shared-libgcc' '-mlittle-endian' '-mabi=lp64' '-dumpdir' 'CMakeFiles/cmTC_75d42.dir/CMakeCXXCompilerABI.cpp.']
+        ignore line: [[2/2] : && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E rm -f libcmTC_75d42.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ar qc libcmTC_75d42.a  CMakeFiles/cmTC_75d42.dir/CMakeCXXCompilerABI.cpp.obj && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ranlib libcmTC_75d42.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E touch libcmTC_75d42.a && :]
         ignore line: []
         ignore line: []
         implicit libs: []
@@ -5140,8 +5140,8 @@ events:
     checks:
       - "Performing Test compiler_arch_test"
     directories:
-      source: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-CHsD2a"
-      binary: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-CHsD2a"
+      source: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ghzo3b"
+      binary: "/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ghzo3b"
     cmakeVariables:
       CMAKE_CXX_STDLIB_MODULES_JSON: ""
       CMAKE_C_FLAGS: " -fvisibility=default  -march=armv8-a  -D__KERNEL_64__"
@@ -5154,11 +5154,11 @@ events:
       variable: "compiler_arch_test"
       cached: true
       stdout: |
-        Change Dir: '/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-CHsD2a'
+        Change Dir: '/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ghzo3b'
         
-        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_d8cd0
-        [1/2] /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-gcc --sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-CHsD2a -Dcompiler_arch_test  -fvisibility=default  -march=armv8-a  -D__KERNEL_64__  -std=gnu11 -o CMakeFiles/cmTC_d8cd0.dir/src.c.obj -c /Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-CHsD2a/src.c
-        [2/2] : && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E rm -f libcmTC_d8cd0.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ar qc libcmTC_d8cd0.a  CMakeFiles/cmTC_d8cd0.dir/src.c.obj && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ranlib libcmTC_d8cd0.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E touch libcmTC_d8cd0.a && :
+        Run Build Command(s): /opt/homebrew/bin/ninja -v cmTC_0ccc8
+        [1/2] /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-gcc --sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ghzo3b -Dcompiler_arch_test  -fvisibility=default  -march=armv8-a  -D__KERNEL_64__  -std=gnu11 -o CMakeFiles/cmTC_0ccc8.dir/src.c.obj -c /Users/bryan/Desktop/github_repos/AIOS/build-04/CMakeFiles/CMakeScratch/TryCompile-ghzo3b/src.c
+        [2/2] : && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E rm -f libcmTC_0ccc8.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ar qc libcmTC_0ccc8.a  CMakeFiles/cmTC_0ccc8.dir/src.c.obj && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ranlib libcmTC_0ccc8.a && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E touch libcmTC_0ccc8.a && :
         
       exitCode: 0
   -
