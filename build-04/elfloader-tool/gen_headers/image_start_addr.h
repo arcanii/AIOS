@@ -1,1 +1,1 @@
-#define IMAGE_START_ADDR 0x60b6d000
+#define IMAGE_START_ADDR 0x60bad000

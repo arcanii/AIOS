@@ -20,6 +20,7 @@ endmacro()
 macro(AiosPosixApp name)
     AiosChildApp(${name})
     target_link_libraries(${name} aios_posix)
+    target_link_options(${name} PRIVATE -Wl,-u,aios_init)
 endmacro()
 
 # System services
@@ -55,6 +56,7 @@ AiosPosixApp(posix_yes)
 AiosPosixApp(posix_tee)
 AiosPosixApp(posix_sort)
 AiosPosixApp(posix_grep)
+AiosPosixApp(gnu_hello)
 
 set(ALL_APPS
     hello_child echo_server serial_server mini_shell crash_test blk_test
@@ -63,6 +65,7 @@ set(ALL_APPS
     posix_nice posix_true posix_false posix_pwd posix_basename posix_dirname
     posix_whoami posix_id posix_date posix_env posix_yes posix_tee
     posix_sort posix_grep
+    gnu_hello
 )
 
 set(CPIO_FILES "")

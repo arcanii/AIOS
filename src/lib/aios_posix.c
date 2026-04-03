@@ -11,6 +11,7 @@
 #include "aios_posix.h"
 #include <arch_stdio.h>
 #include <sel4/sel4.h>
+#include <sel4runtime.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdarg.h>
@@ -704,4 +705,27 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     muslcsys_install_syscall(__NR_gettimeofday, aios_sys_gettimeofday);
     muslcsys_install_syscall(__NR_nanosleep, aios_sys_nanosleep);
     muslcsys_install_syscall(__NR_getdents64, aios_sys_getdents64);
+}
+
+
+/* Auto-init: constructor runs before main().
+ * Reads argc/argv from sel4runtime and calls aios_init().
+ * Programs linking aios_posix get POSIX I/O automatically —
+ * no AIOS_INIT() call needed.
+ */
+static long _auto_parse(const char *s) {
+    if (!s) return 0;
+    long v = 0;
+    while (*s >= '0' && *s <= '9') { v = v * 10 + (*s - '0'); s++; }
+    return v;
+}
+
+__attribute__((constructor(200)))
+static void aios_auto_init(void) {
+    int argc = sel4runtime_argc();
+    char const *const *argv = sel4runtime_argv();
+    seL4_CPtr serial = 0, fs = 0;
+    if (argc > 0 && argv[0]) serial = (seL4_CPtr)_auto_parse(argv[0]);
+    if (argc > 1 && argv[1]) fs = (seL4_CPtr)_auto_parse(argv[1]);
+    if (serial) aios_init(serial, fs);
 }
