@@ -12,7 +12,7 @@ libdir = $(prefix)/lib
 includedir = $(prefix)/include
 syslibdir = /lib
 CC = /opt/homebrew/bin/aarch64-linux-gnu-gcc
-CFLAGS = -nostdinc -fno-pic -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -ftls-model=local-exec -mstrict-align -mno-outline-atomics -fvisibility=default -fvisibility=default -march=armv8-a -D__KERNEL_64__ 
+CFLAGS = -nostdinc -fno-pic -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -ftls-model=local-exec -mstrict-align -mno-outline-atomics -fvisibility=default -march=armv8-a -D__KERNEL_64__ 
 CFLAGS_AUTO = -Os -pipe -fomit-frame-pointer -fno-unwind-tables -fno-asynchronous-unwind-tables -ffunction-sections -fdata-sections -Werror=implicit-function-declaration -Werror=implicit-int -Werror=pointer-sign -Werror=pointer-arith -Wall -Wno-parentheses -Wno-uninitialized -Wno-missing-braces -Wno-unused-value -Wno-unused-but-set-variable -Wno-unknown-pragmas -Wno-pointer-to-int-cast -include vis.h
 CFLAGS_C99FSE = -std=c99 -nostdinc -ffreestanding -fexcess-precision=standard -frounding-math -Wa,--noexecstack
 CFLAGS_MEMOPS = -fno-tree-loop-distribute-patterns

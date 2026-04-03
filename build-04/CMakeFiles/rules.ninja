@@ -169,6 +169,25 @@ rule C_STATIC_LIBRARY_LINKER__sel4_
 #############################################
 # Rule for compiling C files.
 
+rule C_COMPILER__aios_posix_unscanned_
+  depfile = $DEP_FILE
+  deps = gcc
+  command = /opt/homebrew/bin/ccache ${LAUNCHER}${CODE_CHECK}/opt/homebrew/bin/aarch64-linux-gnu-gcc --sysroot=/Users/bryan/Desktop/github_repos/AIOS/build-04 $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  description = Building C object $out
+
+
+#############################################
+# Rule for linking C static library.
+
+rule C_STATIC_LIBRARY_LINKER__aios_posix_
+  command = $PRE_LINK && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E rm -f $TARGET_FILE && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ar qc $TARGET_FILE $LINK_FLAGS $in && /opt/homebrew/bin/ccache /opt/homebrew/bin/aarch64-linux-gnu-ranlib $TARGET_FILE && /opt/homebrew/bin/ccache /opt/homebrew/bin/cmake -E touch $TARGET_FILE && $POST_BUILD
+  description = Linking C static library $TARGET_FILE
+  restat = $RESTAT
+
+
+#############################################
+# Rule for compiling C files.
+
 rule C_COMPILER__hello_child_unscanned_
   depfile = $DEP_FILE
   deps = gcc

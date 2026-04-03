@@ -44,6 +44,7 @@ static volatile uint32_t *blk_vio;
 static uint8_t *blk_dma;
 static uint64_t blk_dma_pa;
 static seL4_CPtr fs_ep_cap;
+static vka_object_t serial_ep;
 
 static int blk_read_sector(uint64_t sector, void *buf);
 static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf);
@@ -170,7 +171,10 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         }
 
         sel4utils_process_t proc;
-        err = spawn_simple(prog_name, 200, &proc, &child_fault_ep);
+        seL4_CPtr exec_caps[1] = { serial_ep.cptr };
+        seL4_CPtr exec_slots[1];
+        err = spawn_with_args(prog_name, 200, &proc, &child_fault_ep,
+                              1, exec_caps, exec_slots);
         if (err) {
             printf("[exec] Failed to spawn %s: %d\n", prog_name, err);
             seL4_SetMR(0, (seL4_Word)-1);
@@ -351,7 +355,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    vka_object_t fault_ep, serial_ep;
+    vka_object_t fault_ep;
+
     vka_alloc_endpoint(&vka, &fault_ep);
     vka_alloc_endpoint(&vka, &serial_ep);
 
