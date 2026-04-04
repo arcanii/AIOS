@@ -386,6 +386,60 @@ login_gate:
         int len; read_line(&len);
         if (len == 0) continue;
 
+        /* Check for && / || chains first (before command split) */
+        {
+            int chain_pos = -1, chain_type = 0;
+            for (int ci = 0; ci < len - 1; ci++) {
+                if (line[ci] == '&' && line[ci+1] == '&') { chain_pos = ci; chain_type = 1; break; }
+                if (line[ci] == '|' && line[ci+1] == '|') { chain_pos = ci; chain_type = 2; break; }
+            }
+            if (chain_type) {
+                /* Split into left and right commands */
+                line[chain_pos] = '\0';
+                char *right_cmd = line + chain_pos + 2;
+                while (*right_cmd == ' ') right_cmd++;
+                /* Trim trailing spaces from left */
+                int ll = chain_pos - 1;
+                while (ll >= 0 && line[ll] == ' ') line[ll--] = '\0';
+
+                /* Execute left command */
+                char *larg = 0;
+                for (int i = 0; line[i]; i++) {
+                    if (line[i] == ' ') { line[i] = '\0'; larg = line + i + 1; break; }
+                }
+                int left_ok = 0;
+                /* Check builtins */
+                if (str_eq(line, "true")) { left_ok = 1; }
+                else if (str_eq(line, "false")) { left_ok = 0; }
+                else {
+                    char lpath[256];
+                    if (find_in_path(line, lpath, sizeof(lpath))) {
+                        char lcmd[512]; int lci = 0;
+                        const char *p = lpath;
+                        while (*p && lci < 500) lcmd[lci++] = *p++;
+                        if (larg) { lcmd[lci++] = ' '; p = larg; while (*p && lci < 500) lcmd[lci++] = *p++; }
+                        lcmd[lci++] = ' '; lcmd[lci++] = 'C'; lcmd[lci++] = 'W'; lcmd[lci++] = 'D'; lcmd[lci++] = '=';
+                        char ud[12], gd[12]; uint_to_dec(session_uid, ud); uint_to_dec(session_gid, gd);
+                        for (int x=0;ud[x]&&lci<500;x++) lcmd[lci++]=ud[x]; lcmd[lci++]=':';
+                        for (int x=0;gd[x]&&lci<500;x++) lcmd[lci++]=gd[x]; lcmd[lci++]=':';
+                        const char *cw=cwd; while(*cw&&lci<500) lcmd[lci++]=*cw++; lcmd[lci]='\0';
+                        left_ok = (do_exec(lcmd) == 0);
+                    }
+                }
+
+                /* Execute right based on chain type */
+                if ((chain_type == 1 && left_ok) || (chain_type == 2 && !left_ok)) {
+                    /* Reconstruct as if user typed right_cmd */
+                    int rl = str_len(right_cmd);
+                    for (int i = 0; i <= rl; i++) line[i] = right_cmd[i];
+                    len = rl;
+                    /* Fall through to normal processing below */
+                } else {
+                    continue; /* Skip right side */
+                }
+            }
+        }
+
         /* Split command + args */
         char *arg = 0;
         for (int i = 0; i < len; i++) {

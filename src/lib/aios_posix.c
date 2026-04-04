@@ -765,7 +765,26 @@ static long aios_sys_uname(va_list ap) {
     for (int i = 0; s[i]; i++) buf->sysname[i] = s[i];
     s = "aios";
     for (int i = 0; s[i]; i++) buf->nodename[i] = s[i];
-    s = "0.4.17";
+    /* Get release from kernel via IPC */
+    if (fs_ep_cap) {
+        seL4_MessageInfo_t ur = seL4_Call(fs_ep_cap,
+            seL4_MessageInfo_new(17 /* FS_UNAME */, 0, 0, 0));
+        /* MR0-1=sysname, MR2-3=nodename, MR4-5=release, MR6-7=version, MR8-9=machine */
+        int nlen = (int)seL4_MessageInfo_get_length(ur);
+        if (nlen >= 10) {
+            /* Unpack all 5 fields (16 bytes each, 2 MRs each) */
+            char *fields[5] = { buf->sysname, buf->nodename, buf->release, buf->version, buf->machine };
+            for (int f = 0; f < 5; f++) {
+                seL4_Word w0 = seL4_GetMR(f * 2);
+                seL4_Word w1 = seL4_GetMR(f * 2 + 1);
+                for (int j = 0; j < 8; j++) fields[f][j] = (char)((w0 >> (j*8)) & 0xFF);
+                for (int j = 0; j < 8; j++) fields[f][8+j] = (char)((w1 >> (j*8)) & 0xFF);
+            }
+            return 0;
+        }
+    }
+    /* Fallback */
+    s = "0.4.37";
     for (int i = 0; s[i]; i++) buf->release[i] = s[i];
     s = "seL4 15.0.0 SMP";
     for (int i = 0; s[i]; i++) buf->version[i] = s[i];
