@@ -63,8 +63,8 @@ static int procfs_list(void *ctx, uint32_t ino, char *buf, int bufsize) {
     (void)ctx; (void)ino;
     int w = 0;
     /* List virtual files */
-    const char *entries[] = { "d .\n", "d ..\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n" };
-    for (int i = 0; i < 7 && w < bufsize - 1; i++) {
+    const char *entries[] = { "d .\n", "d ..\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n" };
+    for (int i = 0; i < 8 && w < bufsize - 1; i++) {
     
         const char *e = entries[i];
         while (*e && w < bufsize - 1) buf[w++] = *e++;
@@ -94,13 +94,13 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         /* /proc/version */
         const char *ver = "AIOS 0.4.x (seL4 15.0.0, AArch64, 4-core SMP)\n";
         while (*ver && w < bufsize - 1) buf[w++] = *ver++;
-    } else if (path[0] == 'm') {
+    } else if (path[0] == 'm' && path[1] == 'o') {
         /* /proc/mounts */
         const char *mnt = "/dev/vda / ext2 ro 0 0\nproc /proc proc rw 0 0\n";
         while (*mnt && w < bufsize - 1) buf[w++] = *mnt++;
     } else if (path[0] == 's') {
         /* /proc/status — process table */
-        const char *hdr = "PID  PRI  NICE  STATE  NAME\n";
+        const char *hdr = "PID  PRI  NICE  STATE  UID   THR  NAME\n";
         while (*hdr && w < bufsize - 1) buf[w++] = *hdr++;
         for (int i = 0; i < PROC_MAX && w < bufsize - 40; i++) {
             if (!proc_table[i].active) continue;
@@ -134,6 +134,18 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
             const char *st = states[proc_table[i].state & 3];
             while (*st) line[li++] = *st++;
             while (li < 23) line[li++] = ' ';
+            /* UID */
+            ti = 0; v = (int)proc_table[i].uid;
+            if (v == 0) tmp[ti++] = '0';
+            else while (v) { tmp[ti++] = '0' + v % 10; v /= 10; }
+            while (ti--) line[li++] = tmp[ti];
+            while (li < 29) line[li++] = ' ';
+            /* THR */
+            ti = 0; v = proc_table[i].threads;
+            if (v == 0) tmp[ti++] = '0';
+            else while (v) { tmp[ti++] = '0' + v % 10; v /= 10; }
+            while (ti--) line[li++] = tmp[ti];
+            while (li < 34) line[li++] = ' ';
             /* NAME */
             const char *nm = proc_table[i].name;
             while (*nm && li < 78) line[li++] = *nm++;
@@ -172,6 +184,78 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
     } else if (path[0] == 'l' && path[1] == 'o') {
         /* /proc/log — kernel log ring buffer */
         w = aios_log_read(buf, bufsize);
+    } else if (path[0] == 'm' && path[1] == 'e') {
+        /* /proc/meminfo */
+        uint32_t total_kb = aios_total_mem / 1024;
+        /* Format: MemTotal: NNNN kB */
+        const char *hdr = "MemTotal:    ";
+        while (*hdr && w < bufsize - 1) buf[w++] = *hdr++;
+        /* uint to string */
+        char tmp[12]; int ti = 0;
+        uint32_t v = total_kb;
+        if (v == 0) tmp[ti++] = '0';
+        else { while (v) { tmp[ti++] = '0' + v % 10; v /= 10; } }
+        while (ti-- > 0 && w < bufsize - 1) buf[w++] = tmp[ti];
+        const char *unit = " kB\n";
+        while (*unit && w < bufsize - 1) buf[w++] = *unit++;
+    } else if (path[0] >= '0' && path[0] <= '9') {
+        /* /proc/[pid]/status */
+        int pid = 0;
+        const char *pp = path;
+        while (*pp >= '0' && *pp <= '9') { pid = pid * 10 + (*pp - '0'); pp++; }
+        /* Skip /status suffix if present */
+        if (*pp == '/') pp++;
+        /* Find process */
+        for (int i = 0; i < PROC_MAX; i++) {
+            if (proc_table[i].active && proc_table[i].pid == pid) {
+                const char *states[] = { "free", "run", "sleep", "zombie" };
+                /* Name: xxx */
+                const char *lbl = "Name:\t";
+                while (*lbl && w < bufsize - 1) buf[w++] = *lbl++;
+                const char *nm = proc_table[i].name;
+                while (*nm && w < bufsize - 1) buf[w++] = *nm++;
+                buf[w++] = '\n';
+                /* State: xxx */
+                lbl = "State:\t";
+                while (*lbl && w < bufsize - 1) buf[w++] = *lbl++;
+                const char *st = states[proc_table[i].state & 3];
+                while (*st && w < bufsize - 1) buf[w++] = *st++;
+                buf[w++] = '\n';
+                /* Pid: N */
+                lbl = "Pid:\t";
+                while (*lbl && w < bufsize - 1) buf[w++] = *lbl++;
+                char tmp[12]; int ti = 0; int pv = pid;
+                if (pv == 0) tmp[ti++] = '0';
+                else { while (pv) { tmp[ti++] = '0' + pv % 10; pv /= 10; } }
+                while (ti-- > 0 && w < bufsize - 1) buf[w++] = tmp[ti];
+                buf[w++] = '\n';
+                /* Uid: N */
+                lbl = "Uid:\t";
+                while (*lbl && w < bufsize - 1) buf[w++] = *lbl++;
+                ti = 0; pv = (int)proc_table[i].uid;
+                if (pv == 0) tmp[ti++] = '0';
+                else { while (pv) { tmp[ti++] = '0' + pv % 10; pv /= 10; } }
+                while (ti-- > 0 && w < bufsize - 1) buf[w++] = tmp[ti];
+                buf[w++] = '\n';
+                /* Priority: N */
+                lbl = "Priority:\t";
+                while (*lbl && w < bufsize - 1) buf[w++] = *lbl++;
+                ti = 0; pv = proc_table[i].priority;
+                if (pv == 0) tmp[ti++] = '0';
+                else { while (pv) { tmp[ti++] = '0' + pv % 10; pv /= 10; } }
+                while (ti-- > 0 && w < bufsize - 1) buf[w++] = tmp[ti];
+                buf[w++] = '\n';
+                /* Threads: N */
+                lbl = "Threads:\t";
+                while (*lbl && w < bufsize - 1) buf[w++] = *lbl++;
+                ti = 0; pv = proc_table[i].threads;
+                if (pv == 0) tmp[ti++] = '0';
+                else { while (pv) { tmp[ti++] = '0' + pv % 10; pv /= 10; } }
+                while (ti-- > 0 && w < bufsize - 1) buf[w++] = tmp[ti];
+                buf[w++] = '\n';
+                break;
+            }
+        }
     } else {
         return -1;
     }

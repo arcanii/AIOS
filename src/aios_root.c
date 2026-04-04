@@ -106,6 +106,7 @@ static uint8_t *blk_dma;
 static uint64_t blk_dma_pa;
 static seL4_CPtr fs_ep_cap;
 static vka_object_t serial_ep;
+uint32_t aios_total_mem = 0;
 
 static int blk_read_sector(uint64_t sector, void *buf);
 static int blk_write_sector(uint64_t sector, const void *buf);
@@ -1130,11 +1131,12 @@ int main(int argc, char *argv[]) {
     vka_alloc_endpoint(&vka, &fault_ep);
     vka_alloc_endpoint(&vka, &serial_ep);
 
-    int total_mem = 0;
+    int total_mem = 0; /* also stored in aios_total_mem */
     for (seL4_Word i = info->untyped.start; i < info->untyped.end; i++) {
         seL4_UntypedDesc *ut = &info->untypedList[i - info->untyped.start];
         if (!ut->isDevice) total_mem += BIT(ut->sizeBits);
     }
+    aios_total_mem = (uint32_t)total_mem;
     printf("[boot] RAM: %d MB, UART: %s\n",
            total_mem / (1024 * 1024), uart ? "OK" : "no");
     AIOS_LOG_INFO_V("RAM available: ", total_mem / (1024 * 1024));

@@ -14,7 +14,12 @@ typedef struct {
     int nice;
     const char *name;
     int state;  /* 0=free, 1=running, 2=sleeping, 3=zombie */
+    uint32_t uid;
+    int threads;
 } proc_entry_t;
+
+/* Memory info (set by root at boot) */
+extern uint32_t aios_total_mem;
 
 extern proc_entry_t proc_table[PROC_MAX];
 

@@ -683,6 +683,31 @@ login_gate:
                 ser_puts("Goodbye, "); ser_puts(session_user); ser_puts("\n");
                 goto login_gate;
             }
+        } else if (str_eq(line, "dmesg")) {
+            /* Read and display kernel log */
+            if (fs_ep) {
+                char dpath[] = "/proc/log";
+                int pl = 9;
+                seL4_SetMR(0, (seL4_Word)pl);
+                int mr = 1;
+                seL4_Word w = 0;
+                for (int i = 0; i < pl; i++) {
+                    w |= ((seL4_Word)(uint8_t)dpath[i]) << ((i % 8) * 8);
+                    if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
+                }
+                seL4_MessageInfo_t reply = seL4_Call(fs_ep,
+                    seL4_MessageInfo_new(11 /* FS_CAT */, 0, 0, mr));
+                seL4_Word total = seL4_GetMR(0);
+                int rmrs = (int)seL4_MessageInfo_get_length(reply) - 1;
+                int got = 0;
+                for (int i = 0; i < rmrs; i++) {
+                    seL4_Word rw = seL4_GetMR(i + 1);
+                    for (int j = 0; j < 8 && got < (int)total; j++) {
+                        ser_putc((char)((rw >> (j * 8)) & 0xFF));
+                        got++;
+                    }
+                }
+            }
         } else if (str_eq(line, "export")) {
             /* export VAR=value */
             if (arg) {
