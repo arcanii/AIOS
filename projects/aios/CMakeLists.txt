@@ -45,6 +45,7 @@ AiosPosixApp(posix_touch)
 AiosPosixApp(posix_mkdir)
 AiosPosixApp(aios_top)
 AiosPosixApp(daemon)
+AiosPosixApp(fork_test)
 
 # Boot services only in CPIO (launched before filesystem)
 set(BOOT_APPS tty_server auth_server mini_shell)

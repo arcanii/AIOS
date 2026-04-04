@@ -18,6 +18,7 @@
 #ifndef __NR_getdents64
 #define __NR_getdents64 61
 #endif
+#define PIPE_FORK 65
 #include <muslcsys/vsyscall.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -1356,6 +1357,19 @@ static char *aios_envp[] = {
     NULL
 };
 
+/* ── fork/clone ── */
+static long aios_sys_clone(va_list ap) {
+    /* On AArch64, clone(flags, stack, ...) — basic fork has flags=SIGCHLD, stack=0 */
+    (void)ap;
+    if (!pipe_ep) return -38; /* -ENOSYS */
+
+    /* Send PIPE_FORK to pipe_server (badged, so server knows who we are) */
+    seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
+        seL4_MessageInfo_new(PIPE_FORK, 0, 0, 0));
+    long child_pid = (long)seL4_GetMR(0);
+    return child_pid;
+}
+
 void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     /* Skip if already initialized (e.g. by __wrap_main) */
     if (ser_ep && serial_ep == 0) return;
@@ -1439,6 +1453,9 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     muslcsys_install_syscall(__NR_gettimeofday, aios_sys_gettimeofday);
     muslcsys_install_syscall(__NR_nanosleep, aios_sys_nanosleep);
     muslcsys_install_syscall(__NR_getdents64, aios_sys_getdents64);
+#ifdef __NR_clone
+    muslcsys_install_syscall(__NR_clone, aios_sys_clone);
+#endif
 #ifdef __NR_pipe2
     muslcsys_install_syscall(__NR_pipe2, aios_sys_pipe2);
 #endif

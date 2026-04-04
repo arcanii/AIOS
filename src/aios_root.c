@@ -45,6 +45,8 @@ static allocman_t *allocman;
 #define SER_KEY_PUSH 4
 #define EXEC_RUN     20
 #define EXEC_RUN_BG  24
+#define EXEC_FORK    25
+#define EXEC_WAIT    26
 #define EXEC_NICE    21
 static volatile uint32_t *uart;
 
@@ -65,15 +67,33 @@ typedef struct {
     int exited;
 } aios_thread_t;
 
+#define MAX_ELF_SEGS 6
+typedef struct {
+    uintptr_t vaddr;
+    size_t    memsz;
+    uint32_t  flags;   /* PF_X=1, PF_W=2, PF_R=4 */
+} elf_seg_info_t;
+
 typedef struct {
     int active;
     int pid;
+    int ppid;
     uint32_t uid;
     uint32_t gid;
     sel4utils_process_t proc;
     vka_object_t fault_ep;
     int num_threads;
     aios_thread_t threads[MAX_THREADS_PER_PROC];
+    /* ELF segment info for fork */
+    int num_segs;
+    elf_seg_info_t segs[MAX_ELF_SEGS];
+    /* Cap slots in child CSpace (for fork duplication) */
+    seL4_CPtr child_ser_slot;
+    seL4_CPtr child_fs_slot;
+    seL4_CPtr child_exec_slot;
+    seL4_CPtr child_auth_slot;
+    seL4_CPtr child_pipe_slot;
+    seL4_CPtr child_thread_slot;
 } active_proc_t;
 
 static active_proc_t active_procs[MAX_ACTIVE_PROCS];
@@ -86,6 +106,7 @@ static seL4_CPtr pipe_ep_cap;
 #define PIPE_READ    62
 #define PIPE_CLOSE   63
 #define PIPE_KILL    64
+#define PIPE_FORK    65
 #define MAX_PIPES     8
 #define PIPE_BUF_SIZE 8192
 
@@ -375,6 +396,634 @@ static void thread_server_fn(void *arg0, void *arg1, void *ipc_buf) {
 static int process_kill(int pid);
 
 /* ── Pipe server — manages pipe buffers ── */
+
+/* ══════════════════════════════════════════════════════ */
+/* ── fork() implementation                           ── */
+/* ══════════════════════════════════════════════════════ */
+
+#define PAGE_SIZE 4096
+
+/*
+ * Copy pages from parent VSpace to child VSpace at the same vaddr.
+ * Allocates new frames, maps into root temporarily for memcpy, then maps into child.
+ */
+static int fork_copy_region(vspace_t *parent_vs, sel4utils_process_t *child_proc,
+                            uintptr_t start, int num_pages) {
+    for (int i = 0; i < num_pages; i++) {
+        /* Page-align the start address */
+        uintptr_t page_base = (start & ~((uintptr_t)PAGE_SIZE - 1)) + (uintptr_t)i * PAGE_SIZE;
+        void *va = (void *)page_base;
+
+        seL4_CPtr parent_cap = vspace_get_cap(parent_vs, va);
+        if (parent_cap == seL4_CapNull) continue;
+
+        /* Allocate new frame for child */
+        vka_object_t new_frame;
+        if (vka_alloc_frame(&vka, seL4_PageBits, &new_frame)) {
+            printf("[fork] frame alloc failed at %p\n", va);
+            return -1;
+        }
+
+        /*
+         * Cannot map parent_cap directly into root — it belongs to parent's VSpace.
+         * Must CNode_Copy to get a fresh cap, map the copy, then delete it.
+         */
+        cspacepath_t src_path, dup_path;
+        vka_cspace_make_path(&vka, parent_cap, &src_path);
+        if (vka_cspace_alloc_path(&vka, &dup_path)) {
+            printf("[fork] cslot alloc failed at %p\n", va);
+            vka_free_object(&vka, &new_frame);
+            continue;
+        }
+        int cerr = seL4_CNode_Copy(dup_path.root, dup_path.capPtr, dup_path.capDepth,
+                                   src_path.root, src_path.capPtr, src_path.capDepth,
+                                   seL4_AllRights);
+        if (cerr) {
+            printf("[fork] CNode_Copy failed at %p: %d\n", va, cerr);
+            vka_cspace_free(&vka, dup_path.capPtr);
+            vka_free_object(&vka, &new_frame);
+            continue;
+        }
+
+        /* Map duplicated parent cap into root temporarily */
+        void *parent_tmp = vspace_map_pages(&vspace, &dup_path.capPtr, NULL,
+            seL4_AllRights, 1, seL4_PageBits, 1);
+        if (!parent_tmp) {
+            printf("[fork] parent map failed at %p\n", va);
+            seL4_CNode_Delete(dup_path.root, dup_path.capPtr, dup_path.capDepth);
+            vka_cspace_free(&vka, dup_path.capPtr);
+            vka_free_object(&vka, &new_frame);
+            continue;
+        }
+
+        /* Map new frame into root temporarily */
+        void *child_tmp = vspace_map_pages(&vspace, &new_frame.cptr, NULL,
+            seL4_AllRights, 1, seL4_PageBits, 1);
+        if (!child_tmp) {
+            printf("[fork] child tmp map failed at %p\n", va);
+            vspace_unmap_pages(&vspace, parent_tmp, 1, seL4_PageBits, NULL);
+            seL4_CNode_Delete(dup_path.root, dup_path.capPtr, dup_path.capDepth);
+            vka_cspace_free(&vka, dup_path.capPtr);
+            vka_free_object(&vka, &new_frame);
+            continue;
+        }
+
+        /* Copy page content */
+        char *src = (char *)parent_tmp;
+        char *dst = (char *)child_tmp;
+        for (int b = 0; b < PAGE_SIZE; b++) dst[b] = src[b];
+
+        /* Unmap both from root */
+        vspace_unmap_pages(&vspace, parent_tmp, 1, seL4_PageBits, NULL);
+        vspace_unmap_pages(&vspace, child_tmp, 1, seL4_PageBits, NULL);
+
+        /* Delete the duplicated cap */
+        seL4_CNode_Delete(dup_path.root, dup_path.capPtr, dup_path.capDepth);
+        vka_cspace_free(&vka, dup_path.capPtr);
+
+        /* Reserve + map new frame into child at same vaddr */
+        reservation_t res = vspace_reserve_range_at(&child_proc->vspace, va,
+            PAGE_SIZE, seL4_AllRights, 1);
+        if (res.res == NULL) {
+            printf("[fork] reserve failed at %p\n", va);
+            vka_free_object(&vka, &new_frame);
+            continue;
+        }
+        int merr = vspace_map_pages_at_vaddr(&child_proc->vspace, &new_frame.cptr, NULL,
+            va, 1, seL4_PageBits, res);
+        if (merr) {
+            printf("[fork] child map_at_vaddr failed at %p: %d\n", va, merr);
+        }
+        vspace_maybe_call_allocated_object(&child_proc->vspace, new_frame);
+    }
+    return 0;
+}
+
+/*
+ * Share read-only pages (e.g. .text) from parent to child at same vaddr.
+ */
+static int fork_share_region(vspace_t *parent_vs, sel4utils_process_t *child_proc,
+                             uintptr_t start, int num_pages) {
+    /* Page-align start */
+    uintptr_t page_base = start & ~((uintptr_t)PAGE_SIZE - 1);
+    void *va = (void *)page_base;
+
+    /* Share page-by-page with CNode_Copy to avoid remap errors */
+    for (int i = 0; i < num_pages; i++) {
+        void *pg = (void *)(page_base + (uintptr_t)i * PAGE_SIZE);
+        seL4_CPtr parent_cap = vspace_get_cap(parent_vs, pg);
+        if (parent_cap == seL4_CapNull) continue;
+
+        /* Duplicate cap for child mapping */
+        cspacepath_t src_path, dup_path;
+        vka_cspace_make_path(&vka, parent_cap, &src_path);
+        if (vka_cspace_alloc_path(&vka, &dup_path)) continue;
+        int cerr = seL4_CNode_Copy(dup_path.root, dup_path.capPtr, dup_path.capDepth,
+                                   src_path.root, src_path.capPtr, src_path.capDepth,
+                                   seL4_AllRights);
+        if (cerr) {
+            vka_cspace_free(&vka, dup_path.capPtr);
+            continue;
+        }
+
+        reservation_t res = vspace_reserve_range_at(&child_proc->vspace, pg,
+            PAGE_SIZE, seL4_CanRead, 1);
+        if (res.res == NULL) {
+            seL4_CNode_Delete(dup_path.root, dup_path.capPtr, dup_path.capDepth);
+            vka_cspace_free(&vka, dup_path.capPtr);
+            continue;
+        }
+        int merr = vspace_map_pages_at_vaddr(&child_proc->vspace, &dup_path.capPtr, NULL,
+            pg, 1, seL4_PageBits, res);
+        if (merr) {
+            printf("[fork] share page failed at %p: %d\n", pg, merr);
+        }
+    }
+    return 0;
+}
+
+/*
+ * Copy stack pages by probing from SP.
+ */
+/*
+ * Copy stack content from parent into child's EXISTING stack pages.
+ * sel4utils already allocated stack for the child at the same addresses.
+ * We just need to copy the content via temporary root mappings.
+ */
+static int fork_copy_into_existing(vspace_t *parent_vs, vspace_t *child_vs, uintptr_t page) {
+    seL4_CPtr parent_cap = vspace_get_cap(parent_vs, (void *)page);
+    seL4_CPtr child_cap = vspace_get_cap(child_vs, (void *)page);
+    if (parent_cap == seL4_CapNull) return -1;
+    if (child_cap == seL4_CapNull) return -2;  /* child doesn't have this page */
+
+    /* Dup both caps for root mapping */
+    cspacepath_t psrc, pdup, csrc, cdup;
+    vka_cspace_make_path(&vka, parent_cap, &psrc);
+    vka_cspace_make_path(&vka, child_cap, &csrc);
+    if (vka_cspace_alloc_path(&vka, &pdup)) return -3;
+    if (vka_cspace_alloc_path(&vka, &cdup)) {
+        vka_cspace_free(&vka, pdup.capPtr);
+        return -3;
+    }
+    if (seL4_CNode_Copy(pdup.root, pdup.capPtr, pdup.capDepth,
+                        psrc.root, psrc.capPtr, psrc.capDepth, seL4_AllRights)) {
+        vka_cspace_free(&vka, pdup.capPtr);
+        vka_cspace_free(&vka, cdup.capPtr);
+        return -4;
+    }
+    if (seL4_CNode_Copy(cdup.root, cdup.capPtr, cdup.capDepth,
+                        csrc.root, csrc.capPtr, csrc.capDepth, seL4_AllRights)) {
+        seL4_CNode_Delete(pdup.root, pdup.capPtr, pdup.capDepth);
+        vka_cspace_free(&vka, pdup.capPtr);
+        vka_cspace_free(&vka, cdup.capPtr);
+        return -4;
+    }
+
+    void *parent_tmp = vspace_map_pages(&vspace, &pdup.capPtr, NULL,
+        seL4_AllRights, 1, seL4_PageBits, 1);
+    void *child_tmp = vspace_map_pages(&vspace, &cdup.capPtr, NULL,
+        seL4_AllRights, 1, seL4_PageBits, 1);
+
+    if (parent_tmp && child_tmp) {
+        char *src = (char *)parent_tmp;
+        char *dst = (char *)child_tmp;
+        for (int b = 0; b < PAGE_SIZE; b++) dst[b] = src[b];
+    }
+
+    if (parent_tmp) vspace_unmap_pages(&vspace, parent_tmp, 1, seL4_PageBits, NULL);
+    if (child_tmp) vspace_unmap_pages(&vspace, child_tmp, 1, seL4_PageBits, NULL);
+    seL4_CNode_Delete(pdup.root, pdup.capPtr, pdup.capDepth);
+    seL4_CNode_Delete(cdup.root, cdup.capPtr, cdup.capDepth);
+    vka_cspace_free(&vka, pdup.capPtr);
+    vka_cspace_free(&vka, cdup.capPtr);
+    return 0;
+}
+
+static int fork_copy_stack(active_proc_t *parent, sel4utils_process_t *child_proc,
+                           uintptr_t sp) {
+    uintptr_t page = sp & ~((uintptr_t)PAGE_SIZE - 1);
+    int copied = 0;
+
+    /* Probe upward from SP page */
+    for (uintptr_t p = page; p < page + 64 * PAGE_SIZE; p += PAGE_SIZE) {
+        seL4_CPtr cap = vspace_get_cap(&parent->proc.vspace, (void *)p);
+        if (cap == seL4_CapNull) break;
+        /* Try copying into child's existing page first (stack/IPC buf) */
+        if (fork_copy_into_existing(&parent->proc.vspace, &child_proc->vspace, p) == 0) {
+            copied++;
+        } else {
+            /* Child doesn't have this page — allocate and copy */
+            fork_copy_region(&parent->proc.vspace, child_proc, p, 1);
+            copied++;
+        }
+    }
+    /* Probe downward */
+    for (uintptr_t p = page - PAGE_SIZE; ; p -= PAGE_SIZE) {
+        seL4_CPtr cap = vspace_get_cap(&parent->proc.vspace, (void *)p);
+        if (cap == seL4_CapNull) break;
+        if (fork_copy_into_existing(&parent->proc.vspace, &child_proc->vspace, p) == 0) {
+            copied++;
+        } else {
+            fork_copy_region(&parent->proc.vspace, child_proc, p, 1);
+            copied++;
+        }
+        if (p < PAGE_SIZE) break;
+    }
+    return copied;
+}
+
+/*
+ * Full fork: create child process duplicating parent's address space.
+ * Returns child PID on success, -1 on failure.
+ */
+static int do_fork(int parent_idx) {
+    active_proc_t *parent = &active_procs[parent_idx];
+    if (!parent->active) return -1;
+
+    /* 1. Allocate child slot */
+    int child_idx = -1;
+    for (int i = 0; i < MAX_ACTIVE_PROCS; i++) {
+        if (!active_procs[i].active) { child_idx = i; break; }
+    }
+    if (child_idx < 0) {
+        printf("[fork] no free proc slot\n");
+        return -1;
+    }
+
+    /* 2. Create child fault endpoint */
+    vka_object_t child_fault_ep;
+    if (vka_alloc_endpoint(&vka, &child_fault_ep)) {
+        printf("[fork] fault ep alloc failed\n");
+        return -1;
+    }
+
+    /* 3. Load same ELF into child (proper sel4runtime/TLS setup)
+     * Then overwrite .data and stack with parent's content. */
+    active_proc_t *child = &active_procs[child_idx];
+    sel4utils_process_t *cp = &child->proc;
+
+    /* Read parent's ELF path from proc table to reload it */
+    char fork_elf_path[160];
+    {
+        /* Build /bin/<name> from parent's proc_table entry */
+        const char *pname = NULL;
+        for (int pi = 0; pi < PROC_MAX; pi++) {
+            if (proc_table[pi].active && proc_table[pi].pid == parent->pid) {
+                pname = proc_table[pi].name;
+                break;
+            }
+        }
+        if (!pname) {
+            printf("[fork] can't find parent name\n");
+            vka_free_object(&vka, &child_fault_ep);
+            return -1;
+        }
+        /* pname might already be a full path like /bin/fork_test */
+        if (pname[0] == '/') {
+            int ei = 0;
+            while (pname[ei] && ei < 158) { fork_elf_path[ei] = pname[ei]; ei++; }
+            fork_elf_path[ei] = 0;
+        } else {
+            int ei = 0;
+            const char *pfx = "/bin/";
+            while (*pfx) fork_elf_path[ei++] = *pfx++;
+            while (*pname && ei < 158) fork_elf_path[ei++] = *pname++;
+            fork_elf_path[ei] = 0;
+        }
+    }
+
+    /* Read ELF from disk */
+    static char fork_elf_buf[1024 * 1024];
+    int elf_size = vfs_read(fork_elf_path, fork_elf_buf, sizeof(fork_elf_buf));
+    if (elf_size <= 0) {
+        printf("[fork] ELF read failed: %s\n", fork_elf_path);
+        vka_free_object(&vka, &child_fault_ep);
+        return -1;
+    }
+
+    elf_t fork_elf;
+    if (elf_newFile(fork_elf_buf, elf_size, &fork_elf) != 0) {
+        printf("[fork] ELF parse failed\n");
+        vka_free_object(&vka, &child_fault_ep);
+        return -1;
+    }
+
+    /* Configure process + load ELF (like normal exec) */
+    sel4utils_process_config_t cfg = process_config_new(&simple);
+    cfg = process_config_create_cnode(cfg, 12);
+    cfg = process_config_create_vspace(cfg, NULL, 0);
+    cfg = process_config_priority(cfg, 200);
+    cfg = process_config_auth(cfg, simple_get_tcb(&simple));
+    cfg = process_config_fault_endpoint(cfg, child_fault_ep);
+
+    int err = sel4utils_configure_process_custom(cp, &vka, &vspace, cfg);
+    if (err) {
+        printf("[fork] configure_process failed\n");
+        vka_free_object(&vka, &child_fault_ep);
+        return -1;
+    }
+
+    /* Load ELF into child's VSpace (sets up .text, .data, TLS, runtime) */
+    cp->entry_point = sel4utils_elf_load(&cp->vspace, &vspace, &vka, &vka, &fork_elf);
+    if (!cp->entry_point) {
+        printf("[fork] ELF load failed\n");
+        sel4utils_destroy_process(cp, &vka);
+        vka_free_object(&vka, &child_fault_ep);
+        return -1;
+    }
+    cp->sysinfo = sel4utils_elf_get_vsyscall(&fork_elf);
+
+    /* Spawn child with REAL argv and resume=1 so sel4runtime fully initializes
+     * TLS, IPC buffer, stack, and __wrap_main runs aios_init. */
+    char s_ser[16], s_fs[16], s_thr[16], s_auth[16], s_pipe[16];
+    {
+        /* Copy caps to child at same slots as parent */
+        seL4_CPtr child_cnode = cp->cspace.cptr;
+        seL4_Word child_depth = 12;
+        struct { seL4_CPtr root_cap; seL4_CPtr slot; } cmap[] = {
+            { serial_ep.cptr, parent->child_ser_slot },
+            { fs_ep_cap,      parent->child_fs_slot },
+            { thread_ep_cap,  parent->child_thread_slot },
+            { auth_ep_cap,    parent->child_auth_slot },
+            { pipe_ep_cap,    parent->child_pipe_slot },
+        };
+        for (int ci = 0; ci < 5; ci++) {
+            if (cmap[ci].slot == 0) continue;
+            cspacepath_t src;
+            vka_cspace_make_path(&vka, cmap[ci].root_cap, &src);
+            seL4_CNode_Copy(child_cnode, cmap[ci].slot, child_depth,
+                            src.root, src.capPtr, src.capDepth, seL4_AllRights);
+        }
+        snprintf(s_ser, 16, "%lu", (unsigned long)parent->child_ser_slot);
+        snprintf(s_fs, 16, "%lu", (unsigned long)parent->child_fs_slot);
+        snprintf(s_thr, 16, "%lu", (unsigned long)parent->child_thread_slot);
+        snprintf(s_auth, 16, "%lu", (unsigned long)parent->child_auth_slot);
+        snprintf(s_pipe, 16, "%lu", (unsigned long)parent->child_pipe_slot);
+    }
+    /* Build CWD string from parent */
+    char fork_cwd[256];
+    snprintf(fork_cwd, 256, "%u:%u:/", parent->uid, parent->gid);
+
+    char *spawn_argv[] = { s_ser, s_fs, s_thr, s_auth, s_pipe, fork_cwd, "fork_child" };
+    err = sel4utils_spawn_process_v(cp, &vka, &vspace, 7, spawn_argv, 1 /* resume */);
+    if (err) {
+        printf("[fork] spawn failed\n");
+        sel4utils_destroy_process(cp, &vka);
+        vka_free_object(&vka, &child_fault_ep);
+        return -1;
+    }
+
+    /* 4. Wait briefly for child to fully initialize (sel4runtime + __wrap_main) */
+    for (volatile int d = 0; d < 2000000; d++);
+
+    /* 5. Suspend child, then copy parent's stack and set registers */
+    seL4_TCB_Suspend(cp->thread.tcb.cptr);
+
+    seL4_UserContext parent_regs;
+    seL4_TCB_ReadRegisters(parent->proc.thread.tcb.cptr, 0, 0,
+                           sizeof(parent_regs) / sizeof(seL4_Word), &parent_regs);
+
+    /* Copy parent's stack content into child's stack pages */
+    {
+        uintptr_t sp_page = parent_regs.sp & ~((uintptr_t)PAGE_SIZE - 1);
+        int scopy = 0;
+        for (uintptr_t p = sp_page; p < sp_page + 64 * PAGE_SIZE; p += PAGE_SIZE) {
+            seL4_CPtr pcap = vspace_get_cap(&parent->proc.vspace, (void *)p);
+            if (pcap == seL4_CapNull) break;
+            if (fork_copy_into_existing(&parent->proc.vspace, &cp->vspace, p) == 0)
+                scopy++;
+        }
+        for (uintptr_t p = sp_page - PAGE_SIZE; ; p -= PAGE_SIZE) {
+            seL4_CPtr pcap = vspace_get_cap(&parent->proc.vspace, (void *)p);
+            if (pcap == seL4_CapNull) break;
+            if (fork_copy_into_existing(&parent->proc.vspace, &cp->vspace, p) == 0)
+                scopy++;
+            if (p < PAGE_SIZE) break;
+        }
+        printf("[fork] copied %d stack pages\n", scopy);
+    }
+
+    /* 6. Copy endpoint caps to child at EXACT SAME slot numbers as parent.
+     *    Parent's shim globals hold these slot numbers — child inherits them
+     *    via the copied .data pages, so slots must match. */
+    {
+        seL4_CPtr child_cnode = cp->cspace.cptr;
+        seL4_Word child_depth = 12;  /* CSpace size bits */
+
+        printf("[fork] parent cap slots: ser=%lu fs=%lu thr=%lu auth=%lu pipe=%lu\n",
+               (unsigned long)parent->child_ser_slot, (unsigned long)parent->child_fs_slot,
+               (unsigned long)parent->child_thread_slot, (unsigned long)parent->child_auth_slot,
+               (unsigned long)parent->child_pipe_slot);
+        struct { seL4_CPtr root_cap; seL4_CPtr parent_slot; } cap_map[] = {
+            { serial_ep.cptr,  parent->child_ser_slot },
+            { fs_ep_cap,       parent->child_fs_slot },
+            { thread_ep_cap,   parent->child_thread_slot },
+            { auth_ep_cap,     parent->child_auth_slot },
+            { pipe_ep_cap,     parent->child_pipe_slot },
+        };
+        for (int ci = 0; ci < 5; ci++) {
+            if (cap_map[ci].parent_slot == 0) continue;
+            cspacepath_t src;
+            vka_cspace_make_path(&vka, cap_map[ci].root_cap, &src);
+            int cerr = seL4_CNode_Copy(
+                child_cnode, cap_map[ci].parent_slot, child_depth,
+                src.root, src.capPtr, src.capDepth,
+                seL4_AllRights);
+            if (cerr) {
+                printf("[fork] cap copy to slot %lu failed: %d\n",
+                       (unsigned long)cap_map[ci].parent_slot, cerr);
+            } else {
+                printf("[fork] cap copied to child slot %lu OK\n",
+                       (unsigned long)cap_map[ci].parent_slot);
+            }
+        }
+        child->child_ser_slot = parent->child_ser_slot;
+        child->child_fs_slot = parent->child_fs_slot;
+        child->child_thread_slot = parent->child_thread_slot;
+        child->child_auth_slot = parent->child_auth_slot;
+        child->child_pipe_slot = parent->child_pipe_slot;
+    }
+
+    /* 7. Read child's registers (set up by sel4runtime during spawn).
+     * Keep child's tpidr_el0 (TLS base) — it points to child's own TLS block.
+     * Copy PC, SP, and GPRs from parent. */
+    seL4_UserContext child_spawn_regs;
+    seL4_TCB_ReadRegisters(cp->thread.tcb.cptr, 0, 0,
+                           sizeof(child_spawn_regs) / sizeof(seL4_Word), &child_spawn_regs);
+    printf("[fork] child tpidr from spawn: %lx (parent: %lx)\n",
+           (unsigned long)child_spawn_regs.tpidr_el0,
+           (unsigned long)parent_regs.tpidr_el0);
+
+    /* 7b. Set child registers: advance PC past svc, set return value = 0.
+     *
+     * Parent is blocked in seL4_Call (svc instruction). ReadRegisters
+     * gives us PC at the svc. Child must resume AFTER the svc, with
+     * x0 = reply MessageInfo and IPC buffer MR0 = 0 (fork returns 0).
+     *
+     * AArch64 seL4_Call return convention:
+     *   x0 = reply MessageInfo
+     *   IPC buffer msg[0] = MR0 (read by seL4_GetMR(0))
+     */
+    /* Read child's current regs (has child's own tpidr from sel4runtime) */
+    seL4_UserContext child_cur_regs;
+    seL4_TCB_ReadRegisters(cp->thread.tcb.cptr, 0, 0,
+                           sizeof(child_cur_regs) / sizeof(seL4_Word), &child_cur_regs);
+
+    seL4_UserContext child_regs = parent_regs;
+    child_regs.pc += 4;  /* skip past svc instruction */
+    seL4_MessageInfo_t fake_reply = seL4_MessageInfo_new(0, 0, 0, 1);
+    child_regs.x0 = fake_reply.words[0];
+    /* CRITICAL: keep child's own tpidr — its sel4runtime set up its own TLS */
+    child_regs.tpidr_el0 = child_cur_regs.tpidr_el0;
+    child_regs.tpidrro_el0 = child_cur_regs.tpidrro_el0;
+
+    seL4_TCB_WriteRegisters(cp->thread.tcb.cptr, 0, 0,
+                            sizeof(child_regs) / sizeof(seL4_Word), &child_regs);
+
+    printf("[fork] child tpidr_el0 = %lx (child's own), parent was %lx\n",
+           (unsigned long)child_regs.tpidr_el0, (unsigned long)parent_regs.tpidr_el0);
+
+    /* Write 0 to child's IPC buffer MR0 so seL4_GetMR(0) returns 0.
+     * IPC buffer layout: tag (8 bytes) then msg[0] at offset 8. */
+    {
+        seL4_CPtr ipc_cap = vspace_get_cap(&cp->vspace,
+            (void *)(uintptr_t)cp->thread.ipc_buffer_addr);
+        if (ipc_cap != seL4_CapNull) {
+            cspacepath_t isrc, idup;
+            vka_cspace_make_path(&vka, ipc_cap, &isrc);
+            if (vka_cspace_alloc_path(&vka, &idup) == 0) {
+                if (seL4_CNode_Copy(idup.root, idup.capPtr, idup.capDepth,
+                                    isrc.root, isrc.capPtr, isrc.capDepth,
+                                    seL4_AllRights) == 0) {
+                    void *ipc_tmp = vspace_map_pages(&vspace, &idup.capPtr, NULL,
+                        seL4_AllRights, 1, seL4_PageBits, 1);
+                    if (ipc_tmp) {
+                        /* Calculate offset within page */
+                        uintptr_t page_off = cp->thread.ipc_buffer_addr & (PAGE_SIZE - 1);
+                        seL4_Word *msg0 = (seL4_Word *)((char *)ipc_tmp + page_off + sizeof(seL4_Word));
+                        *msg0 = 0;  /* MR0 = 0 → fork() returns 0 in child */
+                        vspace_unmap_pages(&vspace, ipc_tmp, 1, seL4_PageBits, NULL);
+                    }
+                    seL4_CNode_Delete(idup.root, idup.capPtr, idup.capDepth);
+                }
+                vka_cspace_free(&vka, idup.capPtr);
+            }
+        }
+    }
+
+    /* 8. Register child */
+    child->active = 1;
+    child->uid = parent->uid;
+    child->gid = parent->gid;
+    child->ppid = parent->pid;
+    child->fault_ep = child_fault_ep;
+    child->num_threads = 0;
+    child->num_segs = parent->num_segs;
+    for (int s = 0; s < parent->num_segs; s++)
+        child->segs[s] = parent->segs[s];
+    for (int ti = 0; ti < MAX_THREADS_PER_PROC; ti++)
+        child->threads[ti].active = 0;
+
+    int child_pid = proc_add("(forked)", 200);
+    child->pid = child_pid;
+
+    /* 9. Resume child — write final registers with resume=1 */
+    {
+        seL4_UserContext final_regs;
+        int rr = seL4_TCB_ReadRegisters(cp->thread.tcb.cptr, 0, 0,
+                            sizeof(final_regs) / sizeof(seL4_Word), &final_regs);
+        printf("[fork] child pre-resume: pc=%lx sp=%lx x0=%lx tpidr=%lx (read=%d)\n",
+               (unsigned long)final_regs.pc, (unsigned long)final_regs.sp,
+               (unsigned long)final_regs.x0, (unsigned long)final_regs.tpidr_el0, rr);
+
+        /* Verify child .text is mapped at PC */
+        seL4_CPtr text_cap = vspace_get_cap(&cp->vspace, (void *)final_regs.pc);
+        printf("[fork] child .text cap at pc=%lx: %lu\n",
+               (unsigned long)final_regs.pc, (unsigned long)text_cap);
+
+        /* Check a few more pages */
+        for (int di = 0; di < parent->num_segs; di++) {
+            seL4_CPtr sc = vspace_get_cap(&cp->vspace, (void *)parent->segs[di].vaddr);
+            printf("[fork] child seg[%d] vaddr=%lx cap=%lu flags=%x\n",
+                   di, (unsigned long)parent->segs[di].vaddr, (unsigned long)sc,
+                   parent->segs[di].flags);
+        }
+
+        /* Ensure priority is set */
+        seL4_TCB_SetPriority(cp->thread.tcb.cptr, simple_get_tcb(&simple), 200);
+
+        /* Resume */
+        int rerr = seL4_TCB_Resume(cp->thread.tcb.cptr);
+        printf("[fork] Resume returned: %d\n", rerr);
+
+        /* Brief yield then check fault EP for child fault */
+        for (volatile int d = 0; d < 1000000; d++);
+        seL4_MessageInfo_t probe = seL4_NBRecv(child_fault_ep.cptr, NULL);
+        if (seL4_MessageInfo_get_label(probe) != 0) {
+            seL4_Word fault_pc = seL4_GetMR(0);
+            seL4_Word fault_addr = seL4_GetMR(1);
+            printf("[fork] CHILD FAULTED: label=%lu pc=%lx addr=%lx\n",
+                   (unsigned long)seL4_MessageInfo_get_label(probe),
+                   (unsigned long)fault_pc, (unsigned long)fault_addr);
+        } else {
+            printf("[fork] no immediate child fault\n");
+        }
+    }
+
+    uintptr_t parent_ipc = parent->proc.thread.ipc_buffer_addr;
+    uintptr_t child_ipc = cp->thread.ipc_buffer_addr;
+    printf("[fork] parent PID %d → child PID %d (%d segs, sp=%lx)\n",
+           parent->pid, child_pid, parent->num_segs, (unsigned long)parent_regs.sp);
+    printf("[fork] parent IPC buf=%lx, child IPC buf=%lx, tpidr=%lx\n",
+           (unsigned long)parent_ipc, (unsigned long)child_ipc,
+           (unsigned long)parent_regs.tpidr_el0);
+
+    /* Fix IPC buffer mismatch: child's TLS (from parent) has parent's IPC buf addr.
+     * Reconfigure child TCB to use parent's IPC buffer virtual address.
+     * The page at that address was already copied by fork_copy_stack/fork_copy_region.
+     * If not mapped, map a fresh frame there. */
+    if (parent_ipc != child_ipc) {
+        /* Check if parent's IPC buf vaddr already has a page in child */
+        seL4_CPtr ipc_frame = vspace_get_cap(&cp->vspace, (void *)parent_ipc);
+        if (ipc_frame == seL4_CapNull) {
+            /* Allocate and map a frame there */
+            vka_object_t ipc_obj;
+            vka_alloc_frame(&vka, seL4_PageBits, &ipc_obj);
+            reservation_t ires = vspace_reserve_range_at(&cp->vspace,
+                (void *)parent_ipc, PAGE_SIZE, seL4_AllRights, 1);
+            if (ires.res) {
+                vspace_map_pages_at_vaddr(&cp->vspace, &ipc_obj.cptr, NULL,
+                    (void *)parent_ipc, 1, seL4_PageBits, ires);
+            }
+            ipc_frame = ipc_obj.cptr;
+            printf("[fork] mapped fresh IPC buf at %lx\n", (unsigned long)parent_ipc);
+        }
+        /* Reconfigure TCB with parent's IPC buffer address */
+        if (ipc_frame != seL4_CapNull) {
+            /* Need a copy of the frame cap in child's CSpace for TCB_Configure */
+            seL4_CPtr child_ipc_cap = sel4utils_copy_cap_to_process(cp, &vka, ipc_frame);
+
+            /* Reconfigure TCB: keep same CSpace/VSpace, change IPC buffer */
+            int tcerr = seL4_TCB_Configure(cp->thread.tcb.cptr,
+                child_fault_ep.cptr,   /* fault EP */
+                cp->cspace.cptr,       /* CSpace root */
+                seL4_CapData_Guard_new(0, seL4_WordBits - 12),
+                vspace_get_root(&cp->vspace),  /* VSpace root */
+                0,                     /* vspace_root_data */
+                parent_ipc,            /* IPC buffer address */
+                ipc_frame);            /* IPC buffer frame cap */
+            if (tcerr) {
+                printf("[fork] TCB_Configure failed: %d\n", tcerr);
+            } else {
+                cp->thread.ipc_buffer_addr = parent_ipc;
+                printf("[fork] IPC buf remapped to %lx\n", (unsigned long)parent_ipc);
+            }
+        }
+    }
+
+    return child_pid;
+}
+
 static void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
     seL4_CPtr ep = (seL4_CPtr)(uintptr_t)arg0;
     (void)arg1; (void)ipc_buf;
@@ -470,6 +1119,20 @@ static void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             int pid = (int)seL4_GetMR(0);
             int result = process_kill(pid);
             seL4_SetMR(0, (seL4_Word)result);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        case PIPE_FORK: {
+            /* Badge identifies the calling process (ap_idx + 1) */
+            int parent_idx = (int)badge - 1;
+            if (parent_idx < 0 || parent_idx >= MAX_ACTIVE_PROCS
+                || !active_procs[parent_idx].active) {
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            int child_pid = do_fork(parent_idx);
+            seL4_SetMR(0, (seL4_Word)child_pid);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }
@@ -618,6 +1281,20 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             continue;
         }
 
+        /* Record ELF segments for fork */
+        {
+            int nph = elf_getNumProgramHeaders(&elf);
+            ap->num_segs = 0;
+            for (int si = 0; si < nph && ap->num_segs < MAX_ELF_SEGS; si++) {
+                if (elf_getProgramHeaderType(&elf, si) == 1 /* PT_LOAD */) {
+                    elf_seg_info_t *seg = &ap->segs[ap->num_segs++];
+                    seg->vaddr = (uintptr_t)elf_getProgramHeaderVaddr(&elf, si);
+                    seg->memsz = (size_t)elf_getProgramHeaderMemorySize(&elf, si);
+                    seg->flags = (uint32_t)elf_getProgramHeaderFlags(&elf, si);
+                }
+            }
+        }
+
         /* Load ELF into child's VSpace */
         proc->entry_point = sel4utils_elf_load(
             &proc->vspace, &vspace, &vka, &vka, &elf);
@@ -632,6 +1309,7 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         proc->sysinfo = sel4utils_elf_get_vsyscall(&elf);
 
         seL4_CPtr child_ser = sel4utils_copy_cap_to_process(proc, &vka, serial_ep.cptr);
+        ap->child_ser_slot = child_ser;
         /* Mint badged fs_ep (badge = ap_idx + 1) for permission checks */
         cspacepath_t fs_src, fs_dest;
         vka_cspace_make_path(&vka, fs_ep_cap, &fs_src);
@@ -641,6 +1319,7 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             seL4_AllRights, (seL4_Word)(ap_idx + 1));
         seL4_CPtr child_fs = sel4utils_copy_cap_to_process(
             proc, &vka, fs_dest.capPtr);
+        ap->child_fs_slot = child_fs;
 
         /* Mint badged thread_ep (badge = ap_idx + 1) and copy to child */
         cspacepath_t te_src, te_dest;
@@ -651,11 +1330,21 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             seL4_AllRights, (seL4_Word)(ap_idx + 1));
         seL4_CPtr child_thread = sel4utils_copy_cap_to_process(
             proc, &vka, te_dest.capPtr);
+        ap->child_thread_slot = child_thread;
 
         seL4_CPtr child_auth = sel4utils_copy_cap_to_process(
             proc, &vka, auth_ep_cap);
+        ap->child_auth_slot = child_auth;
+        /* Mint badged pipe_ep (badge = ap_idx + 1) for fork identification */
+        cspacepath_t pip_src, pip_dest;
+        vka_cspace_make_path(&vka, pipe_ep_cap, &pip_src);
+        vka_cspace_alloc_path(&vka, &pip_dest);
+        seL4_CNode_Mint(pip_dest.root, pip_dest.capPtr, pip_dest.capDepth,
+            pip_src.root, pip_src.capPtr, pip_src.capDepth,
+            seL4_AllRights, (seL4_Word)(ap_idx + 1));
         seL4_CPtr child_pipe = sel4utils_copy_cap_to_process(
-            proc, &vka, pipe_ep_cap);
+            proc, &vka, pip_dest.capPtr);
+        ap->child_pipe_slot = child_pipe;
 
         char s_ser[16], s_fs[16], s_thread[16], s_auth[16], s_pipe[16];
         snprintf(s_ser, 16, "%lu", (unsigned long)child_ser);
