@@ -13,6 +13,7 @@
 #define SER_GETC 2
 #define FS_STAT  12
 #define EXEC_RUN 20
+#define EXEC_RUN_BG 24
 #define AUTH_LOGIN  40
 #define PIPE_CREATE 60
 #define PIPE_CLOSE  63
@@ -40,6 +41,11 @@ static int su_depth = 0;
 static char hist[HIST_MAX][256];
 static int hist_count = 0;
 static int hist_pos = 0;
+
+/* Background jobs tracking */
+#define MAX_BG_JOBS 8
+static struct { int active; int pid; char name[64]; } bg_jobs[MAX_BG_JOBS];
+static int bg_count = 0;
 
 static void ser_putc(char c) {
     seL4_SetMR(0, (seL4_Word)c);
@@ -264,6 +270,20 @@ static int do_exec_piped(const char *cmdline, int stdout_pipe, int stdin_pipe) {
         if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
     }
     seL4_MessageInfo_t reply = seL4_Call(exec_ep, seL4_MessageInfo_new(EXEC_RUN, 0, 0, mr));
+    return (int)(long)seL4_GetMR(0);
+}
+
+static int do_exec_bg(const char *cmdline) {
+    if (!exec_ep) return -1;
+    int pl = str_len(cmdline);
+    seL4_SetMR(0, (seL4_Word)pl);
+    int mr = 1;
+    seL4_Word w = 0;
+    for (int i = 0; i < pl; i++) {
+        w |= ((seL4_Word)(uint8_t)cmdline[i]) << ((i % 8) * 8);
+        if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
+    }
+    seL4_MessageInfo_t reply = seL4_Call(exec_ep, seL4_MessageInfo_new(EXEC_RUN_BG, 0, 0, mr));
     return (int)(long)seL4_GetMR(0);
 }
 
@@ -572,6 +592,19 @@ login_gate:
         }
         hist_pos = hist_count;
 
+        /* Check for background & */
+        int run_bg = 0;
+        {
+            int tl = str_len(line);
+            if (tl > 0 && line[tl - 1] == '&') {
+                run_bg = 1;
+                line[tl - 1] = '\0';
+                tl--;
+                while (tl > 0 && line[tl - 1] == ' ') line[--tl] = '\0';
+                len = tl;
+            }
+        }
+
         /* Check for pipe | (supports multi-pipe: a | b | c) */
         {
             /* Count pipe segments */
@@ -807,6 +840,26 @@ login_gate:
                 ser_puts("Goodbye, "); ser_puts(session_user); ser_puts("\n");
                 goto login_gate;
             }
+        } else if (str_eq(line, "jobs")) {
+            /* List background jobs */
+            int found = 0;
+            for (int ji = 0; ji < MAX_BG_JOBS; ji++) {
+                if (bg_jobs[ji].active) {
+                    ser_puts("["); 
+                    char jb[12]; int ji2 = 0; int jv = ji + 1;
+                    if (jv == 0) jb[ji2++] = '0';
+                    else { char jt[12]; int jti=0; while(jv){jt[jti++]='0'+jv%10;jv/=10;} while(jti--)jb[ji2++]=jt[jti]; }
+                    jb[ji2] = 0; ser_puts(jb);
+                    ser_puts("] PID ");
+                    ji2 = 0; jv = bg_jobs[ji].pid;
+                    if (jv == 0) jb[ji2++] = '0';
+                    else { char jt[12]; int jti=0; while(jv){jt[jti++]='0'+jv%10;jv/=10;} while(jti--)jb[ji2++]=jt[jti]; }
+                    jb[ji2] = 0; ser_puts(jb);
+                    ser_puts("  "); ser_puts(bg_jobs[ji].name); ser_puts("\n");
+                    found++;
+                }
+            }
+            if (!found) ser_puts("No background jobs\n");
         } else if (str_eq(line, "kill")) {
             /* kill <pid> — terminate a process */
             if (!arg || !arg[0]) {
@@ -822,6 +875,7 @@ login_gate:
                     seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
                         seL4_MessageInfo_new(PIPE_KILL, 0, 0, 1));
                     int result = (int)(long)seL4_GetMR(0);
+
                     if (result == 0) {
                         ser_puts("[proc] killed PID ");
                         char pb[12]; int pi2 = 0; int pv = kpid;
@@ -1149,6 +1203,30 @@ login_gate:
                         }
                     } else {
                         ser_puts(rpath); ser_puts(": No such file\n");
+                    }
+                } else if (run_bg) {
+                    int bgpid = do_exec_bg(cmd);
+                    if (bgpid > 0) {
+                        /* Track background job */
+                        for (int ji = 0; ji < MAX_BG_JOBS; ji++) {
+                            if (!bg_jobs[ji].active) {
+                                bg_jobs[ji].active = 1;
+                                bg_jobs[ji].pid = bgpid;
+                                int ni = 0;
+                                const char *np = line;
+                                while (*np && ni < 63) bg_jobs[ji].name[ni++] = *np++;
+                                bg_jobs[ji].name[ni] = '\0';
+                                ser_puts("[");
+                                char jb[12]; int ji2=0; int jv=ji+1;
+                                if(jv==0)jb[ji2++]='0'; else{char jt[12];int jti=0;while(jv){jt[jti++]='0'+jv%10;jv/=10;}while(jti--)jb[ji2++]=jt[jti];}
+                                jb[ji2]=0; ser_puts(jb);
+                                ser_puts("] PID ");
+                                ji2=0; jv=bgpid;
+                                if(jv==0)jb[ji2++]='0'; else{char jt[12];int jti=0;while(jv){jt[jti++]='0'+jv%10;jv/=10;}while(jti--)jb[ji2++]=jt[jti];}
+                                jb[ji2]=0; ser_puts(jb); ser_puts("\n");
+                                break;
+                            }
+                        }
                     }
                 } else {
                     do_exec(cmd);

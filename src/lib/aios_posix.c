@@ -476,10 +476,32 @@ static long aios_sys_write(va_list ap) {
         return (long)aios_stdio_write((void *)buf, count);
     }
 
-    /* Pipe fd */
+    /* File or pipe fd */
     if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
         aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
         if (!f->active) return -EBADF;
+        /* Regular file write via FS_WRITE_FILE */
+        if (!f->is_pipe && !f->is_dir && f->path[0] && fs_ep_cap) {
+            const char *src = (const char *)buf;
+            int plen = 0; while (f->path[plen]) plen++;
+            seL4_SetMR(0, (seL4_Word)plen);
+            int mr = 1;
+            seL4_Word w = 0;
+            for (int i = 0; i < plen; i++) {
+                w |= ((seL4_Word)(uint8_t)f->path[i]) << ((i % 8) * 8);
+                if (i % 8 == 7 || i == plen - 1) { seL4_SetMR(mr++, w); w = 0; }
+            }
+            int wlen = (int)count;
+            if (wlen > 3000) wlen = 3000;  /* MR limit */
+            seL4_SetMR(mr++, (seL4_Word)wlen);
+            w = 0;
+            for (int i = 0; i < wlen; i++) {
+                w |= ((seL4_Word)(uint8_t)src[i]) << ((i % 8) * 8);
+                if (i % 8 == 7 || i == wlen - 1) { seL4_SetMR(mr++, w); w = 0; }
+            }
+            seL4_Call(fs_ep_cap, seL4_MessageInfo_new(15 /* FS_WRITE_FILE */, 0, 0, mr));
+            return (long)wlen;
+        }
         if (f->is_pipe && !f->pipe_read && pipe_ep) {
             const char *src = (const char *)buf;
             size_t sent = 0;
@@ -1067,6 +1089,71 @@ static long aios_sys_getdents64(va_list ap) {
     return copied;
 }
 
+/* ── rename syscall ── */
+static long aios_sys_renameat(va_list ap) {
+    int olddirfd = va_arg(ap, int);
+    const char *oldpath = va_arg(ap, const char *);
+    int newdirfd = va_arg(ap, int);
+    const char *newpath = va_arg(ap, const char *);
+    (void)olddirfd; (void)newdirfd;
+    if (!fs_ep_cap || !oldpath || !newpath) return -ENOSYS;
+
+    /* Resolve paths */
+    char old_full[256], new_full[256];
+    if (oldpath[0] != '/') {
+        int i = 0;
+        const char *c = aios_cwd;
+        while (*c && i < 250) old_full[i++] = *c++;
+        if (i > 1) old_full[i++] = '/';
+        while (*oldpath && i < 255) old_full[i++] = *oldpath++;
+        old_full[i] = '\0';
+    } else {
+        int i = 0; while (*oldpath && i < 255) old_full[i++] = *oldpath++; old_full[i] = '\0';
+    }
+    if (newpath[0] != '/') {
+        int i = 0;
+        const char *c = aios_cwd;
+        while (*c && i < 250) new_full[i++] = *c++;
+        if (i > 1) new_full[i++] = '/';
+        while (*newpath && i < 255) new_full[i++] = *newpath++;
+        new_full[i] = '\0';
+    } else {
+        int i = 0; while (*newpath && i < 255) new_full[i++] = *newpath++; new_full[i] = '\0';
+    }
+
+    /* Pack both paths: MR0=oldlen, MR1..=old, then newlen, new.. */
+    int olen = 0; while (old_full[olen]) olen++;
+    int nlen = 0; while (new_full[nlen]) nlen++;
+    seL4_SetMR(0, (seL4_Word)olen);
+    int mr = 1;
+    seL4_Word w = 0;
+    for (int i = 0; i < olen; i++) {
+        w |= ((seL4_Word)(uint8_t)old_full[i]) << ((i % 8) * 8);
+        if (i % 8 == 7 || i == olen - 1) { seL4_SetMR(mr++, w); w = 0; }
+    }
+    seL4_SetMR(mr++, (seL4_Word)nlen);
+    w = 0;
+    for (int i = 0; i < nlen; i++) {
+        w |= ((seL4_Word)(uint8_t)new_full[i]) << ((i % 8) * 8);
+        if (i % 8 == 7 || i == nlen - 1) { seL4_SetMR(mr++, w); w = 0; }
+    }
+    seL4_MessageInfo_t reply = seL4_Call(fs_ep_cap, seL4_MessageInfo_new(18 /* FS_RENAME */, 0, 0, mr));
+    long result = (long)seL4_GetMR(0);
+    return result;
+}
+
+/* ── ftruncate syscall (stub) ── */
+static long aios_sys_ftruncate(va_list ap) {
+    int fd = va_arg(ap, int);
+    long length = va_arg(ap, long);
+    (void)fd; (void)length;
+    return 0;  /* stub — pretend success */
+}
+
+/* ── real write to file fds ── */
+/* (write to aios_fd is handled in aios_sys_write already for pipes,
+    but regular file fds need FS_WRITE_FILE support) */
+
 /* ── pipe() syscall ── */
 static long aios_sys_pipe2(va_list ap) {
     int *fds = va_arg(ap, int *);
@@ -1346,6 +1433,15 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     muslcsys_install_syscall(__NR_getdents64, aios_sys_getdents64);
 #ifdef __NR_pipe2
     muslcsys_install_syscall(__NR_pipe2, aios_sys_pipe2);
+#endif
+#ifdef __NR_renameat
+    muslcsys_install_syscall(__NR_renameat, aios_sys_renameat);
+#endif
+#ifdef __NR_renameat2
+    muslcsys_install_syscall(__NR_renameat2, aios_sys_renameat);
+#endif
+#ifdef __NR_ftruncate
+    muslcsys_install_syscall(__NR_ftruncate, aios_sys_ftruncate);
 #endif
 }
 

@@ -158,3 +158,13 @@ int vfs_unlink(const char *path) {
     sub[i] = '\0';
     return m->ops->fs_unlink(m->ctx, sub);
 }
+
+int vfs_rename(const char *oldpath, const char *newpath) {
+    /* Simple rename: read old file, write to new path, delete old */
+    char buf[4096];
+    int len = vfs_read(oldpath, buf, sizeof(buf));
+    if (len < 0) return -1;
+    int ret = vfs_create(newpath, buf, len);
+    if (ret < 0) return -1;
+    return vfs_unlink(oldpath);
+}

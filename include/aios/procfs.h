@@ -12,7 +12,7 @@ typedef struct {
     int pid;
     int priority;
     int nice;
-    const char *name;
+    char name[64];
     int state;  /* 0=free, 1=running, 2=sleeping, 3=zombie */
     uint32_t uid;
     int threads;

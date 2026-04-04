@@ -44,6 +44,7 @@ static allocman_t *allocman;
 #define FR_RXFE   (1 << 4)
 #define SER_KEY_PUSH 4
 #define EXEC_RUN     20
+#define EXEC_RUN_BG  24
 #define EXEC_NICE    21
 static volatile uint32_t *uart;
 
@@ -371,6 +372,8 @@ static void thread_server_fn(void *arg0, void *arg1, void *ipc_buf) {
     }
 }
 
+static int process_kill(int pid);
+
 /* ── Pipe server — manages pipe buffers ── */
 static void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
     seL4_CPtr ep = (seL4_CPtr)(uintptr_t)arg0;
@@ -463,6 +466,13 @@ static void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }
+        case PIPE_KILL: {
+            int pid = (int)seL4_GetMR(0);
+            int result = process_kill(pid);
+            seL4_SetMR(0, (seL4_Word)result);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
         default:
             seL4_SetMR(0, (seL4_Word)-1);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
@@ -509,7 +519,7 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         seL4_MessageInfo_t msg = seL4_Recv(ep, &badge);
         seL4_Word label = seL4_MessageInfo_get_label(msg);
 
-        if (label != EXEC_RUN && label != EXEC_NICE) {
+        if (label != EXEC_RUN && label != EXEC_NICE && label != EXEC_RUN_BG) {
             seL4_SetMR(0, (seL4_Word)-1);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             continue;
@@ -739,6 +749,16 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             /* Nice value was stored in last MR by shell */
         }
 
+        /* Background exec: reply immediately, don't wait */
+        if (label == EXEC_RUN_BG) {
+            ap->pid = child_pid;
+            seL4_SetMR(0, (seL4_Word)child_pid);
+            seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
+            /* Store fault_ep in active_procs for later reaping */
+            ap->fault_ep = child_fault_ep;
+            continue;
+        }
+
         /* Track foreground process for Ctrl-C */
         fg_pid = child_pid;
         fg_fault_ep = child_fault_ep.cptr;
@@ -890,12 +910,6 @@ static int fs_check_write_perm(int badge) {
 }
 
 static int fs_check_path_write(int badge, const char *path) {
-    /* DEBUG PERM */
-    if (badge > 0) {
-        int idx = badge - 1;
-        printf("[fs] PERM CHECK: badge=%d uid=%u path=%s\n",
-               badge, active_procs[idx].active ? active_procs[idx].uid : 9999, path);
-    }
     if (fs_check_write_perm(badge)) return 1;
     /* Non-root: deny writes to /etc/ */
     if (path[0] == '/' && path[1] == 'e' && path[2] == 't' &&
@@ -1126,6 +1140,35 @@ static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
                 seL4_SetMR(i, w);
             }
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 10));
+            break;
+        }
+        case FS_RENAME: {
+            seL4_Word old_len = seL4_GetMR(0);
+            char old_path[128], new_path[128];
+            int opl = (old_len > 127) ? 127 : (int)old_len;
+            int rmr = 1;
+            for (int i = 0; i < opl; i++) {
+                if (i % 8 == 0 && i > 0) rmr++;
+                old_path[i] = (char)((seL4_GetMR(rmr) >> ((i % 8) * 8)) & 0xFF);
+            }
+            old_path[opl] = '\0';
+            rmr++;
+            seL4_Word new_len = seL4_GetMR(rmr++);
+            int npl = (new_len > 127) ? 127 : (int)new_len;
+            for (int i = 0; i < npl; i++) {
+                if (i % 8 == 0 && i > 0) rmr++;
+                new_path[i] = (char)((seL4_GetMR(rmr) >> ((i % 8) * 8)) & 0xFF);
+            }
+            new_path[npl] = '\0';
+            if (!fs_check_path_write(fs_badge, new_path) ||
+                !fs_check_path_write(fs_badge, old_path)) {
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            int ret = vfs_rename(old_path, new_path);
+            seL4_SetMR(0, (seL4_Word)(ret >= 0 ? 0 : -1));
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }
         default:

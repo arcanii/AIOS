@@ -38,5 +38,6 @@ int vfs_stat(const char *path, uint32_t *mode, uint32_t *size);
 int vfs_mkdir(const char *path);
 int vfs_create(const char *path, const void *data, int len);
 int vfs_unlink(const char *path);
+int vfs_rename(const char *oldpath, const char *newpath);
 
 #endif

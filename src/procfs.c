@@ -12,7 +12,7 @@ void proc_init(void) {
     proc_table[0].pid = 0;
     proc_table[0].priority = 255;
     proc_table[0].nice = -20;
-    proc_table[0].name = "kernel";
+    { const char *kn = "kernel"; int ki = 0; while (kn[ki]) { proc_table[0].name[ki] = kn[ki]; ki++; } proc_table[0].name[ki] = '\0'; }
     proc_table[0].state = 1;
 }
 
@@ -23,7 +23,9 @@ int proc_add(const char *name, int priority) {
             proc_table[i].pid = next_pid++;
             proc_table[i].priority = priority;
             proc_table[i].nice = 0;
-            proc_table[i].name = name;
+            int ni = 0;
+            while (name[ni] && ni < 63) { proc_table[i].name[ni] = name[ni]; ni++; }
+            proc_table[i].name[ni] = '\0';
             proc_table[i].state = 1;
             return proc_table[i].pid;
         }

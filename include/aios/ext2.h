@@ -80,7 +80,8 @@ struct __attribute__((packed)) ext2_dir_entry {
 #define FS_MKDIR 14
 #define FS_WRITE_FILE 15
 #define FS_UNLINK 16
-#define FS_UNAME 17
+#define FS_UNAME  17
+#define FS_RENAME 18
 
 /* Block read function type (provided by caller) */
 typedef int (*blk_read_fn)(uint64_t sector, void *buf);
