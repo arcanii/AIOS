@@ -55,6 +55,7 @@ void aios_set_cwd(const char *path);
 seL4_CPtr aios_get_serial_ep(void);
 seL4_CPtr aios_get_fs_ep(void);
 seL4_CPtr aios_get_auth_ep(void);
+int aios_nb_getchar(void);  /* non-blocking, returns -1 if no input */
 
 static inline long _aios_parse(const char *s) {
     if (!s) return 0;

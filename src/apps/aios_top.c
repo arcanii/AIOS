@@ -9,6 +9,8 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
+#include <stdint.h>
+#include "aios_posix.h"
 
 int main(int argc, char *argv[]) {
     (void)argc; (void)argv;
@@ -77,14 +79,23 @@ int main(int argc, char *argv[]) {
 
         printf("\nPress 'q' to quit\n");
 
-        /* Sleep 2 seconds, check for 'q' */
-        struct timespec ts = { .tv_sec = 2, .tv_nsec = 0 };
-        nanosleep(&ts, NULL);
-
-        /* Non-blocking check for 'q' — use read with small timeout */
-        /* Since we don't have non-blocking I/O, just check once */
-        /* For now, top runs until the process is killed or we add
-         * a way to check for input without blocking */
+        /* Poll for 'q' during 2-second refresh interval */
+        /* Use ARM timer to implement timeout-based polling */
+        {
+            uint64_t freq, start, now;
+            __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+            __asm__ volatile("mrs %0, cntpct_el0" : "=r"(start));
+            uint64_t end = start + 2 * freq;  /* 2 seconds */
+            do {
+                /* Try to read one char (non-blocking via aios_getchar) */
+                int c = aios_nb_getchar();
+                if (c == 'q' || c == 'Q') { running = 0; break; }
+                /* Yield to avoid burning CPU */
+                struct timespec ys = { .tv_sec = 0, .tv_nsec = 50000000 }; /* 50ms */
+                nanosleep(&ys, NULL);
+                __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
+            } while (now < end);
+        }
     }
 
     return 0;

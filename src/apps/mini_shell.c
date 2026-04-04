@@ -34,6 +34,12 @@ static struct {
 } su_stack[SU_STACK_MAX];
 static int su_depth = 0;
 
+/* Command history */
+#define HIST_MAX 16
+static char hist[HIST_MAX][256];
+static int hist_count = 0;
+static int hist_pos = 0;
+
 static void ser_putc(char c) {
     seL4_SetMR(0, (seL4_Word)c);
     seL4_Call(serial_ep, seL4_MessageInfo_new(SER_PUTC, 0, 0, 1));
@@ -275,8 +281,37 @@ static void read_line(int *len) {
                 /* RIGHT */
                 cursor++;
                 ser_puts("\033[C");
+            } else if (c == 'A') {
+                /* UP — previous history */
+                if (hist_pos > 0) {
+                    hist_pos--;
+                    while (cursor > 0) { ser_puts("\033[D"); cursor--; }
+                    for (int x = 0; x < *len; x++) ser_putc(' ');
+                    for (int x = 0; x < *len; x++) ser_puts("\033[D");
+                    *len = 0; cursor = 0;
+                    while (hist[hist_pos][*len] && *len < 255) {
+                        line[*len] = hist[hist_pos][*len];
+                        ser_putc(line[*len]);
+                        (*len)++; cursor++;
+                    }
+                }
+            } else if (c == 'B') {
+                /* DOWN — next history */
+                if (hist_pos < hist_count) {
+                    hist_pos++;
+                    while (cursor > 0) { ser_puts("\033[D"); cursor--; }
+                    for (int x = 0; x < *len; x++) ser_putc(' ');
+                    for (int x = 0; x < *len; x++) ser_puts("\033[D");
+                    *len = 0; cursor = 0;
+                    if (hist_pos < hist_count) {
+                        while (hist[hist_pos][*len] && *len < 255) {
+                            line[*len] = hist[hist_pos][*len];
+                            ser_putc(line[*len]);
+                            (*len)++; cursor++;
+                        }
+                    }
+                }
             }
-            /* UP/DOWN (A/B) — silently ignore */
             continue;
         }
         if (c == 0x1b) { esc_state = 1; continue; }
@@ -441,12 +476,54 @@ login_gate:
     str_cpy(cwd, session_home);
     env_set("PWD", cwd);
 
-    ser_puts("\nWelcome, "); ser_puts(session_user); ser_puts("\n\n");
+    ser_puts("\n");
+    /* Display MOTD */
+    if (fs_ep) {
+        char mpath[] = "/etc/motd";
+        int mpl = 9;
+        seL4_SetMR(0, (seL4_Word)mpl);
+        int mmr = 1;
+        seL4_Word mw = 0;
+        for (int i = 0; i < mpl; i++) {
+            mw |= ((seL4_Word)(uint8_t)mpath[i]) << ((i % 8) * 8);
+            if (i % 8 == 7 || i == mpl - 1) { seL4_SetMR(mmr++, mw); mw = 0; }
+        }
+        seL4_MessageInfo_t mreply = seL4_Call(fs_ep,
+            seL4_MessageInfo_new(11, 0, 0, mmr));
+        seL4_Word mtotal = seL4_GetMR(0);
+        if (mtotal > 0) {
+            int mrmrs = (int)seL4_MessageInfo_get_length(mreply) - 1;
+            int mgot = 0;
+            for (int i = 0; i < mrmrs; i++) {
+                seL4_Word rw = seL4_GetMR(i + 1);
+                for (int j = 0; j < 8 && mgot < (int)mtotal; j++) {
+                    ser_putc((char)((rw >> (j * 8)) & 0xFF));
+                    mgot++;
+                }
+            }
+        }
+    }
+    ser_puts("Welcome, "); ser_puts(session_user); ser_puts("\n\n");
 
     while (1) {
         ser_puts(cwd); ser_puts(" $ ");
         int len; read_line(&len);
         if (len == 0) continue;
+
+        /* Save to history (skip duplicates) */
+        if (hist_count == 0 || !str_eq(line, hist[hist_count - 1])) {
+            if (hist_count >= HIST_MAX) {
+                for (int hi = 0; hi < HIST_MAX - 1; hi++)
+                    for (int hj = 0; hj < 256; hj++)
+                        hist[hi][hj] = hist[hi+1][hj];
+                hist_count = HIST_MAX - 1;
+            }
+            int hi = 0;
+            while (hi <= len && hi < 255) { hist[hist_count][hi] = line[hi]; hi++; }
+            hist[hist_count][hi] = '\0';
+            hist_count++;
+        }
+        hist_pos = hist_count;
 
         /* Check for pipe | (supports multi-pipe: a | b | c) */
         {

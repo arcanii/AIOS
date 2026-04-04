@@ -1147,7 +1147,11 @@ int main(int argc, char *argv[]) {
     /* Clear active process table */
     for (int i = 0; i < MAX_ACTIVE_PROCS; i++) active_procs[i].active = 0;
 
-    proc_add("root", 200);
+    int root_pid = proc_add("root", 200);
+    for (int pi = 0; pi < PROC_MAX; pi++) {
+        if (proc_table[pi].active && proc_table[pi].pid == root_pid)
+            proc_table[pi].threads = 1;
+    }
 
 
     /* Set root to priority 200 for round-robin with children */
