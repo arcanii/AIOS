@@ -52,6 +52,16 @@ static int str_eq(const char *a, const char *b) {
 }
 static int str_len(const char *s) { int n = 0; while (s[n]) n++; return n; }
 static void str_cpy(char *d, const char *s) { while ((*d++ = *s++)); }
+
+/* Strip matching quotes from a string in-place */
+static void strip_quotes(char *s) {
+    int len = str_len(s);
+    if (len < 2) return;
+    if ((s[0] == '"' && s[len-1] == '"') || (s[0] == '\'' && s[len-1] == '\'')) {
+        for (int i = 0; i < len - 2; i++) s[i] = s[i+1];
+        s[len-2] = '\0';
+    }
+}
 static int uint_to_dec(uint32_t v, char *buf) {
     if (v == 0) { buf[0] = '0'; buf[1] = 0; return 1; }
     char tmp[12]; int ti = 0;
@@ -438,78 +448,93 @@ login_gate:
         int len; read_line(&len);
         if (len == 0) continue;
 
-        /* Check for pipe | first */
+        /* Check for pipe | (supports multi-pipe: a | b | c) */
         {
-            int pipe_pos = -1;
-            for (int ci = 0; ci < len; ci++) {
-                /* Single | but not || */
+            /* Count pipe segments */
+            int pipe_positions[8];
+            int num_pipes = 0;
+            for (int ci = 0; ci < len && num_pipes < 8; ci++) {
                 if (line[ci] == '|' && (ci + 1 >= len || line[ci+1] != '|')) {
-                    pipe_pos = ci; break;
+                    pipe_positions[num_pipes++] = ci;
                 }
             }
-            if (pipe_pos >= 0 && pipe_ep) {
-                /* Split into left | right */
-                line[pipe_pos] = '\0';
-                char *right_start = line + pipe_pos + 1;
-                while (*right_start == ' ') right_start++;
-                /* Trim trailing spaces from left */
-                int ll = pipe_pos - 1;
-                while (ll >= 0 && line[ll] == ' ') line[ll--] = '\0';
+            if (num_pipes > 0 && pipe_ep) {
+                /* Split into segments */
+                char *segments[9];  /* max 8 pipes = 9 segments */
+                int num_segments = 0;
+                segments[num_segments++] = line;
+                for (int pi = 0; pi < num_pipes; pi++) {
+                    line[pipe_positions[pi]] = '\0';
+                    char *next = line + pipe_positions[pi] + 1;
+                    while (*next == ' ') next++;
+                    segments[num_segments++] = next;
+                }
+                /* Trim trailing spaces from each segment */
+                for (int si = 0; si < num_segments; si++) {
+                    int sl = str_len(segments[si]);
+                    while (sl > 0 && segments[si][sl-1] == ' ') segments[si][--sl] = '\0';
+                }
 
-                /* Create pipe */
-                seL4_MessageInfo_t pr = seL4_Call(pipe_ep,
-                    seL4_MessageInfo_new(PIPE_CREATE, 0, 0, 0));
-                int pipe_id = (int)(long)seL4_GetMR(0);
-                if (pipe_id < 0) {
+                /* Create pipe_ids between each pair */
+                int pipe_ids[8];
+                int pipes_ok = 1;
+                for (int pi = 0; pi < num_pipes; pi++) {
+                    seL4_MessageInfo_t pr = seL4_Call(pipe_ep,
+                        seL4_MessageInfo_new(PIPE_CREATE, 0, 0, 0));
+                    pipe_ids[pi] = (int)(long)seL4_GetMR(0);
+                    if (pipe_ids[pi] < 0) { pipes_ok = 0; break; }
+                }
+                if (!pipes_ok) {
                     ser_puts("pipe: failed to create\n");
+                    /* Clean up any created pipes */
+                    for (int pi = 0; pi < num_pipes; pi++) {
+                        if (pipe_ids[pi] >= 0) {
+                            seL4_SetMR(0, (seL4_Word)pipe_ids[pi]);
+                            seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_CLOSE, 0, 0, 1));
+                        }
+                    }
                     continue;
                 }
 
-                /* Parse and exec left command with stdout→pipe */
-                {
-                    char *larg = 0;
-                    for (int i = 0; line[i]; i++) {
-                        if (line[i] == ' ') { line[i] = '\0'; larg = line+i+1; break; }
+                /* Execute each segment with appropriate pipe redirection */
+                for (int si = 0; si < num_segments; si++) {
+                    int spipe = (si < num_segments - 1) ? pipe_ids[si] : -1;  /* stdout pipe */
+                    int rpipe = (si > 0) ? pipe_ids[si - 1] : -1;             /* stdin pipe */
+
+                    /* Parse command + args for this segment */
+                    char *seg = segments[si];
+                    char *sarg = 0;
+                    for (int i = 0; seg[i]; i++) {
+                        if (seg[i] == ' ') { seg[i] = '\0'; sarg = seg+i+1; break; }
                     }
-                    char lpath[256];
-                    if (find_in_path(line, lpath, sizeof(lpath))) {
-                        char lcmd[512]; int lci = 0;
-                        const char *cp = lpath;
-                        while (*cp && lci < 500) lcmd[lci++] = *cp++;
-                        if (larg) { lcmd[lci++] = ' '; cp = larg; while (*cp && lci < 500) lcmd[lci++] = *cp++; }
-                        lcmd[lci++] = ' '; lcmd[lci++] = 'C'; lcmd[lci++] = 'W'; lcmd[lci++] = 'D'; lcmd[lci++] = '=';
+                    strip_quotes(seg);
+                    if (sarg) {
+                        char *p = sarg;
+                        while (*p) { strip_quotes(p); while(*p&&*p!=' ')p++; while(*p==' ')p++; }
+                    }
+
+                    char spath[256];
+                    if (find_in_path(seg, spath, sizeof(spath))) {
+                        char scmd[512]; int sci = 0;
+                        const char *cp = spath;
+                        while (*cp && sci < 500) scmd[sci++] = *cp++;
+                        if (sarg) { scmd[sci++] = ' '; cp = sarg; while (*cp && sci < 500) scmd[sci++] = *cp++; }
+                        scmd[sci++] = ' '; scmd[sci++] = 'C'; scmd[sci++] = 'W'; scmd[sci++] = 'D'; scmd[sci++] = '=';
                         char ud[12], gd[12]; uint_to_dec(session_uid, ud); uint_to_dec(session_gid, gd);
-                        for (int x=0;ud[x]&&lci<500;x++) lcmd[lci++]=ud[x]; lcmd[lci++]=':';
-                        for (int x=0;gd[x]&&lci<500;x++) lcmd[lci++]=gd[x]; lcmd[lci++]=':';
-                        const char *cw=cwd; while(*cw&&lci<500) lcmd[lci++]=*cw++; lcmd[lci]='\0';
-                        do_exec_piped(lcmd, pipe_id, -1);
+                        for (int x=0;ud[x]&&sci<500;x++) scmd[sci++]=ud[x]; scmd[sci++]=':';
+                        for (int x=0;gd[x]&&sci<500;x++) scmd[sci++]=gd[x]; scmd[sci++]=':';
+                        const char *cw=cwd; while(*cw&&sci<500) scmd[sci++]=*cw++; scmd[sci]='\0';
+                        do_exec_piped(scmd, spipe, rpipe);
+                    } else {
+                        ser_puts(seg); ser_puts(": command not found\n");
                     }
                 }
 
-                /* Parse and exec right command with stdin←pipe */
-                {
-                    char *rarg = 0;
-                    for (int i = 0; right_start[i]; i++) {
-                        if (right_start[i] == ' ') { right_start[i] = '\0'; rarg = right_start+i+1; break; }
-                    }
-                    char rpath[256];
-                    if (find_in_path(right_start, rpath, sizeof(rpath))) {
-                        char rcmd[512]; int rci = 0;
-                        const char *cp = rpath;
-                        while (*cp && rci < 500) rcmd[rci++] = *cp++;
-                        if (rarg) { rcmd[rci++] = ' '; cp = rarg; while (*cp && rci < 500) rcmd[rci++] = *cp++; }
-                        rcmd[rci++] = ' '; rcmd[rci++] = 'C'; rcmd[rci++] = 'W'; rcmd[rci++] = 'D'; rcmd[rci++] = '=';
-                        char ud[12], gd[12]; uint_to_dec(session_uid, ud); uint_to_dec(session_gid, gd);
-                        for (int x=0;ud[x]&&rci<500;x++) rcmd[rci++]=ud[x]; rcmd[rci++]=':';
-                        for (int x=0;gd[x]&&rci<500;x++) rcmd[rci++]=gd[x]; rcmd[rci++]=':';
-                        const char *cw=cwd; while(*cw&&rci<500) rcmd[rci++]=*cw++; rcmd[rci]='\0';
-                        do_exec_piped(rcmd, -1, pipe_id);
-                    }
+                /* Close all pipes */
+                for (int pi = 0; pi < num_pipes; pi++) {
+                    seL4_SetMR(0, (seL4_Word)pipe_ids[pi]);
+                    seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_CLOSE, 0, 0, 1));
                 }
-
-                /* Close pipe */
-                seL4_SetMR(0, (seL4_Word)pipe_id);
-                seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_CLOSE, 0, 0, 1));
                 continue;
             }
         }
@@ -572,6 +597,61 @@ login_gate:
         char *arg = 0;
         for (int i = 0; i < len; i++) {
             if (line[i] == ' ') { line[i] = '\0'; arg = line + i + 1; break; }
+        }
+        /* Strip quotes from command and args */
+        strip_quotes(line);
+        if (arg) {
+            /* Strip quotes from each space-separated arg */
+            char *p = arg;
+            while (*p) {
+                strip_quotes(p);
+                while (*p && *p != ' ') p++;
+                while (*p == ' ') p++;
+            }
+        }
+
+        /* ── Detect redirection ── */
+        char *redir_out = 0;    /* > filename */
+        char *redir_in = 0;     /* < filename */
+        int redir_append = 0;   /* >> = 1 */
+        if (arg) {
+            /* Scan args for >, >>, < operators */
+            char *p = arg;
+            char *prev_end = 0;
+            while (*p) {
+                if (*p == '>' && *(p+1) == '>') {
+                    *p = '\0';
+                    redir_append = 1;
+                    redir_out = p + 2;
+                    while (*redir_out == ' ') redir_out++;
+                    strip_quotes(redir_out);
+                    /* Trim trailing spaces from redir filename */
+                    int rl = str_len(redir_out);
+                    while (rl > 0 && redir_out[rl-1] == ' ') redir_out[--rl] = '\0';
+                    break;
+                } else if (*p == '>') {
+                    *p = '\0';
+                    redir_out = p + 1;
+                    while (*redir_out == ' ') redir_out++;
+                    strip_quotes(redir_out);
+                    int rl = str_len(redir_out);
+                    while (rl > 0 && redir_out[rl-1] == ' ') redir_out[--rl] = '\0';
+                    break;
+                } else if (*p == '<') {
+                    *p = '\0';
+                    redir_in = p + 1;
+                    while (*redir_in == ' ') redir_in++;
+                    strip_quotes(redir_in);
+                    int rl = str_len(redir_in);
+                    while (rl > 0 && redir_in[rl-1] == ' ') redir_in[--rl] = '\0';
+                    break;
+                }
+                p++;
+            }
+            /* Trim trailing spaces from remaining args */
+            int al = str_len(arg);
+            while (al > 0 && arg[al-1] == ' ') arg[--al] = '\0';
+            if (arg[0] == '\0') arg = 0;
         }
 
         /* ── Builtins ── */
@@ -755,7 +835,7 @@ login_gate:
                     p = arg;
                     while (*p && ci < 500) cmd[ci++] = *p++;
                 }
-                /* Append CWD marker: CWD=uid:gid:/path */
+                /* Append CWD marker */
                 cmd[ci++] = ' ';
                 cmd[ci++] = 'C'; cmd[ci++] = 'W'; cmd[ci++] = 'D'; cmd[ci++] = '=';
                 char uid_dec[12], gid_dec[12];
@@ -768,7 +848,136 @@ login_gate:
                 const char *cw = cwd;
                 while (*cw && ci < 500) cmd[ci++] = *cw++;
                 cmd[ci] = '\0';
-                do_exec(cmd);
+
+                if (redir_out && pipe_ep) {
+                    /* Output redirection: capture stdout to pipe, write to file */
+                    seL4_MessageInfo_t pr = seL4_Call(pipe_ep,
+                        seL4_MessageInfo_new(PIPE_CREATE, 0, 0, 0));
+                    int rpid = (int)(long)seL4_GetMR(0);
+                    if (rpid >= 0) {
+                        do_exec_piped(cmd, rpid, -1);
+                        /* Read pipe contents and write to file via FS */
+                        char fbuf[4096]; int fpos = 0;
+                        while (fpos < 4095) {
+                            int want = 900;
+                            if (fpos + want > 4095) want = 4095 - fpos;
+                            seL4_SetMR(0, (seL4_Word)rpid);
+                            seL4_SetMR(1, (seL4_Word)want);
+                            seL4_MessageInfo_t rr = seL4_Call(pipe_ep,
+                                seL4_MessageInfo_new(62, 0, 0, 2));
+                            int got = (int)(long)seL4_GetMR(0);
+                            if (got <= 0) break;
+                            int mr = 1;
+                            for (int i = 0; i < got; i++) {
+                                if (i % 8 == 0 && i > 0) mr++;
+                                fbuf[fpos++] = (char)((seL4_GetMR(mr) >> ((i % 8) * 8)) & 0xFF);
+                            }
+                        }
+                        /* Resolve path */
+                        char rpath[256];
+                        if (redir_out[0] != '/') {
+                            int ri = 0;
+                            const char *cw2 = cwd;
+                            while (*cw2 && ri < 250) rpath[ri++] = *cw2++;
+                            if (ri > 1) rpath[ri++] = '/';
+                            while (*redir_out && ri < 255) rpath[ri++] = *redir_out++;
+                            rpath[ri] = '\0';
+                        } else {
+                            int ri = 0;
+                            while (*redir_out && ri < 255) rpath[ri++] = *redir_out++;
+                            rpath[ri] = '\0';
+                        }
+                        /* Write to file via FS_WRITE_FILE IPC */
+                        if (fs_ep && fpos > 0) {
+                            int pl = str_len(rpath);
+                            seL4_SetMR(0, (seL4_Word)pl);
+                            int mr = 1;
+                            seL4_Word w = 0;
+                            for (int i = 0; i < pl; i++) {
+                                w |= ((seL4_Word)(uint8_t)rpath[i]) << ((i % 8) * 8);
+                                if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
+                            }
+                            seL4_SetMR(mr++, (seL4_Word)fpos);
+                            w = 0;
+                            for (int i = 0; i < fpos; i++) {
+                                w |= ((seL4_Word)(uint8_t)fbuf[i]) << ((i % 8) * 8);
+                                if (i % 8 == 7 || i == fpos - 1) { seL4_SetMR(mr++, w); w = 0; }
+                            }
+                            seL4_Call(fs_ep, seL4_MessageInfo_new(15, 0, 0, mr));
+                        }
+                        seL4_SetMR(0, (seL4_Word)rpid);
+                        seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_CLOSE, 0, 0, 1));
+                    }
+                } else if (redir_in && pipe_ep) {
+                    /* Input redirection: read file, feed to stdin pipe */
+                    /* Resolve path */
+                    char rpath[256];
+                    if (redir_in[0] != '/') {
+                        int ri = 0;
+                        const char *cw2 = cwd;
+                        while (*cw2 && ri < 250) rpath[ri++] = *cw2++;
+                        if (ri > 1) rpath[ri++] = '/';
+                        const char *rr = redir_in;
+                        while (*rr && ri < 255) rpath[ri++] = *rr++;
+                        rpath[ri] = '\0';
+                    } else {
+                        int ri = 0;
+                        while (*redir_in && ri < 255) rpath[ri++] = *redir_in++;
+                        rpath[ri] = '\0';
+                    }
+                    /* Read file via FS_CAT */
+                    char fbuf[4096]; int flen = 0;
+                    {
+                        int pl = str_len(rpath);
+                        seL4_SetMR(0, (seL4_Word)pl);
+                        int mr = 1;
+                        seL4_Word w = 0;
+                        for (int i = 0; i < pl; i++) {
+                            w |= ((seL4_Word)(uint8_t)rpath[i]) << ((i % 8) * 8);
+                            if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
+                        }
+                        seL4_MessageInfo_t rr = seL4_Call(fs_ep,
+                            seL4_MessageInfo_new(11, 0, 0, mr));
+                        seL4_Word total = seL4_GetMR(0);
+                        int rmrs = (int)seL4_MessageInfo_get_length(rr) - 1;
+                        for (int i = 0; i < rmrs && flen < 4095; i++) {
+                            seL4_Word rw = seL4_GetMR(i + 1);
+                            for (int j = 0; j < 8 && flen < (int)total && flen < 4095; j++)
+                                fbuf[flen++] = (char)((rw >> (j * 8)) & 0xFF);
+                        }
+                    }
+                    if (flen > 0) {
+                        /* Create pipe, fill it, exec with stdin←pipe */
+                        seL4_MessageInfo_t pr = seL4_Call(pipe_ep,
+                            seL4_MessageInfo_new(PIPE_CREATE, 0, 0, 0));
+                        int rpid = (int)(long)seL4_GetMR(0);
+                        if (rpid >= 0) {
+                            /* Write file contents to pipe */
+                            int sent = 0;
+                            while (sent < flen) {
+                                int chunk = flen - sent;
+                                if (chunk > 900) chunk = 900;
+                                seL4_SetMR(0, (seL4_Word)rpid);
+                                seL4_SetMR(1, (seL4_Word)chunk);
+                                int mr = 2;
+                                seL4_Word w = 0;
+                                for (int i = 0; i < chunk; i++) {
+                                    w |= ((seL4_Word)(uint8_t)fbuf[sent+i]) << ((i % 8) * 8);
+                                    if (i % 8 == 7 || i == chunk - 1) { seL4_SetMR(mr++, w); w = 0; }
+                                }
+                                seL4_Call(pipe_ep, seL4_MessageInfo_new(61, 0, 0, mr));
+                                sent += chunk;
+                            }
+                            do_exec_piped(cmd, -1, rpid);
+                            seL4_SetMR(0, (seL4_Word)rpid);
+                            seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_CLOSE, 0, 0, 1));
+                        }
+                    } else {
+                        ser_puts(rpath); ser_puts(": No such file\n");
+                    }
+                } else {
+                    do_exec(cmd);
+                }
             } else {
                 ser_puts(line);
                 ser_puts(": command not found\n");
