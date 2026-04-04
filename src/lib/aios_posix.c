@@ -33,6 +33,7 @@ static seL4_CPtr ser_ep = 0;
 static seL4_CPtr fs_ep_cap = 0;
 static seL4_CPtr thread_ep = 0;
 static seL4_CPtr auth_ep = 0;
+static seL4_CPtr pipe_ep = 0;
 static int fetch_stat(const char *path, uint32_t *mode, uint32_t *size);
 
 /* Resolve relative path against CWD */
@@ -40,6 +41,8 @@ static int fetch_stat(const char *path, uint32_t *mode, uint32_t *size);
 static char aios_cwd[256] = "/";
 static uint32_t aios_uid = 0;
 static uint32_t aios_gid = 0;
+static int stdout_pipe_id = -1;   /* if >= 0, stdout goes to pipe */
+static int stdin_pipe_id = -1;    /* if >= 0, stdin comes from pipe */
 
 static void resolve_path(const char *pathname, char *out, int outsz) {
     if (pathname[0] == '/') {
@@ -74,6 +77,9 @@ seL4_CPtr aios_get_auth_ep(void) { return auth_ep; }
 typedef struct {
     int active;
     int is_dir;
+    int is_pipe;
+    int pipe_id;      /* pipe server pipe index */
+    int pipe_read;    /* 1=read end, 0=write end */
     char path[128];
     char data[4096];
     int size;
@@ -124,6 +130,26 @@ static int fetch_file(const char *path, char *buf, int bufsz) {
 
 /* ── stdio write via IPC ── */
 static size_t aios_stdio_write(void *data, size_t count) {
+    /* Check for pipe redirect (stdout_pipe_id set by __wrap_main) */
+    if (stdout_pipe_id >= 0 && pipe_ep) {
+        const char *src = (const char *)data;
+        size_t sent = 0;
+        while (sent < count) {
+            int chunk = (int)(count - sent);
+            if (chunk > 900) chunk = 900;
+            seL4_SetMR(0, (seL4_Word)stdout_pipe_id);
+            seL4_SetMR(1, (seL4_Word)chunk);
+            int mr = 2;
+            seL4_Word w = 0;
+            for (int i = 0; i < chunk; i++) {
+                w |= ((seL4_Word)(uint8_t)src[sent + i]) << ((i % 8) * 8);
+                if (i % 8 == 7 || i == chunk - 1) { seL4_SetMR(mr++, w); w = 0; }
+            }
+            seL4_Call(pipe_ep, seL4_MessageInfo_new(61, 0, 0, mr));
+            sent += chunk;
+        }
+        return count;
+    }
     if (!ser_ep) return count;
     char *buf = (char *)data;
     for (size_t i = 0; i < count; i++) {
@@ -351,8 +377,25 @@ static long aios_sys_read(va_list ap) {
     void *buf = va_arg(ap, void *);
     size_t count = va_arg(ap, size_t);
 
-    /* stdin */
+    /* stdin — check for pipe redirect */
     if (fd == 0) {
+        if (stdin_pipe_id >= 0 && pipe_ep) {
+            /* Read from pipe instead of serial */
+            char *cbuf = (char *)buf;
+            int want = (int)count;
+            if (want > 900) want = 900;
+            seL4_SetMR(0, (seL4_Word)stdin_pipe_id);
+            seL4_SetMR(1, (seL4_Word)want);
+            seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
+                seL4_MessageInfo_new(62, 0, 0, 2));
+            int got = (int)(long)seL4_GetMR(0);
+            int mr = 1;
+            for (int i = 0; i < got; i++) {
+                if (i % 8 == 0 && i > 0) mr++;
+                cbuf[i] = (char)((seL4_GetMR(mr) >> ((i % 8) * 8)) & 0xFF);
+            }
+            return (long)got;
+        }
         char *cbuf = (char *)buf;
         for (size_t i = 0; i < count; i++) {
             int c = aios_getchar();
@@ -367,6 +410,23 @@ static long aios_sys_read(va_list ap) {
     if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
         aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
         if (!f->active) return -EBADF;
+        /* Pipe read */
+        if (f->is_pipe && f->pipe_read && pipe_ep) {
+            char *cbuf = (char *)buf;
+            int want = (int)count;
+            if (want > 900) want = 900;
+            seL4_SetMR(0, (seL4_Word)f->pipe_id);
+            seL4_SetMR(1, (seL4_Word)want);
+            seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
+                seL4_MessageInfo_new(62, 0, 0, 2));
+            int got = (int)(long)seL4_GetMR(0);
+            int mr = 1;
+            for (int i = 0; i < got; i++) {
+                if (i % 8 == 0 && i > 0) mr++;
+                cbuf[i] = (char)((seL4_GetMR(mr) >> ((i % 8) * 8)) & 0xFF);
+            }
+            return (long)got;
+        }
         int avail = f->size - f->pos;
         if (avail <= 0) return 0;
         int n = (int)count < avail ? (int)count : avail;
@@ -385,8 +445,54 @@ static long aios_sys_write(va_list ap) {
     const void *buf = va_arg(ap, const void *);
     size_t count = va_arg(ap, size_t);
 
+    /* stdout/stderr — check for pipe redirect */
     if (fd == 1 || fd == 2) {
+        if (stdout_pipe_id >= 0 && pipe_ep) {
+            /* Write to pipe instead of serial */
+            const char *src = (const char *)buf;
+            size_t sent = 0;
+            while (sent < count) {
+                int chunk = (int)(count - sent);
+                if (chunk > 900) chunk = 900;  /* MR limit */
+                seL4_SetMR(0, (seL4_Word)stdout_pipe_id);
+                seL4_SetMR(1, (seL4_Word)chunk);
+                int mr = 2;
+                seL4_Word w = 0;
+                for (int i = 0; i < chunk; i++) {
+                    w |= ((seL4_Word)(uint8_t)src[sent + i]) << ((i % 8) * 8);
+                    if (i % 8 == 7 || i == chunk - 1) { seL4_SetMR(mr++, w); w = 0; }
+                }
+                seL4_Call(pipe_ep, seL4_MessageInfo_new(61, 0, 0, mr));
+                sent += chunk;
+            }
+            return (long)count;
+        }
         return (long)aios_stdio_write((void *)buf, count);
+    }
+
+    /* Pipe fd */
+    if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
+        aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
+        if (!f->active) return -EBADF;
+        if (f->is_pipe && !f->pipe_read && pipe_ep) {
+            const char *src = (const char *)buf;
+            size_t sent = 0;
+            while (sent < count) {
+                int chunk = (int)(count - sent);
+                if (chunk > 900) chunk = 900;
+                seL4_SetMR(0, (seL4_Word)f->pipe_id);
+                seL4_SetMR(1, (seL4_Word)chunk);
+                int mr = 2;
+                seL4_Word w = 0;
+                for (int i = 0; i < chunk; i++) {
+                    w |= ((seL4_Word)(uint8_t)src[sent + i]) << ((i % 8) * 8);
+                    if (i % 8 == 7 || i == chunk - 1) { seL4_SetMR(mr++, w); w = 0; }
+                }
+                seL4_Call(pipe_ep, seL4_MessageInfo_new(61, 0, 0, mr));
+                sent += chunk;
+            }
+            return (long)count;
+        }
     }
     return -EBADF;
 }
@@ -459,7 +565,24 @@ static long aios_sys_readv(va_list ap) {
             total += n;
             if (n < (int)iov[i].iov_len) break;
         } else if (fd == 0) {
-            /* stdin */
+            /* stdin — check pipe redirect */
+            if (stdin_pipe_id >= 0 && pipe_ep) {
+                char *dst = (char *)iov[i].iov_base;
+                int want = (int)iov[i].iov_len;
+                if (want > 900) want = 900;
+                seL4_SetMR(0, (seL4_Word)stdin_pipe_id);
+                seL4_SetMR(1, (seL4_Word)want);
+                seL4_MessageInfo_t rpl = seL4_Call(pipe_ep,
+                    seL4_MessageInfo_new(62, 0, 0, 2));
+                int got = (int)(long)seL4_GetMR(0);
+                int mr = 1;
+                for (int k = 0; k < got; k++) {
+                    if (k % 8 == 0 && k > 0) mr++;
+                    dst[k] = (char)((seL4_GetMR(mr) >> ((k % 8) * 8)) & 0xFF);
+                }
+                total += got;
+                if (got < (int)iov[i].iov_len) break;
+            } else {
             char *dst = (char *)iov[i].iov_base;
             for (size_t j = 0; j < iov[i].iov_len; j++) {
                 int c = aios_getchar();
@@ -467,6 +590,7 @@ static long aios_sys_readv(va_list ap) {
                 dst[j] = (char)c;
                 total++;
                 if (c == '\n') return total;
+            }
             }
         } else {
             return -EBADF;
@@ -937,6 +1061,40 @@ static long aios_sys_getdents64(va_list ap) {
     return copied;
 }
 
+/* ── pipe() syscall ── */
+static long aios_sys_pipe2(va_list ap) {
+    int *fds = va_arg(ap, int *);
+    int flags = va_arg(ap, int);
+    (void)flags;
+    if (!pipe_ep) return -ENOSYS;
+
+    /* Create pipe via IPC */
+    seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
+        seL4_MessageInfo_new(60 /* PIPE_CREATE */, 0, 0, 0));
+    int pipe_id = (int)(long)seL4_GetMR(0);
+    if (pipe_id < 0) return -ENOMEM;
+
+    /* Allocate two fds: read end and write end */
+    int ri = aios_fd_alloc();
+    if (ri < 0) return -EMFILE;
+    int wi = aios_fd_alloc();
+    if (wi < 0) { aios_fds[ri].active = 0; return -EMFILE; }
+
+    aios_fds[ri].active = 1;
+    aios_fds[ri].is_pipe = 1;
+    aios_fds[ri].pipe_id = pipe_id;
+    aios_fds[ri].pipe_read = 1;
+
+    aios_fds[wi].active = 1;
+    aios_fds[wi].is_pipe = 1;
+    aios_fds[wi].pipe_id = pipe_id;
+    aios_fds[wi].pipe_read = 0;
+
+    fds[0] = AIOS_FD_BASE + ri;  /* read end */
+    fds[1] = AIOS_FD_BASE + wi;  /* write end */
+    return 0;
+}
+
 /* ── getpwuid / getpwnam via auth_ep IPC ── */
 static struct passwd _pw_buf;
 static char _pw_name[32];
@@ -1180,6 +1338,9 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     muslcsys_install_syscall(__NR_gettimeofday, aios_sys_gettimeofday);
     muslcsys_install_syscall(__NR_nanosleep, aios_sys_nanosleep);
     muslcsys_install_syscall(__NR_getdents64, aios_sys_getdents64);
+#ifdef __NR_pipe2
+    muslcsys_install_syscall(__NR_pipe2, aios_sys_pipe2);
+#endif
 }
 
 void aios_init_full(seL4_CPtr serial_ep_arg, seL4_CPtr fs_ep_arg,
@@ -1203,21 +1364,23 @@ static long _auto_parse(const char *s) {
 int __real_main(int argc, char **argv);
 
 int __wrap_main(int argc, char **argv) {
-    /* argv layout: [serial_ep, fs_ep, thread_ep, auth_ep, CWD, progname, arg1, ...] */
-    seL4_CPtr serial = 0, fs = 0, thr = 0, ath = 0;
+    /* argv layout: [serial_ep, fs_ep, thread_ep, auth_ep, pipe_ep, CWD, progname, arg1, ...] */
+    seL4_CPtr serial = 0, fs = 0, thr = 0, ath = 0, pip = 0;
     if (argc > 0 && argv[0]) serial = (seL4_CPtr)_auto_parse(argv[0]);
     if (argc > 1 && argv[1]) fs = (seL4_CPtr)_auto_parse(argv[1]);
     if (argc > 2 && argv[2]) thr = (seL4_CPtr)_auto_parse(argv[2]);
     if (argc > 3 && argv[3]) ath = (seL4_CPtr)_auto_parse(argv[3]);
+    if (argc > 4 && argv[4]) pip = (seL4_CPtr)_auto_parse(argv[4]);
     thread_ep = thr;
     auth_ep = ath;
+    pipe_ep = pip;
     aios_init(serial, fs);
 
-    /* Parse uid:gid:/path from argv[4] */
-    if (argc > 4 && argv[4]) {
-        const char *s = argv[4];
+    /* Parse uid:gid:/path from argv[5] */
+    if (argc > 5 && argv[5]) {
+        const char *s = argv[5];
         if (s[0] >= '0' && s[0] <= '9') {
-            /* Format: uid:gid:/path */
+            /* Format: uid:gid:[spipe:rpipe:]/path */
             uint32_t uid = 0;
             while (*s >= '0' && *s <= '9') { uid = uid * 10 + (*s - '0'); s++; }
             if (*s == ':') s++;
@@ -1226,12 +1389,23 @@ int __wrap_main(int argc, char **argv) {
             if (*s == ':') s++;
             aios_uid = uid;
             aios_gid = gid;
+            /* Check for optional spipe:rpipe: before /path */
+            if (*s >= '0' && *s <= '9') {
+                int sp = 0;
+                while (*s >= '0' && *s <= '9') { sp = sp * 10 + (*s - '0'); s++; }
+                if (*s == ':') s++;
+                int rp = 0;
+                while (*s >= '0' && *s <= '9') { rp = rp * 10 + (*s - '0'); s++; }
+                if (*s == ':') s++;
+                if (sp != 99) stdout_pipe_id = sp;
+                if (rp != 99) stdin_pipe_id = rp;
+            }
             if (*s == '/') aios_set_cwd(s);
         } else if (s[0] == '/') {
             aios_set_cwd(s);
         }
     }
 
-    /* Strip 5 args (ser, fs, thread, auth, cwd): real main sees [progname, arg1, ...] */
-    return __real_main(argc - 5, argv + 5);
+    /* Strip 6 args (ser, fs, thread, auth, pipe, cwd): real main sees [progname, arg1, ...] */
+    return __real_main(argc - 6, argv + 6);
 }

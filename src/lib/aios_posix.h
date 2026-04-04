@@ -36,6 +36,15 @@
 #define AIOS_THREAD_CREATE  30
 #define AIOS_THREAD_JOIN    31
 
+/* Pipe IPC labels */
+#define AIOS_PIPE_CREATE    60
+#define AIOS_PIPE_WRITE     61
+#define AIOS_PIPE_READ      62
+#define AIOS_PIPE_CLOSE     63
+
+/* Exec with pipe redirection */
+#define AIOS_EXEC_RUN_PIPE  22
+
 /* Initialize shim with endpoint caps */
 void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_ep);
 void aios_init_full(seL4_CPtr serial_ep, seL4_CPtr fs_ep, seL4_CPtr thread_ep);

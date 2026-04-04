@@ -77,6 +77,26 @@ typedef struct {
 
 static active_proc_t active_procs[MAX_ACTIVE_PROCS];
 static seL4_CPtr thread_ep_cap;
+static seL4_CPtr pipe_ep_cap;
+
+/* ── Pipe management ── */
+#define PIPE_CREATE  60
+#define PIPE_WRITE   61
+#define PIPE_READ    62
+#define PIPE_CLOSE   63
+#define MAX_PIPES     8
+#define PIPE_BUF_SIZE 8192
+
+typedef struct {
+    int active;
+    char buf[PIPE_BUF_SIZE];
+    int head;       /* write position */
+    int count;      /* bytes in buffer */
+    int read_closed;
+    int write_closed;
+} pipe_t;
+
+static pipe_t pipes[MAX_PIPES];
 static seL4_CPtr auth_ep_cap;
 
 /* Filesystem state (shared with fs thread) */
@@ -109,9 +129,9 @@ static int spawn_with_args(const char *name, uint8_t prio,
     error = sel4utils_configure_process_custom(proc, &vka, &vspace, config);
     if (error) return error;
 
-    char argv_bufs[4][16];
-    char *child_argv[4];
-    for (int i = 0; i < ep_count && i < 4; i++) {
+    char argv_bufs[8][16];
+    char *child_argv[8];
+    for (int i = 0; i < ep_count && i < 8; i++) {
         child_slots[i] = sel4utils_copy_cap_to_process(proc, &vka, eps[i]);
         snprintf(argv_bufs[i], 16, "%lu", (unsigned long)child_slots[i]);
         child_argv[i] = argv_bufs[i];
@@ -344,6 +364,106 @@ static void thread_server_fn(void *arg0, void *arg1, void *ipc_buf) {
     }
 }
 
+/* ── Pipe server — manages pipe buffers ── */
+static void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
+    seL4_CPtr ep = (seL4_CPtr)(uintptr_t)arg0;
+    (void)arg1; (void)ipc_buf;
+
+    /* Init pipes */
+    for (int i = 0; i < MAX_PIPES; i++) pipes[i].active = 0;
+
+    while (1) {
+        seL4_Word badge;
+        seL4_MessageInfo_t msg = seL4_Recv(ep, &badge);
+        seL4_Word label = seL4_MessageInfo_get_label(msg);
+
+        switch (label) {
+        case PIPE_CREATE: {
+            /* Find free pipe slot */
+            int pi = -1;
+            for (int i = 0; i < MAX_PIPES; i++) {
+                if (!pipes[i].active) { pi = i; break; }
+            }
+            if (pi < 0) {
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            pipes[pi].active = 1;
+            pipes[pi].head = 0;
+            pipes[pi].count = 0;
+            pipes[pi].read_closed = 0;
+            pipes[pi].write_closed = 0;
+            seL4_SetMR(0, (seL4_Word)pi);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        case PIPE_WRITE: {
+            /* MR0=pipe_id, MR1=len, MR2..=data */
+            int pi = (int)seL4_GetMR(0);
+            int wlen = (int)seL4_GetMR(1);
+            if (pi < 0 || pi >= MAX_PIPES || !pipes[pi].active) {
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            pipe_t *p = &pipes[pi];
+            int mr = 2;
+            int written = 0;
+            for (int i = 0; i < wlen && p->count < PIPE_BUF_SIZE; i++) {
+                if (i % 8 == 0 && i > 0) mr++;
+                char c = (char)((seL4_GetMR(mr) >> ((i % 8) * 8)) & 0xFF);
+                p->buf[(p->head + p->count) % PIPE_BUF_SIZE] = c;
+                p->count++;
+                written++;
+            }
+            seL4_SetMR(0, (seL4_Word)written);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        case PIPE_READ: {
+            /* MR0=pipe_id, MR1=max_len → MR0=len, MR1..=data */
+            int pi = (int)seL4_GetMR(0);
+            int max_len = (int)seL4_GetMR(1);
+            if (pi < 0 || pi >= MAX_PIPES || !pipes[pi].active) {
+                seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            pipe_t *p = &pipes[pi];
+            int rlen = p->count < max_len ? p->count : max_len;
+            /* Cap at what fits in MRs (~900 bytes) */
+            if (rlen > 900) rlen = 900;
+            seL4_SetMR(0, (seL4_Word)rlen);
+            int mr = 1;
+            seL4_Word w = 0;
+            for (int i = 0; i < rlen; i++) {
+                char c = p->buf[(p->head + i) % PIPE_BUF_SIZE];
+                w |= ((seL4_Word)(uint8_t)c) << ((i % 8) * 8);
+                if (i % 8 == 7 || i == rlen - 1) { seL4_SetMR(mr++, w); w = 0; }
+            }
+            p->head = (p->head + rlen) % PIPE_BUF_SIZE;
+            p->count -= rlen;
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, mr));
+            break;
+        }
+        case PIPE_CLOSE: {
+            int pi = (int)seL4_GetMR(0);
+            if (pi >= 0 && pi < MAX_PIPES && pipes[pi].active) {
+                pipes[pi].active = 0;
+            }
+            seL4_SetMR(0, 0);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        default:
+            seL4_SetMR(0, (seL4_Word)-1);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+    }
+}
+
 /* Exec thread — spawns processes on behalf of shell */
 static vka_object_t exec_reply_cap_obj;
 
@@ -501,12 +621,15 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
 
         seL4_CPtr child_auth = sel4utils_copy_cap_to_process(
             proc, &vka, auth_ep_cap);
+        seL4_CPtr child_pipe = sel4utils_copy_cap_to_process(
+            proc, &vka, pipe_ep_cap);
 
-        char s_ser[16], s_fs[16], s_thread[16], s_auth[16];
+        char s_ser[16], s_fs[16], s_thread[16], s_auth[16], s_pipe[16];
         snprintf(s_ser, 16, "%lu", (unsigned long)child_ser);
         snprintf(s_fs, 16, "%lu", (unsigned long)child_fs);
         snprintf(s_thread, 16, "%lu", (unsigned long)child_thread);
         snprintf(s_auth, 16, "%lu", (unsigned long)child_auth);
+        snprintf(s_pipe, 16, "%lu", (unsigned long)child_pipe);
 
         /* Build argv array */
         #define MAX_EXEC_ARGS 12
@@ -516,6 +639,7 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         child_argv[child_argc++] = s_fs;
         child_argv[child_argc++] = s_thread;
         child_argv[child_argc++] = s_auth;
+        child_argv[child_argc++] = s_pipe;
         /* Pass CWD from shell (encoded in exec_args after \x01 separator) */
         static char cwd_buf[256];
         cwd_buf[0] = '/'; cwd_buf[1] = 0;
@@ -1279,6 +1403,24 @@ skip_blk:
         }
     }
 
+    /* Pipe server endpoint + thread */
+    vka_object_t pipe_ep_obj;
+    vka_alloc_endpoint(&vka, &pipe_ep_obj);
+    pipe_ep_cap = pipe_ep_obj.cptr;
+    {
+        sel4utils_thread_t pipe_thread;
+        error = sel4utils_configure_thread(&vka, &vspace, &vspace, 0,
+            simple_get_cnode(&simple), seL4_NilData, &pipe_thread);
+        if (!error) {
+            seL4_TCB_SetPriority(pipe_thread.tcb.cptr,
+                                  simple_get_tcb(&simple), 200);
+            sel4utils_start_thread(&pipe_thread,
+                (sel4utils_thread_entry_fn)pipe_server_fn,
+                (void *)(uintptr_t)pipe_ep_cap, NULL, 1);
+            proc_add("pipe_server", 200);
+        }
+    }
+
 
 
     /* quiet */
@@ -1321,10 +1463,10 @@ skip_blk:
         }
         printf("[boot] Auth: isolated process\n");
 
-        seL4_CPtr sh_caps[4] = { serial_ep.cptr, fs_ep_cap, exec_ep_cap, auth_ep_cap };
-        seL4_CPtr sh_slots[4];
+        seL4_CPtr sh_caps[5] = { serial_ep.cptr, fs_ep_cap, exec_ep_cap, auth_ep_cap, pipe_ep_cap };
+        seL4_CPtr sh_slots[5];
         error = spawn_with_args("mini_shell", 200, &shell_proc,
-                                &fault_ep, 4, sh_caps, sh_slots);
+                                &fault_ep, 5, sh_caps, sh_slots);
         if (error) { printf("[proc] shell FAILED\n"); goto idle; }
         proc_add("mini_shell", 200);
         /* quiet */

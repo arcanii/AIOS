@@ -14,7 +14,7 @@
 #define SER_PUTS     3
 #define SER_KEY_PUSH 4
 
-#define KEY_BUF_SIZE 64
+#define KEY_BUF_SIZE 512
 static char key_buf[KEY_BUF_SIZE];
 static int key_head = 0, key_tail = 0;
 
