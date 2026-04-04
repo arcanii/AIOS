@@ -22,10 +22,13 @@ FULL = [
     "join", "kill", "ln", "mkdir", "mkfifo", "mktemp", "mv", "nice",
     "nohup", "od", "printf", "readlink", "rmdir", "sed", "split", "sync",
     "touch", "tsort", "unexpand", "uniq", "which", "xargs", "test", "expr",
-    "chgrp", "chroot", "dc", "logger", "md5sum", "sha256sum", "sha512sum",
+    "chgrp", "chroot", "dc", "logger", "md5sum", "sha256sum", "sha512sum", "sha1sum", "sha224sum", "sha384sum",
+    "sha512-224sum", "sha512-256sum",
     "sponge", "pathchk",
+    "cols", "uudecode", "uuencode", "mknod", "ed", "tar", "renice", "xinstall",
 ]
 SPECIAL = ["cp", "rm"]
+BC_PREFIX_DEFINE = '-DPREFIX="/usr/local"'  # bc.y references PREFIX
 
 def build_tool(name, srcs, flags):
     """Build one tool. Returns (name, success, error)."""
@@ -68,6 +71,11 @@ def main():
         tasks.append((cmd, [os.path.join(sbase, f"{cmd}.c")] + libutil + libutf, inc))
     for cmd in SPECIAL:
         tasks.append((cmd, [os.path.join(sbase, f"{cmd}.c")] + libutil + libutf, inc))
+
+    # bc: yacc-generated, needs PREFIX define
+    bc_c = os.path.join(sbase, "bc.c")
+    if os.path.isfile(bc_c):
+        tasks.append(("bc", [bc_c] + libutil + libutf, inc))
 
     total = len(tasks)
     ok_count = 0

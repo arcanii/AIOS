@@ -939,10 +939,12 @@ static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
 
         switch (label) {
         case FS_LS: {
+            /* Multi-round protocol: MR0=path_len, MR1=offset, MR2..=path */
             seL4_Word path_len = seL4_GetMR(0);
+            seL4_Word ls_offset = seL4_GetMR(1);
             char ls_path[128];
             int lpl = (path_len > 127) ? 127 : (int)path_len;
-            int ls_mr = 1;
+            int ls_mr = 2;  /* path starts at MR2 (MR1 is offset) */
             for (int i = 0; i < lpl; i++) {
                 if (i % 8 == 0 && i > 0) ls_mr++;
                 ls_path[i] = (char)((seL4_GetMR(ls_mr) >> ((i % 8) * 8)) & 0xFF);
@@ -950,17 +952,25 @@ static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             ls_path[lpl] = '\0';
             if (lpl == 0) { ls_path[0] = '/'; ls_path[1] = '\0'; }
 
-            int len = vfs_list(ls_path, fs_buf, sizeof(fs_buf));
-            if (len < 0) len = 0;
-            if (len < 0) len = 0;
-            /* Return dir listing in MRs (pack 8 chars per MR) */
-            int mrs = (len + 7) / 8;
+            /* Only fetch listing on first round (offset==0) */
+            static int fs_ls_total = 0;
+            if (ls_offset == 0) {
+                fs_ls_total = vfs_list(ls_path, fs_buf, sizeof(fs_buf));
+                if (fs_ls_total < 0) fs_ls_total = 0;
+            }
+
+            /* Send chunk starting at offset */
+            int remaining = fs_ls_total - (int)ls_offset;
+            if (remaining < 0) remaining = 0;
+            int mrs = (remaining + 7) / 8;
             if (mrs > (int)seL4_MsgMaxLength - 1) mrs = seL4_MsgMaxLength - 1;
-            seL4_SetMR(0, (seL4_Word)len);
+            int chunk = mrs * 8;
+            if (chunk > remaining) chunk = remaining;
+            seL4_SetMR(0, (seL4_Word)fs_ls_total);
             for (int i = 0; i < mrs; i++) {
                 seL4_Word w = 0;
-                for (int j = 0; j < 8 && i*8+j < len; j++)
-                    w |= ((seL4_Word)(uint8_t)fs_buf[i*8+j]) << (j*8);
+                for (int j = 0; j < 8 && i*8+j < chunk; j++)
+                    w |= ((seL4_Word)(uint8_t)fs_buf[(int)ls_offset + i*8+j]) << (j*8);
                 seL4_SetMR(i + 1, w);
             }
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, mrs + 1));

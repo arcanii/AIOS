@@ -177,28 +177,36 @@ int aios_getchar(void) {
 /* Fetch directory listing from fs_thread, format as getdents buffer */
 static int fetch_dir_as_getdents(const char *path, char *buf, int bufsz) {
     if (!fs_ep_cap) return -1;
-    /* First get raw listing "d name\n- name\n..." */
+    /* Multi-round: fetch raw listing in chunks via offset */
     char raw[4096];
     int pl = str_len(path);
-    seL4_SetMR(0, (seL4_Word)pl);
-    int mr = 1;
-    seL4_Word w = 0;
-    for (int i = 0; i < pl; i++) {
-        w |= ((seL4_Word)(uint8_t)path[i]) << ((i % 8) * 8);
-        if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
-    }
-    seL4_MessageInfo_t reply = seL4_Call(fs_ep_cap,
-        seL4_MessageInfo_new(10 /* FS_LS */, 0, 0, mr));
-    seL4_Word total = seL4_GetMR(0);
-    if (total == 0) return -1;
-
-    int rmrs = (int)seL4_MessageInfo_get_length(reply) - 1;
     int got = 0;
-    for (int i = 0; i < rmrs && got < 4095; i++) {
-        seL4_Word rw = seL4_GetMR(i + 1);
-        for (int j = 0; j < 8 && got < (int)total && got < 4095; j++)
-            raw[got++] = (char)((rw >> (j * 8)) & 0xFF);
-    }
+    int total = 0;
+    int offset = 0;
+
+    do {
+        seL4_SetMR(0, (seL4_Word)pl);
+        seL4_SetMR(1, (seL4_Word)offset);  /* chunk offset */
+        int mr = 2;  /* path starts at MR2 */
+        seL4_Word w = 0;
+        for (int i = 0; i < pl; i++) {
+            w |= ((seL4_Word)(uint8_t)path[i]) << ((i % 8) * 8);
+            if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
+        }
+        seL4_MessageInfo_t reply = seL4_Call(fs_ep_cap,
+            seL4_MessageInfo_new(10 /* FS_LS */, 0, 0, mr));
+        total = (int)seL4_GetMR(0);
+        if (total == 0) return -1;
+
+        int rmrs = (int)seL4_MessageInfo_get_length(reply) - 1;
+        for (int i = 0; i < rmrs && got < 4095; i++) {
+            seL4_Word rw = seL4_GetMR(i + 1);
+            for (int j = 0; j < 8 && got < total && got < 4095; j++)
+                raw[got++] = (char)((rw >> (j * 8)) & 0xFF);
+        }
+        offset = got;
+    } while (got < total && got < 4095);
+
     raw[got] = '\0';
 
     /* Parse "d name\n" or "- name\n" lines into struct dirent format */
