@@ -52,13 +52,15 @@ This allows the user to report "Script B failed" without ambiguity.
 
 ### Commit Protocol
 
-- Commit at each milestone with version tag in message
+- Commit at each milestone with version tag in message. Each patch should contain 5 or more new features.
 - Format: "v0.4.XX: short description\n\ndetails"
 - git push origin main after each commit
 
 ### No Hacks Protocol
 
-- Pure POSIX — no alias tables, no prefix stripping, no magic
+- Pure POSIX — no alias tables, no prefix stripping, no magic.
+- Strict Unix philosophy to do things the right way.
+- Do work that would make Richard Stallman proud.
 - Shell searches $PATH, sends full path to exec_thread
 - exec_thread loads exactly what it's given
 - mkdisk installs files with original names
