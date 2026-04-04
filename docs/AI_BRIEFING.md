@@ -7,7 +7,7 @@
 - **Repository**: https://github.com/arcanii/AIOS
 - **Branch**: main
 - **Developer**: Bryan
-- **Current Version**: v0.4.35
+- **Current Version**: v0.4.43
 
 ## Development Environment
 
@@ -171,7 +171,7 @@ This allows the user to report "Script B failed" without ambiguity.
 2. Root task initializes: allocator, SMP, virtio-blk, ext2, VFS
 3. VFS mounts: / (ext2) and /proc (procfs)
 4. Auth init: load /etc/passwd (SHA-3-512), auto-login root
-5. Starts fs_thread + exec_thread + thread_server + auth_server
+5. Starts fs_thread + exec_thread + thread_server + pipe_server
 6. Spawns serial_server + mini_shell from CPIO
 7. mini_shell presents login prompt, authenticates via auth IPC
 
@@ -195,8 +195,8 @@ This allows the user to report "Script B failed" without ambiguity.
 ### POSIX Shim (aios_posix.c)
 
 - __wrap_main: intercepts main(), strips cap args, inits shim
-- argv from exec: [serial_ep, fs_ep, thread_ep, auth_ep, CWD, progname, arg1, ...]
-- CWD format: uid:gid:/path (encodes session identity)
+- argv from exec: [serial_ep, fs_ep, thread_ep, auth_ep, pipe_ep, CWD, progname, arg1, ...]
+- CWD format: uid:gid:spipe:rpipe:/path (spipe/rpipe=99 if not piped) (encodes session identity)
 - Programs see clean POSIX argv: [progname, arg1, ...]
 - --wrap flags: main, pthread_create/join/exit/detach, pthread_mutex_*, getpwuid, getpwnam
 - 40+ syscalls overridden via muslcsys_install_syscall()
@@ -213,7 +213,9 @@ This allows the user to report "Script B failed" without ambiguity.
     AUTH_LOGIN=40, AUTH_LOGOUT=41, AUTH_WHOAMI=42, AUTH_CHECK_FILE=43
     AUTH_CHECK_KILL=44, AUTH_CHECK_PRIV=45, AUTH_USERADD=46
     AUTH_PASSWD=47, AUTH_SU=48, AUTH_GROUPS=49, AUTH_USERMOD=50
-    AUTH_GET_USER=51
+    AUTH_GET_USER=51, AUTH_LOAD_PASSWD=52
+    PIPE_CREATE=60, PIPE_WRITE=61, PIPE_READ=62, PIPE_CLOSE=63, PIPE_KILL=64
+    EXEC_RUN_BG=24, FS_RENAME=18
 
 ### Implemented Syscalls (50+)
 
@@ -294,4 +296,4 @@ Memory: mmap, munmap, brk, madvise (from muslcsys)
 | v0.4.32 | Auth server: SHA-3-512 (Keccak), user DB, sessions, /etc/passwd |
 | v0.4.33 | Login prompt: password masking, 3 retries, logout |
 | v0.4.34 | uid/gid propagation + getpwuid via auth IPC |
-| v0.4.35 | su/passwd + file permissions + line editor + parallel sbase builder |
+| v0.4.43 | su/passwd + file permissions + line editor + parallel sbase builder |

@@ -12,18 +12,25 @@ This is in an experimental/research phase. Collaborators welcome.
 
 **AI Development Study**: This project serves as a study in AI-assisted OS development, currently using Claude Opus 4.6.
 
-## Current State (v0.4.29)
+## Current State (v0.4.43)
 
 AIOS boots on QEMU (aarch64, Cortex-A53, 4-core SMP) and provides a Unix-like environment:
 
-- **94 programs** in `/bin/`, loaded from ext2 filesystem on disk
+- **95+ programs** in `/bin/`, loaded from ext2 filesystem on disk
 - **79 sbase (suckless) Unix tools**: ls, cat, head, wc, sort, grep, sed, find, cp, rm, mkdir, touch, date, cal, seq, tr, and more
-- **POSIX syscall shim**: 40+ syscalls (open, read, write, close, stat, opendir, getdents, uname, getpid, clock_gettime, ...)
+- **POSIX syscall shim**: 50+ syscalls (open, read, write, close, stat, opendir, getdents, uname, getpid, clock_gettime, pipe2, renameat, ...)
 - **ext2 filesystem**: read/write, indirect blocks, multi-group allocation
 - **VFS layer**: mount points (/ for ext2, /proc for procfs)
-- **Process management**: isolated VSpaces, fault recovery, process table
-- **ELF-from-disk loading**: programs read from ext2, loaded into new address spaces
+- **Process management**: isolated VSpaces, fault recovery, process table, background exec, kill
+- **Unix pipes**: `cmd1 | cmd2 | cmd3` with 8KB ring buffers via pipe server
+- **Shell**: line editor, command history, `$VAR` expansion, `&&`/`||` chains, `>` `<` redirection, quote stripping, Ctrl-C
+- **Authentication**: SHA-3-512 password hashing, login/logout, su/passwd, MMU-isolated auth server
+- **File permissions**: badge-based enforcement, non-root denied write to /etc/ and /bin/
+- **pthreads**: create, join, mutex via thread server (real seL4 TCBs)
+- **Kernel log**: 16KB ring buffer, /proc/log, dmesg builtin
+- **Process viewer**: `aios_top` with ANSI refresh, quit with 'q'
 - **Cross-compiler**: any POSIX C program compiles with `./scripts/aios-cc` and runs unmodified
+- **Parallel sbase builder**: `python3 scripts/build_sbase.py` (79 tools, 16 jobs, 11s)
 
 ### What It Looks Like
 
@@ -220,7 +227,21 @@ Run `posix_test` in the shell to verify.
 | v0.4.25 | aios-cc cross-compiler wrapper |
 | v0.4.26-27 | 37 sbase tools + __wrap_main + sbase ls |
 | v0.4.28 | Crash recovery (exit via VM fault) |
-| v0.4.29 | CWD propagation + 79 sbase tools + 94 programs |
+| v0.4.29 | CWD propagation + 79 sbase tools + path resolution |
+| v0.4.30 | pthreads: create, join, mutex (manual TCB in child VSpaces) |
+| v0.4.31 | AIOS_LOG: 16KB ring buffer + serial echo + /proc/log + /proc/uptime |
+| v0.4.32 | Auth server: SHA-3-512 (Keccak), user DB, sessions, /etc/passwd |
+| v0.4.33 | Login prompt: password masking, 3 retries, logout |
+| v0.4.34 | uid/gid propagation + getpwuid via auth IPC + parallel sbase builder |
+| v0.4.35 | su/passwd + file permissions + line editor |
+| v0.4.36 | Auth promoted to isolated process (MMU-isolated credentials) |
+| v0.4.37 | uname IPC + shell && / || chains |
+| v0.4.38 | Unix pipes + pipe server + UART buffer expansion |
+| v0.4.39 | Quotes + redirection + multi-pipe |
+| v0.4.40 | procfs enhancements + top + dmesg |
+| v0.4.41 | MOTD, command history, top quit, PID 1 fix |
+| v0.4.42 | $VAR expansion, Ctrl-C kills foreground, kill builtin |
+| v0.4.43 | Background exec (&), jobs, rename/mv, write-to-fd |
 
 ## Roadmap
 

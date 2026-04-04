@@ -203,6 +203,15 @@ fs_ep minted per-process with badge = active_procs index. fs_thread extracts bad
 ### Login Flow (v0.4.33-35)
 mini_shell presents "AIOS login:" prompt. Password masked with asterisks. 3 attempts before reset. Successful login sets session uid/gid/token. su/exit maintain 4-deep identity stack.
 
+### Pipe Server (v0.4.38)
+Root-side thread managing 8 concurrent pipes with 8KB ring buffers. IPC labels: PIPE_CREATE, PIPE_WRITE, PIPE_READ, PIPE_CLOSE, PIPE_KILL. pipe_ep passed to all children via argv. Shell orchestrates pipe chains: creates pipes, spawns left/right with stdout/stdin redirected. Also handles process kill requests (PIPE_KILL) since exec_thread blocks on child exit.
+
+### Shell Features (v0.4.37-43)
+Line editor with left/right cursor. Command history (16 entries, up/down arrows). $VAR expansion. Quote stripping. && / || chains. Multi-pipe (up to 8 stages). > / < redirection via pipe capture + FS_WRITE_FILE. Background execution (&) with jobs listing. kill builtin. Ctrl-C kills foreground process. dmesg builtin.
+
+### Process Control (v0.4.42-43)
+Ctrl-C: UART poll intercepts 0x03, destroys foreground process, unblocks exec_thread via fault EP message. kill: IPC to pipe_server which calls process_kill(). Background exec: EXEC_RUN_BG replies to shell immediately without waiting for child exit.
+
 ## Known Limitations
 
 - Non-MCS scheduler (MCS sched context setup fails — deferred)
@@ -211,8 +220,12 @@ mini_shell presents "AIOS login:" prompt. Password masked with asterisks. 3 atte
 - No fork() (spawn only)
 - Process priority is static (no runtime nice/renice)
 - Single QEMU platform (no real hardware tested)
-- Auth runs as thread in root VSpace (not yet isolated)
+- Auth server isolated in own VSpace (v0.4.36)
+- No background reaping (zombie processes from exited bg jobs)
+- No job control (fg/bg/suspend)
+- Pipe runs sequentially (left finishes before right starts)
 - pthread_join blocks thread_server (one join at a time)
+- Serial output interleaves with background process output
 
 ## Comparison with 0.3.x
 

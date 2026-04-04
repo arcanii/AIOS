@@ -403,3 +403,39 @@ Shell maintains a 4-deep stack of (uid, gid, token, username). `su` pushes curre
 
 ### Line Editor Escape Sequences
 Arrow keys send 3-byte ANSI sequences: ESC `[` A/B/C/D. A state machine (0=normal, 1=got ESC, 2=got ESC[) processes them. Left/right move cursor; up/down are silently consumed. Insert at cursor requires redrawing from cursor to end of line, then repositioning cursor with ESC[D sequences.
+
+
+## Auth Isolation (v0.4.36)
+
+### Promoting a Thread to a Process
+When moving auth_server from a root-side thread to an isolated process: it can no longer call `vfs_read()` directly (different VSpace). Root must read /etc/passwd via VFS, then send contents to auth_server via IPC (AUTH_LOAD_PASSWD). The auth server parses the passwd file in its own memory — SHA-3 hashes never leave auth's VSpace.
+
+### CPIO Boot Order
+Boot services must be in CPIO (available before filesystem). Order matters: serial_server first (other processes need serial for debug output), auth_server second (login needs auth), mini_shell last (needs all services ready).
+
+## Unix Pipes (v0.4.38)
+
+### stdio Hook vs syscall Write
+`printf()` goes through musl's stdio → `aios_stdio_write()` → `ser_putc()`. This is a *separate path* from the `write()` syscall. Pipe redirection must intercept at the stdio hook level (`aios_stdio_write`), not just the syscall level, otherwise printf output bypasses the pipe.
+
+### readv for stdin
+musl's buffered stdio uses `readv()` not `read()` for stdin. Pipe redirect must be checked in *both* `aios_sys_read` (fd=0 path) and `aios_sys_readv` (fd=0 path), otherwise the right side of a pipe never sees data.
+
+### CWD Marker Extended Format
+Pipe redirect info encoded in CWD marker: `uid:gid:spipe:rpipe:/path`. Values of 99 mean "not piped". This avoids adding more argv entries — the existing CWD= marker carries all session context.
+
+## Background Execution (v0.4.43)
+
+### EXEC_RUN_BG: Reply Before Wait
+For `daemon &`, exec_thread spawns the child and replies to shell immediately (EXEC_RUN_BG) without calling seL4_Recv on the fault EP. The shell gets the PID back and continues. The background child runs until killed or exits. Critical: must set `ap->pid = child_pid` in the BG path *before* `continue`, since the foreground path sets it later.
+
+### proc_entry_t Name Must Be Copied
+`proc_table[].name` was a `const char *` pointing to a static buffer (`prog_name`). When exec_thread processes the next command, `prog_name` gets overwritten — all previous entries show the wrong name. Fix: `name` is now `char[64]` with string copy in `proc_add()`.
+
+## Foreground Process Kill (v0.4.42)
+
+### Ctrl-C Race Condition
+Main loop polls UART, sees 0x03, needs to kill child. But exec_thread is blocked on `seL4_Recv(child_fault_ep)`. Can't call `process_kill()` then `seL4_Send(fault_ep)` — process_kill frees the fault_ep cap. Fix: destroy the process first (stops execution), then Send to fault_ep to unblock exec_thread, which detects `fg_killed` flag and skips normal cleanup.
+
+### process_kill via pipe_server
+exec_thread blocks waiting for child exit, so it can't receive kill IPC. Route kill through pipe_server instead (always available, runs in root VSpace, can call process_kill directly). Forward declaration needed since pipe_server_fn is defined before process_kill.
