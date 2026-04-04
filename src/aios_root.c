@@ -84,6 +84,7 @@ static seL4_CPtr pipe_ep_cap;
 #define PIPE_WRITE   61
 #define PIPE_READ    62
 #define PIPE_CLOSE   63
+#define PIPE_KILL    64
 #define MAX_PIPES     8
 #define PIPE_BUF_SIZE 8192
 
@@ -107,6 +108,11 @@ static uint64_t blk_dma_pa;
 static seL4_CPtr fs_ep_cap;
 static vka_object_t serial_ep;
 uint32_t aios_total_mem = 0;
+
+/* Foreground process tracking (for Ctrl-C) */
+static volatile int fg_pid = -1;
+static volatile seL4_CPtr fg_fault_ep = 0;
+static volatile int fg_killed = 0;
 
 static int blk_read_sector(uint64_t sector, void *buf);
 static int blk_write_sector(uint64_t sector, const void *buf);
@@ -465,6 +471,22 @@ static void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
     }
 }
 
+/* ── Process kill ── */
+static int process_kill(int pid) {
+    for (int i = 0; i < MAX_ACTIVE_PROCS; i++) {
+        if (active_procs[i].active && active_procs[i].pid == pid) {
+            /* Destroy the process */
+            sel4utils_destroy_process(&active_procs[i].proc, &vka);
+            vka_free_object(&vka, &active_procs[i].fault_ep);
+            active_procs[i].active = 0;
+            /* Update proc table */
+            proc_remove(pid);
+            return 0;
+        }
+    }
+    return -1;  /* not found */
+}
+
 /* Exec thread — spawns processes on behalf of shell */
 static vka_object_t exec_reply_cap_obj;
 
@@ -717,29 +739,53 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             /* Nice value was stored in last MR by shell */
         }
 
+        /* Track foreground process for Ctrl-C */
+        fg_pid = child_pid;
+        fg_fault_ep = child_fault_ep.cptr;
+
         /* Wait for child to exit */
         seL4_Word child_badge;
         seL4_Recv(child_fault_ep.cptr, &child_badge);
 
-        /* Clean up any remaining threads */
-        for (int ti = 0; ti < MAX_THREADS_PER_PROC; ti++) {
-            aios_thread_t *ct = &ap->threads[ti];
-            if (ct->active) {
-                vka_free_object(&vka, &ct->tcb);
-                vka_free_object(&vka, &ct->fault_ep);
-                vka_free_object(&vka, &ct->ipc_frame);
-                for (int si = 0; si < THREAD_STACK_PAGES; si++)
-                    vka_free_object(&vka, &ct->stack_frames[si]);
-                ct->active = 0;
+        /* Clear foreground tracking */
+        fg_pid = -1;
+        fg_fault_ep = 0;
+
+        /* Check if child was killed by Ctrl-C */
+        int was_killed = fg_killed;
+        fg_killed = 0;
+
+        if (was_killed) {
+            /* Ctrl-C killed child — process already destroyed, just clean up metadata */
+            vka_free_object(&vka, &child_fault_ep);
+            seL4_CNode_Delete(seL4_CapInitThreadCNode, te_dest.capPtr, seL4_WordBits);
+            vka_cspace_free(&vka, te_dest.capPtr);
+            seL4_CNode_Delete(seL4_CapInitThreadCNode, fs_dest.capPtr, seL4_WordBits);
+            vka_cspace_free(&vka, fs_dest.capPtr);
+            ap->active = 0;
+            if (child_pid > 0) proc_remove(child_pid);
+        } else {
+            /* Normal exit — full cleanup */
+            for (int ti = 0; ti < MAX_THREADS_PER_PROC; ti++) {
+                aios_thread_t *ct = &ap->threads[ti];
+                if (ct->active) {
+                    vka_free_object(&vka, &ct->tcb);
+                    vka_free_object(&vka, &ct->fault_ep);
+                    vka_free_object(&vka, &ct->ipc_frame);
+                    for (int si = 0; si < THREAD_STACK_PAGES; si++)
+                        vka_free_object(&vka, &ct->stack_frames[si]);
+                    ct->active = 0;
+                }
             }
+            sel4utils_destroy_process(proc, &vka);
+            vka_free_object(&vka, &child_fault_ep);
+            seL4_CNode_Delete(seL4_CapInitThreadCNode, te_dest.capPtr, seL4_WordBits);
+            vka_cspace_free(&vka, te_dest.capPtr);
+            seL4_CNode_Delete(seL4_CapInitThreadCNode, fs_dest.capPtr, seL4_WordBits);
+            vka_cspace_free(&vka, fs_dest.capPtr);
+            ap->active = 0;
+            if (child_pid > 0) proc_remove(child_pid);
         }
-        sel4utils_destroy_process(proc, &vka);
-        vka_free_object(&vka, &child_fault_ep);
-        /* Free badged thread_ep — must delete cap before freeing slot */
-        seL4_CNode_Delete(seL4_CapInitThreadCNode, te_dest.capPtr, seL4_WordBits);
-        vka_cspace_free(&vka, te_dest.capPtr);
-        ap->active = 0;
-        if (child_pid > 0) proc_remove(child_pid);
 
         /* Reply to shell via saved cap */
         seL4_SetMR(0, 0);
@@ -1428,7 +1474,6 @@ skip_blk:
     }
 
 
-
     /* quiet */
     {
         sel4utils_process_t serial_proc, shell_proc;
@@ -1483,9 +1528,31 @@ skip_blk:
         /* Poll UART for keyboard */
         if (uart && !(uart[UART_FR / 4] & FR_RXFE)) {
             char c = (char)(uart[UART_DR / 4] & 0xFF);
-            seL4_SetMR(0, (seL4_Word)c);
-            seL4_Call(serial_ep.cptr,
-                      seL4_MessageInfo_new(SER_KEY_PUSH, 0, 0, 1));
+            if (c == 0x03 && fg_pid > 0) {
+                /* Ctrl-C: signal foreground process to die */
+                fg_killed = 1;
+                seL4_CPtr kep = fg_fault_ep;
+                /* Destroy child process (stops execution) */
+                for (int ki = 0; ki < MAX_ACTIVE_PROCS; ki++) {
+                    if (active_procs[ki].active && active_procs[ki].pid == fg_pid) {
+                        sel4utils_destroy_process(&active_procs[ki].proc, &vka);
+                        break;
+                    }
+                }
+                /* Unblock exec_thread via fault EP */
+                if (kep) {
+                    seL4_SetMR(0, 0xDEAD);
+                    seL4_Send(kep, seL4_MessageInfo_new(0, 0, 0, 1));
+                }
+                /* Push ^C to serial so shell sees it */
+                seL4_SetMR(0, (seL4_Word)0x03);
+                seL4_Call(serial_ep.cptr,
+                          seL4_MessageInfo_new(SER_KEY_PUSH, 0, 0, 1));
+            } else {
+                seL4_SetMR(0, (seL4_Word)c);
+                seL4_Call(serial_ep.cptr,
+                          seL4_MessageInfo_new(SER_KEY_PUSH, 0, 0, 1));
+            }
         }
 
         seL4_Yield();

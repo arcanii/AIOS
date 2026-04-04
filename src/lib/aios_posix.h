@@ -44,6 +44,7 @@
 
 /* Exec with pipe redirection */
 #define AIOS_EXEC_RUN_PIPE  22
+#define AIOS_EXEC_KILL      23
 
 /* Initialize shim with endpoint caps */
 void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_ep);

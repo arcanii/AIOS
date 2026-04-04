@@ -16,6 +16,7 @@
 #define AUTH_LOGIN  40
 #define PIPE_CREATE 60
 #define PIPE_CLOSE  63
+#define PIPE_KILL   64
 #define AUTH_SU     48
 #define AUTH_PASSWD 47
 
@@ -58,6 +59,35 @@ static int str_eq(const char *a, const char *b) {
 }
 static int str_len(const char *s) { int n = 0; while (s[n]) n++; return n; }
 static void str_cpy(char *d, const char *s) { while ((*d++ = *s++)); }
+
+static const char *env_get(const char *key);
+
+/* Expand $VAR references in a string */
+static void expand_vars(char *out, const char *in, int maxlen) {
+    int oi = 0;
+    while (*in && oi < maxlen - 1) {
+        if (*in == '$' && (in[1] == '_' || (in[1] >= 'A' && in[1] <= 'Z') ||
+                           (in[1] >= 'a' && in[1] <= 'z'))) {
+            /* Extract variable name */
+            in++;
+            char vname[64]; int vi = 0;
+            while ((*in >= 'A' && *in <= 'Z') || (*in >= 'a' && *in <= 'z') ||
+                   (*in >= '0' && *in <= '9') || *in == '_') {
+                if (vi < 63) vname[vi++] = *in;
+                in++;
+            }
+            vname[vi] = '\0';
+            /* Look up in env */
+            const char *val = env_get(vname);
+            if (val) {
+                while (*val && oi < maxlen - 1) out[oi++] = *val++;
+            }
+        } else {
+            out[oi++] = *in++;
+        }
+    }
+    out[oi] = '\0';
+}
 
 /* Strip matching quotes from a string in-place */
 static void strip_quotes(char *s) {
@@ -317,6 +347,13 @@ static void read_line(int *len) {
         if (c == 0x1b) { esc_state = 1; continue; }
 
 normal:
+        if (c == 0x03) {
+            /* Ctrl-C — cancel current input */
+            ser_puts("^C\n");
+            *len = 0;
+            line[0] = '\0';
+            break;
+        }
         if (c == '\r' || c == '\n') { ser_putc('\n'); break; }
 
         if ((c == 0x7f || c == '\b') && cursor > 0) {
@@ -509,6 +546,16 @@ login_gate:
         ser_puts(cwd); ser_puts(" $ ");
         int len; read_line(&len);
         if (len == 0) continue;
+
+        /* Expand $VAR references */
+        {
+            char expanded[256];
+            expand_vars(expanded, line, 256);
+            int ei = 0;
+            while (expanded[ei] && ei < 255) { line[ei] = expanded[ei]; ei++; }
+            line[ei] = '\0';
+            len = ei;
+        }
 
         /* Save to history (skip duplicates) */
         if (hist_count == 0 || !str_eq(line, hist[hist_count - 1])) {
@@ -759,6 +806,32 @@ login_gate:
             } else {
                 ser_puts("Goodbye, "); ser_puts(session_user); ser_puts("\n");
                 goto login_gate;
+            }
+        } else if (str_eq(line, "kill")) {
+            /* kill <pid> — terminate a process */
+            if (!arg || !arg[0]) {
+                ser_puts("usage: kill <pid>\n");
+            } else {
+                int kpid = 0;
+                const char *ka = arg;
+                while (*ka >= '0' && *ka <= '9') { kpid = kpid * 10 + (*ka - '0'); ka++; }
+                if (kpid <= 1) {
+                    ser_puts("kill: cannot kill PID 0 or 1\n");
+                } else if (pipe_ep) {
+                    seL4_SetMR(0, (seL4_Word)kpid);
+                    seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
+                        seL4_MessageInfo_new(PIPE_KILL, 0, 0, 1));
+                    int result = (int)(long)seL4_GetMR(0);
+                    if (result == 0) {
+                        ser_puts("[proc] killed PID ");
+                        char pb[12]; int pi2 = 0; int pv = kpid;
+                        if (pv == 0) pb[pi2++] = '0';
+                        else { char pt[12]; int pti=0; while(pv){pt[pti++]='0'+pv%10;pv/=10;} while(pti--)pb[pi2++]=pt[pti]; }
+                        pb[pi2] = 0; ser_puts(pb); ser_puts("\n");
+                    } else {
+                        ser_puts("kill: no such process\n");
+                    }
+                }
             }
         } else if (str_eq(line, "dmesg")) {
             /* Read and display kernel log */
