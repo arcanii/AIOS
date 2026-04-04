@@ -1533,10 +1533,10 @@ skip_blk:
         seL4_CPtr caps[1], slots[1];
         caps[0] = serial_ep.cptr;
 
-        error = spawn_with_args("serial_server", 200, &serial_proc,
+        error = spawn_with_args("tty_server", 200, &serial_proc,
                                 &fault_ep, 1, caps, slots);
-        if (error) { printf("[proc] serial FAILED\n"); goto idle; }
-        proc_add("serial_server", 200);
+        if (error) { printf("[proc] tty FAILED\n"); goto idle; }
+        proc_add("tty_server", 200);
 
         /* Spawn auth_server as isolated process */
         sel4utils_process_t auth_proc;
