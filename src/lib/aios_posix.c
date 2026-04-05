@@ -19,6 +19,7 @@
 #define __NR_getdents64 61
 #endif
 #define PIPE_FORK 65
+#define PIPE_GETPID 66
 #include <muslcsys/vsyscall.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -905,6 +906,13 @@ static int aios_pid = 1;
 
 static long aios_sys_getpid(va_list ap) {
     (void)ap;
+    if (aios_pid <= 1 && pipe_ep) {
+        /* Query real PID from pipe_server on first call */
+        seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
+            seL4_MessageInfo_new(PIPE_GETPID, 0, 0, 0));
+        long pid = (long)seL4_GetMR(0);
+        if (pid > 0) aios_pid = (int)pid;
+    }
     return (long)aios_pid;
 }
 
@@ -1370,11 +1378,11 @@ static long aios_sys_clone(va_list ap) {
         seL4_MessageInfo_new(PIPE_FORK, 0, 0, 0));
     long result = (long)seL4_GetMR(0);
     if (result == 0) {
-        /* We are the child — update our PID.
-         * The parent's PID was inherited via .data copy.
-         * Read our actual PID from MR1 (set by process server). */
-        long new_pid = (long)seL4_GetMR(1);
-        if (new_pid > 0) aios_pid = (int)new_pid;
+        /* We are the child — query our actual PID from pipe_server */
+        seL4_MessageInfo_t pid_reply = seL4_Call(pipe_ep,
+            seL4_MessageInfo_new(PIPE_GETPID, 0, 0, 0));
+        long my_pid = (long)seL4_GetMR(0);
+        if (my_pid > 0) aios_pid = (int)my_pid;
     }
     return result;
 }

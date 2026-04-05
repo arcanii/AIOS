@@ -107,6 +107,7 @@ static seL4_CPtr pipe_ep_cap;
 #define PIPE_CLOSE   63
 #define PIPE_KILL    64
 #define PIPE_FORK    65
+#define PIPE_GETPID  66
 #define MAX_PIPES     8
 #define PIPE_BUF_SIZE 8192
 
@@ -828,6 +829,30 @@ static int do_fork(int parent_idx) {
     return child_pid;
 }
 
+/* Reap a forked child — called when we detect it has exited */
+static void reap_forked_child(int child_idx) {
+    active_proc_t *child = &active_procs[child_idx];
+    if (!child->active) return;
+    sel4utils_destroy_process(&child->proc, &vka);
+    vka_free_object(&vka, &child->fault_ep);
+    proc_remove(child->pid);
+    child->active = 0;
+}
+
+/* Check all forked children for exit (non-blocking) */
+static void reap_check(void) {
+    for (int i = 0; i < MAX_ACTIVE_PROCS; i++) {
+        if (!active_procs[i].active) continue;
+        if (active_procs[i].ppid <= 0) continue;  /* not a forked child */
+        /* Non-blocking check on fault EP */
+        seL4_MessageInfo_t probe = seL4_NBRecv(active_procs[i].fault_ep.cptr, NULL);
+        if (seL4_MessageInfo_get_label(probe) != 0) {
+            /* Child faulted/exited */
+            reap_forked_child(i);
+        }
+    }
+}
+
 static void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
     seL4_CPtr ep = (seL4_CPtr)(uintptr_t)arg0;
     (void)arg1; (void)ipc_buf;
@@ -836,6 +861,9 @@ static void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
     for (int i = 0; i < MAX_PIPES; i++) pipes[i].active = 0;
 
     while (1) {
+        /* Periodically reap forked children that have exited */
+        reap_check();
+
         seL4_Word badge;
         seL4_MessageInfo_t msg = seL4_Recv(ep, &badge);
         seL4_Word label = seL4_MessageInfo_get_label(msg);
@@ -923,6 +951,18 @@ static void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             int pid = (int)seL4_GetMR(0);
             int result = process_kill(pid);
             seL4_SetMR(0, (seL4_Word)result);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        case PIPE_GETPID: {
+            /* Return caller's PID based on badge */
+            int caller_idx = (int)badge - 1;
+            int pid = -1;
+            if (caller_idx >= 0 && caller_idx < MAX_ACTIVE_PROCS
+                && active_procs[caller_idx].active) {
+                pid = active_procs[caller_idx].pid;
+            }
+            seL4_SetMR(0, (seL4_Word)pid);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }
