@@ -1404,7 +1404,6 @@ static long aios_sys_wait4(va_list ap) {
 static long aios_sys_execve(va_list ap) {
     const char *pathname = va_arg(ap, const char *);
     if (!pipe_ep || !pathname) return -38;
-    printf("[execve] path=%s\n", pathname);
     char full[160];
     if (pathname[0] == '/') {
         int i = 0; while (pathname[i] && i < 158) { full[i] = pathname[i]; i++; } full[i] = 0;

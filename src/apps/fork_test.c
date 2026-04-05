@@ -11,8 +11,7 @@ int main(int argc, char *argv[]) {
         printf("fork_test: fork FAILED\n");
         return 1;
     } else if (pid == 0) {
-        /* Child — exec sysinfo (it prints and exits) */
-        execl("/bin/sysinfo", "sysinfo", NULL);
+        execl("/bin/echo", "echo", "Hello from exec!", NULL);
         printf("fork_test: exec FAILED\n");
         return 1;
     } else {

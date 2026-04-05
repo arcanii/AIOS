@@ -1234,7 +1234,6 @@ static void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             break;
         }
         case PIPE_EXEC: {
-            printf("[pipe-exec] badge=%lu\n", (unsigned long)badge);
             int ci = (int)badge - 1;
             if (ci < 0 || ci >= MAX_ACTIVE_PROCS || !active_procs[ci].active) {
                 seL4_SetMR(0, (seL4_Word)-1);
