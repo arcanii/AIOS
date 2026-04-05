@@ -7,7 +7,7 @@
 - **Repository**: https://github.com/arcanii/AIOS
 - **Branch**: main
 - **Developer**: Bryan
-- **Current Version**: v0.4.43
+- **Current Version**: v0.4.47
 
 ## Development Environment
 
@@ -49,6 +49,7 @@ This allows the user to report "Script B failed" without ambiguity.
 - Always verify changes applied: grep for expected content after edit
 - Full rebuild required when CPIO contents change (rm -rf build-04)
 - Incremental ninja sufficient for aios_root.c or aios_posix.c changes
+- Rebuild sbase after aios_posix.c changes (`python3 scripts/build_sbase.py --clean --jobs 16`)
 
 ### Commit Protocol
 
@@ -66,6 +67,15 @@ This allows the user to report "Script B failed" without ambiguity.
 - mkdisk installs files with original names
 - Temporary workarounds must be documented and removed when proper solution available
 
+### Memory Budget Awareness
+
+- The rootserver has a fixed memory budget. Adding static buffers (even 512KB)
+  can push it past limits, causing `ext2 init failed: -1` at boot.
+- The file-scope `elf_buf[1024 * 1024]` is shared between exec_thread, fork,
+  and exec. NEVER add another large static buffer.
+- If the rootserver image grows past ~608ac (varies), ext2 init fails silently.
+- Always check rootserver size in boot output if ext2 init fails.
+
 ## Build & Boot Commands
 
 ### Full Rebuild
@@ -79,31 +89,6 @@ This allows the user to report "Script B failed" without ambiguity.
 ### Rebuild sbase (parallel builder)
 
     python3 scripts/build_sbase.py [--clean] [--jobs N]
-
-### Rebuild sbase (manual, after aios_posix changes)
-
-    cd ~/Desktop/github_repos/AIOS
-    SBASE=~/Desktop/github_repos/sbase
-    mkdir -p build-04/sbase
-    for cmd in true false; do
-        ./scripts/aios-cc $SBASE/${cmd}.c -o build-04/sbase/${cmd}
-    done
-    for cmd in echo yes basename dirname hostname logname whoami; do
-        ./scripts/aios-cc $SBASE/${cmd}.c $SBASE/libutil/*.c -I $SBASE -o build-04/sbase/${cmd}
-    done
-    for cmd in cat head wc sort tee sleep link unlink tty printenv \
-               pwd env uname date cal cksum comm cmp cut expand \
-               fold nl paste rev seq strings tail tr ls grep \
-               chmod chown dd du find join kill ln mkdir mkfifo \
-               mktemp mv nice nohup od printf readlink rmdir \
-               sed split sync touch tsort unexpand uniq which xargs \
-               test expr chgrp chroot dc logger md5sum sha256sum \
-               sha512sum sponge pathchk; do
-        ./scripts/aios-cc $SBASE/${cmd}.c $SBASE/libutil/*.c $SBASE/libutf/*.c \
-            -I $SBASE -o build-04/sbase/${cmd} 2>/dev/null
-    done
-    ./scripts/aios-cc $SBASE/cp.c $SBASE/libutil/*.c $SBASE/libutf/*.c -I $SBASE -o build-04/sbase/cp
-    ./scripts/aios-cc $SBASE/rm.c $SBASE/libutil/*.c $SBASE/libutf/*.c -I $SBASE -o build-04/sbase/rm
 
 ### Install to Disk
 
@@ -130,39 +115,42 @@ This allows the user to report "Script B failed" without ambiguity.
 
     AIOS/
     ├── src/
-    │   ├── aios_root.c          # Root task: boot, drivers, exec/fs/thread/auth servers
+    │   ├── aios_root.c          # Root task: boot, drivers, servers, fork/exec (~2500 lines)
     │   ├── aios_auth.c          # Auth server: SHA-3-512, user DB, sessions, permissions
     │   ├── aios_log.c           # Kernel log: 16KB ring buffer + serial echo
     │   ├── ext2.c               # ext2 filesystem (read + write + indirect blocks)
     │   ├── vfs.c                # Virtual filesystem switch (mount dispatch)
-    │   ├── procfs.c             # /proc: version, uptime, status, mounts, log
+    │   ├── procfs.c             # /proc: version, uptime, status, mounts, log, meminfo
     │   ├── lib/
-    │   │   ├── aios_posix.c     # POSIX shim (40+ syscalls + pthreads + getpwuid)
+    │   │   ├── aios_posix.c     # POSIX shim (55+ syscalls + fork + exec + waitpid)
     │   │   └── aios_posix.h     # POSIX shim header + IPC labels
-    │   └── apps/                # AIOS programs + test_threads
+    │   └── apps/                # AIOS programs (fork_test, mini_shell, tty_server, etc.)
     ├── include/aios/
     │   ├── version.h, build_number.h, ext2.h, vfs.h, procfs.h
     │   ├── aios_auth.h          # Auth protocol: IPC labels, user/session types
     │   ├── aios_log.h           # Log macros: AIOS_LOG_INFO/WARN/ERROR/DEBUG
+    │   └── tty.h                # TTY IPC labels
     ├── scripts/
     │   ├── mkdisk.py            # Disk image CLI
     │   ├── ext2/builder.py      # ext2 image builder (multi-group, indirect blocks)
-    │   ├── aios-cc              # Cross-compiler wrapper (per-PID temp dirs, --wrap flags)
+    │   ├── ext2_dump.py         # ext2 disk image inspector
+    │   ├── aios-cc              # Cross-compiler wrapper
     │   ├── build_sbase.py       # Parallel sbase builder (16 jobs, progress bar)
-    │   ├── bump-patch.sh, bump-minor.sh, bump-build.sh, version.sh
-    │   └── posix_audit.py       # POSIX compliance audit
+    │   └── bump-patch.sh, bump-minor.sh, bump-build.sh, version.sh
     ├── disk/
     │   ├── disk_ext2.img        # 128MB ext2 disk image (gitignored)
     │   └── rootfs/              # Filesystem content overlay
     ├── docs/
     │   ├── AI_BRIEFING.md       # This file
+    │   ├── FORK_IMPLEMENTATION.md # Definitive fork/waitpid/exec guide
+    │   ├── DESIGN_TTY.md        # TTY architecture (5 phases)
+    │   ├── SESSION_2026_04_05.md # Session summary
+    │   ├── NEXT_20260405.md     # Next steps: modularize + TTY Phase 2
     │   ├── ARCHITECTURE.md, DESIGN_0.4.md, LEARNINGS.md
     │   └── patches/             # Documented dep patches
     ├── projects/aios/CMakeLists.txt  # Build config
     ├── deps/                    # gitignored: seL4, musllibc, etc.
     ├── build-04/                # gitignored: build output
-    │   ├── sbase/               # Cross-compiled sbase tools
-    │   └── projects/aios/       # AIOS programs
     └── settings.cmake           # seL4 kernel config
 
 ## Architecture
@@ -172,54 +160,48 @@ This allows the user to report "Script B failed" without ambiguity.
 1. ELF-loader loads kernel + root task
 2. Root task initializes: allocator, SMP, virtio-blk, ext2, VFS
 3. VFS mounts: / (ext2) and /proc (procfs)
-4. Auth init: load /etc/passwd (SHA-3-512), auto-login root
-5. Starts fs_thread + exec_thread + thread_server + pipe_server
-6. Spawns serial_server + mini_shell from CPIO
+4. Auth init: load /etc/passwd (SHA-3-512)
+5. Starts fs_thread + exec_thread + thread_server + pipe_server (root VSpace threads)
+6. Spawns tty_server + auth_server + mini_shell (isolated processes from CPIO)
 7. mini_shell presents login prompt, authenticates via auth IPC
 
 ### Process Model
 
-- serial_server: UART I/O via IPC (PUTC/GETC)
-- fs_thread: VFS dispatch (LS, CAT, STAT, MKDIR, WRITE, UNLINK, UNAME)
-- exec_thread: Reads ELF from /bin/, loads into new VSpace, manages lifecycle
-- mini_shell: PATH search, CWD, environment variables, exec launcher
-- User programs: isolated VSpaces, POSIX syscalls via IPC
+- **tty_server**: TTY line discipline, UART I/O, cooked/raw mode, Ctrl-C/U/W/D
+- **fs_thread**: VFS dispatch (LS, CAT, STAT, MKDIR, WRITE, UNLINK, UNAME, RENAME)
+- **exec_thread**: Reads ELF from /bin/, loads into new VSpace, manages lifecycle
+- **pipe_server**: Unix pipes, fork(), exec(), waitpid(), kill(), getpid()
+- **thread_server**: pthread create/join via TCB management
+- **auth_server**: SHA-3-512 auth, user DB, sessions, file permission checks
+- **mini_shell**: PATH search, CWD, env vars, pipes, redirection, exec launcher
+- **User programs**: isolated VSpaces, POSIX syscalls via IPC
 
-### ELF Loading (from disk)
+### fork()+exec()+waitpid() Architecture
 
-1. Shell searches $PATH, sends full path to exec_thread
-2. exec_thread reads ELF via VFS (ext2 with indirect blocks)
-3. elf_newFile() parses from 1MB static buffer (TODO: dynamic)
-4. sel4utils_elf_load() maps segments into child VSpace
-5. __wrap_main intercepts: extracts caps [ser, fs, CWD], sets CWD, calls real main
-6. Process exits via VM fault -> exec_thread cleans up -> shell resumes
+See `docs/FORK_IMPLEMENTATION.md` for the complete technical guide. Key points:
 
-### POSIX Shim (aios_posix.c)
-
-- __wrap_main: intercepts main(), strips cap args, inits shim
-- argv from exec: [serial_ep, fs_ep, thread_ep, auth_ep, pipe_ep, CWD, progname, arg1, ...]
-- CWD format: uid:gid:spipe:rpipe:/path (spipe/rpipe=99 if not piped) (encodes session identity)
-- Programs see clean POSIX argv: [progname, arg1, ...]
-- --wrap flags: main, pthread_create/join/exit/detach, pthread_mutex_*, getpwuid, getpwnam
-- 40+ syscalls overridden via muslcsys_install_syscall()
-- resolve_path() handles relative paths against CWD
-- Environment variables set via environ pointer
+- **fork()** routed through pipe_server (PIPE_FORK=65). Badge identifies caller.
+- **Approach**: Reload same ELF into new VSpace, copy .data (299 pages) + stack (16 pages)
+- **AArch64 ABI**: x0=badge, x1=msginfo, x2=MR0 (NOT x0=msginfo!)
+- **Off-by-one fix**: Page count must use (end - aligned_base), not (memsz / PAGE_SIZE)
+- **waitpid()**: SaveCaller pattern — parent blocks until reap_check detects child exit
+- **exec()**: PIPE_EXEC destroys old process, loads new ELF, preserves PID/fault_ep
+- **Exit codes**: sel4runtime exit callback sends PIPE_EXIT before faulting
 
 ### IPC Protocol Labels
 
-    SER_PUTC=1, SER_GETC=2
-    FS_LS=10, FS_CAT=11, FS_STAT=12
-    FS_MKDIR=14, FS_WRITE_FILE=15, FS_UNLINK=16, FS_UNAME=17
-    EXEC_RUN=20, EXEC_NICE=21
+    SER_PUTC=1, SER_GETC=2, SER_PUTS=3, KEY_PUSH=4
+    FS_LS=10, FS_CAT=11, FS_STAT=12, FS_MKDIR=14
+    FS_WRITE_FILE=15, FS_UNLINK=16, FS_UNAME=17, FS_RENAME=18
+    EXEC_RUN=20, EXEC_NICE=21, EXEC_RUN_BG=24
     THREAD_CREATE=30, THREAD_JOIN=31
-    AUTH_LOGIN=40, AUTH_LOGOUT=41, AUTH_WHOAMI=42, AUTH_CHECK_FILE=43
-    AUTH_CHECK_KILL=44, AUTH_CHECK_PRIV=45, AUTH_USERADD=46
-    AUTH_PASSWD=47, AUTH_SU=48, AUTH_GROUPS=49, AUTH_USERMOD=50
-    AUTH_GET_USER=51, AUTH_LOAD_PASSWD=52
-    PIPE_CREATE=60, PIPE_WRITE=61, PIPE_READ=62, PIPE_CLOSE=63, PIPE_KILL=64
-    EXEC_RUN_BG=24, FS_RENAME=18
+    AUTH_LOGIN=40 .. AUTH_LOAD_PASSWD=52
+    PIPE_CREATE=60, PIPE_WRITE=61, PIPE_READ=62, PIPE_CLOSE=63
+    PIPE_KILL=64, PIPE_FORK=65, PIPE_GETPID=66
+    PIPE_WAIT=67, PIPE_EXIT=68, PIPE_EXEC=69
+    TTY_WRITE=70, TTY_READ=71, TTY_IOCTL=72, TTY_INPUT=75
 
-### Implemented Syscalls (50+)
+### Implemented Syscalls (55+)
 
 File I/O: open, openat (O_CREAT), read, readv, write, writev, close, lseek
 Directories: getdents64, chdir, mkdirat, unlinkat
@@ -228,7 +210,7 @@ Identity: getpid, getppid, getuid, geteuid, getgid, getegid
 System: uname (kernel IPC), getcwd, ioctl, fcntl, dup, dup3
 Access: access, faccessat, umask, utimensat
 Time: clock_gettime, gettimeofday, nanosleep (ARM generic timer)
-Process: exit, exit_group (VM fault for clean recovery)
+Process: fork (clone), execve, wait4, exit, exit_group
 Memory: mmap, munmap, brk, madvise (from muslcsys)
 
 ## External Tools
@@ -236,40 +218,45 @@ Memory: mmap, munmap, brk, madvise (from muslcsys)
 ### sbase (suckless base utilities)
 
 - Source: ~/Desktop/github_repos/sbase
-- 79 tools: ls, cat, head, wc, sort, grep, sed, find, cp, rm, mkdir, etc.
-- Cross-compiled via ./scripts/aios-cc with libutil + libutf
-- Note: cp.c and rm.c need special handling (libutil has cp.c/rm.c too)
-
-### Programs on Disk
-
-- 94 total programs in /bin/
-- 79 sbase Unix tools
-- 9 AIOS-specific programs
-- Boot services in CPIO: serial_server, mini_shell
+- 93 tools cross-compiled via build_sbase.py
+- bc requires pre-generated bc.c via bison: `/opt/homebrew/opt/bison/bin/bison -o bc.c bc.y`
+- 5 sbase tools NOT compiled (need fork/sockets): cron, flock, setsid, time, tftp
 
 ## Known Issues / Gotchas
 
-- GCC 15 + musllibc: Patch vis.h and stdio_impl.h (protected->default visibility)
-- platsupport Warning: Patched common.c (docs/patches/)
-- GNU sed on macOS: PATH="/opt/homebrew/opt/gnu-sed/libexec/gnubin:$PATH"
-- texinfo: PATH="/opt/homebrew/opt/texinfo/bin:$PATH"
-- CPIO caching: ninja doesn't detect child ELF changes, need full rebuild
-- ELF buffer: Static 1MB (TODO: dynamic for v0.5.x)
-- DMA: Must use single untyped Retype for contiguous pages
-- Priority: All processes at 200 (different = deadlock)
-- ext2: Never use packed structs on AArch64 (use rd16/rd32)
-- aios-cc: Uses tr "/" "_" for object names (avoids cp.c vs libutil/cp.c collision)
-- Process exit: Overridden to trigger VM fault (not seL4_DebugHalt)
-- Multi-group ext2: Block allocation scans all groups; inode allocation group 0 only
+- **GCC 15 + musllibc**: Patch vis.h and stdio_impl.h (protected->default visibility)
+- **GNU sed on macOS**: PATH="/opt/homebrew/opt/gnu-sed/libexec/gnubin:$PATH"
+- **CPIO caching**: ninja doesn't detect child ELF changes, need full rebuild
+- **ELF buffer**: Static 1MB shared between exec_thread, fork, and exec. Cannot add more.
+- **Memory budget**: Adding static buffers to rootserver can cause ext2 init failure
+- **DMA**: Must use single untyped Retype for contiguous pages
+- **Priority**: All processes at 200 (different = deadlock)
+- **ext2**: Never use packed structs on AArch64 (use rd16/rd32)
+- **SMP fork timing**: Child can exit before parent calls waitpid (zombie table handles this)
+- **_exit() bypass**: musl's _exit() skips sel4runtime callback, losing exit code
+- **pipe_ep**: Currently non-static (was changed for fork_test extern access)
+- **seL4 SMP**: Kernel compiled for 4 cores, cannot boot with fewer (crashes)
+- **aios_root.c**: ~2500 lines, needs modularization (see NEXT_20260405.md)
+
+## Key Learnings (fork/exec)
+
+See docs/FORK_IMPLEMENTATION.md for 15 detailed learnings. Critical ones:
+
+1. **AArch64 seL4 ABI**: x0=badge, x1=msginfo, x2=MR0 (NOT x0=msginfo)
+2. **Off-by-one pages**: (end - aligned_base), not (memsz / PAGE_SIZE)
+3. **No dynamic allocation**: TLS=16KB static, heap=1MB static, both in .data
+4. **Frame caps need CNode_Copy**: Can't map parent's cap into root's VSpace directly
+5. **Child needs unique badge**: pipe_ep must be re-minted for correct IPC routing
+6. **Spin-reap pattern**: After PIPE_EXIT, spin NBRecv on fault EP before blocking
 
 ## Pending Items
 
-1. Shell: piping, redirection, tab completion
-2. POSIX: more syscalls (symlink, chmod, chown, pipe, dup2)
-3. Networking: virtio-net + TCP/IP
-4. Dynamic ELF buffer: vka_alloc_frame for >1MB binaries
-5. Process niceness: runtime seL4_TCB_SetPriority
-6. ext2 write improvements: multi-block file write, triple indirect
+1. **exec argv passthrough** — currently only path, not user arguments
+2. **Modularize aios_root.c** — split into 7 files (see NEXT_20260405.md)
+3. **TTY Phase 2** — getty/shell separation via fork+exec
+4. **TTY Phase 3** — multiple virtual terminals (Ctrl-A switching)
+5. **_exit() fix** — intercept at musl syscall level
+6. **COW fork** — defer .data page copy until write fault (v0.5.x)
 
 ## Version History (0.4.x)
 
@@ -280,22 +267,24 @@ Memory: mmap, munmap, brk, madvise (from muslcsys)
 | v0.4.7-8 | ext2 filesystem + navigation |
 | v0.4.9 | Exec from shell |
 | v0.4.10-11 | POSIX shim (printf, open/read/write/close) |
-| v0.4.12-13 | POSIX programs + stat + silent exec |
-| v0.4.14 | Unix-like shell with aliases |
-| v0.4.15 | VFS + procfs + /proc |
-| v0.4.16 | Process lifecycle tracking |
+| v0.4.12-14 | POSIX programs + Unix-like shell |
+| v0.4.15-16 | VFS + procfs + process lifecycle |
 | v0.4.17-18 | 34 syscalls + getdents64 |
 | v0.4.19 | ext2 write support |
 | v0.4.20-21 | Auto-init + 30 programs + miniShell |
 | v0.4.22-24 | ELF-from-disk + PATH search + env vars |
 | v0.4.25 | aios-cc cross-compiler + kernel uname |
-| v0.4.26 | 37 sbase tools + __wrap_main |
-| v0.4.27 | sbase ls + chdir + fstatat fix |
+| v0.4.26-27 | 37 sbase tools + __wrap_main |
 | v0.4.28 | Crash recovery (exit via VM fault) |
 | v0.4.29 | CWD propagation + 79 sbase tools + path resolution |
 | v0.4.30 | pthreads: create, join, mutex (manual TCB in child VSpaces) |
-| v0.4.31 | AIOS_LOG: 16KB ring buffer + serial echo + /proc/log + /proc/uptime |
-| v0.4.32 | Auth server: SHA-3-512 (Keccak), user DB, sessions, /etc/passwd |
-| v0.4.33 | Login prompt: password masking, 3 retries, logout |
-| v0.4.34 | uid/gid propagation + getpwuid via auth IPC |
-| v0.4.43 | su/passwd + file permissions + line editor + parallel sbase builder |
+| v0.4.31 | AIOS_LOG: 16KB ring buffer + serial echo |
+| v0.4.32 | Auth server: SHA-3-512, user DB, sessions |
+| v0.4.33-34 | Login, uid/gid propagation, getpwuid |
+| v0.4.35-36 | su/passwd, file permissions, auth isolation |
+| v0.4.37-39 | uname, pipes, quotes, redirection |
+| v0.4.40-42 | procfs, top, dmesg, $VAR, Ctrl-C, kill |
+| v0.4.43 | Background exec, jobs, 14 new sbase (93 total) |
+| v0.4.44 | tty_server Phase 1: line discipline |
+| v0.4.45-46 | **fork() + waitpid()** — process duplication on seL4 |
+| v0.4.47 | **exec()** — fork+exec+waitpid complete |
