@@ -94,6 +94,7 @@ typedef struct {
     seL4_CPtr child_auth_slot;
     seL4_CPtr child_pipe_slot;
     seL4_CPtr child_thread_slot;
+    int exit_status;  /* set by PIPE_EXIT before child faults */
 } active_proc_t;
 
 static active_proc_t active_procs[MAX_ACTIVE_PROCS];
@@ -109,6 +110,7 @@ static seL4_CPtr pipe_ep_cap;
 #define PIPE_FORK    65
 #define PIPE_GETPID  66
 #define PIPE_WAIT    67
+#define PIPE_EXIT    68
 #define MAX_PIPES     8
 #define PIPE_BUF_SIZE 8192
 
@@ -725,6 +727,7 @@ static int do_fork(int parent_idx) {
         }
     }
 
+
     /* 7. Copy parent's stack (skip IPC buffer page) */
     {
         uintptr_t ipc_page = cp->thread.ipc_buffer_addr & ~((uintptr_t)PAGE_SIZE - 1);
@@ -766,6 +769,26 @@ static int do_fork(int parent_idx) {
         child->child_pipe_slot = parent->child_pipe_slot;
     }
 
+    /* 8b. Mint child's own pipe_ep with child's badge (child_idx + 1) */
+    {
+        seL4_CPtr child_cnode = cp->cspace.cptr;
+        seL4_Word depth = 12;
+        seL4_CPtr pipe_slot = child->child_pipe_slot;
+
+        /* Delete the parent's pipe cap from child's slot */
+        seL4_CNode_Delete(child_cnode, pipe_slot, depth);
+
+        /* Mint a new one with child's badge */
+        cspacepath_t pipe_src;
+        vka_cspace_make_path(&vka, pipe_ep_cap, &pipe_src);
+        int merr = seL4_CNode_Mint(child_cnode, pipe_slot, depth,
+                        pipe_src.root, pipe_src.capPtr, pipe_src.capDepth,
+                        seL4_AllRights, (seL4_Word)(child_idx + 1));
+        if (merr) {
+            printf("[fork] pipe_ep re-mint failed: %d\n", merr);
+        }
+    }
+
     /* 9. Register child in proc table (need PID before setting IPC buffer) */
     child->active = 1;
     child->uid = parent->uid;
@@ -773,6 +796,7 @@ static int do_fork(int parent_idx) {
     child->ppid = parent->pid;
     child->fault_ep = child_fault_ep;
     child->num_threads = 0;
+    child->exit_status = 0;
     child->num_segs = parent->num_segs;
     for (int s = 0; s < parent->num_segs; s++)
         child->segs[s] = parent->segs[s];
@@ -843,6 +867,16 @@ static wait_pending_t wait_pending[MAX_WAIT_PENDING];
 static vka_object_t wait_reply_objects[MAX_WAIT_PENDING];
 static int wait_pending_init = 0;
 
+/* Zombie table: stores exit status of children that exited before parent called waitpid */
+#define MAX_ZOMBIES 8
+typedef struct {
+    int active;
+    int pid;
+    int ppid;
+    int exit_status;
+} zombie_t;
+static zombie_t zombies[MAX_ZOMBIES];
+
 static void wait_init(void) {
     for (int i = 0; i < MAX_WAIT_PENDING; i++) {
         wait_pending[i].active = 0;
@@ -851,6 +885,7 @@ static void wait_init(void) {
         vka_cspace_alloc_path(&vka, &path);
         wait_reply_objects[i].cptr = path.capPtr;
     }
+    for (int i = 0; i < MAX_ZOMBIES; i++) zombies[i].active = 0;
     wait_pending_init = 1;
 }
 
@@ -860,6 +895,7 @@ static void reap_forked_child(int child_idx) {
     if (!child->active) return;
     int child_pid = child->pid;
     int parent_pid = child->ppid;
+    int estatus = child->exit_status;
 
     /* Destroy the process */
     sel4utils_destroy_process(&child->proc, &vka);
@@ -868,6 +904,7 @@ static void reap_forked_child(int child_idx) {
     child->active = 0;
 
     /* Check if any parent is waiting for this child */
+    int delivered = 0;
     for (int w = 0; w < MAX_WAIT_PENDING; w++) {
         if (!wait_pending[w].active) continue;
         if (wait_pending[w].child_pid == child_pid ||
@@ -875,13 +912,26 @@ static void reap_forked_child(int child_idx) {
              wait_pending[w].waiting_pid == parent_pid)) {
             /* Reply to the waiting parent */
             seL4_SetMR(0, (seL4_Word)child_pid);
-            seL4_SetMR(1, 0);  /* exit status = 0 (normal) */
+            seL4_SetMR(1, (seL4_Word)estatus);
             seL4_Send(wait_pending[w].reply_cap, seL4_MessageInfo_new(0, 0, 0, 2));
-            /* Clean up the saved cap */
             seL4_CNode_Delete(seL4_CapInitThreadCNode,
                               wait_pending[w].reply_cap, seL4_WordBits);
             wait_pending[w].active = 0;
+            delivered = 1;
             break;
+        }
+    }
+
+    /* No waiter — save as zombie for later waitpid */
+    if (!delivered) {
+        for (int z = 0; z < MAX_ZOMBIES; z++) {
+            if (!zombies[z].active) {
+                zombies[z].active = 1;
+                zombies[z].pid = child_pid;
+                zombies[z].ppid = parent_pid;
+                zombies[z].exit_status = estatus;
+                break;
+            }
         }
     }
 }
@@ -893,9 +943,42 @@ static void reap_check(void) {
         if (active_procs[i].ppid <= 0) continue;  /* not a forked child */
         /* Non-blocking check on fault EP */
         seL4_MessageInfo_t probe = seL4_NBRecv(active_procs[i].fault_ep.cptr, NULL);
-        if (seL4_MessageInfo_get_label(probe) != 0) {
-            /* Child faulted/exited */
+        if (seL4_MessageInfo_get_label(probe) == 0) continue;
+
+        /* Child faulted/exited. Check if parent is waiting. */
+        int ppid = active_procs[i].ppid;
+        int has_waiter = 0;
+        for (int w = 0; w < MAX_WAIT_PENDING; w++) {
+            if (!wait_pending[w].active) continue;
+            if (wait_pending[w].waiting_pid == ppid &&
+                (wait_pending[w].child_pid == active_procs[i].pid ||
+                 wait_pending[w].child_pid == -1)) {
+                has_waiter = 1;
+                break;
+            }
+        }
+
+        if (has_waiter) {
+            /* Parent is waiting — reap and deliver exit status */
             reap_forked_child(i);
+        } else {
+            /* Check if parent is still alive */
+            int parent_alive = 0;
+            for (int p = 0; p < MAX_ACTIVE_PROCS; p++) {
+                if (active_procs[p].active && active_procs[p].pid == ppid) {
+                    parent_alive = 1;
+                    break;
+                }
+            }
+            if (parent_alive) {
+                /* Parent alive but hasn't called waitpid yet — save as zombie.
+                 * Don't consume the fault — put it back by not destroying yet.
+                 * Actually we already consumed the NBRecv. Save to zombie and destroy. */
+                reap_forked_child(i);
+            } else {
+                /* Orphan — just clean up */
+                reap_forked_child(i);
+            }
         }
     }
 }
@@ -909,12 +992,15 @@ static void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
     wait_init();
 
     while (1) {
-        /* Periodically reap forked children that have exited */
-        reap_check();
+
 
         seL4_Word badge;
         seL4_MessageInfo_t msg = seL4_Recv(ep, &badge);
         seL4_Word label = seL4_MessageInfo_get_label(msg);
+
+        if (label >= 65) {  /* PIPE_FORK and above */
+            printf("[pipe] label=%lu badge=%lu\n", (unsigned long)label, (unsigned long)badge);
+        }
 
         switch (label) {
         case PIPE_CREATE: {
@@ -1014,6 +1100,36 @@ static void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }
+        case PIPE_EXIT: {
+            /* Child sends exit code before dying.
+             * After we reply, child will fault. We need to catch that fault
+             * and deliver it to the waiting parent. But pipe_server will be
+             * blocked in seL4_Recv. Solution: after reply, busy-wait briefly
+             * for the child's fault, then reap immediately. */
+            int caller_idx = (int)badge - 1;
+            int exit_code = (int)seL4_GetMR(0);
+            if (caller_idx >= 0 && caller_idx < MAX_ACTIVE_PROCS
+                && active_procs[caller_idx].active) {
+                active_procs[caller_idx].exit_status = exit_code;
+            }
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
+
+            /* Brief spin waiting for child to fault after PIPE_EXIT reply */
+            if (caller_idx >= 0 && caller_idx < MAX_ACTIVE_PROCS
+                && active_procs[caller_idx].active
+                && active_procs[caller_idx].ppid > 0) {
+                for (int spin = 0; spin < 100; spin++) {
+                    seL4_Yield();
+                    seL4_MessageInfo_t probe = seL4_NBRecv(
+                        active_procs[caller_idx].fault_ep.cptr, NULL);
+                    if (seL4_MessageInfo_get_label(probe) != 0) {
+                        reap_forked_child(caller_idx);
+                        break;
+                    }
+                }
+            }
+            break;
+        }
         case PIPE_WAIT: {
             /* waitpid(child_pid): MR0 = child_pid (-1 for any) */
             int caller_idx = (int)badge - 1;
@@ -1048,9 +1164,21 @@ static void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
 
             if (already_exited) {
-                /* Child already gone — return immediately */
-                seL4_SetMR(0, (seL4_Word)target_pid);
-                seL4_SetMR(1, 0);
+                /* Child already gone — check zombie table for exit status */
+                int zstatus = 0;
+                int zpid = target_pid;
+                for (int z = 0; z < MAX_ZOMBIES; z++) {
+                    if (!zombies[z].active) continue;
+                    if ((target_pid > 0 && zombies[z].pid == target_pid) ||
+                        (target_pid == -1 && zombies[z].ppid == caller_pid)) {
+                        zpid = zombies[z].pid;
+                        zstatus = zombies[z].exit_status;
+                        zombies[z].active = 0;  /* consumed */
+                        break;
+                    }
+                }
+                seL4_SetMR(0, (seL4_Word)zpid);
+                seL4_SetMR(1, (seL4_Word)zstatus);
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 2));
                 break;
             }
@@ -1844,6 +1972,9 @@ static void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
             break;
         }
+
+        /* Check for exited forked children after processing each message */
+        reap_check();
     }
 }
 

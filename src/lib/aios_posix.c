@@ -11,6 +11,7 @@
 #include "aios_posix.h"
 #include <arch_stdio.h>
 #include <sel4/sel4.h>
+#include <sel4runtime.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdarg.h>
@@ -21,6 +22,7 @@
 #define PIPE_FORK 65
 #define PIPE_GETPID 66
 #define PIPE_WAIT 67
+#define PIPE_EXIT 68
 #include <muslcsys/vsyscall.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -36,7 +38,7 @@ static seL4_CPtr ser_ep = 0;
 static seL4_CPtr fs_ep_cap = 0;
 static seL4_CPtr thread_ep = 0;
 static seL4_CPtr auth_ep = 0;
-static seL4_CPtr pipe_ep = 0;
+seL4_CPtr pipe_ep = 0;
 static int fetch_stat(const char *path, uint32_t *mode, uint32_t *size);
 
 /* Resolve relative path against CWD */
@@ -759,9 +761,14 @@ static long aios_sys_exit(va_list ap) {
 
 static long aios_sys_exit_group(va_list ap) {
     int status = va_arg(ap, int);
-    (void)status;
-    volatile int *null = (volatile int *)0;
-    *null = 0;
+    /* Send exit code to pipe_server before dying */
+    if (pipe_ep) {
+        seL4_SetMR(0, (seL4_Word)status);
+        seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_EXIT, 0, 0, 1));
+    }
+    /* Fault to trigger reaper (NULL deref) */
+    volatile int *null_ptr = (volatile int *)0;
+    *null_ptr = 0;
     __builtin_unreachable();
     return 0;
 }
@@ -907,13 +914,6 @@ static int aios_pid = 1;
 
 static long aios_sys_getpid(va_list ap) {
     (void)ap;
-    if (aios_pid <= 1 && pipe_ep) {
-        /* Query real PID from pipe_server on first call */
-        seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
-            seL4_MessageInfo_new(PIPE_GETPID, 0, 0, 0));
-        long pid = (long)seL4_GetMR(0);
-        if (pid > 0) aios_pid = (int)pid;
-    }
     return (long)aios_pid;
 }
 
@@ -1403,14 +1403,21 @@ static long aios_sys_clone(va_list ap) {
     seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
         seL4_MessageInfo_new(PIPE_FORK, 0, 0, 0));
     long result = (long)seL4_GetMR(0);
-    if (result == 0) {
-        /* We are the child — query our actual PID from pipe_server */
-        seL4_MessageInfo_t pid_reply = seL4_Call(pipe_ep,
-            seL4_MessageInfo_new(PIPE_GETPID, 0, 0, 0));
-        long my_pid = (long)seL4_GetMR(0);
-        if (my_pid > 0) aios_pid = (int)my_pid;
-    }
+    /* result == 0 for child, child_pid for parent */
+    /* Child's PID is patched directly into aios_pid by do_fork */
     return result;
+}
+
+/* sel4runtime exit callback — sends exit code via IPC before faulting */
+static void aios_exit_cb(int code) {
+    if (pipe_ep) {
+        seL4_SetMR(0, (seL4_Word)code);
+        seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_EXIT, 0, 0, 1));
+    }
+    /* Fault to trigger reaper */
+    volatile int *p = (volatile int *)0;
+    *p = 0;
+    __builtin_unreachable();
 }
 
 void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
@@ -1502,6 +1509,12 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
 #ifdef __NR_wait4
     muslcsys_install_syscall(__NR_wait4, aios_sys_wait4);
 #endif
+#ifdef __NR_exit_group
+    muslcsys_install_syscall(__NR_exit_group, aios_sys_exit_group);
+#endif
+
+    /* Register exit callback so sel4runtime_exit sends exit code via IPC */
+    sel4runtime_set_exit(aios_exit_cb);
 #ifdef __NR_pipe2
     muslcsys_install_syscall(__NR_pipe2, aios_sys_pipe2);
 #endif
