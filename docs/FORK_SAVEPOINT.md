@@ -232,3 +232,81 @@ Before the next implementation round, should:
 1. Strip debug prints
 2. Clean up do_fork() to use the chosen approach
 3. Consider whether IPC-based fork or true fork is the target
+
+
+## Source Code Analysis (2026-04-05, session 2)
+
+### sel4runtime — NO dynamic page allocation
+
+From deps/sel4runtime/src/env.c:
+- TLS is a static 16KB array: `static char static_tls[CONFIG_SEL4RUNTIME_STATIC_TLS]` (16384 bytes)
+- Located in .data segment (0x421f80..0x54b288)
+- `try_init_static_tls()` copies 12 bytes of TLS image into static_tls, sets tpidr
+- tpidr (0x54b1d8) points INTO this .data region
+- sel4runtime allocates ZERO pages at runtime
+
+### sel4utils/process.c — stack/argv writes tracked
+
+- `sel4utils_spawn_process_v` writes auxv, argv, argc to stack using `sel4utils_stack_write`
+- `sel4utils_stack_write` uses `vspace_get_cap(target_vspace, ...)` — works correctly
+- Stack pages ARE tracked by vspace manager
+- IPC buffer page also tracked (allocated by `sel4utils_configure_thread_config`)
+
+### Key CSpace layout (from process.c)
+
+Slots 1-7 are pre-allocated by sel4utils:
+- 1: CNODE_SLOT (CSpace root)
+- 2: ENDPOINT_SLOT (fault EP)
+- 3: PD_SLOT (page directory)
+- 4: ASID_POOL_SLOT
+- 5: TCB_SLOT
+- 6: SCHED_CONTEXT_SLOT (skipped on non-MCS)
+- 7: REPLY_SLOT (skipped on non-MCS)
+- 8+: user caps (serial_ep, fs_ep, etc.)
+
+This is why cap slots 8-12 are correct for our 5 endpoints.
+After spawn, those slots ARE occupied — CNode_Copy fails with error 8 (dest not empty).
+Must either: not copy (they're already there), or Delete first then Copy.
+
+### The 0x10050000 Mystery
+
+Parent and child both show vspace_get_cap=0 at 0x10050000-0x10058000.
+Yet child faults at PC=0x10050420.
+
+This means:
+- The child's PC was set to 0x4086f0 (in .text)
+- Child executed from 0x4086f0, then jumped to 0x10050420
+- The jump came from a return address on the copied stack
+- In the parent, 0x10050420 is mapped to something (otherwise parent would have faulted)
+- But vspace_get_cap can't see it
+
+Hypothesis: musl's internal bookkeeping (malloc arena, stdio buffers) uses
+addresses in this range. musl's sys_mmap implementation in libsel4muslcsys
+may allocate pages through a separate path that doesn't register with
+the sel4utils vspace manager. This would explain why:
+- Pages exist (parent uses them without faulting)
+- vspace_get_cap returns 0 (not tracked by sel4utils)
+- The child doesn't have them (fork can't copy what it can't see)
+
+### Next Investigation Steps
+
+1. **Find musl's mmap implementation in libsel4muslcsys**:
+   Look for sys_mmap, sys_brk in deps/seL4_libs/libsel4muslcsys/
+   These likely allocate pages WITHOUT going through the vspace manager
+
+2. **Scan CSpace to find all frame caps**:
+   Walk the entire parent CSpace (slots 0-4095), call seL4_ARM_Page_GetAddress
+   on each to find all mapped frames regardless of vspace tracking
+
+3. **Alternative: Approach C (manual construction)**:
+   Skip sel4utils entirely for the forked child. Manually:
+   a. Create VSpace root (PGD)
+   b. Walk parent's CSpace, for every frame cap: CNode_Copy + map into child
+   c. Allocate fresh IPC buffer
+   d. Create TCB, configure manually
+   e. Copy registers from parent (PC+4, x0=0)
+   f. Resume
+
+4. **Alternative: Find and patch musl's mmap path**:
+   If musl allocates via a separate vspace or raw seL4 calls, patch it
+   to register with the sel4utils vspace manager. Then vspace_get_cap works.
