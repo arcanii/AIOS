@@ -571,7 +571,7 @@ skip_blk:
 
     /* quiet */
     {
-        sel4utils_process_t serial_proc, shell_proc;
+        sel4utils_process_t serial_proc;
         seL4_CPtr caps[1], slots[1];
         caps[0] = serial_ep.cptr;
 
@@ -609,12 +609,26 @@ skip_blk:
         }
         printf("[boot] Auth: isolated process\n");
 
-        seL4_CPtr sh_caps[5] = { serial_ep.cptr, fs_ep_cap, exec_ep_cap, auth_ep_cap, pipe_ep_cap };
-        seL4_CPtr sh_slots[5];
-        error = spawn_with_args("mini_shell", 200, &shell_proc,
-                                &fault_ep, 5, sh_caps, sh_slots);
-        if (error) { printf("[proc] shell FAILED\n"); goto idle; }
-        proc_add("mini_shell", 200);
+        /* Spawn mini_shell from disk via exec_thread (EXEC_RUN_shell)
+         * exec_thread creates proper VSpace with page tracking,
+         * enabling fork()+exec() to work correctly */
+        {
+            const char *sh_cmd = "/bin/mini_shell CWD=0:0:/";
+            int sh_pl = 0;
+            while (sh_cmd[sh_pl]) sh_pl++;
+            seL4_SetMR(0, (seL4_Word)sh_pl);
+            int sh_mr = 1;
+            seL4_Word sh_w = 0;
+            for (int i = 0; i < sh_pl; i++) {
+                sh_w |= ((seL4_Word)(uint8_t)sh_cmd[i]) << ((i % 8) * 8);
+                if (i % 8 == 7 || i == sh_pl - 1) {
+                    seL4_SetMR(sh_mr++, sh_w);
+                    sh_w = 0;
+                }
+            }
+            seL4_Call(exec_ep_cap,
+                seL4_MessageInfo_new(EXEC_RUN_BG, 0, 0, sh_mr));
+        }
         /* quiet */
     }
 

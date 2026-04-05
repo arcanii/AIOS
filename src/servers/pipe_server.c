@@ -339,8 +339,22 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 break;
             }
 
-            /* Destroy old process */
+            /* Destroy old process + free old fault_ep */
             sel4utils_destroy_process(&ap->proc, &vka);
+            vka_free_object(&vka, &old_fault_ep);
+
+            /* Allocate fresh fault_ep for the new process.
+             * The old fault_ep may have residual fault state
+             * from the destroy that NBRecv cannot reliably consume
+             * on SMP (fault arrives from another core after NBRecv). */
+            vka_object_t new_fault_ep;
+            if (vka_alloc_endpoint(&vka, &new_fault_ep)) {
+                ap->active = 0;
+                proc_remove(old_pid);
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
 
             /* Configure new process */
             sel4utils_process_config_t cfg = process_config_new(&simple);
@@ -348,7 +362,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             cfg = process_config_create_vspace(cfg, NULL, 0);
             cfg = process_config_priority(cfg, 200);
             cfg = process_config_auth(cfg, simple_get_tcb(&simple));
-            cfg = process_config_fault_endpoint(cfg, old_fault_ep);
+            cfg = process_config_fault_endpoint(cfg, new_fault_ep);
 
             sel4utils_process_t *proc = &ap->proc;
             int err = sel4utils_configure_process_custom(proc, &vka, &vspace, cfg);
@@ -378,15 +392,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 break;
             }
             proc->sysinfo = sel4utils_elf_get_vsyscall(&elf);
-            proc->num_elf_phdrs = sel4utils_elf_num_phdrs(&elf);
-            proc->elf_phdrs = calloc(proc->num_elf_phdrs, sizeof(Elf_Phdr));
-            if (proc->elf_phdrs) {
-                sel4utils_elf_read_phdrs(&elf, proc->num_elf_phdrs, proc->elf_phdrs);
-                for (int i = 0; i < proc->num_elf_phdrs; i++)
-                    if (proc->elf_phdrs[i].p_type == PT_PHDR)
-                        proc->elf_phdrs[i].p_type = PT_NULL;
-            }
-            proc->pagesz = PAGE_SIZE_4K;
+            /* PHDR_REMOVED: match exec_thread behavior — no phdr fixup */
 
             /* Copy caps */
             seL4_CPtr cs = sel4utils_copy_cap_to_process(proc, &vka, serial_ep.cptr);
@@ -467,7 +473,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             ap->ppid = old_ppid;
             ap->uid = old_uid;
             ap->gid = old_gid;
-            ap->fault_ep = old_fault_ep;
+            ap->fault_ep = new_fault_ep;
             ap->exit_status = 0;
             ap->num_threads = 0;
             for (int ti = 0; ti < MAX_THREADS_PER_PROC; ti++)

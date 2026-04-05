@@ -1524,6 +1524,10 @@ static long aios_sys_clone(va_list ap) {
 
 /* sel4runtime exit callback — sends exit code via IPC before faulting */
 static void aios_exit_cb(int code) {
+    /* Flush musl stdio before dying — exit via VM fault
+     * bypasses atexit handlers so buffered output would be lost */
+    fflush(stdout);
+    fflush(stderr);
     if (pipe_ep) {
         seL4_SetMR(0, (seL4_Word)code);
         seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_EXIT, 0, 0, 1));
@@ -1653,6 +1657,15 @@ void aios_init_full(seL4_CPtr serial_ep_arg, seL4_CPtr fs_ep_arg,
 }
 
 
+/* aios_init_caps: initialize all endpoint caps for ChildApps
+ * that link aios_posix without using __wrap_main */
+void aios_init_caps(seL4_CPtr serial, seL4_CPtr fs,
+                    seL4_CPtr _auth, seL4_CPtr pip) {
+    aios_init(serial, fs);
+    auth_ep = _auth;
+    pipe_ep = pip;
+}
+
 /* __wrap_main: intercepts main() to strip cap args from argv.
  * exec_thread passes: argv[0]=serial_ep, argv[1]=fs_ep, argv[2..]=real args
  * We init the POSIX shim, then call real main with clean argv.
@@ -1664,7 +1677,7 @@ static long _auto_parse(const char *s) {
     return v;
 }
 
-int __real_main(int argc, char **argv);
+int __real_main(int argc, char **argv) __attribute__((weak));
 
 int __wrap_main(int argc, char **argv) {
     /* argv layout: [serial_ep, fs_ep, thread_ep, auth_ep, pipe_ep, CWD, progname, arg1, ...] */
@@ -1708,6 +1721,11 @@ int __wrap_main(int argc, char **argv) {
             aios_set_cwd(s);
         }
     }
+
+    /* Force unbuffered stdout — AIOS has no real terminal,
+     * musl defaults to full buffering, which loses output on exit */
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
 
     /* Strip 6 args (ser, fs, thread, auth, pipe, cwd): real main sees [progname, arg1, ...] */
     return __real_main(argc - 6, argv + 6);

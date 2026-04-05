@@ -8,6 +8,11 @@
  */
 #include <stdint.h>
 #include <sel4/sel4.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include "aios_posix.h"
+extern seL4_CPtr pipe_ep;
 
 #define SER_PUTC 1
 #define SER_GETC 2
@@ -21,7 +26,7 @@
 #define AUTH_SU     48
 #define AUTH_PASSWD 47
 
-static seL4_CPtr serial_ep, fs_ep, exec_ep, auth_ep, pipe_ep;
+static seL4_CPtr serial_ep, fs_ep, exec_ep, auth_ep;
 static uint32_t session_token = 0;
 static uint32_t session_uid = 0;
 static uint32_t session_gid = 0;
@@ -223,6 +228,93 @@ static int find_in_path(const char *name, char *out, int outsz) {
     return 0;
 }
 
+/* ── Fork+exec+waitpid: Unix-way command execution ── */
+static int fork_exec_wait(const char *path, char *const argv[]) {
+    pid_t pid = fork();
+    if (pid < 0) return -1;
+    if (pid == 0) {
+        execv(path, argv);
+        _exit(127);
+    }
+    int status = 0;
+    waitpid(pid, &status, 0);
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+
+static int fork_exec_bg(const char *path, char *const argv[]) {
+    pid_t pid = fork();
+    if (pid < 0) return -1;
+    if (pid == 0) {
+        execv(path, argv);
+        _exit(127);
+    }
+    return (int)pid;
+}
+
+/* Unix-way exec: parse path + args, fork+exec+waitpid */
+static int do_exec(const char *path, const char *arg) {
+    char *argv[32];
+    int argc = 0;
+    /* argv[0] = basename of path */
+    const char *base = path;
+    for (const char *p = path; *p; p++) {
+        if (*p == '/') base = p + 1;
+    }
+    static char argv0[64];
+    int bi = 0;
+    while (*base && bi < 63) argv0[bi++] = *base++;
+    argv0[bi] = 0;
+    argv[argc++] = argv0;
+
+    /* Split arg by spaces into argv[1..] */
+    static char argbuf[512];
+    if (arg) {
+        int ai = 0;
+        while (*arg && ai < 510) argbuf[ai++] = *arg++;
+        argbuf[ai] = 0;
+        char *p = argbuf;
+        while (*p && argc < 31) {
+            while (*p == ' ') p++;
+            if (!*p) break;
+            argv[argc++] = p;
+            while (*p && *p != ' ') p++;
+            if (*p) { *p = 0; p++; }
+        }
+    }
+    argv[argc] = 0;
+    return fork_exec_wait(path, argv);
+}
+
+static int do_exec_bg(const char *path, const char *arg) {
+    char *argv[32];
+    int argc = 0;
+    const char *base = path;
+    for (const char *p = path; *p; p++) {
+        if (*p == '/') base = p + 1;
+    }
+    static char bg_argv0[64];
+    int bi = 0;
+    while (*base && bi < 63) bg_argv0[bi++] = *base++;
+    bg_argv0[bi] = 0;
+    argv[argc++] = bg_argv0;
+    static char bg_argbuf[512];
+    if (arg) {
+        int ai = 0;
+        while (*arg && ai < 510) bg_argbuf[ai++] = *arg++;
+        bg_argbuf[ai] = 0;
+        char *p = bg_argbuf;
+        while (*p && argc < 31) {
+            while (*p == ' ') p++;
+            if (!*p) break;
+            argv[argc++] = p;
+            while (*p && *p != ' ') p++;
+            if (*p) { *p = 0; p++; }
+        }
+    }
+    argv[argc] = 0;
+    return fork_exec_bg(path, argv);
+}
+
 /* ── Exec a command via IPC ── */
 static int do_exec_piped(const char *cmdline, int stdout_pipe, int stdin_pipe) {
     if (!exec_ep) return -1;
@@ -273,7 +365,7 @@ static int do_exec_piped(const char *cmdline, int stdout_pipe, int stdin_pipe) {
     return (int)(long)seL4_GetMR(0);
 }
 
-static int do_exec_bg(const char *cmdline) {
+static int do_exec_bg_ipc(const char *cmdline) {
     if (!exec_ep) return -1;
     int pl = str_len(cmdline);
     seL4_SetMR(0, (seL4_Word)pl);
@@ -287,7 +379,7 @@ static int do_exec_bg(const char *cmdline) {
     return (int)(long)seL4_GetMR(0);
 }
 
-static int do_exec(const char *cmdline) {
+static int do_exec_ipc(const char *cmdline) {
     if (!exec_ep) return -1;
     int pl = str_len(cmdline);
     seL4_SetMR(0, (seL4_Word)pl);
@@ -508,6 +600,9 @@ int main(int argc, char *argv[]) {
     if (argc > 2) exec_ep = (seL4_CPtr)parse_num(argv[2]);
     if (argc > 3) auth_ep = (seL4_CPtr)parse_num(argv[3]);
     if (argc > 4) pipe_ep = (seL4_CPtr)parse_num(argv[4]);
+
+    /* Initialize POSIX shim with endpoint caps */
+    aios_init_caps(serial_ep, fs_ep, auth_ep, pipe_ep);
 
     /* Default environment */
     env_set("PATH", "/bin");
@@ -733,7 +828,7 @@ login_gate:
                         for (int x=0;ud[x]&&lci<500;x++) lcmd[lci++]=ud[x]; lcmd[lci++]=':';
                         for (int x=0;gd[x]&&lci<500;x++) lcmd[lci++]=gd[x]; lcmd[lci++]=':';
                         const char *cw=cwd; while(*cw&&lci<500) lcmd[lci++]=*cw++; lcmd[lci]='\0';
-                        left_ok = (do_exec(lcmd) == 0);
+                        left_ok = (do_exec(lpath, larg) == 0);
                     }
                 }
 
@@ -1205,7 +1300,7 @@ login_gate:
                         ser_puts(rpath); ser_puts(": No such file\n");
                     }
                 } else if (run_bg) {
-                    int bgpid = do_exec_bg(cmd);
+                    int bgpid = do_exec_bg(full_path, arg);
                     if (bgpid > 0) {
                         /* Track background job */
                         for (int ji = 0; ji < MAX_BG_JOBS; ji++) {
@@ -1229,7 +1324,7 @@ login_gate:
                         }
                     }
                 } else {
-                    do_exec(cmd);
+                    do_exec(full_path, arg);
                 }
             } else {
                 ser_puts(line);

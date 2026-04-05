@@ -48,6 +48,8 @@
 
 /* Initialize shim with endpoint caps */
 void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_ep);
+void aios_init_caps(seL4_CPtr serial, seL4_CPtr fs,
+                    seL4_CPtr auth, seL4_CPtr pip);
 void aios_init_full(seL4_CPtr serial_ep, seL4_CPtr fs_ep, seL4_CPtr thread_ep);
 
 int aios_getchar(void);

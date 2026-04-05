@@ -48,6 +48,7 @@ void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         seL4_Word label = seL4_MessageInfo_get_label(msg);
         int fs_badge = (int)badge;
 
+
         switch (label) {
         case FS_LS: {
             /* Multi-round protocol: MR0=path_len, MR1=offset, MR2..=path */
@@ -298,7 +299,6 @@ void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         }
 
         /* Check for exited forked children after processing each message */
-        reap_check();
     }
 }
 
