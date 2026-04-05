@@ -723,6 +723,39 @@ static int do_fork(int parent_idx) {
         return -1;
     }
 
+    /* === CSpace walk diagnostic: map ALL parent pages === */
+    {
+        int total_mapped = 0;
+        uintptr_t ranges[] = {
+            0x400000, 0x550000,    /* .text + .data */
+            0x10000000, 0x10020000, /* stack + IPC buf */
+            0x10050000, 0x10060000, /* mystery region */
+        };
+        printf("[fork-diag] Parent page map (CSpace walk):\n");
+        for (int r = 0; r < 6; r += 2) {
+            int range_count = 0;
+            uintptr_t first = 0, last = 0;
+            for (uintptr_t p = ranges[r]; p < ranges[r+1]; p += PAGE_SIZE) {
+                seL4_CPtr cap = vspace_get_cap(&parent->proc.vspace, (void *)p);
+                if (cap != seL4_CapNull) {
+                    if (range_count == 0) first = p;
+                    last = p;
+                    range_count++;
+                    total_mapped++;
+                }
+            }
+            if (range_count > 0) {
+                printf("[fork-diag]   0x%lx-0x%lx: %d pages mapped\n",
+                       (unsigned long)first, (unsigned long)(last + PAGE_SIZE),
+                       range_count);
+            } else {
+                printf("[fork-diag]   0x%lx-0x%lx: NO pages\n",
+                       (unsigned long)ranges[r], (unsigned long)ranges[r+1]);
+            }
+        }
+        printf("[fork-diag] Total: %d pages mapped in parent\n", total_mapped);
+    }
+
     /* Load ELF into child's VSpace (sets up .text, .data, TLS, runtime) */
     cp->entry_point = sel4utils_elf_load(&cp->vspace, &vspace, &vka, &vka, &fork_elf);
     if (!cp->entry_point) {
@@ -733,39 +766,9 @@ static int do_fork(int parent_idx) {
     }
     cp->sysinfo = sel4utils_elf_get_vsyscall(&fork_elf);
 
-    /* Spawn child with REAL argv and resume=1 so sel4runtime fully initializes
-     * TLS, IPC buffer, stack, and __wrap_main runs aios_init. */
-    char s_ser[16], s_fs[16], s_thr[16], s_auth[16], s_pipe[16];
-    {
-        /* Copy caps to child at same slots as parent */
-        seL4_CPtr child_cnode = cp->cspace.cptr;
-        seL4_Word child_depth = 12;
-        struct { seL4_CPtr root_cap; seL4_CPtr slot; } cmap[] = {
-            { serial_ep.cptr, parent->child_ser_slot },
-            { fs_ep_cap,      parent->child_fs_slot },
-            { thread_ep_cap,  parent->child_thread_slot },
-            { auth_ep_cap,    parent->child_auth_slot },
-            { pipe_ep_cap,    parent->child_pipe_slot },
-        };
-        for (int ci = 0; ci < 5; ci++) {
-            if (cmap[ci].slot == 0) continue;
-            cspacepath_t src;
-            vka_cspace_make_path(&vka, cmap[ci].root_cap, &src);
-            seL4_CNode_Copy(child_cnode, cmap[ci].slot, child_depth,
-                            src.root, src.capPtr, src.capDepth, seL4_AllRights);
-        }
-        snprintf(s_ser, 16, "%lu", (unsigned long)parent->child_ser_slot);
-        snprintf(s_fs, 16, "%lu", (unsigned long)parent->child_fs_slot);
-        snprintf(s_thr, 16, "%lu", (unsigned long)parent->child_thread_slot);
-        snprintf(s_auth, 16, "%lu", (unsigned long)parent->child_auth_slot);
-        snprintf(s_pipe, 16, "%lu", (unsigned long)parent->child_pipe_slot);
-    }
-    /* Build CWD string from parent */
-    char fork_cwd[256];
-    snprintf(fork_cwd, 256, "%u:%u:/", parent->uid, parent->gid);
-
-    char *spawn_argv[] = { s_ser, s_fs, s_thr, s_auth, s_pipe, fork_cwd, "fork_child" };
-    err = sel4utils_spawn_process_v(cp, &vka, &vspace, 7, spawn_argv, 1 /* resume */);
+    /* NO spawn — child doesn't run sel4runtime.
+     * We'll manually copy .data + stack from parent and set registers. */
+    int spawn_skipped = 1; /* marker for later */
     if (err) {
         printf("[fork] spawn failed\n");
         sel4utils_destroy_process(cp, &vka);
@@ -773,34 +776,53 @@ static int do_fork(int parent_idx) {
         return -1;
     }
 
-    /* 4. Wait briefly for child to fully initialize (sel4runtime + __wrap_main) */
-    for (volatile int d = 0; d < 2000000; d++);
-
-    /* 5. Suspend child, then copy parent's stack and set registers */
-    seL4_TCB_Suspend(cp->thread.tcb.cptr);
-
+    /* 4. Overwrite child's .data with parent's content */
     seL4_UserContext parent_regs;
     seL4_TCB_ReadRegisters(parent->proc.thread.tcb.cptr, 0, 0,
                            sizeof(parent_regs) / sizeof(seL4_Word), &parent_regs);
 
-    /* Copy parent's stack content into child's stack pages */
     {
+        int data_copied = 0;
+        for (int s = 0; s < parent->num_segs; s++) {
+            elf_seg_info_t *seg = &parent->segs[s];
+            if (!(seg->flags & 2)) continue;  /* skip non-writable */
+            uintptr_t base = seg->vaddr & ~((uintptr_t)PAGE_SIZE - 1);
+            uintptr_t end = seg->vaddr + seg->memsz;
+            int np = (int)((end - base + PAGE_SIZE - 1) / PAGE_SIZE);
+            printf("[fork] .data: base=%lx end=%lx np=%d\n",
+                   (unsigned long)base, (unsigned long)end, np);
+            for (int pi = 0; pi < np; pi++) {
+                uintptr_t addr = base + (uintptr_t)pi * PAGE_SIZE;
+                if (fork_copy_into_existing(&parent->proc.vspace, &cp->vspace, addr) == 0)
+                    data_copied++;
+            }
+        }
+        printf("[fork] copied %d .data pages from parent\n", data_copied);
+    }
+
+    /* 5. Copy parent's stack into child's pre-allocated stack.
+     * SKIP the IPC buffer page — child needs its own clean IPC buffer. */
+    {
+        uintptr_t ipc_page = cp->thread.ipc_buffer_addr & ~((uintptr_t)PAGE_SIZE - 1);
         uintptr_t sp_page = parent_regs.sp & ~((uintptr_t)PAGE_SIZE - 1);
         int scopy = 0;
         for (uintptr_t p = sp_page; p < sp_page + 64 * PAGE_SIZE; p += PAGE_SIZE) {
+            if (p == ipc_page) continue;  /* skip IPC buffer page */
             seL4_CPtr pcap = vspace_get_cap(&parent->proc.vspace, (void *)p);
             if (pcap == seL4_CapNull) break;
             if (fork_copy_into_existing(&parent->proc.vspace, &cp->vspace, p) == 0)
                 scopy++;
         }
         for (uintptr_t p = sp_page - PAGE_SIZE; ; p -= PAGE_SIZE) {
+            if (p == ipc_page) { if (p < PAGE_SIZE) break; continue; }
             seL4_CPtr pcap = vspace_get_cap(&parent->proc.vspace, (void *)p);
             if (pcap == seL4_CapNull) break;
             if (fork_copy_into_existing(&parent->proc.vspace, &cp->vspace, p) == 0)
                 scopy++;
             if (p < PAGE_SIZE) break;
         }
-        printf("[fork] copied %d stack pages\n", scopy);
+        printf("[fork] copied %d stack pages (skipped IPC at %lx)\n",
+               scopy, (unsigned long)ipc_page);
     }
 
     /* 6. Copy endpoint caps to child at EXACT SAME slot numbers as parent.
@@ -844,17 +866,7 @@ static int do_fork(int parent_idx) {
         child->child_pipe_slot = parent->child_pipe_slot;
     }
 
-    /* 7. Read child's registers (set up by sel4runtime during spawn).
-     * Keep child's tpidr_el0 (TLS base) — it points to child's own TLS block.
-     * Copy PC, SP, and GPRs from parent. */
-    seL4_UserContext child_spawn_regs;
-    seL4_TCB_ReadRegisters(cp->thread.tcb.cptr, 0, 0,
-                           sizeof(child_spawn_regs) / sizeof(seL4_Word), &child_spawn_regs);
-    printf("[fork] child tpidr from spawn: %lx (parent: %lx)\n",
-           (unsigned long)child_spawn_regs.tpidr_el0,
-           (unsigned long)parent_regs.tpidr_el0);
-
-    /* 7b. Set child registers: advance PC past svc, set return value = 0.
+    /* 7. Set child registers: advance PC past svc, set return value = 0.
      *
      * Parent is blocked in seL4_Call (svc instruction). ReadRegisters
      * gives us PC at the svc. Child must resume AFTER the svc, with
@@ -864,22 +876,34 @@ static int do_fork(int parent_idx) {
      *   x0 = reply MessageInfo
      *   IPC buffer msg[0] = MR0 (read by seL4_GetMR(0))
      */
-    /* Read child's current regs (has child's own tpidr from sel4runtime) */
-    seL4_UserContext child_cur_regs;
-    seL4_TCB_ReadRegisters(cp->thread.tcb.cptr, 0, 0,
-                           sizeof(child_cur_regs) / sizeof(seL4_Word), &child_cur_regs);
-
     seL4_UserContext child_regs = parent_regs;
     child_regs.pc += 4;  /* skip past svc instruction */
+    /* AArch64 seL4 syscall return convention:
+     *   x0 = badge (0 for reply)
+     *   x1 = reply MessageInfo
+     *   x2 = MR0 (first message register)
+     *   x3 = MR1, x4 = MR2, x5 = MR3
+     * fork() reads MR0 via seL4_GetMR(0) which returns x2.
+     * Set x2 = 0 so fork() returns 0 in child. */
     seL4_MessageInfo_t fake_reply = seL4_MessageInfo_new(0, 0, 0, 1);
-    child_regs.x0 = fake_reply.words[0];
-    /* CRITICAL: keep child's own tpidr — its sel4runtime set up its own TLS */
-    child_regs.tpidr_el0 = child_cur_regs.tpidr_el0;
-    child_regs.tpidrro_el0 = child_cur_regs.tpidrro_el0;
+    child_regs.x0 = 0;                    /* badge = 0 */
+    child_regs.x1 = fake_reply.words[0];  /* reply MessageInfo */
+    child_regs.x2 = 0;                    /* MR0 = 0 → fork returns 0 */
+    child_regs.x3 = 0;                    /* MR1 */
+    child_regs.x4 = 0;                    /* MR2 */
+    child_regs.x5 = 0;                    /* MR3 */
+    /* Use PARENT's tpidr — TLS is a static array in .data which we copied */
 
     seL4_TCB_WriteRegisters(cp->thread.tcb.cptr, 0, 0,
                             sizeof(child_regs) / sizeof(seL4_Word), &child_regs);
 
+    /* Verify child's TCB configuration */
+    printf("[fork] child CSpace cptr=%lu, thread TCB=%lu, IPC buf addr=%lx\n",
+           (unsigned long)cp->cspace.cptr,
+           (unsigned long)cp->thread.tcb.cptr,
+           (unsigned long)cp->thread.ipc_buffer_addr);
+    printf("[fork] parent IPC buf addr=%lx\n",
+           (unsigned long)parent->proc.thread.ipc_buffer_addr);
     printf("[fork] child tpidr_el0 = %lx (child's own), parent was %lx\n",
            (unsigned long)child_regs.tpidr_el0, (unsigned long)parent_regs.tpidr_el0);
 
@@ -932,7 +956,11 @@ static int do_fork(int parent_idx) {
         seL4_UserContext final_regs;
         int rr = seL4_TCB_ReadRegisters(cp->thread.tcb.cptr, 0, 0,
                             sizeof(final_regs) / sizeof(seL4_Word), &final_regs);
-        printf("[fork] child pre-resume: pc=%lx sp=%lx x0=%lx tpidr=%lx (read=%d)\n",
+        printf("[fork] parent regs: pc=%lx sp=%lx x0=%lx x30(LR)=%lx x29(FP)=%lx\n",
+           (unsigned long)parent_regs.pc, (unsigned long)parent_regs.sp,
+           (unsigned long)parent_regs.x0, (unsigned long)parent_regs.x30,
+           (unsigned long)parent_regs.x29);
+    printf("[fork] child pre-resume: pc=%lx sp=%lx x0=%lx tpidr=%lx (read=%d)\n",
                (unsigned long)final_regs.pc, (unsigned long)final_regs.sp,
                (unsigned long)final_regs.x0, (unsigned long)final_regs.tpidr_el0, rr);
 
@@ -959,12 +987,26 @@ static int do_fork(int parent_idx) {
         /* Brief yield then check fault EP for child fault */
         for (volatile int d = 0; d < 1000000; d++);
         seL4_MessageInfo_t probe = seL4_NBRecv(child_fault_ep.cptr, NULL);
-        if (seL4_MessageInfo_get_label(probe) != 0) {
-            seL4_Word fault_pc = seL4_GetMR(0);
-            seL4_Word fault_addr = seL4_GetMR(1);
-            printf("[fork] CHILD FAULTED: label=%lu pc=%lx addr=%lx\n",
-                   (unsigned long)seL4_MessageInfo_get_label(probe),
-                   (unsigned long)fault_pc, (unsigned long)fault_addr);
+        seL4_Word flabel = seL4_MessageInfo_get_label(probe);
+        if (flabel != 0) {
+            const char *ftypes[] = {"null","CapFault","UnknownSyscall","UserException","VMFault"};
+            const char *ft = (flabel < 5) ? ftypes[flabel] : "other";
+            if (flabel == 1) {
+                /* CapFault: MR0=IP, MR1=CPtr, MR2=InReceivePhase, MR3+=LookupFailure */
+                printf("[fork] CHILD CapFault: IP=%lx CPtr=%lx InRecv=%lu LookupType=%lu\n",
+                       (unsigned long)seL4_GetMR(0), (unsigned long)seL4_GetMR(1),
+                       (unsigned long)seL4_GetMR(2), (unsigned long)seL4_GetMR(3));
+            } else if (flabel == 4) {
+                /* VMFault: MR0=IP, MR1=Addr, MR2=PrefetchFault, MR3=FSR */
+                printf("[fork] CHILD VMFault: IP=%lx Addr=%lx Prefetch=%lu FSR=%lx\n",
+                       (unsigned long)seL4_GetMR(0), (unsigned long)seL4_GetMR(1),
+                       (unsigned long)seL4_GetMR(2), (unsigned long)seL4_GetMR(3));
+            } else {
+                printf("[fork] CHILD FAULT type=%lu(%s): MR0=%lx MR1=%lx MR2=%lx\n",
+                       (unsigned long)flabel, ft,
+                       (unsigned long)seL4_GetMR(0), (unsigned long)seL4_GetMR(1),
+                       (unsigned long)seL4_GetMR(2));
+            }
         } else {
             printf("[fork] no immediate child fault\n");
         }
