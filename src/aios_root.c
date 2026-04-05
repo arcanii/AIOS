@@ -998,10 +998,6 @@ static void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
         seL4_MessageInfo_t msg = seL4_Recv(ep, &badge);
         seL4_Word label = seL4_MessageInfo_get_label(msg);
 
-        if (label >= 65) {  /* PIPE_FORK and above */
-            printf("[pipe] label=%lu badge=%lu\n", (unsigned long)label, (unsigned long)badge);
-        }
-
         switch (label) {
         case PIPE_CREATE: {
             /* Find free pipe slot */

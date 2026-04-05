@@ -914,6 +914,12 @@ static int aios_pid = 1;
 
 static long aios_sys_getpid(va_list ap) {
     (void)ap;
+    if (aios_pid <= 1 && pipe_ep) {
+        seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
+            seL4_MessageInfo_new(PIPE_GETPID, 0, 0, 0));
+        long pid = (long)seL4_GetMR(0);
+        if (pid > 0) aios_pid = (int)pid;
+    }
     return (long)aios_pid;
 }
 
@@ -1403,8 +1409,10 @@ static long aios_sys_clone(va_list ap) {
     seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
         seL4_MessageInfo_new(PIPE_FORK, 0, 0, 0));
     long result = (long)seL4_GetMR(0);
-    /* result == 0 for child, child_pid for parent */
-    /* Child's PID is patched directly into aios_pid by do_fork */
+    if (result == 0) {
+        /* Child — reset cached PID so getpid() re-queries */
+        aios_pid = 0;
+    }
     return result;
 }
 
