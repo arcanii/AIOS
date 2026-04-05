@@ -23,6 +23,7 @@
 #define PIPE_GETPID 66
 #define PIPE_WAIT 67
 #define PIPE_EXIT 68
+#define PIPE_EXEC 69
 #include <muslcsys/vsyscall.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -1399,6 +1400,34 @@ static long aios_sys_wait4(va_list ap) {
     return child_pid;
 }
 
+/* ── execve ── */
+static long aios_sys_execve(va_list ap) {
+    const char *pathname = va_arg(ap, const char *);
+    if (!pipe_ep || !pathname) return -38;
+    printf("[execve] path=%s\n", pathname);
+    char full[160];
+    if (pathname[0] == '/') {
+        int i = 0; while (pathname[i] && i < 158) { full[i] = pathname[i]; i++; } full[i] = 0;
+    } else {
+        int i = 0; const char *p = "/bin/";
+        while (*p) full[i++] = *p++;
+        while (*pathname && i < 158) full[i++] = *pathname++;
+        full[i] = 0;
+    }
+    int len = 0; while (full[len]) len++; len++;
+    int nmrs = (len + 7) / 8;
+    for (int m = 0; m < nmrs; m++) {
+        seL4_Word w = 0;
+        for (int b = 0; b < 8; b++) {
+            int idx = m * 8 + b;
+            if (idx < len) w |= ((seL4_Word)(uint8_t)full[idx]) << (b * 8);
+        }
+        seL4_SetMR(m, w);
+    }
+    seL4_MessageInfo_t reply = seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_EXEC, 0, 0, nmrs));
+    return (long)seL4_GetMR(0);
+}
+
 /* ── fork/clone ── */
 static long aios_sys_clone(va_list ap) {
     /* On AArch64, clone(flags, stack, ...) — basic fork has flags=SIGCHLD, stack=0 */
@@ -1513,6 +1542,9 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     muslcsys_install_syscall(__NR_getdents64, aios_sys_getdents64);
 #ifdef __NR_clone
     muslcsys_install_syscall(__NR_clone, aios_sys_clone);
+#endif
+#ifdef __NR_execve
+    muslcsys_install_syscall(__NR_execve, aios_sys_execve);
 #endif
 #ifdef __NR_wait4
     muslcsys_install_syscall(__NR_wait4, aios_sys_wait4);

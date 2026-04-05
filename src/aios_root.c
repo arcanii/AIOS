@@ -111,6 +111,7 @@ static seL4_CPtr pipe_ep_cap;
 #define PIPE_GETPID  66
 #define PIPE_WAIT    67
 #define PIPE_EXIT    68
+#define PIPE_EXEC    69
 #define MAX_PIPES     8
 #define PIPE_BUF_SIZE 8192
 
@@ -640,6 +641,8 @@ static int fork_copy_stack(active_proc_t *parent, sel4utils_process_t *child_pro
  * Full fork: create child process duplicating parent's address space.
  * Returns child PID on success, -1 on failure.
  */
+static char elf_buf[1024 * 1024]; /* shared: exec_thread, fork, exec */
+
 static int do_fork(int parent_idx) {
     active_proc_t *parent = &active_procs[parent_idx];
     if (!parent->active) return -1;
@@ -681,12 +684,12 @@ static int do_fork(int parent_idx) {
         }
     }
 
-    static char fork_elf_buf[1024 * 1024];
-    int elf_size = vfs_read(fork_elf_path, fork_elf_buf, sizeof(fork_elf_buf));
+    /* uses file-scope elf_buf */
+    int elf_size = vfs_read(fork_elf_path, elf_buf, sizeof(elf_buf));
     if (elf_size <= 0) { vka_free_object(&vka, &child_fault_ep); return -1; }
 
     elf_t fork_elf;
-    if (elf_newFile(fork_elf_buf, elf_size, &fork_elf) != 0) {
+    if (elf_newFile(elf_buf, elf_size, &fork_elf) != 0) {
         vka_free_object(&vka, &child_fault_ep); return -1;
     }
 
@@ -1230,6 +1233,190 @@ static void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
             break;
         }
+        case PIPE_EXEC: {
+            printf("[pipe-exec] badge=%lu\n", (unsigned long)badge);
+            int ci = (int)badge - 1;
+            if (ci < 0 || ci >= MAX_ACTIVE_PROCS || !active_procs[ci].active) {
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            /* Unpack path from MRs */
+            int nmrs = seL4_MessageInfo_get_length(msg);
+            char exec_path[160];
+            int epi = 0, pdone = 0;
+            for (int m = 0; m < nmrs && epi < 158 && !pdone; m++) {
+                seL4_Word w = seL4_GetMR(m);
+                for (int b = 0; b < 8 && epi < 158 && !pdone; b++) {
+                    char c = (char)((w >> (b * 8)) & 0xFF);
+                    if (c == 0) { pdone = 1; break; }
+                    exec_path[epi++] = c;
+                }
+            }
+            exec_path[epi] = 0;
+
+            /* Build full path */
+            char elf_path[160];
+            if (exec_path[0] == '/') {
+                int i = 0;
+                while (exec_path[i] && i < 158) { elf_path[i] = exec_path[i]; i++; }
+                elf_path[i] = 0;
+            } else {
+                int i = 0;
+                const char *pfx = "/bin/";
+                while (*pfx) elf_path[i++] = *pfx++;
+                const char *ep2 = exec_path;
+                while (*ep2 && i < 158) elf_path[i++] = *ep2++;
+                elf_path[i] = 0;
+            }
+
+            /* Save old metadata */
+            active_proc_t *ap = &active_procs[ci];
+            int old_pid = ap->pid;
+            int old_ppid = ap->ppid;
+            uint32_t old_uid = ap->uid;
+            uint32_t old_gid = ap->gid;
+            vka_object_t old_fault_ep = ap->fault_ep;
+
+            /* Read + parse ELF (reuses file-scope elf_buf) */
+            int esz = vfs_read(elf_path, elf_buf, sizeof(elf_buf));
+            if (esz <= 0) {
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            elf_t elf;
+            if (elf_newFile(elf_buf, esz, &elf) != 0) {
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+
+            /* Destroy old process */
+            sel4utils_destroy_process(&ap->proc, &vka);
+
+            /* Configure new process */
+            sel4utils_process_config_t cfg = process_config_new(&simple);
+            cfg = process_config_create_cnode(cfg, 12);
+            cfg = process_config_create_vspace(cfg, NULL, 0);
+            cfg = process_config_priority(cfg, 200);
+            cfg = process_config_auth(cfg, simple_get_tcb(&simple));
+            cfg = process_config_fault_endpoint(cfg, old_fault_ep);
+
+            sel4utils_process_t *proc = &ap->proc;
+            int err = sel4utils_configure_process_custom(proc, &vka, &vspace, cfg);
+            if (err) {
+                ap->active = 0;
+                proc_remove(old_pid);
+                break;
+            }
+
+            /* Record segments */
+            ap->num_segs = 0;
+            for (int si = 0; si < elf_getNumProgramHeaders(&elf) && ap->num_segs < MAX_ELF_SEGS; si++) {
+                if (elf_getProgramHeaderType(&elf, si) == 1) {
+                    elf_seg_info_t *seg = &ap->segs[ap->num_segs++];
+                    seg->vaddr = (uintptr_t)elf_getProgramHeaderVaddr(&elf, si);
+                    seg->memsz = (size_t)elf_getProgramHeaderMemorySize(&elf, si);
+                    seg->flags = (uint32_t)elf_getProgramHeaderFlags(&elf, si);
+                }
+            }
+
+            /* Load ELF */
+            proc->entry_point = sel4utils_elf_load(&proc->vspace, &vspace, &vka, &vka, &elf);
+            if (!proc->entry_point) {
+                sel4utils_destroy_process(proc, &vka);
+                ap->active = 0;
+                proc_remove(old_pid);
+                break;
+            }
+            proc->sysinfo = sel4utils_elf_get_vsyscall(&elf);
+            proc->num_elf_phdrs = sel4utils_elf_num_phdrs(&elf);
+            proc->elf_phdrs = calloc(proc->num_elf_phdrs, sizeof(Elf_Phdr));
+            if (proc->elf_phdrs) {
+                sel4utils_elf_read_phdrs(&elf, proc->num_elf_phdrs, proc->elf_phdrs);
+                for (int i = 0; i < proc->num_elf_phdrs; i++)
+                    if (proc->elf_phdrs[i].p_type == PT_PHDR)
+                        proc->elf_phdrs[i].p_type = PT_NULL;
+            }
+            proc->pagesz = PAGE_SIZE_4K;
+
+            /* Copy caps */
+            seL4_CPtr cs = sel4utils_copy_cap_to_process(proc, &vka, serial_ep.cptr);
+            ap->child_ser_slot = cs;
+
+            cspacepath_t fs_s, fs_d;
+            vka_cspace_make_path(&vka, fs_ep_cap, &fs_s);
+            vka_cspace_alloc_path(&vka, &fs_d);
+            seL4_CNode_Mint(fs_d.root, fs_d.capPtr, fs_d.capDepth,
+                fs_s.root, fs_s.capPtr, fs_s.capDepth,
+                seL4_AllRights, (seL4_Word)(ci + 1));
+            seL4_CPtr cf = sel4utils_copy_cap_to_process(proc, &vka, fs_d.capPtr);
+            ap->child_fs_slot = cf;
+
+            cspacepath_t te_s, te_d;
+            vka_cspace_make_path(&vka, thread_ep_cap, &te_s);
+            vka_cspace_alloc_path(&vka, &te_d);
+            seL4_CNode_Mint(te_d.root, te_d.capPtr, te_d.capDepth,
+                te_s.root, te_s.capPtr, te_s.capDepth,
+                seL4_AllRights, (seL4_Word)(ci + 1));
+            seL4_CPtr ct = sel4utils_copy_cap_to_process(proc, &vka, te_d.capPtr);
+            ap->child_thread_slot = ct;
+
+            seL4_CPtr ca = sel4utils_copy_cap_to_process(proc, &vka, auth_ep_cap);
+            ap->child_auth_slot = ca;
+
+            cspacepath_t pi_s, pi_d;
+            vka_cspace_make_path(&vka, pipe_ep_cap, &pi_s);
+            vka_cspace_alloc_path(&vka, &pi_d);
+            seL4_CNode_Mint(pi_d.root, pi_d.capPtr, pi_d.capDepth,
+                pi_s.root, pi_s.capPtr, pi_s.capDepth,
+                seL4_AllRights, (seL4_Word)(ci + 1));
+            seL4_CPtr cp2 = sel4utils_copy_cap_to_process(proc, &vka, pi_d.capPtr);
+            ap->child_pipe_slot = cp2;
+
+            /* Build argv + spawn */
+            char ss[16], sf[16], st[16], sa[16], sp[16], cwd[64];
+            snprintf(ss, 16, "%lu", (unsigned long)cs);
+            snprintf(sf, 16, "%lu", (unsigned long)cf);
+            snprintf(st, 16, "%lu", (unsigned long)ct);
+            snprintf(sa, 16, "%lu", (unsigned long)ca);
+            snprintf(sp, 16, "%lu", (unsigned long)cp2);
+            snprintf(cwd, 64, "%u:%u:/", old_uid, old_gid);
+            char *argv[] = { ss, sf, st, sa, sp, cwd, elf_path };
+            err = sel4utils_spawn_process_v(proc, &vka, &vspace, 7, argv, 1);
+            if (err) {
+                sel4utils_destroy_process(proc, &vka);
+                ap->active = 0;
+                proc_remove(old_pid);
+                break;
+            }
+
+            /* Restore metadata */
+            ap->active = 1;
+            ap->pid = old_pid;
+            ap->ppid = old_ppid;
+            ap->uid = old_uid;
+            ap->gid = old_gid;
+            ap->fault_ep = old_fault_ep;
+            ap->exit_status = 0;
+            ap->num_threads = 0;
+            for (int ti = 0; ti < MAX_THREADS_PER_PROC; ti++)
+                ap->threads[ti].active = 0;
+
+            /* Update proc name */
+            for (int pi = 0; pi < PROC_MAX; pi++) {
+                if (proc_table[pi].active && proc_table[pi].pid == old_pid) {
+                    int ni = 0;
+                    const char *n = elf_path;
+                    while (*n && ni < 63) proc_table[pi].name[ni++] = *n++;
+                    proc_table[pi].name[ni] = 0;
+                    break;
+                }
+            }
+            /* No reply — old process destroyed, new one running */
+            break;
+        }
         default:
             seL4_SetMR(0, (seL4_Word)-1);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
@@ -1334,7 +1521,7 @@ static void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         sel4utils_process_t *proc = &ap->proc;
 
         /* Read ELF from disk — shell sends full path */
-        static char elf_buf[1024 * 1024];
+        /* elf_buf is at file scope */
         char elf_path[160];
         int epi = 0;
         const char *pn = prog_name;
