@@ -108,6 +108,7 @@ static seL4_CPtr pipe_ep_cap;
 #define PIPE_KILL    64
 #define PIPE_FORK    65
 #define PIPE_GETPID  66
+#define PIPE_WAIT    67
 #define MAX_PIPES     8
 #define PIPE_BUF_SIZE 8192
 
@@ -829,14 +830,60 @@ static int do_fork(int parent_idx) {
     return child_pid;
 }
 
+/* ── waitpid support ── */
+#define MAX_WAIT_PENDING 4
+typedef struct {
+    int active;
+    int waiting_pid;    /* PID of the parent that called waitpid */
+    int child_pid;      /* PID of child being waited on (-1 = any) */
+    seL4_CPtr reply_cap; /* saved reply cap to unblock parent */
+} wait_pending_t;
+
+static wait_pending_t wait_pending[MAX_WAIT_PENDING];
+static vka_object_t wait_reply_objects[MAX_WAIT_PENDING];
+static int wait_pending_init = 0;
+
+static void wait_init(void) {
+    for (int i = 0; i < MAX_WAIT_PENDING; i++) {
+        wait_pending[i].active = 0;
+        /* Pre-allocate CSpace slots for SaveCaller */
+        cspacepath_t path;
+        vka_cspace_alloc_path(&vka, &path);
+        wait_reply_objects[i].cptr = path.capPtr;
+    }
+    wait_pending_init = 1;
+}
+
 /* Reap a forked child — called when we detect it has exited */
 static void reap_forked_child(int child_idx) {
     active_proc_t *child = &active_procs[child_idx];
     if (!child->active) return;
+    int child_pid = child->pid;
+    int parent_pid = child->ppid;
+
+    /* Destroy the process */
     sel4utils_destroy_process(&child->proc, &vka);
     vka_free_object(&vka, &child->fault_ep);
-    proc_remove(child->pid);
+    proc_remove(child_pid);
     child->active = 0;
+
+    /* Check if any parent is waiting for this child */
+    for (int w = 0; w < MAX_WAIT_PENDING; w++) {
+        if (!wait_pending[w].active) continue;
+        if (wait_pending[w].child_pid == child_pid ||
+            (wait_pending[w].child_pid == -1 &&
+             wait_pending[w].waiting_pid == parent_pid)) {
+            /* Reply to the waiting parent */
+            seL4_SetMR(0, (seL4_Word)child_pid);
+            seL4_SetMR(1, 0);  /* exit status = 0 (normal) */
+            seL4_Send(wait_pending[w].reply_cap, seL4_MessageInfo_new(0, 0, 0, 2));
+            /* Clean up the saved cap */
+            seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                              wait_pending[w].reply_cap, seL4_WordBits);
+            wait_pending[w].active = 0;
+            break;
+        }
+    }
 }
 
 /* Check all forked children for exit (non-blocking) */
@@ -859,6 +906,7 @@ static void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
 
     /* Init pipes */
     for (int i = 0; i < MAX_PIPES; i++) pipes[i].active = 0;
+    wait_init();
 
     while (1) {
         /* Periodically reap forked children that have exited */
@@ -964,6 +1012,72 @@ static void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
             seL4_SetMR(0, (seL4_Word)pid);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        case PIPE_WAIT: {
+            /* waitpid(child_pid): MR0 = child_pid (-1 for any) */
+            int caller_idx = (int)badge - 1;
+            int target_pid = (int)seL4_GetMR(0);
+
+            if (caller_idx < 0 || caller_idx >= MAX_ACTIVE_PROCS
+                || !active_procs[caller_idx].active) {
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            int caller_pid = active_procs[caller_idx].pid;
+
+            /* Check if child already exited */
+            int already_exited = 1;
+            if (target_pid > 0) {
+                for (int ci = 0; ci < MAX_ACTIVE_PROCS; ci++) {
+                    if (active_procs[ci].active && active_procs[ci].pid == target_pid
+                        && active_procs[ci].ppid == caller_pid) {
+                        already_exited = 0;
+                        break;
+                    }
+                }
+            } else {
+                /* Wait for any child */
+                for (int ci = 0; ci < MAX_ACTIVE_PROCS; ci++) {
+                    if (active_procs[ci].active && active_procs[ci].ppid == caller_pid) {
+                        already_exited = 0;
+                        break;
+                    }
+                }
+            }
+
+            if (already_exited) {
+                /* Child already gone — return immediately */
+                seL4_SetMR(0, (seL4_Word)target_pid);
+                seL4_SetMR(1, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 2));
+                break;
+            }
+
+            /* Child still alive — save reply cap and defer */
+            int wi = -1;
+            for (int w = 0; w < MAX_WAIT_PENDING; w++) {
+                if (!wait_pending[w].active) { wi = w; break; }
+            }
+            if (wi < 0) {
+                /* No wait slots — reply with error */
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+
+            /* SaveCaller: save the reply cap so we can reply later */
+            seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                              wait_reply_objects[wi].cptr, seL4_WordBits);
+            seL4_CNode_SaveCaller(seL4_CapInitThreadCNode,
+                                   wait_reply_objects[wi].cptr, seL4_WordBits);
+
+            wait_pending[wi].active = 1;
+            wait_pending[wi].waiting_pid = caller_pid;
+            wait_pending[wi].child_pid = target_pid;
+            wait_pending[wi].reply_cap = wait_reply_objects[wi].cptr;
+            /* Do NOT reply — parent blocks until child exits */
             break;
         }
         case PIPE_FORK: {

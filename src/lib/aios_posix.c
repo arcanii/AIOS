@@ -20,6 +20,7 @@
 #endif
 #define PIPE_FORK 65
 #define PIPE_GETPID 66
+#define PIPE_WAIT 67
 #include <muslcsys/vsyscall.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -1367,6 +1368,31 @@ static char *aios_envp[] = {
     NULL
 };
 
+/* ── waitpid/wait4 ── */
+static long aios_sys_wait4(va_list ap) {
+    int pid = va_arg(ap, int);
+    int *wstatus = va_arg(ap, int *);
+    /* int options = va_arg(ap, int); — ignored for now */
+    /* struct rusage *rusage = va_arg(ap, struct rusage *); — ignored */
+
+    if (!pipe_ep) return -38;  /* ENOSYS */
+
+    /* Send PIPE_WAIT to pipe_server */
+    seL4_SetMR(0, (seL4_Word)pid);
+    seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
+        seL4_MessageInfo_new(PIPE_WAIT, 0, 0, 1));
+
+    long child_pid = (long)seL4_GetMR(0);
+    int exit_status = (int)seL4_GetMR(1);
+
+    if (wstatus && child_pid > 0) {
+        /* Encode exit status in wait format: (status & 0xff) << 8 */
+        *wstatus = (exit_status & 0xff) << 8;
+    }
+
+    return child_pid;
+}
+
 /* ── fork/clone ── */
 static long aios_sys_clone(va_list ap) {
     /* On AArch64, clone(flags, stack, ...) — basic fork has flags=SIGCHLD, stack=0 */
@@ -1472,6 +1498,9 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     muslcsys_install_syscall(__NR_getdents64, aios_sys_getdents64);
 #ifdef __NR_clone
     muslcsys_install_syscall(__NR_clone, aios_sys_clone);
+#endif
+#ifdef __NR_wait4
+    muslcsys_install_syscall(__NR_wait4, aios_sys_wait4);
 #endif
 #ifdef __NR_pipe2
     muslcsys_install_syscall(__NR_pipe2, aios_sys_pipe2);
