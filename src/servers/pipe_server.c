@@ -279,33 +279,37 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                 break;
             }
-            /* Unpack path from MRs */
+            /* Unpack double-null terminated buffer from MRs:
+             * path\0argv[0]\0argv[1]\0...\0\0 */
             int nmrs = seL4_MessageInfo_get_length(msg);
-            char exec_path[160];
-            int epi = 0, pdone = 0;
-            for (int m = 0; m < nmrs && epi < 158 && !pdone; m++) {
+            char exec_buf[900];
+            int ebi = 0;
+            for (int m = 0; m < nmrs && ebi < 899; m++) {
                 seL4_Word w = seL4_GetMR(m);
-                for (int b = 0; b < 8 && epi < 158 && !pdone; b++) {
-                    char c = (char)((w >> (b * 8)) & 0xFF);
-                    if (c == 0) { pdone = 1; break; }
-                    exec_path[epi++] = c;
+                for (int b = 0; b < 8 && ebi < 899; b++) {
+                    exec_buf[ebi++] = (char)((w >> (b * 8)) & 0xFF);
                 }
             }
-            exec_path[epi] = 0;
+            exec_buf[ebi] = 0;
 
-            /* Build full path */
-            char elf_path[160];
-            if (exec_path[0] == '/') {
-                int i = 0;
-                while (exec_path[i] && i < 158) { elf_path[i] = exec_path[i]; i++; }
-                elf_path[i] = 0;
-            } else {
-                int i = 0;
-                const char *pfx = "/bin/";
-                while (*pfx) elf_path[i++] = *pfx++;
-                const char *ep2 = exec_path;
-                while (*ep2 && i < 158) elf_path[i++] = *ep2++;
-                elf_path[i] = 0;
+            /* First string is the path (already resolved by caller) */
+            char *elf_path = exec_buf;
+
+            /* Collect argv strings after the path */
+            #define MAX_USER_ARGV 16
+            char *exec_argv[MAX_USER_ARGV];
+            int exec_argc = 0;
+            {
+                /* Skip past path null */
+                int pos = 0;
+                while (pos < ebi && exec_buf[pos] != 0) pos++;
+                pos++; /* skip null after path */
+                /* Each subsequent null-terminated string is an argv entry */
+                while (pos < ebi && exec_buf[pos] != 0 && exec_argc < MAX_USER_ARGV) {
+                    exec_argv[exec_argc++] = &exec_buf[pos];
+                    while (pos < ebi && exec_buf[pos] != 0) pos++;
+                    pos++; /* skip null */
+                }
             }
 
             /* Save old metadata */
@@ -421,8 +425,23 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             snprintf(sa, 16, "%lu", (unsigned long)ca);
             snprintf(sp, 16, "%lu", (unsigned long)cp2);
             snprintf(cwd, 64, "%u:%u:/", old_uid, old_gid);
-            char *argv[] = { ss, sf, st, sa, sp, cwd, elf_path };
-            err = sel4utils_spawn_process_v(proc, &vka, &vspace, 7, argv, 1);
+            /* Build spawn argv: [caps(5), cwd, user_argv[0], user_argv[1], ...] */
+            char *spawn_argv[6 + MAX_USER_ARGV];
+            int spawn_argc = 0;
+            spawn_argv[spawn_argc++] = ss;
+            spawn_argv[spawn_argc++] = sf;
+            spawn_argv[spawn_argc++] = st;
+            spawn_argv[spawn_argc++] = sa;
+            spawn_argv[spawn_argc++] = sp;
+            spawn_argv[spawn_argc++] = cwd;
+            /* If user provided argv, use it; otherwise fall back to elf_path */
+            if (exec_argc > 0) {
+                for (int ai = 0; ai < exec_argc && spawn_argc < 6 + MAX_USER_ARGV; ai++)
+                    spawn_argv[spawn_argc++] = exec_argv[ai];
+            } else {
+                spawn_argv[spawn_argc++] = elf_path;
+            }
+            err = sel4utils_spawn_process_v(proc, &vka, &vspace, spawn_argc, spawn_argv, 1);
             if (err) {
                 sel4utils_destroy_process(proc, &vka);
                 ap->active = 0;

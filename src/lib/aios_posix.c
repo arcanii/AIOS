@@ -1403,23 +1403,43 @@ static long aios_sys_wait4(va_list ap) {
 /* ── execve ── */
 static long aios_sys_execve(va_list ap) {
     const char *pathname = va_arg(ap, const char *);
+    char *const *argv_arr = va_arg(ap, char *const *);
+    (void)va_arg(ap, char *const *); /* envp -- unused */
     if (!pipe_ep || !pathname) return -38;
-    char full[160];
+
+    /* Pack into buffer: path\0argv[0]\0argv[1]\0...\0\0
+     * Double-null terminates the argument list. */
+    char buf[900];
+    int pos = 0;
+
+    /* Resolve path */
     if (pathname[0] == '/') {
-        int i = 0; while (pathname[i] && i < 158) { full[i] = pathname[i]; i++; } full[i] = 0;
+        while (*pathname && pos < 898) buf[pos++] = *pathname++;
     } else {
-        int i = 0; const char *p = "/bin/";
-        while (*p) full[i++] = *p++;
-        while (*pathname && i < 158) full[i++] = *pathname++;
-        full[i] = 0;
+        const char *pfx = "/bin/";
+        while (*pfx && pos < 898) buf[pos++] = *pfx++;
+        while (*pathname && pos < 898) buf[pos++] = *pathname++;
     }
-    int len = 0; while (full[len]) len++; len++;
-    int nmrs = (len + 7) / 8;
+    buf[pos++] = 0; /* null after path */
+
+    /* Pack argv strings */
+    if (argv_arr) {
+        for (int ai = 0; argv_arr[ai] && pos < 898; ai++) {
+            const char *a = argv_arr[ai];
+            while (*a && pos < 898) buf[pos++] = *a++;
+            buf[pos++] = 0;
+        }
+    }
+    buf[pos++] = 0; /* double-null terminator */
+
+    /* Pack into MRs */
+    int nmrs = (pos + 7) / 8;
+    if (nmrs > 110) nmrs = 110; /* leave headroom in 120 MR limit */
     for (int m = 0; m < nmrs; m++) {
         seL4_Word w = 0;
         for (int b = 0; b < 8; b++) {
             int idx = m * 8 + b;
-            if (idx < len) w |= ((seL4_Word)(uint8_t)full[idx]) << (b * 8);
+            if (idx < pos) w |= ((seL4_Word)(uint8_t)buf[idx]) << (b * 8);
         }
         seL4_SetMR(m, w);
     }
