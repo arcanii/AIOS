@@ -543,11 +543,19 @@ static long aios_sys_close(va_list ap) {
     int fd = va_arg(ap, int);
     if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
         aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
+        if (f->active && f->is_pipe && pipe_ep) {
+            /* Notify pipe server */
+            seL4_SetMR(0, (seL4_Word)f->pipe_id);
+            seL4_Call(pipe_ep, seL4_MessageInfo_new(63 /* PIPE_CLOSE */, 0, 0, 1));
+        }
         f->active = 0;
+        f->is_pipe = 0;
+        f->pipe_id = -1;
         return 0;
     }
-    /* let stdin/stdout/stderr close silently */
-    if (fd < 3) return 0;
+    /* Reset stdin/stdout pipe redirect on close */
+    if (fd == 0) { stdin_pipe_id = -1; return 0; }
+    if (fd == 1 || fd == 2) { stdout_pipe_id = -1; return 0; }
     return -EBADF;
 }
 
@@ -1019,8 +1027,49 @@ static long aios_sys_dup3(va_list ap) {
     int oldfd = va_arg(ap, int);
     int newfd = va_arg(ap, int);
     int flags = va_arg(ap, int);
-    (void)oldfd; (void)newfd; (void)flags;
-    /* Minimal stub */
+    (void)flags;
+
+    /* pipe fd -> stdin redirect: dup2(pipe_read_fd, 0) */
+    if (newfd == 0 && oldfd >= AIOS_FD_BASE && oldfd < AIOS_FD_BASE + AIOS_MAX_FDS) {
+        aios_fd_t *src = &aios_fds[oldfd - AIOS_FD_BASE];
+        if (!src->active) return -EBADF;
+        if (src->is_pipe && src->pipe_read) {
+            stdin_pipe_id = src->pipe_id;
+            return 0;
+        }
+    }
+
+    /* pipe fd -> stdout redirect: dup2(pipe_write_fd, 1) */
+    if ((newfd == 1 || newfd == 2) && oldfd >= AIOS_FD_BASE && oldfd < AIOS_FD_BASE + AIOS_MAX_FDS) {
+        aios_fd_t *src = &aios_fds[oldfd - AIOS_FD_BASE];
+        if (!src->active) return -EBADF;
+        if (src->is_pipe && !src->pipe_read) {
+            stdout_pipe_id = src->pipe_id;
+            return newfd;
+        }
+    }
+
+    /* aios fd -> aios fd copy */
+    if (oldfd >= AIOS_FD_BASE && oldfd < AIOS_FD_BASE + AIOS_MAX_FDS
+        && newfd >= AIOS_FD_BASE && newfd < AIOS_FD_BASE + AIOS_MAX_FDS) {
+        aios_fd_t *src = &aios_fds[oldfd - AIOS_FD_BASE];
+        if (!src->active) return -EBADF;
+        aios_fd_t *dst = &aios_fds[newfd - AIOS_FD_BASE];
+        *dst = *src;
+        return newfd;
+    }
+
+    /* stdin/stdout/stderr -> aios fd */
+    if (oldfd < 3) {
+        if (newfd >= AIOS_FD_BASE && newfd < AIOS_FD_BASE + AIOS_MAX_FDS) {
+            aios_fds[newfd - AIOS_FD_BASE].active = 1;
+            aios_fds[newfd - AIOS_FD_BASE].size = 0;
+            aios_fds[newfd - AIOS_FD_BASE].pos = 0;
+            return newfd;
+        }
+        return newfd;
+    }
+
     return -EINVAL;
 }
 
@@ -1432,18 +1481,27 @@ static long aios_sys_execve(va_list ap) {
     }
     buf[pos++] = 0; /* double-null terminator */
 
-    /* Pack into MRs */
+    /* Pack pipe metadata in MR0, string buffer in MR1..MRn
+     * MR0 bits [31:16] = stdout_pipe_id + 1 (0 = no redirect)
+     * MR0 bits [15:0]  = stdin_pipe_id + 1  (0 = no redirect) */
+    seL4_Word pipe_meta = 0;
+    if (stdout_pipe_id >= 0)
+        pipe_meta |= ((seL4_Word)(stdout_pipe_id + 1)) << 16;
+    if (stdin_pipe_id >= 0)
+        pipe_meta |= ((seL4_Word)(stdin_pipe_id + 1)) & 0xFFFF;
+    seL4_SetMR(0, pipe_meta);
+
     int nmrs = (pos + 7) / 8;
-    if (nmrs > 110) nmrs = 110; /* leave headroom in 120 MR limit */
+    if (nmrs > 109) nmrs = 109; /* leave headroom: MR0=meta + 109 data MRs */
     for (int m = 0; m < nmrs; m++) {
         seL4_Word w = 0;
         for (int b = 0; b < 8; b++) {
             int idx = m * 8 + b;
             if (idx < pos) w |= ((seL4_Word)(uint8_t)buf[idx]) << (b * 8);
         }
-        seL4_SetMR(m, w);
+        seL4_SetMR(m + 1, w); /* offset by 1: MR0 is metadata */
     }
-    seL4_MessageInfo_t reply = seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_EXEC, 0, 0, nmrs));
+    seL4_MessageInfo_t reply = seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_EXEC, 0, 0, nmrs + 1));
     return (long)seL4_GetMR(0);
 }
 

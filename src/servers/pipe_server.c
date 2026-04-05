@@ -279,12 +279,17 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                 break;
             }
-            /* Unpack double-null terminated buffer from MRs:
-             * path\0argv[0]\0argv[1]\0...\0\0 */
+            /* MR0 = pipe metadata, MR1.. = double-null string buffer
+             * MR0 bits [31:16] = stdout_pipe_id + 1 (0 = none)
+             * MR0 bits [15:0]  = stdin_pipe_id + 1  (0 = none) */
             int nmrs = seL4_MessageInfo_get_length(msg);
+            seL4_Word pipe_meta_word = seL4_GetMR(0);
+            int exec_stdout_pipe = (int)((pipe_meta_word >> 16) & 0xFFFF) - 1;
+            int exec_stdin_pipe = (int)(pipe_meta_word & 0xFFFF) - 1;
+
             char exec_buf[900];
             int ebi = 0;
-            for (int m = 0; m < nmrs && ebi < 899; m++) {
+            for (int m = 1; m < nmrs && ebi < 899; m++) {
                 seL4_Word w = seL4_GetMR(m);
                 for (int b = 0; b < 8 && ebi < 899; b++) {
                     exec_buf[ebi++] = (char)((w >> (b * 8)) & 0xFF);
@@ -424,7 +429,14 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             snprintf(st, 16, "%lu", (unsigned long)ct);
             snprintf(sa, 16, "%lu", (unsigned long)ca);
             snprintf(sp, 16, "%lu", (unsigned long)cp2);
-            snprintf(cwd, 64, "%u:%u:/", old_uid, old_gid);
+            /* Encode pipe redirection in CWD if present */
+            if (exec_stdout_pipe >= 0 || exec_stdin_pipe >= 0) {
+                int sp = exec_stdout_pipe < 0 ? 99 : exec_stdout_pipe;
+                int rp = exec_stdin_pipe < 0 ? 99 : exec_stdin_pipe;
+                snprintf(cwd, 64, "%u:%u:%d:%d:/", old_uid, old_gid, sp, rp);
+            } else {
+                snprintf(cwd, 64, "%u:%u:/", old_uid, old_gid);
+            }
             /* Build spawn argv: [caps(5), cwd, user_argv[0], user_argv[1], ...] */
             char *spawn_argv[6 + MAX_USER_ARGV];
             int spawn_argc = 0;
