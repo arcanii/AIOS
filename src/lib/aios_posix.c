@@ -901,9 +901,11 @@ static long aios_sys_getcwd(va_list ap) {
     return (long)buf;
 }
 
+static int aios_pid = 1;
+
 static long aios_sys_getpid(va_list ap) {
     (void)ap;
-    return 1; /* TODO: get real PID from proc_table */
+    return (long)aios_pid;
 }
 
 static long aios_sys_getppid(va_list ap) {
@@ -1366,8 +1368,15 @@ static long aios_sys_clone(va_list ap) {
     /* Send PIPE_FORK to pipe_server (badged, so server knows who we are) */
     seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
         seL4_MessageInfo_new(PIPE_FORK, 0, 0, 0));
-    long child_pid = (long)seL4_GetMR(0);
-    return child_pid;
+    long result = (long)seL4_GetMR(0);
+    if (result == 0) {
+        /* We are the child — update our PID.
+         * The parent's PID was inherited via .data copy.
+         * Read our actual PID from MR1 (set by process server). */
+        long new_pid = (long)seL4_GetMR(1);
+        if (new_pid > 0) aios_pid = (int)new_pid;
+    }
+    return result;
 }
 
 void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
