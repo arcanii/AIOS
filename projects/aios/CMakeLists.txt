@@ -67,6 +67,12 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/vfs.c
     ${AIOS_ROOT}/src/procfs.c
     ${AIOS_ROOT}/src/aios_log.c
+    ${AIOS_ROOT}/src/process/fork.c
+    ${AIOS_ROOT}/src/process/reap.c
+    ${AIOS_ROOT}/src/servers/thread_server.c
+    ${AIOS_ROOT}/src/servers/fs_server.c
+    ${AIOS_ROOT}/src/servers/exec_server.c
+    ${AIOS_ROOT}/src/servers/pipe_server.c
     apps_cpio.o
 )
 target_link_libraries(aios_root

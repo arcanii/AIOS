@@ -1,0 +1,171 @@
+#ifndef AIOS_ROOT_SHARED_H
+#define AIOS_ROOT_SHARED_H
+
+/*
+ * AIOS root_shared.h -- Shared types, constants, and externs
+ *
+ * All server threads and extracted modules include this header
+ * to access the root task shared state.
+ */
+
+#include <stdint.h>
+#include <sel4/sel4.h>
+#include <allocman/bootstrap.h>
+#include <allocman/vka.h>
+#include <sel4utils/vspace.h>
+#include <sel4utils/process.h>
+#include <sel4utils/process_config.h>
+#include <simple/simple.h>
+#include <vka/capops.h>
+#include <vka/object.h>
+#include "aios/ext2.h"
+
+/* ── IPC protocol labels ── */
+
+#define SER_KEY_PUSH    4
+
+#define EXEC_RUN        20
+#define EXEC_NICE       21
+#define EXEC_RUN_BG     24
+#define EXEC_FORK       25
+#define EXEC_WAIT       26
+
+#define THREAD_CREATE   30
+#define THREAD_JOIN     31
+
+#define PIPE_CREATE     60
+#define PIPE_WRITE      61
+#define PIPE_READ       62
+#define PIPE_CLOSE      63
+#define PIPE_KILL       64
+#define PIPE_FORK       65
+#define PIPE_GETPID     66
+#define PIPE_WAIT       67
+#define PIPE_EXIT       68
+#define PIPE_EXEC       69
+
+/* ── Limits ── */
+
+#define MAX_ACTIVE_PROCS     8
+#define MAX_THREADS_PER_PROC 8
+#define THREAD_STACK_PAGES   4
+#define MAX_ELF_SEGS         6
+#define MAX_PIPES            8
+#define PIPE_BUF_SIZE        8192
+#define MAX_WAIT_PENDING     4
+#define MAX_ZOMBIES          8
+#define MAX_EXEC_ARGS        12
+
+#ifndef PAGE_SIZE
+#define PAGE_SIZE 4096
+#endif
+
+/* ── Types ── */
+
+typedef struct {
+    int active;
+    int tid;
+    vka_object_t tcb;
+    vka_object_t fault_ep;
+    vka_object_t ipc_frame;
+    vka_object_t stack_frames[THREAD_STACK_PAGES];
+    int exited;
+} aios_thread_t;
+
+typedef struct {
+    uintptr_t vaddr;
+    size_t    memsz;
+    uint32_t  flags;   /* PF_X=1, PF_W=2, PF_R=4 */
+} elf_seg_info_t;
+
+typedef struct {
+    int active;
+    int pid;
+    int ppid;
+    uint32_t uid;
+    uint32_t gid;
+    sel4utils_process_t proc;
+    vka_object_t fault_ep;
+    int num_threads;
+    aios_thread_t threads[MAX_THREADS_PER_PROC];
+    int num_segs;
+    elf_seg_info_t segs[MAX_ELF_SEGS];
+    seL4_CPtr child_ser_slot;
+    seL4_CPtr child_fs_slot;
+    seL4_CPtr child_exec_slot;
+    seL4_CPtr child_auth_slot;
+    seL4_CPtr child_pipe_slot;
+    seL4_CPtr child_thread_slot;
+    int exit_status;
+} active_proc_t;
+
+typedef struct {
+    int active;
+    char buf[PIPE_BUF_SIZE];
+    int head;
+    int count;
+    int read_closed;
+    int write_closed;
+} pipe_t;
+
+typedef struct {
+    int active;
+    int waiting_pid;
+    int child_pid;
+    seL4_CPtr reply_cap;
+} wait_pending_t;
+
+typedef struct {
+    int active;
+    int pid;
+    int ppid;
+    int exit_status;
+} zombie_t;
+
+/* ── Shared global state (defined in aios_root.c) ── */
+
+extern vka_t vka;
+extern vspace_t vspace;
+extern simple_t simple;
+extern allocman_t *allocman;
+
+extern active_proc_t active_procs[MAX_ACTIVE_PROCS];
+extern seL4_CPtr thread_ep_cap;
+extern seL4_CPtr pipe_ep_cap;
+extern seL4_CPtr auth_ep_cap;
+extern seL4_CPtr fs_ep_cap;
+extern vka_object_t serial_ep;
+extern uint32_t aios_total_mem;
+
+extern pipe_t pipes[MAX_PIPES];
+extern char elf_buf[1024 * 1024];
+
+extern ext2_ctx_t ext2;
+extern volatile uint32_t *blk_vio;
+extern uint8_t *blk_dma;
+extern uint64_t blk_dma_pa;
+
+extern volatile int fg_pid;
+extern volatile seL4_CPtr fg_fault_ep;
+extern volatile int fg_killed;
+
+extern wait_pending_t wait_pending[MAX_WAIT_PENDING];
+extern vka_object_t wait_reply_objects[MAX_WAIT_PENDING];
+extern zombie_t zombies[MAX_ZOMBIES];
+extern int wait_pending_init;
+
+/* ── Cross-module function declarations ── */
+/* Add declarations here as functions are extracted from aios_root.c */
+
+int do_fork(int parent_idx);
+void wait_init(void);
+void reap_forked_child(int child_idx);
+void reap_check(void);
+int create_child_thread(int proc_idx, seL4_Word entry, seL4_Word arg, int *out_tid);
+void thread_server_fn(void *arg0, void *arg1, void *ipc_buf);
+void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf);
+void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf);
+int process_kill(int pid);
+void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf);
+
+#endif /* AIOS_ROOT_SHARED_H */
