@@ -25,7 +25,7 @@ AIOS boots on QEMU (aarch64, Cortex-A53, 4-core SMP) and provides a Unix-like en
 - **Process management**: isolated VSpaces, fork/exec/wait, fault recovery, process table, background exec, kill
 - **Unix pipes**: `cmd1 | cmd2 | cmd3` with 8KB ring buffers via pipe server
 - **TTY server**: line discipline (cooked/raw mode), Ctrl-C/U/W/D, echo control
-- **Shell**: line editor, command history, `$VAR` expansion, `&&`/`||` chains, `>` `<` redirection, quote stripping, Ctrl-C
+- **Shell**: line editor, command history, `$VAR` expansion, `&&`/`||` chains (with pipes), `>` `<` redirection, quote stripping, Ctrl-C
 - **Authentication**: SHA-3-512 password hashing, login/logout, su/passwd, MMU-isolated auth server
 - **File permissions**: badge-based enforcement, non-root denied write to /etc/ and /bin/
 - **pthreads**: create, join, mutex via thread server (real seL4 TCBs)
@@ -72,7 +72,7 @@ AIOS boots on QEMU (aarch64, Cortex-A53, 4-core SMP) and provides a Unix-like en
     │                 User Programs                    │
     │  ls, cat, grep, find, sed, sort, cp, rm, ...    │
     │  fork_test, sysinfo, posix_test                 │
-    │  (93 sbase tools + 20 AIOS programs)            │
+    │  (93 sbase tools + 21 AIOS programs)            │
     ├─────────────────────────────────────────────────┤
     │              POSIX Syscall Shim                  │
     │  open/read/write/close/stat/fork/exec/waitpid   │
@@ -189,7 +189,7 @@ Any standard POSIX C program can run on AIOS with no modifications:
 | Misc | echo, yes, true, false, basename, dirname, pwd, sleep, test, printf, mknod |
 | System | kill, nice, renice, nohup, sync, which, xargs |
 
-### AIOS-Specific Programs (20)
+### AIOS-Specific Programs (21)
 
 | Program | Purpose |
 |---------|---------|
@@ -265,6 +265,9 @@ Run `posix_test` in the shell to verify.
 | v0.4.44 | tty_server Phase 1: line discipline, cooked/raw mode |
 | v0.4.45-46 | **fork()+waitpid()**: process duplication on seL4, exit codes, zombie reaping |
 | v0.4.47 | **exec()**: process image replacement, fork+exec+waitpid complete |
+| v0.4.48-49 | Pipe+fork integration, PIPE_EXEC/PIPE_FORK in pipe_server |
+| v0.4.50-51 | SMP fork serialization, pipe ref counting, redirect rewrite |
+| v0.4.52 | &&/|| pipes, remove exec_ep, **getty/shell separation** |
 
 ## Roadmap
 
