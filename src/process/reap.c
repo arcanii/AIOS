@@ -85,8 +85,6 @@ void reap_check(void) {
         /* Non-blocking check on fault EP */
         seL4_MessageInfo_t probe = seL4_NBRecv(active_procs[i].fault_ep.cptr, NULL);
         if (seL4_MessageInfo_get_label(probe) == 0) continue;
-            i, active_procs[i].pid, active_procs[i].ppid,
-            (unsigned long)seL4_MessageInfo_get_label(probe));
 
         /* Child faulted/exited. Check if parent is waiting. */
         int ppid = active_procs[i].ppid;
