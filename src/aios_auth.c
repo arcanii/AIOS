@@ -177,7 +177,7 @@ static void init_default_users(void) {
     users[0].gid = 0;
     users[0].ngroups = 0;
     users[0].is_root = 1;
-    str_cpy(users[0].home, "/root");
+    str_cpy(users[0].home, "/");
     str_cpy(users[0].shell, "/bin/sh");
     str_cpy(users[0].gecos, "System Administrator");
 
@@ -439,7 +439,7 @@ static void handle_useradd(void) {
     nu->is_root = (new_uid == 0) ? 1 : 0;
     nu->ngroups = 0;
     /* Default home/shell */
-    if (new_uid == 0) str_cpy(nu->home, "/root");
+    if (new_uid == 0) str_cpy(nu->home, "/");
     else {
         str_cpy(nu->home, "/home/");
         int hi = 6;
@@ -740,7 +740,7 @@ int aios_auth_load_passwd(void) {
 
         /* Defaults */
         if (u->home[0] == '\0') {
-            if (u->uid == 0) str_cpy(u->home, "/root");
+            if (u->uid == 0) str_cpy(u->home, "/");
             else {
                 str_cpy(u->home, "/home/");
                 int hi = 6;

@@ -674,28 +674,27 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        /* Check for && / || chains (before pipe splitting) */
+        /* Check for && / || chains (iterative -- supports multi-chain) */
         {
-            int chain_pos = -1, chain_type = 0;
-            for (int ci = 0; ci < len - 1; ci++) {
-                if (line[ci] == '&' && line[ci+1] == '&') { chain_pos = ci; chain_type = 1; break; }
-                if (line[ci] == '|' && line[ci+1] == '|') { chain_pos = ci; chain_type = 2; break; }
-            }
-            if (chain_type) {
-                /* Split into left and right commands */
+            int chain_skip = 0;
+            for (;;) {
+                int chain_pos = -1, chain_type = 0;
+                for (int ci = 0; ci < len - 1; ci++) {
+                    if (line[ci] == '&' && line[ci+1] == '&') { chain_pos = ci; chain_type = 1; break; }
+                    if (line[ci] == '|' && line[ci+1] == '|') { chain_pos = ci; chain_type = 2; break; }
+                }
+                if (!chain_type) break;
+        
                 line[chain_pos] = '\0';
                 char *right_cmd = line + chain_pos + 2;
                 while (*right_cmd == ' ') right_cmd++;
-                /* Trim trailing spaces from left */
                 int ll = chain_pos - 1;
                 while (ll >= 0 && line[ll] == ' ') line[ll--] = '\0';
-
-                /* Execute left command (supports pipes in left side) */
+        
                 int left_ok = 0;
                 if (str_eq(line, "true")) { left_ok = 1; }
                 else if (str_eq(line, "false")) { left_ok = 0; }
                 else {
-                    /* Detect pipe | in left side */
                     int left_len = str_len(line);
                     int has_pipe = 0;
                     for (int pi = 0; pi < left_len - 1; pi++) {
@@ -704,7 +703,6 @@ int main(int argc, char *argv[]) {
                         }
                     }
                     if (has_pipe && pipe_ep) {
-                        /* Split left side into pipe segments */
                         char *lsegs[9]; int lnseg = 0;
                         int lppos[8]; int lnp = 0;
                         for (int pi = 0; pi < left_len && lnp < 8; pi++) {
@@ -726,7 +724,6 @@ int main(int argc, char *argv[]) {
                         }
                         left_ok = (run_pipeline(lsegs, lnseg) == 0);
                     } else {
-                        /* Simple command: split cmd + args */
                         char *larg = 0;
                         for (int i = 0; line[i]; i++) {
                             if (line[i] == ' ') { line[i] = '\0'; larg = line + i + 1; break; }
@@ -736,18 +733,18 @@ int main(int argc, char *argv[]) {
                             left_ok = (do_exec(lpath, larg) == 0);
                     }
                 }
-
-                /* Execute right based on chain type */
+        
                 if ((chain_type == 1 && left_ok) || (chain_type == 2 && !left_ok)) {
-                    /* Reconstruct as if user typed right_cmd */
                     int rl = str_len(right_cmd);
                     for (int i = 0; i <= rl; i++) line[i] = right_cmd[i];
                     len = rl;
-                    /* Fall through to normal processing below */
+                    /* re-enter loop to check for more chains in right side */
                 } else {
-                    continue; /* Skip right side */
+                    chain_skip = 1;
+                    break;
                 }
             }
+            if (chain_skip) continue;
         }
 
         /* Check for pipe | (after && / || chains) */

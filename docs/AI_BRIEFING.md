@@ -7,7 +7,7 @@
 - **Repository**: https://github.com/arcanii/AIOS
 - **Branch**: main
 - **Developer**: Bryan
-- **Current Version**: v0.4.54
+- **Current Version**: v0.4.55
 
 ## Development Environment
 

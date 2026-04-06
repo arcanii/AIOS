@@ -128,7 +128,7 @@ static void init_default_users(void) {
         "8cd824c700eb0c125fff40c8c185d14c5dfe7f32814afac079ba7c20d93bc3c0"
         "82193243c420fed22ef2474fbb85880e7bc1ca772150a1f759f8ddebca77711f");
     users[0].uid=0; users[0].gid=0; users[0].is_root=1;
-    str_cpy(users[0].home,"/root"); str_cpy(users[0].shell,"/bin/sh");
+    str_cpy(users[0].home,"/"); str_cpy(users[0].shell,"/bin/sh");
     str_cpy(users[0].gecos,"System Administrator");
 
     users[1].active=1; str_cpy(users[1].username,"user");
@@ -288,7 +288,7 @@ static void handle_useradd(void) {
     aios_user_t *nu=&users[num_users++];
     nu->active=1; str_cpy(nu->username,u); str_cpy(nu->passhash,hex);
     nu->uid=new_uid; nu->gid=new_gid; nu->is_root=(new_uid==0)?1:0; nu->ngroups=0;
-    if(new_uid==0) str_cpy(nu->home,"/root");
+    if(new_uid==0) str_cpy(nu->home,"/");
     else{str_cpy(nu->home,"/home/");int hi=6;for(int j=0;u[j]&&hi<63;j++)nu->home[hi++]=u[j];nu->home[hi]='\0';}
     str_cpy(nu->shell,"/bin/sh");
     ser_puts("[INF] auth: useradd OK\n");
@@ -443,7 +443,7 @@ static void handle_load_passwd(void) {
                 }
             }
         }
-        if(u->home[0]=='\0'){if(u->uid==0)str_cpy(u->home,"/root");
+        if(u->home[0]=='\0'){if(u->uid==0)str_cpy(u->home,"/");
         else{str_cpy(u->home,"/home/");int hi=6;for(int j=0;u->username[j]&&hi<63;j++)u->home[hi++]=u->username[j];u->home[hi]='\0';}}
         if(u->shell[0]=='\0')str_cpy(u->shell,"/bin/sh");
         u->active=1; u->is_root=(u->uid==0)?1:0; num_users++;

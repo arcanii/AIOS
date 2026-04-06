@@ -53,6 +53,10 @@ AiosPosixApp(writetest)
 AiosPosixApp(diagtest)
 AiosPosixApp(signal_test)
 
+AiosPosixApp(posix_verify
+    SRCS ${CMAKE_CURRENT_SOURCE_DIR}/../../src/apps/posix_verify.c
+)
+
 # Boot services only in CPIO (launched before filesystem)
 set(BOOT_APPS tty_server auth_server)
 set(CPIO_FILES "")

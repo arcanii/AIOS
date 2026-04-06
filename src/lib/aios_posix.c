@@ -16,6 +16,9 @@
 #include <stdint.h>
 #include <stdarg.h>
 #include <bits/syscall.h>
+#ifndef __NR_times
+#define __NR_times 153
+#endif
 #ifndef __NR_getdents64
 #define __NR_getdents64 61
 #endif
@@ -1762,6 +1765,24 @@ static long aios_sys_rt_sigpending(va_list ap) {
     return 0;
 }
 
+
+/* sys_times stub -- returns clock ticks for sbase time(1) */
+static long aios_sys_times(va_list ap)
+{
+    struct { long tms_utime; long tms_stime; long tms_cutime; long tms_cstime; } *buf;
+    buf = va_arg(ap, void *);
+    if (buf) {
+        buf->tms_utime = 0;
+        buf->tms_stime = 0;
+        buf->tms_cutime = 0;
+        buf->tms_cstime = 0;
+    }
+    /* Return current clock ticks (monotonic approximation) */
+    struct timespec ts;
+    clock_gettime(0 /* CLOCK_MONOTONIC */, &ts);
+    return (long)(ts.tv_sec * 100 + ts.tv_nsec / 10000000);
+}
+
 void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     /* Skip if already initialized (e.g. by __wrap_main) */
     if (ser_ep && serial_ep == 0) return;
@@ -1878,6 +1899,7 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
 #endif
 #ifdef __NR_ftruncate
     muslcsys_install_syscall(__NR_ftruncate, aios_sys_ftruncate);
+    muslcsys_install_syscall(__NR_times, aios_sys_times);
 #endif
 }
 
