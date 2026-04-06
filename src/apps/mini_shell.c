@@ -24,8 +24,10 @@ extern int aios_get_pipe_id(int fd);
 #define AUTH_LOGIN  40
 #define PIPE_CREATE 60
 #define PIPE_CLOSE  63
+#define PIPE_CLOSE_WRITE 70
 #define PIPE_KILL   64
 #define PIPE_DEBUG  71
+#define PIPE_EXEC_WAIT 72
 #define AUTH_SU     48
 #define AUTH_PASSWD 47
 
@@ -417,11 +419,14 @@ static int run_pipeline(char **segments, int num_segments) {
             _exit(127);
         }
         child_pids[si] = pid;
-        /* yield after fork to let child exec before next fork.
-         * On SMP, without this the parent races ahead and
-         * the next fork/exec can collide with the current
-         * childs PIPE_EXEC in pipe_server. */
-        for (int y = 0; y < 20; y++) seL4_Yield();
+        /* Wait for child exec to complete before forking next.
+         * pipe_server blocks us via SaveCaller until PIPE_EXEC
+         * finishes, ensuring elf_buf is free for the next fork. */
+        if (pid > 0) {
+            seL4_SetMR(0, (seL4_Word)pid);
+            seL4_Call(pipe_ep,
+                seL4_MessageInfo_new(PIPE_EXEC_WAIT, 0, 0, 1));
+        }
     }
 
     /* Parent: close all pipe fds */
@@ -446,83 +451,6 @@ static int run_pipeline(char **segments, int num_segments) {
         }
     }
     return 0;
-}
-
-static int do_exec_piped(const char *cmdline, int stdout_pipe, int stdin_pipe) {
-    if (!exec_ep) return -1;
-    /* Build command with extended CWD marker: CWD=uid:gid:spipe:rpipe:/path */
-    char piped_cmd[512];
-    int pi = 0;
-    const char *p = cmdline;
-
-    /* Copy everything up to "CWD=" */
-    while (*p) {
-        if (p[0]=='C'&&p[1]=='W'&&p[2]=='D'&&p[3]=='=') break;
-        piped_cmd[pi++] = *p++;
-    }
-    if (*p) {
-        /* Found CWD= — insert pipe info after uid:gid: */
-        piped_cmd[pi++] = 'C'; piped_cmd[pi++] = 'W';
-        piped_cmd[pi++] = 'D'; piped_cmd[pi++] = '=';
-        p += 4; /* skip CWD= */
-        /* Copy uid */
-        while (*p && *p != ':') piped_cmd[pi++] = *p++;
-        if (*p == ':') piped_cmd[pi++] = *p++;
-        /* Copy gid */
-        while (*p && *p != ':') piped_cmd[pi++] = *p++;
-        if (*p == ':') piped_cmd[pi++] = *p++;
-        /* Insert spipe:rpipe: */
-        char sp[12], rp[12];
-        uint_to_dec(stdout_pipe < 0 ? 99 : (uint32_t)stdout_pipe, sp);
-        uint_to_dec(stdin_pipe < 0 ? 99 : (uint32_t)stdin_pipe, rp);
-        for (int x=0; sp[x]; x++) piped_cmd[pi++] = sp[x];
-        piped_cmd[pi++] = ':';
-        for (int x=0; rp[x]; x++) piped_cmd[pi++] = rp[x];
-        piped_cmd[pi++] = ':';
-        /* Copy remaining path */
-        while (*p && pi < 510) piped_cmd[pi++] = *p++;
-    }
-    piped_cmd[pi] = '\0';
-
-    /* Send via normal exec IPC */
-    int pl = str_len(piped_cmd);
-    seL4_SetMR(0, (seL4_Word)pl);
-    int mr = 1;
-    seL4_Word w = 0;
-    for (int i = 0; i < pl; i++) {
-        w |= ((seL4_Word)(uint8_t)piped_cmd[i]) << ((i % 8) * 8);
-        if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
-    }
-    seL4_MessageInfo_t reply = seL4_Call(exec_ep, seL4_MessageInfo_new(EXEC_RUN, 0, 0, mr));
-    return (int)(long)seL4_GetMR(0);
-}
-
-static int do_exec_bg_ipc(const char *cmdline) {
-    if (!exec_ep) return -1;
-    int pl = str_len(cmdline);
-    seL4_SetMR(0, (seL4_Word)pl);
-    int mr = 1;
-    seL4_Word w = 0;
-    for (int i = 0; i < pl; i++) {
-        w |= ((seL4_Word)(uint8_t)cmdline[i]) << ((i % 8) * 8);
-        if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
-    }
-    seL4_MessageInfo_t reply = seL4_Call(exec_ep, seL4_MessageInfo_new(EXEC_RUN_BG, 0, 0, mr));
-    return (int)(long)seL4_GetMR(0);
-}
-
-static int do_exec_ipc(const char *cmdline) {
-    if (!exec_ep) return -1;
-    int pl = str_len(cmdline);
-    seL4_SetMR(0, (seL4_Word)pl);
-    int mr = 1;
-    seL4_Word w = 0;
-    for (int i = 0; i < pl; i++) {
-        w |= ((seL4_Word)(uint8_t)cmdline[i]) << ((i % 8) * 8);
-        if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
-    }
-    seL4_MessageInfo_t reply = seL4_Call(exec_ep, seL4_MessageInfo_new(EXEC_RUN, 0, 0, mr));
-    return (int)(long)seL4_GetMR(0);
 }
 
 /* ── Line editor with cursor movement ── */
@@ -832,60 +760,7 @@ login_gate:
             }
         }
 
-        /* Check for pipe | (supports multi-pipe: a | b | c) */
-        {
-            /* Count pipe segments */
-            int pipe_positions[8];
-            int num_pipes = 0;
-            for (int ci = 0; ci < len && num_pipes < 8; ci++) {
-                if (line[ci] == '|' && (ci + 1 >= len || line[ci+1] != '|')) {
-                    pipe_positions[num_pipes++] = ci;
-                }
-            }
-            if (num_pipes > 0 && pipe_ep) {
-                /* Split into segments */
-                char *segments[9];  /* max 8 pipes = 9 segments */
-                int num_segments = 0;
-                segments[num_segments++] = line;
-                for (int pi = 0; pi < num_pipes; pi++) {
-                    line[pipe_positions[pi]] = '\0';
-                    char *next = line + pipe_positions[pi] + 1;
-                    while (*next == ' ') next++;
-                    segments[num_segments++] = next;
-                }
-                /* Trim trailing spaces from each segment */
-                for (int si = 0; si < num_segments; si++) {
-                    int sl = str_len(segments[si]);
-                    while (sl > 0 && segments[si][sl-1] == ' ') segments[si][--sl] = '\0';
-                }
-
-                /* Create pipe_ids between each pair */
-                int pipe_ids[8];
-                int pipes_ok = 1;
-                for (int pi = 0; pi < num_pipes; pi++) {
-                    seL4_MessageInfo_t pr = seL4_Call(pipe_ep,
-                        seL4_MessageInfo_new(PIPE_CREATE, 0, 0, 0));
-                    pipe_ids[pi] = (int)(long)seL4_GetMR(0);
-                    if (pipe_ids[pi] < 0) { pipes_ok = 0; break; }
-                }
-                if (!pipes_ok) {
-                    ser_puts("pipe: failed to create\n");
-                    /* Clean up any created pipes */
-                    for (int pi = 0; pi < num_pipes; pi++) {
-                        if (pipe_ids[pi] >= 0) {
-                            seL4_SetMR(0, (seL4_Word)pipe_ids[pi]);
-                            seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_CLOSE, 0, 0, 1));
-                        }
-                    }
-                    continue;
-                }
-
-                run_pipeline(segments, num_segments);
-                continue;
-            }
-        }
-
-        /* Check for && / || chains first (before command split) */
+        /* Check for && / || chains (before pipe splitting) */
         {
             int chain_pos = -1, chain_type = 0;
             for (int ci = 0; ci < len - 1; ci++) {
@@ -938,6 +813,39 @@ login_gate:
                 }
             }
         }
+
+        /* Check for pipe | (after && / || chains) */
+        {
+            /* Count pipe segments */
+            int pipe_positions[8];
+            int num_pipes = 0;
+            for (int ci = 0; ci < len && num_pipes < 8; ci++) {
+                if (line[ci] == '|' && (ci + 1 >= len || line[ci+1] != '|')) {
+                    pipe_positions[num_pipes++] = ci;
+                }
+            }
+            if (num_pipes > 0 && pipe_ep) {
+                /* Split into segments */
+                char *segments[9];  /* max 8 pipes = 9 segments */
+                int num_segments = 0;
+                segments[num_segments++] = line;
+                for (int pi = 0; pi < num_pipes; pi++) {
+                    line[pipe_positions[pi]] = '\0';
+                    char *next = line + pipe_positions[pi] + 1;
+                    while (*next == ' ') next++;
+                    segments[num_segments++] = next;
+                }
+                /* Trim trailing spaces from each segment */
+                for (int si = 0; si < num_segments; si++) {
+                    int sl = str_len(segments[si]);
+                    while (sl > 0 && segments[si][sl-1] == ' ') segments[si][--sl] = '\0';
+                }
+
+                run_pipeline(segments, num_segments);
+                continue;
+            }
+        }
+
 
         /* Split command + args */
         char *arg = 0;
@@ -1015,6 +923,8 @@ login_gate:
                 if (l > 1 && cwd[l-1] == '/') cwd[l-1] = '\0';
             }
             env_set("PWD", cwd);
+            chdir(cwd);
+            continue;
         } else if (str_eq(line, "exit") || str_eq(line, "logout")) {
             if (su_depth > 0) {
                 /* Pop su stack — return to previous identity */
@@ -1272,67 +1182,103 @@ login_gate:
                 cmd[ci] = '\0';
 
                 if (redir_out && pipe_ep) {
-                    /* Output redirection: capture stdout to pipe, write to file */
-                    seL4_MessageInfo_t pr = seL4_Call(pipe_ep,
-                        seL4_MessageInfo_new(PIPE_CREATE, 0, 0, 0));
-                    int rpid = (int)(long)seL4_GetMR(0);
-                    if (rpid >= 0) {
-                        do_exec_piped(cmd, rpid, -1);
-                        /* Read pipe contents and write to file via FS */
-                        char fbuf[4096]; int fpos = 0;
-                        while (fpos < 4095) {
-                            int want = 900;
-                            if (fpos + want > 4095) want = 4095 - fpos;
-                            seL4_SetMR(0, (seL4_Word)rpid);
-                            seL4_SetMR(1, (seL4_Word)want);
-                            seL4_MessageInfo_t rr = seL4_Call(pipe_ep,
-                                seL4_MessageInfo_new(62, 0, 0, 2));
-                            int got = (int)(long)seL4_GetMR(0);
-                            if (got <= 0) break;
-                            int mr = 1;
-                            for (int i = 0; i < got; i++) {
-                                if (i % 8 == 0 && i > 0) mr++;
-                                fbuf[fpos++] = (char)((seL4_GetMR(mr) >> ((i % 8) * 8)) & 0xFF);
+                    /* Output redirect via fork+dup2+exec (POSIX) */
+                    int rfd[2];
+                    if (pipe(rfd) < 0) {
+                        ser_puts("redir: pipe failed\n");
+                    } else {
+                        int rpipe_id = aios_get_pipe_id(rfd[0]);
+                        pid_t rpid = fork();
+                        if (rpid < 0) {
+                            ser_puts("redir: fork failed\n");
+                            close(rfd[0]); close(rfd[1]);
+                            if (rpipe_id >= 0) {
+                                seL4_SetMR(0, (seL4_Word)rpipe_id);
+                                seL4_Call(pipe_ep,
+                                    seL4_MessageInfo_new(PIPE_CLOSE, 0, 0, 1));
                             }
-                        }
-                        /* Resolve path */
-                        char rpath[256];
-                        if (redir_out[0] != '/') {
-                            int ri = 0;
-                            const char *cw2 = cwd;
-                            while (*cw2 && ri < 250) rpath[ri++] = *cw2++;
-                            if (ri > 1) rpath[ri++] = '/';
-                            while (*redir_out && ri < 255) rpath[ri++] = *redir_out++;
-                            rpath[ri] = '\0';
+                        } else if (rpid == 0) {
+                            /* Child: stdout -> pipe write end */
+                            dup2(rfd[1], 1);
+                            close(rfd[0]); close(rfd[1]);
+                            char *eargv[32]; int eac = 0;
+                            const char *bn = full_path;
+                            for (const char *pp = full_path; *pp; pp++)
+                                if (*pp == '/') bn = pp + 1;
+                            static char ea0[64];
+                            { int bi2=0; while(*bn && bi2<63) ea0[bi2++]=*bn++; ea0[bi2]=0; }
+                            eargv[eac++] = ea0;
+                            static char eabuf[512];
+                            if (arg) {
+                                int ai2=0; const char *sa=arg;
+                                while (*sa && ai2<510) eabuf[ai2++]=*sa++;
+                                eabuf[ai2]=0;
+                                char *ep=eabuf;
+                                while (*ep && eac<31) {
+                                    while(*ep==' ') ep++;
+                                    if (!*ep) break;
+                                    eargv[eac++]=ep;
+                                    while(*ep && *ep!=' ') ep++;
+                                    if(*ep){*ep=0;ep++;}
+                                }
+                            }
+                            eargv[eac] = 0;
+                            execv(full_path, eargv);
+                            _exit(127);
                         } else {
-                            int ri = 0;
-                            while (*redir_out && ri < 255) rpath[ri++] = *redir_out++;
-                            rpath[ri] = '\0';
-                        }
-                        /* Write to file via FS_WRITE_FILE IPC */
-                        if (fs_ep && fpos > 0) {
-                            int pl = str_len(rpath);
-                            seL4_SetMR(0, (seL4_Word)pl);
-                            int mr = 1;
-                            seL4_Word w = 0;
-                            for (int i = 0; i < pl; i++) {
-                                w |= ((seL4_Word)(uint8_t)rpath[i]) << ((i % 8) * 8);
-                                if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
+                            /* Parent: read child stdout from pipe */
+                            close(rfd[1]);
+                            char fbuf[4096]; int fpos = 0;
+                            while (fpos < 4095) {
+                                char tmp[256];
+                                int got = read(rfd[0], tmp, 256);
+                                if (got <= 0) break;
+                                for (int i = 0; i < got && fpos < 4095; i++)
+                                    fbuf[fpos++] = tmp[i];
                             }
-                            seL4_SetMR(mr++, (seL4_Word)fpos);
-                            w = 0;
-                            for (int i = 0; i < fpos; i++) {
-                                w |= ((seL4_Word)(uint8_t)fbuf[i]) << ((i % 8) * 8);
-                                if (i % 8 == 7 || i == fpos - 1) { seL4_SetMR(mr++, w); w = 0; }
+                            close(rfd[0]);
+                            waitpid(rpid, 0, 0);
+                            if (rpipe_id >= 0) {
+                                seL4_SetMR(0, (seL4_Word)rpipe_id);
+                                seL4_Call(pipe_ep,
+                                    seL4_MessageInfo_new(PIPE_CLOSE, 0, 0, 1));
                             }
-                            seL4_Call(fs_ep, seL4_MessageInfo_new(15, 0, 0, mr));
+                            /* Resolve output path */
+                            char rpath[256];
+                            if (redir_out[0] != '/') {
+                                int ri = 0;
+                                const char *cw2 = cwd;
+                                while (*cw2 && ri < 250) rpath[ri++] = *cw2++;
+                                if (ri > 1) rpath[ri++] = '/';
+                                while (*redir_out && ri < 255) rpath[ri++] = *redir_out++;
+                                rpath[ri] = 0;
+                            } else {
+                                int ri = 0;
+                                while (*redir_out && ri < 255) rpath[ri++] = *redir_out++;
+                                rpath[ri] = 0;
+                            }
+                            /* Write to file via FS_WRITE_FILE IPC */
+                            if (fs_ep && fpos > 0) {
+                                int pl = str_len(rpath);
+                                seL4_SetMR(0, (seL4_Word)pl);
+                                int mr = 1;
+                                seL4_Word w = 0;
+                                for (int i = 0; i < pl; i++) {
+                                    w |= ((seL4_Word)(uint8_t)rpath[i]) << ((i % 8) * 8);
+                                    if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
+                                }
+                                seL4_SetMR(mr++, (seL4_Word)fpos);
+                                w = 0;
+                                for (int i = 0; i < fpos; i++) {
+                                    w |= ((seL4_Word)(uint8_t)fbuf[i]) << ((i % 8) * 8);
+                                    if (i % 8 == 7 || i == fpos - 1) { seL4_SetMR(mr++, w); w = 0; }
+                                }
+                                seL4_Call(fs_ep, seL4_MessageInfo_new(15, 0, 0, mr));
+                            }
                         }
-                        seL4_SetMR(0, (seL4_Word)rpid);
-                        seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_CLOSE, 0, 0, 1));
                     }
                 } else if (redir_in && pipe_ep) {
-                    /* Input redirection: read file, feed to stdin pipe */
-                    /* Resolve path */
+                    /* Input redirect via fork+dup2+exec (POSIX) */
                     char rpath[256];
                     if (redir_in[0] != '/') {
                         int ri = 0;
@@ -1341,11 +1287,11 @@ login_gate:
                         if (ri > 1) rpath[ri++] = '/';
                         const char *rr = redir_in;
                         while (*rr && ri < 255) rpath[ri++] = *rr++;
-                        rpath[ri] = '\0';
+                        rpath[ri] = 0;
                     } else {
                         int ri = 0;
                         while (*redir_in && ri < 255) rpath[ri++] = *redir_in++;
-                        rpath[ri] = '\0';
+                        rpath[ri] = 0;
                     }
                     /* Read file via FS_CAT */
                     char fbuf[4096]; int flen = 0;
@@ -1369,30 +1315,56 @@ login_gate:
                         }
                     }
                     if (flen > 0) {
-                        /* Create pipe, fill it, exec with stdin←pipe */
-                        seL4_MessageInfo_t pr = seL4_Call(pipe_ep,
-                            seL4_MessageInfo_new(PIPE_CREATE, 0, 0, 0));
-                        int rpid = (int)(long)seL4_GetMR(0);
-                        if (rpid >= 0) {
-                            /* Write file contents to pipe */
-                            int sent = 0;
-                            while (sent < flen) {
-                                int chunk = flen - sent;
-                                if (chunk > 900) chunk = 900;
-                                seL4_SetMR(0, (seL4_Word)rpid);
-                                seL4_SetMR(1, (seL4_Word)chunk);
-                                int mr = 2;
-                                seL4_Word w = 0;
-                                for (int i = 0; i < chunk; i++) {
-                                    w |= ((seL4_Word)(uint8_t)fbuf[sent+i]) << ((i % 8) * 8);
-                                    if (i % 8 == 7 || i == chunk - 1) { seL4_SetMR(mr++, w); w = 0; }
-                                }
-                                seL4_Call(pipe_ep, seL4_MessageInfo_new(61, 0, 0, mr));
-                                sent += chunk;
+                        int rfd[2];
+                        if (pipe(rfd) >= 0) {
+                            int rpipe_id = aios_get_pipe_id(rfd[0]);
+                            write(rfd[1], fbuf, flen);
+                            close(rfd[1]);
+                            /* Signal write-end closed so child read() gets EOF */
+                            if (rpipe_id >= 0) {
+                                seL4_SetMR(0, (seL4_Word)rpipe_id);
+                                seL4_Call(pipe_ep,
+                                    seL4_MessageInfo_new(PIPE_CLOSE_WRITE, 0, 0, 1));
                             }
-                            do_exec_piped(cmd, -1, rpid);
-                            seL4_SetMR(0, (seL4_Word)rpid);
-                            seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_CLOSE, 0, 0, 1));
+                            pid_t rpid2 = fork();
+                            if (rpid2 == 0) {
+                                dup2(rfd[0], 0);
+                                close(rfd[0]);
+                                char *eargv[32]; int eac = 0;
+                                const char *bn = full_path;
+                                for (const char *pp = full_path; *pp; pp++)
+                                    if (*pp == '/') bn = pp + 1;
+                                static char ea0_in[64];
+                                { int bi2=0; while(*bn && bi2<63) ea0_in[bi2++]=*bn++; ea0_in[bi2]=0; }
+                                eargv[eac++] = ea0_in;
+                                static char eabuf_in[512];
+                                if (arg) {
+                                    int ai2=0; const char *sa=arg;
+                                    while (*sa && ai2<510) eabuf_in[ai2++]=*sa++;
+                                    eabuf_in[ai2]=0;
+                                    char *ep=eabuf_in;
+                                    while (*ep && eac<31) {
+                                        while(*ep==' ') ep++;
+                                        if (!*ep) break;
+                                        eargv[eac++]=ep;
+                                        while(*ep && *ep!=' ') ep++;
+                                        if(*ep){*ep=0;ep++;}
+                                    }
+                                }
+                                eargv[eac] = 0;
+                                execv(full_path, eargv);
+                                _exit(127);
+                            } else if (rpid2 > 0) {
+                                close(rfd[0]);
+                                waitpid(rpid2, 0, 0);
+                            } else {
+                                close(rfd[0]);
+                            }
+                            if (rpipe_id >= 0) {
+                                seL4_SetMR(0, (seL4_Word)rpipe_id);
+                                seL4_Call(pipe_ep,
+                                    seL4_MessageInfo_new(PIPE_CLOSE, 0, 0, 1));
+                            }
                         }
                     } else {
                         ser_puts(rpath); ser_puts(": No such file\n");

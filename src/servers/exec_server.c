@@ -302,6 +302,9 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         ap->uid = (uint32_t)(uint8_t)cwd_buf[252] | ((uint32_t)(uint8_t)cwd_buf[253] << 8);
         ap->gid = (uint32_t)(uint8_t)cwd_buf[254] | ((uint32_t)(uint8_t)cwd_buf[255] << 8);
         ap->fault_ep = child_fault_ep;
+        ap->fault_on_pipe_ep = 0;
+        ap->stdout_pipe_id = -1;
+        ap->stdin_pipe_id = -1;
         ap->num_threads = 0;
         for (int ti = 0; ti < MAX_THREADS_PER_PROC; ti++)
             ap->threads[ti].active = 0;

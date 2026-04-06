@@ -42,6 +42,7 @@
 #define AIOS_PIPE_READ      62
 #define AIOS_PIPE_CLOSE     63
 #define AIOS_PIPE_CLOSE_WRITE 70
+#define AIOS_PIPE_CLOSE_READ  73
 
 /* Exec with pipe redirection */
 #define AIOS_EXEC_RUN_PIPE  22

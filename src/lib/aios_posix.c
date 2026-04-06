@@ -25,6 +25,7 @@
 #define PIPE_EXIT 68
 #define PIPE_EXEC 69
 #define PIPE_CLOSE_WRITE 70
+#define PIPE_CLOSE_READ  73
 #include <muslcsys/vsyscall.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -1503,6 +1504,13 @@ static long aios_sys_execve(va_list ap) {
     }
     buf[pos++] = 0; /* double-null terminator */
 
+    /* Pack CWD after argv double-null so pipe_server can extract it */
+    {
+        const char *cwdp = aios_cwd;
+        while (*cwdp && pos < 898) buf[pos++] = *cwdp++;
+        buf[pos++] = 0;
+    }
+
     /* Pack pipe metadata in MR0, string buffer in MR1..MRn
      * MR0 bits [31:16] = stdout_pipe_id + 1 (0 = no redirect)
      * MR0 bits [15:0]  = stdin_pipe_id + 1  (0 = no redirect) */
@@ -1551,17 +1559,17 @@ static void aios_exit_cb(int code) {
     fflush(stdout);
     fflush(stderr);
     if (pipe_ep) {
-        /* Explicitly close pipe write end before exiting.
-         * This is the POSIX way: the child closes its end,
-         * readers get EOF deterministically. Do not rely on
-         * fault timing for pipe lifecycle. */
+        /* Close pipe ends before exiting. This is the canonical path
+         * for ALL process types (exec_server and pipe_server children).
+         * handle_child_fault provides backup for crashes where exit_cb
+         * never runs, but checks write_closed to avoid double-decrement. */
         if (stdout_pipe_id >= 0) {
             seL4_SetMR(0, (seL4_Word)stdout_pipe_id);
             seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_CLOSE_WRITE, 0, 0, 1));
         }
         if (stdin_pipe_id >= 0) {
             seL4_SetMR(0, (seL4_Word)stdin_pipe_id);
-            seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_CLOSE_WRITE, 0, 0, 1));
+            seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_CLOSE_READ, 0, 0, 1));
         }
         seL4_SetMR(0, (seL4_Word)code);
         seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_EXIT, 0, 0, 1));

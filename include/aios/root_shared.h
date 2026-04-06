@@ -45,6 +45,8 @@
 #define PIPE_EXEC       69
 #define PIPE_CLOSE_WRITE 70
 #define PIPE_DEBUG       71
+#define PIPE_EXEC_WAIT   72
+#define PIPE_CLOSE_READ  73
 
 /* ── Limits ── */
 
@@ -112,6 +114,8 @@ typedef struct {
     int count;
     int read_closed;
     int write_closed;
+    int read_refs;
+    int write_refs;
 } pipe_t;
 
 typedef struct {
