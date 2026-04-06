@@ -439,3 +439,113 @@ Main loop polls UART, sees 0x03, needs to kill child. But exec_thread is blocked
 
 ### process_kill via pipe_server
 exec_thread blocks waiting for child exit, so it can't receive kill IPC. Route kill through pipe_server instead (always available, runs in root VSpace, can call process_kill directly). Forward declaration needed since pipe_server_fn is defined before process_kill.
+
+
+## Fork+Exec Pipes (v0.4.50)
+
+### pipe2() fd Allocation Bug (THE Root Cause)
+`aios_fd_alloc()` returns a free slot index but does NOT mark it active.
+When `pipe2()` calls it twice in succession, both calls return the SAME index.
+Read fd == write fd. All data written is immediately visible to reads on the
+same fd, but the pipe server never receives data because both ends point to
+the same aios_fd entry.
+
+Fix: mark `aios_fds[ri].active = 1` immediately after the first alloc,
+before calling `aios_fd_alloc()` for the second fd. This single-line fix
+resolved every pipe failure across 20+ debugging attempts.
+
+Lesson: when allocating paired resources, always commit the first allocation
+before requesting the second. This applies to any allocator that searches for
+"first free slot" -- the slot must be marked used before the next search.
+
+### close() Must Not Signal Pipe Server
+In the fork+dup2+exec pipeline pattern, the child does:
+```c
+dup2(write_fd, 1);   // stdout now goes to pipe
+close(write_fd);      // clean up original fd
+execv(path, argv);    // run program
+```
+If `close(write_fd)` sends PIPE_CLOSE or PIPE_CLOSE_WRITE to the server,
+the pipe is destroyed or EOF-signaled BEFORE exec even loads the program.
+The reader sees empty output or EOF immediately.
+
+Fix: `close()` only clears the local fd entry. It sends NO server IPC.
+EOF is signaled only by `aios_exit_cb()` when the writer process exits.
+The parent shell sends `PIPE_CLOSE` to destroy the server-side buffer
+after all children have exited.
+
+This matches Unix semantics: `close(fd)` decrements a reference count.
+The pipe stays alive until all writers exit (or all readers close).
+
+### Notification-Based Fault Delivery
+Previous approach: separate fault endpoint per child + spin loop + NBRecv.
+On SMP, NBRecv is destructive -- it consumes the fault message. If called
+at the wrong time, it kills a live process mid-IPC.
+
+Fix: mint a badged copy of pipe_ep as the child fault endpoint.
+Child faults arrive on pipe_ep with seL4 fault label (< 60), while
+PIPE_* IPC has labels >= 60. pipe_server distinguishes them by label
+and processes faults as normal IPC messages. No spinning, no NBRecv,
+deterministic on SMP.
+
+Cleanup difference: minted caps are freed with CNode_Delete + cspace_free,
+not vka_free_object (which would try to free a non-existent untyped).
+The `fault_on_pipe_ep` flag in active_proc_t tracks which cleanup to use.
+
+### SMP Fork Startup Race
+On 4-core SMP, the parent forks child A and child B in rapid succession.
+Both children call PIPE_EXEC on pipe_server simultaneously. pipe_server
+is single-threaded and shares `elf_buf[]` -- if two PIPE_EXEC messages
+arrive before the first completes, the ELF buffer is corrupted.
+
+Workaround: 20x `seL4_Yield()` between forks in `run_pipeline()`.
+This gives the first child time to complete its PIPE_EXEC before the
+parent forks the second child.
+
+Proper fix (future): completion handshake in PIPE_FORK/PIPE_EXEC.
+pipe_server should signal the parent when the child is fully exec-ed
+and ready, before accepting the next fork request.
+
+### POSIX Pipeline Pattern on seL4
+The correct pattern for `cmd1 | cmd2 | cmd3`:
+1. Parent calls `pipe()` for each inter-segment connection
+2. Parent saves server-side pipe_ids (via `aios_get_pipe_id()`)
+3. Parent forks each child (with yield between forks on SMP)
+4. Each child: `dup2(pipe_fd, 0 or 1)`, close all pipe fds, `execv()`
+5. Parent: close all pipe fds, `waitpid()` all children
+6. Parent: send `PIPE_CLOSE` for each saved pipe_id to free server buffer
+
+Key: the child's `close()` must NOT talk to pipe_server. Only the exit
+callback signals `PIPE_CLOSE_WRITE` for EOF. Only the parent's explicit
+`PIPE_CLOSE` after waitpid destroys the buffer.
+
+### Blocking PIPE_READ via SaveCaller
+When a pipe is empty but the writer is still alive, the reader should block
+(not busy-poll). pipe_server uses the SaveCaller pattern:
+1. Reader sends PIPE_READ, pipe is empty, writer alive
+2. pipe_server saves reply cap via `seL4_CNode_SaveCaller`
+3. pipe_server does NOT reply -- reader blocks
+4. When writer sends PIPE_WRITE, pipe_server wakes one blocked reader
+5. When writer sends PIPE_CLOSE_WRITE, pipe_server wakes all readers with EOF
+
+This eliminates busy-waiting and ensures deterministic EOF delivery.
+
+### MAX_ACTIVE_PROCS Must Account for Pipelines
+With 7 server processes (root, fs, exec, thread, pipe, tty, auth) and
+`MAX_ACTIVE_PROCS=8`, only 1 slot remains for children. A two-stage
+pipeline needs 2 simultaneous children. Three-stage needs 3.
+
+Fix: increased to 16. This allows 9 simultaneous user processes, enough
+for complex pipelines and background jobs.
+
+### pipe_test Diagnostic Tool
+When pipe mechanisms are complex, a standalone test program is invaluable.
+`pipe_test` exercises 4 levels of the pipe stack:
+1. Single-process: pipe+write+read (tests IPC roundtrip)
+2. Fork+pipe without exec (tests cross-process pipe)
+3. Fork+exec+dup2 (tests the real pipeline path)
+4. Two-child pipeline (tests multi-process coordination)
+
+Each test isolates one layer. When Test 1 passes but Test 2 fails,
+the bug is in fork-related pipe handling, not the pipe mechanism itself.
+When all tests pass but shell pipes fail, the bug is in run_pipeline().
