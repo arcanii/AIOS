@@ -81,16 +81,31 @@ int main(void) {
     r = kill(99999, 0);
     check("kill(99999, 0) returns -1 (no such process)", r == -1);
 
-    /* Test 6: kill delivers SIGUSR1 to self */
-    printf("\n[5] kill signal delivery\n");
+    /* Test 6: kill delivers SIGUSR1 to self -- cooperative dispatch */
+    printf("\n[5] kill signal delivery (Phase 2)\n");
     got_signal = 0;
     last_signum = 0;
     r = kill(getpid(), SIGUSR1);
     check("kill(self, SIGUSR1) returns 0", r == 0);
-    /* NOTE: signal delivery is cooperative in AIOS.
-     * The pending bit is set server-side but handler invocation
-     * requires Phase 2 (TCB register trampoline).
-     * For now we just verify the kill() call succeeds. */
+    check("handler was invoked", got_signal == 1);
+    check("received correct signal", last_signum == SIGUSR1);
+
+    /* Test 6b: second signal also dispatches */
+    got_signal = 0;
+    last_signum = 0;
+    r = kill(getpid(), SIGUSR1);
+    check("second kill returns 0", r == 0);
+    check("handler invoked again", got_signal == 1);
+
+    /* Test 6c: SIG_DFL(SIGCHLD) should be ignored, not terminate */
+    printf("\n[5b] SIG_DFL ignore class\n");
+    struct sigaction dfl;
+    memset(&dfl, 0, sizeof(dfl));
+    dfl.sa_handler = SIG_DFL;
+    sigaction(SIGCHLD, &dfl, NULL);
+    r = kill(getpid(), SIGCHLD);
+    check("kill(self, SIGCHLD) with SIG_DFL returns 0", r == 0);
+    check("process survived (SIGCHLD default=ignore)", 1);
 
     /* Test 7: SIG_IGN */
     printf("\n[6] SIG_IGN\n");

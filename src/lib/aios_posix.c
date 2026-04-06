@@ -27,6 +27,7 @@
 #define PIPE_CLOSE_WRITE 70
 #define PIPE_CLOSE_READ  73
 #define PIPE_SIGNAL      75
+#define PIPE_SIG_FETCH   76
 #include <muslcsys/vsyscall.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -55,6 +56,7 @@ static int stdout_pipe_id = -1;   /* if >= 0, stdout goes to pipe */
 static int stdin_pipe_id = -1;    /* if >= 0, stdin comes from pipe */
 
 static aios_sigstate_t sigstate;
+static int sig_dispatching = 0;
 
 static void resolve_path(const char *pathname, char *out, int outsz) {
     if (pathname[0] == '/') {
@@ -269,6 +271,70 @@ static int fetch_dir_as_getdents(const char *path, char *buf, int bufsz) {
         out += reclen;
     }
     return out;
+}
+
+/*
+ * aios_sig_check -- Cooperative signal dispatch
+ *
+ * Fetches pending signals from pipe_server (PIPE_SIG_FETCH),
+ * merges with local pending, and invokes handlers for any
+ * unblocked pending signals.  Called after key syscalls.
+ *
+ * SIG_DFL actions per POSIX:
+ *   Terminate: HUP,INT,QUIT,ILL,TRAP,ABRT,BUS,FPE,
+ *              USR1,SEGV,USR2,PIPE,ALRM,TERM
+ *   Ignore:    CHLD,CONT,TSTP,TTIN,TTOU,URG
+ */
+static void aios_exit_cb(int code);
+
+static void aios_sig_check(void) {
+    if (!pipe_ep) return;
+    if (sig_dispatching) return;
+    if (!sigstate.initialized) aios_sigstate_init(&sigstate);
+
+    sig_dispatching = 1;
+
+    /* Fetch and clear server-side pending bits */
+    seL4_MessageInfo_t sr = seL4_Call(pipe_ep,
+        seL4_MessageInfo_new(PIPE_SIG_FETCH, 0, 0, 0));
+    (void)sr;
+    uint32_t server_pending = (uint32_t)seL4_GetMR(0);
+    sigstate.pending |= server_pending;
+
+    /* Dispatch unblocked pending signals (lowest first, POSIX order) */
+    uint32_t deliverable = sigstate.pending & ~(uint32_t)sigstate.blocked;
+    if (!deliverable) { sig_dispatching = 0; return; }
+
+    for (int sig = 1; sig < AIOS_NSIG; sig++) {
+        if (!(deliverable & SIG_BIT(sig))) continue;
+
+        sigstate.pending &= ~SIG_BIT(sig);
+
+        aios_k_sigaction_t *sa = &sigstate.actions[sig];
+        void (*handler)(int) = sa->sa_handler;
+
+        if (handler == (void (*)(int))0) {
+            /* SIG_DFL */
+            switch (sig) {
+            case AIOS_SIGCHLD:
+            case AIOS_SIGCONT:
+            case 20: /* TSTP  - no job control */
+            case 21: /* TTIN  - no job control */
+            case 22: /* TTOU  - no job control */
+            case 23: /* URG   */
+                break;
+            default:
+                sig_dispatching = 0;
+                aios_exit_cb(128 + sig);
+                break;
+            }
+        } else if (handler == (void (*)(int))1) {
+            /* SIG_IGN */
+        } else {
+            handler(sig);
+        }
+    }
+    sig_dispatching = 0;
 }
 
 static long aios_sys_open(va_list ap) {
@@ -1662,7 +1728,9 @@ static long aios_sys_kill(va_list ap) {
     seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
         seL4_MessageInfo_new(PIPE_SIGNAL, 0, 0, 2));
     (void)reply;
-    return (long)seL4_GetMR(0);
+    long kill_result = (long)seL4_GetMR(0);
+    aios_sig_check();
+    return kill_result;
 }
 
 /* tgkill(tgid, tid, sig) -- single-threaded: treat as kill(tid, sig) */
@@ -1679,7 +1747,9 @@ static long aios_sys_tgkill(va_list ap) {
     seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
         seL4_MessageInfo_new(PIPE_SIGNAL, 0, 0, 2));
     (void)reply;
-    return (long)seL4_GetMR(0);
+    long kill_result = (long)seL4_GetMR(0);
+    aios_sig_check();
+    return kill_result;
 }
 
 /* rt_sigpending(set, sigsetsize) */

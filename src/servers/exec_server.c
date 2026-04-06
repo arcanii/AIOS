@@ -22,15 +22,13 @@
 
 
 /* ── Process kill ── */
+/* process_kill -- DEPRECATED: prefer handle_child_fault in pipe_server.
+ * Retained as fallback. Now creates zombie so waitpid does not block. */
 int process_kill(int pid) {
     for (int i = 0; i < MAX_ACTIVE_PROCS; i++) {
         if (active_procs[i].active && active_procs[i].pid == pid) {
-            /* Destroy the process */
-            sel4utils_destroy_process(&active_procs[i].proc, &vka);
-            vka_free_object(&vka, &active_procs[i].fault_ep);
-            active_procs[i].active = 0;
-            /* Update proc table */
-            proc_remove(pid);
+            active_procs[i].exit_status = 9; /* SIGKILL */
+            reap_forked_child(i);
             return 0;
         }
     }

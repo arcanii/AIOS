@@ -22,6 +22,11 @@
 #include <sel4utils/elf.h>
 #include <simple/simple.h>
 #include "aios/root_shared.h"
+/* Signal fetch: client retrieves and clears pending bits */
+#ifndef PIPE_SIG_FETCH
+#define PIPE_SIG_FETCH 76
+#endif
+
 #include "aios/vfs.h"
 #include "aios/procfs.h"
 
@@ -334,9 +339,29 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             break;
         }
         case PIPE_KILL: {
+            /* PIPE_KILL: reap path for proper zombie creation.
+             * find active_proc index, then handle_child_fault
+             * which does pipe cleanup + reap_forked_child. */
             int pid = (int)seL4_GetMR(0);
-            int result = process_kill(pid);
-            seL4_SetMR(0, (seL4_Word)result);
+            int ki = -1;
+            for (int i = 0; i < MAX_ACTIVE_PROCS; i++) {
+                if (active_procs[i].active && active_procs[i].pid == pid) {
+                    ki = i; break;
+                }
+            }
+            if (ki < 0) {
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            active_procs[ki].exit_status = 9; /* SIGKILL */
+            if (active_procs[ki].fault_on_pipe_ep) {
+                handle_child_fault(ki);
+            } else {
+                /* Non-forked process: use direct destroy + reap */
+                reap_forked_child(ki);
+            }
+            seL4_SetMR(0, 0);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }
@@ -765,9 +790,12 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
 
             if (signum == 9 || signum == 15) {
-                /* SIGKILL / SIGTERM: destroy process immediately */
-                int result = process_kill(target_pid);
-                seL4_SetMR(0, (seL4_Word)result);
+                /* SIGKILL / SIGTERM: destroy via reap path so
+                 * zombie is created and waitpid unblocks.
+                 * POSIX wait status: signal death = raw signum. */
+                active_procs[ti].exit_status = signum;
+                handle_child_fault(ti);
+                seL4_SetMR(0, 0);
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                 break;
             }
@@ -809,6 +837,20 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 }
             }
             seL4_SetMR(0, 0);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        case PIPE_SIG_FETCH: {
+            /* Return pending signal mask for caller, then clear it.
+             * Client merges into local sigstate and dispatches handlers. */
+            int caller_idx = (int)badge - 1;
+            uint32_t pending = 0;
+            if (caller_idx >= 0 && caller_idx < MAX_ACTIVE_PROCS
+                && active_procs[caller_idx].active) {
+                pending = active_procs[caller_idx].sig_pending;
+                active_procs[caller_idx].sig_pending = 0;
+            }
+            seL4_SetMR(0, (seL4_Word)pending);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }
