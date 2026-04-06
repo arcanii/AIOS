@@ -40,7 +40,14 @@ void reap_forked_child(int child_idx) {
 
     /* Destroy the process */
     sel4utils_destroy_process(&child->proc, &vka);
-    vka_free_object(&vka, &child->fault_ep);
+    /* Free fault endpoint: minted cap vs allocated endpoint */
+    if (child->fault_on_pipe_ep) {
+        seL4_CNode_Delete(seL4_CapInitThreadCNode,
+            child->fault_ep.cptr, seL4_WordBits);
+        vka_cspace_free(&vka, child->fault_ep.cptr);
+    } else {
+        vka_free_object(&vka, &child->fault_ep);
+    }
     proc_remove(child_pid);
     child->active = 0;
 

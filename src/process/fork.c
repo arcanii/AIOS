@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sel4/sel4.h>
 #include <sel4utils/process.h>
 #include <sel4utils/process_config.h>
@@ -262,9 +263,21 @@ int do_fork(int parent_idx) {
     }
     if (child_idx < 0) return -1;
 
-    /* 2. Create child fault endpoint */
+    /* 2. Mint badged pipe_ep as child fault endpoint.
+     * Faults arrive on pipe_ep with badge = child_idx + 1,
+     * distinguishable from PIPE_* IPC by label < PIPE_CREATE. */
+    cspacepath_t pfe_src, pfe_dest;
+    vka_cspace_make_path(&vka, pipe_ep_cap, &pfe_src);
+    if (vka_cspace_alloc_path(&vka, &pfe_dest)) return -1;
+    if (seL4_CNode_Mint(pfe_dest.root, pfe_dest.capPtr, pfe_dest.capDepth,
+            pfe_src.root, pfe_src.capPtr, pfe_src.capDepth,
+            seL4_AllRights, (seL4_Word)(child_idx + 1))) {
+        vka_cspace_free(&vka, pfe_dest.capPtr);
+        return -1;
+    }
     vka_object_t child_fault_ep;
-    if (vka_alloc_endpoint(&vka, &child_fault_ep)) return -1;
+    memset(&child_fault_ep, 0, sizeof(child_fault_ep));
+    child_fault_ep.cptr = pfe_dest.capPtr;
 
     /* 3. Find parent's ELF path and reload into child */
     active_proc_t *child = &active_procs[child_idx];
@@ -294,11 +307,17 @@ int do_fork(int parent_idx) {
 
     /* uses file-scope elf_buf */
     int elf_size = vfs_read(fork_elf_path, elf_buf, sizeof(elf_buf));
-    if (elf_size <= 0) { vka_free_object(&vka, &child_fault_ep); return -1; }
+    if (elf_size <= 0) {
+        seL4_CNode_Delete(pfe_dest.root, pfe_dest.capPtr, pfe_dest.capDepth);
+        vka_cspace_free(&vka, pfe_dest.capPtr);
+        return -1;
+    }
 
     elf_t fork_elf;
     if (elf_newFile(elf_buf, elf_size, &fork_elf) != 0) {
-        vka_free_object(&vka, &child_fault_ep); return -1;
+        seL4_CNode_Delete(pfe_dest.root, pfe_dest.capPtr, pfe_dest.capDepth);
+        vka_cspace_free(&vka, pfe_dest.capPtr);
+        return -1;
     }
 
     /* 4. Configure child process + load ELF */
@@ -310,12 +329,17 @@ int do_fork(int parent_idx) {
     cfg = process_config_fault_endpoint(cfg, child_fault_ep);
 
     int err = sel4utils_configure_process_custom(cp, &vka, &vspace, cfg);
-    if (err) { vka_free_object(&vka, &child_fault_ep); return -1; }
+    if (err) {
+        seL4_CNode_Delete(pfe_dest.root, pfe_dest.capPtr, pfe_dest.capDepth);
+        vka_cspace_free(&vka, pfe_dest.capPtr);
+        return -1;
+    }
 
     cp->entry_point = sel4utils_elf_load(&cp->vspace, &vspace, &vka, &vka, &fork_elf);
     if (!cp->entry_point) {
         sel4utils_destroy_process(cp, &vka);
-        vka_free_object(&vka, &child_fault_ep);
+        seL4_CNode_Delete(pfe_dest.root, pfe_dest.capPtr, pfe_dest.capDepth);
+        vka_cspace_free(&vka, pfe_dest.capPtr);
         return -1;
     }
     cp->sysinfo = sel4utils_elf_get_vsyscall(&fork_elf);
@@ -406,6 +430,9 @@ int do_fork(int parent_idx) {
     child->gid = parent->gid;
     child->ppid = parent->pid;
     child->fault_ep = child_fault_ep;
+    child->fault_on_pipe_ep = 1;
+    child->stdout_pipe_id = -1;
+    child->stdin_pipe_id = -1;
     child->num_threads = 0;
     child->exit_status = 0;
     child->num_segs = parent->num_segs;

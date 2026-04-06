@@ -13,6 +13,8 @@
 #include <sys/wait.h>
 #include "aios_posix.h"
 extern seL4_CPtr pipe_ep;
+extern void aios_set_pipe_redirect(int stdout_pipe, int stdin_pipe);
+extern int aios_get_pipe_id(int fd);
 
 #define SER_PUTC 1
 #define SER_GETC 2
@@ -23,6 +25,7 @@ extern seL4_CPtr pipe_ep;
 #define PIPE_CREATE 60
 #define PIPE_CLOSE  63
 #define PIPE_KILL   64
+#define PIPE_DEBUG  71
 #define AUTH_SU     48
 #define AUTH_PASSWD 47
 
@@ -316,6 +319,135 @@ static int do_exec_bg(const char *path, const char *arg) {
 }
 
 /* ── Exec a command via IPC ── */
+
+/* ---- POSIX pipe/dup2/close pipeline ---- */
+static int run_pipeline(char **segments, int num_segments) {
+    int num_pipes = num_segments - 1;
+    int pipe_fds[8][2];  /* pipe_fds[i] = {read_fd, write_fd} */
+    pid_t child_pids[9];
+
+    /* Create POSIX pipes and save pipe_ids for server-side cleanup */
+    int saved_pipe_ids[8];
+    for (int pi = 0; pi < num_pipes; pi++) {
+        if (pipe(pipe_fds[pi]) < 0) {
+            ser_puts("pipe: create failed\n");
+            for (int j = 0; j < pi; j++) {
+                close(pipe_fds[j][0]);
+                close(pipe_fds[j][1]);
+                /* Destroy server-side pipe buffer */
+                if (saved_pipe_ids[j] >= 0) {
+                    seL4_SetMR(0, (seL4_Word)saved_pipe_ids[j]);
+                    seL4_Call(pipe_ep,
+                        seL4_MessageInfo_new(PIPE_CLOSE, 0, 0, 1));
+                }
+            }
+            return -1;
+        }
+        saved_pipe_ids[pi] = aios_get_pipe_id(pipe_fds[pi][0]);
+    }
+
+    /* Fork+exec each segment */
+    for (int si = 0; si < num_segments; si++) {
+        char *seg = segments[si];
+        char *sarg = 0;
+        for (int i = 0; seg[i]; i++) {
+            if (seg[i] == ' ') { seg[i] = 0; sarg = seg + i + 1; break; }
+        }
+        strip_quotes(seg);
+
+        char spath[256];
+        if (!find_in_path(seg, spath, sizeof(spath))) {
+            ser_puts(seg);
+            ser_puts(": command not found\n");
+            child_pids[si] = -1;
+            continue;
+        }
+
+        pid_t pid = fork();
+        if (pid < 0) {
+            ser_puts("pipe: fork failed\n");
+            child_pids[si] = -1;
+            continue;
+        }
+        if (pid == 0) {
+            /* ---- Child ---- */
+            /* Wire up stdin from previous pipe */
+            if (si > 0) {
+                dup2(pipe_fds[si - 1][0], 0);
+            }
+            /* Wire up stdout to next pipe */
+            if (si < num_segments - 1) {
+                dup2(pipe_fds[si][1], 1);
+            }
+            /* Close all pipe fds in child */
+            for (int pi = 0; pi < num_pipes; pi++) {
+                close(pipe_fds[pi][0]);
+                close(pipe_fds[pi][1]);
+            }
+
+            /* Build argv */
+            char *argv[32];
+            int ac = 0;
+            const char *base = spath;
+            for (const char *p = spath; *p; p++)
+                if (*p == '/') base = p + 1;
+            static char a0[64];
+            int bi = 0;
+            while (*base && bi < 63) a0[bi++] = *base++;
+            a0[bi] = 0;
+            argv[ac++] = a0;
+
+            static char abuf[512];
+            if (sarg) {
+                int ai = 0;
+                const char *sa = sarg;
+                while (*sa && ai < 510) abuf[ai++] = *sa++;
+                abuf[ai] = 0;
+                char *p = abuf;
+                while (*p && ac < 31) {
+                    while (*p == ' ') p++;
+                    if (!*p) break;
+                    argv[ac++] = p;
+                    while (*p && *p != ' ') p++;
+                    if (*p) { *p = 0; p++; }
+                }
+            }
+            argv[ac] = 0;
+            execv(spath, argv);
+            _exit(127);
+        }
+        child_pids[si] = pid;
+        /* yield after fork to let child exec before next fork.
+         * On SMP, without this the parent races ahead and
+         * the next fork/exec can collide with the current
+         * childs PIPE_EXEC in pipe_server. */
+        for (int y = 0; y < 20; y++) seL4_Yield();
+    }
+
+    /* Parent: close all pipe fds */
+    for (int pi = 0; pi < num_pipes; pi++) {
+        close(pipe_fds[pi][0]);
+        close(pipe_fds[pi][1]);
+    }
+
+    /* Wait for all children */
+    for (int si = 0; si < num_segments; si++) {
+        if (child_pids[si] > 0) {
+            waitpid(child_pids[si], 0, 0);
+        }
+    }
+
+    /* Destroy server-side pipe buffers */
+    for (int pi = 0; pi < num_pipes; pi++) {
+        if (saved_pipe_ids[pi] >= 0) {
+            seL4_SetMR(0, (seL4_Word)saved_pipe_ids[pi]);
+            seL4_Call(pipe_ep,
+                seL4_MessageInfo_new(PIPE_CLOSE, 0, 0, 1));
+        }
+    }
+    return 0;
+}
+
 static int do_exec_piped(const char *cmdline, int stdout_pipe, int stdin_pipe) {
     if (!exec_ep) return -1;
     /* Build command with extended CWD marker: CWD=uid:gid:spipe:rpipe:/path */
@@ -748,45 +880,7 @@ login_gate:
                     continue;
                 }
 
-                /* Execute each segment with appropriate pipe redirection */
-                for (int si = 0; si < num_segments; si++) {
-                    int spipe = (si < num_segments - 1) ? pipe_ids[si] : -1;  /* stdout pipe */
-                    int rpipe = (si > 0) ? pipe_ids[si - 1] : -1;             /* stdin pipe */
-
-                    /* Parse command + args for this segment */
-                    char *seg = segments[si];
-                    char *sarg = 0;
-                    for (int i = 0; seg[i]; i++) {
-                        if (seg[i] == ' ') { seg[i] = '\0'; sarg = seg+i+1; break; }
-                    }
-                    strip_quotes(seg);
-                    if (sarg) {
-                        char *p = sarg;
-                        while (*p) { strip_quotes(p); while(*p&&*p!=' ')p++; while(*p==' ')p++; }
-                    }
-
-                    char spath[256];
-                    if (find_in_path(seg, spath, sizeof(spath))) {
-                        char scmd[512]; int sci = 0;
-                        const char *cp = spath;
-                        while (*cp && sci < 500) scmd[sci++] = *cp++;
-                        if (sarg) { scmd[sci++] = ' '; cp = sarg; while (*cp && sci < 500) scmd[sci++] = *cp++; }
-                        scmd[sci++] = ' '; scmd[sci++] = 'C'; scmd[sci++] = 'W'; scmd[sci++] = 'D'; scmd[sci++] = '=';
-                        char ud[12], gd[12]; uint_to_dec(session_uid, ud); uint_to_dec(session_gid, gd);
-                        for (int x=0;ud[x]&&sci<500;x++) scmd[sci++]=ud[x]; scmd[sci++]=':';
-                        for (int x=0;gd[x]&&sci<500;x++) scmd[sci++]=gd[x]; scmd[sci++]=':';
-                        const char *cw=cwd; while(*cw&&sci<500) scmd[sci++]=*cw++; scmd[sci]='\0';
-                        do_exec_piped(scmd, spipe, rpipe);
-                    } else {
-                        ser_puts(seg); ser_puts(": command not found\n");
-                    }
-                }
-
-                /* Close all pipes */
-                for (int pi = 0; pi < num_pipes; pi++) {
-                    seL4_SetMR(0, (seL4_Word)pipe_ids[pi]);
-                    seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_CLOSE, 0, 0, 1));
-                }
+                run_pipeline(segments, num_segments);
                 continue;
             }
         }
@@ -982,7 +1076,11 @@ login_gate:
                     }
                 }
             }
-        } else if (str_eq(line, "dmesg")) {
+        } else if (str_eq(line, "debug")) {
+                seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_DEBUG, 0, 0, 0));
+                continue;
+            }
+            if (str_eq(line, "dmesg")) {
             /* Read and display kernel log */
             if (fs_ep) {
                 char dpath[] = "/proc/log";

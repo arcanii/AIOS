@@ -24,6 +24,7 @@
 #define PIPE_WAIT 67
 #define PIPE_EXIT 68
 #define PIPE_EXEC 69
+#define PIPE_CLOSE_WRITE 70
 #include <muslcsys/vsyscall.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -543,11 +544,13 @@ static long aios_sys_close(va_list ap) {
     int fd = va_arg(ap, int);
     if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
         aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
-        if (f->active && f->is_pipe && pipe_ep) {
-            /* Notify pipe server */
-            seL4_SetMR(0, (seL4_Word)f->pipe_id);
-            seL4_Call(pipe_ep, seL4_MessageInfo_new(63 /* PIPE_CLOSE */, 0, 0, 1));
-        }
+        /* close() never sends PIPE_CLOSE_WRITE.
+         * Reason: in fork+dup2+exec pipelines, the child does
+         * dup2(write_fd, 1) then close(write_fd). If close sent
+         * PIPE_CLOSE_WRITE, EOF fires before exec even runs.
+         * Instead, aios_exit_cb sends PIPE_CLOSE_WRITE when the
+         * writer process exits. The shell sends PIPE_CLOSE to
+         * destroy the pipe buffer after the pipeline completes. */
         f->active = 0;
         f->is_pipe = 0;
         f->pipe_id = -1;
@@ -1246,10 +1249,11 @@ static long aios_sys_pipe2(va_list ap) {
     /* Allocate two fds: read end and write end */
     int ri = aios_fd_alloc();
     if (ri < 0) return -EMFILE;
+    /* Mark active immediately so second alloc gets different slot */
+    aios_fds[ri].active = 1;
     int wi = aios_fd_alloc();
     if (wi < 0) { aios_fds[ri].active = 0; return -EMFILE; }
 
-    aios_fds[ri].active = 1;
     aios_fds[ri].is_pipe = 1;
     aios_fds[ri].pipe_id = pipe_id;
     aios_fds[ri].pipe_read = 1;
@@ -1263,6 +1267,24 @@ static long aios_sys_pipe2(va_list ap) {
     fds[1] = AIOS_FD_BASE + wi;  /* write end */
     return 0;
 }
+
+
+/* Set pipe redirect IDs for the next execv() call.
+ * These get packed into MR0 of PIPE_EXEC so the new process
+ * inherits stdout/stdin pipe redirection. */
+void aios_set_pipe_redirect(int stdout_pipe, int stdin_pipe) {
+    stdout_pipe_id = stdout_pipe;
+    stdin_pipe_id = stdin_pipe;
+}
+/* Return the pipe_server pipe_id for an aios fd, or -1 */
+int aios_get_pipe_id(int fd) {
+    if (fd < AIOS_FD_BASE || fd >= AIOS_FD_BASE + AIOS_MAX_FDS) return -1;
+    aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
+    if (!f->active || !f->is_pipe) return -1;
+    return f->pipe_id;
+}
+
+
 
 /* ── getpwuid / getpwnam via auth_ep IPC ── */
 static struct passwd _pw_buf;
@@ -1529,6 +1551,18 @@ static void aios_exit_cb(int code) {
     fflush(stdout);
     fflush(stderr);
     if (pipe_ep) {
+        /* Explicitly close pipe write end before exiting.
+         * This is the POSIX way: the child closes its end,
+         * readers get EOF deterministically. Do not rely on
+         * fault timing for pipe lifecycle. */
+        if (stdout_pipe_id >= 0) {
+            seL4_SetMR(0, (seL4_Word)stdout_pipe_id);
+            seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_CLOSE_WRITE, 0, 0, 1));
+        }
+        if (stdin_pipe_id >= 0) {
+            seL4_SetMR(0, (seL4_Word)stdin_pipe_id);
+            seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_CLOSE_WRITE, 0, 0, 1));
+        }
         seL4_SetMR(0, (seL4_Word)code);
         seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_EXIT, 0, 0, 1));
     }

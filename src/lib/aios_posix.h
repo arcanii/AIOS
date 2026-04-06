@@ -41,6 +41,7 @@
 #define AIOS_PIPE_WRITE     61
 #define AIOS_PIPE_READ      62
 #define AIOS_PIPE_CLOSE     63
+#define AIOS_PIPE_CLOSE_WRITE 70
 
 /* Exec with pipe redirection */
 #define AIOS_EXEC_RUN_PIPE  22
@@ -59,6 +60,9 @@ seL4_CPtr aios_get_serial_ep(void);
 seL4_CPtr aios_get_fs_ep(void);
 seL4_CPtr aios_get_auth_ep(void);
 int aios_nb_getchar(void);  /* non-blocking, returns -1 if no input */
+
+void aios_set_pipe_redirect(int stdout_pipe, int stdin_pipe);
+int aios_get_pipe_id(int fd);
 
 static inline long _aios_parse(const char *s) {
     if (!s) return 0;

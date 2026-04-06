@@ -43,10 +43,12 @@
 #define PIPE_WAIT       67
 #define PIPE_EXIT       68
 #define PIPE_EXEC       69
+#define PIPE_CLOSE_WRITE 70
+#define PIPE_DEBUG       71
 
 /* ── Limits ── */
 
-#define MAX_ACTIVE_PROCS     8
+#define MAX_ACTIVE_PROCS     16
 #define MAX_THREADS_PER_PROC 8
 #define THREAD_STACK_PAGES   4
 #define MAX_ELF_SEGS         6
@@ -55,6 +57,7 @@
 #define MAX_WAIT_PENDING     4
 #define MAX_ZOMBIES          8
 #define MAX_EXEC_ARGS        12
+#define MAX_PIPE_READ_BLOCKED 4
 
 #ifndef PAGE_SIZE
 #define PAGE_SIZE 4096
@@ -97,6 +100,9 @@ typedef struct {
     seL4_CPtr child_pipe_slot;
     seL4_CPtr child_thread_slot;
     int exit_status;
+    int fault_on_pipe_ep;
+    int stdout_pipe_id;
+    int stdin_pipe_id;
 } active_proc_t;
 
 typedef struct {
@@ -123,6 +129,13 @@ typedef struct {
 } zombie_t;
 
 /* ── Shared global state (defined in aios_root.c) ── */
+
+typedef struct {
+    int active;
+    int pipe_id;
+    int max_len;
+    seL4_CPtr reply_cap;
+} pipe_read_blocked_t;
 
 extern vka_t vka;
 extern vspace_t vspace;

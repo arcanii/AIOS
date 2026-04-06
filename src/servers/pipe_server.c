@@ -1,11 +1,16 @@
 /* AIOS servers/pipe_server.c -- Pipe, fork, exec, wait, exit server
  *
- * Handles PIPE_CREATE/WRITE/READ/CLOSE, PIPE_KILL,
+ * Handles PIPE_CREATE/WRITE/READ/CLOSE/CLOSE_WRITE, PIPE_KILL,
  * PIPE_FORK, PIPE_GETPID, PIPE_WAIT, PIPE_EXIT, PIPE_EXEC.
  * Central IPC hub for process lifecycle on seL4.
+ *
+ * v0.4.51: Fault delivery on pipe_ep -- child faults arrive as IPC
+ * messages with label < PIPE_CREATE (60). No spin loops or NBRecv.
+ * Blocking PIPE_READ via SaveCaller when pipe empty + writer alive.
  */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sel4/sel4.h>
 #include <sel4utils/process.h>
 #include <sel4utils/process_config.h>
@@ -20,10 +25,85 @@
 #include "aios/vfs.h"
 #include "aios/procfs.h"
 
-/* ── waitpid support ── */
+/* ---- Blocked reader table ---- */
+static pipe_read_blocked_t pipe_read_blocked[MAX_PIPE_READ_BLOCKED];
+static vka_object_t read_reply_objs[MAX_PIPE_READ_BLOCKED];
 
+/* Wake all blocked readers on a pipe with EOF (0 bytes) */
+static void wake_blocked_readers_eof(int pipe_id) {
+    for (int bi = 0; bi < MAX_PIPE_READ_BLOCKED; bi++) {
+        if (!pipe_read_blocked[bi].active) continue;
+        if (pipe_read_blocked[bi].pipe_id != pipe_id) continue;
+        seL4_SetMR(0, 0);
+        seL4_Send(pipe_read_blocked[bi].reply_cap,
+                  seL4_MessageInfo_new(0, 0, 0, 1));
+        seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                          pipe_read_blocked[bi].reply_cap, seL4_WordBits);
+        pipe_read_blocked[bi].active = 0;
+    }
+}
 
-/* Zombie table: stores exit status of children that exited before parent called waitpid */
+/* Serve one blocked reader with available pipe data */
+static void wake_one_blocked_reader(int pipe_id) {
+    for (int bi = 0; bi < MAX_PIPE_READ_BLOCKED; bi++) {
+        if (!pipe_read_blocked[bi].active) continue;
+        if (pipe_read_blocked[bi].pipe_id != pipe_id) continue;
+        pipe_t *p = &pipes[pipe_id];
+        if (p->count == 0) break;
+        int max_len = pipe_read_blocked[bi].max_len;
+        int rlen = p->count < max_len ? p->count : max_len;
+        if (rlen > 900) rlen = 900;
+        seL4_SetMR(0, (seL4_Word)rlen);
+        int mr = 1;
+        seL4_Word w = 0;
+        for (int i = 0; i < rlen; i++) {
+            char c = p->buf[(p->head + i) % PIPE_BUF_SIZE];
+            w |= ((seL4_Word)(uint8_t)c) << ((i % 8) * 8);
+            if (i % 8 == 7 || i == rlen - 1) {
+                seL4_SetMR(mr++, w); w = 0;
+            }
+        }
+        p->head = (p->head + rlen) % PIPE_BUF_SIZE;
+        p->count -= rlen;
+        seL4_Send(pipe_read_blocked[bi].reply_cap,
+                  seL4_MessageInfo_new(0, 0, 0, mr));
+        seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                          pipe_read_blocked[bi].reply_cap, seL4_WordBits);
+        pipe_read_blocked[bi].active = 0;
+        break;
+    }
+}
+
+/* Handle child fault arriving on pipe_ep */
+static void handle_child_fault(int child_idx) {
+    active_proc_t *ch = &active_procs[child_idx];
+    if (!ch->active || !ch->fault_on_pipe_ep) return;
+
+    /* Auto-close write end if child was writing to a pipe */
+    if (ch->stdout_pipe_id >= 0 && ch->stdout_pipe_id < MAX_PIPES
+        && pipes[ch->stdout_pipe_id].active) {
+        pipes[ch->stdout_pipe_id].write_closed = 1;
+        wake_blocked_readers_eof(ch->stdout_pipe_id);
+    }
+    reap_forked_child(child_idx);
+}
+
+/* Mint badged pipe_ep as fault endpoint for a child process */
+static int mint_pipe_fault_ep(int child_idx, vka_object_t *out) {
+    cspacepath_t src, dest;
+    vka_cspace_make_path(&vka, pipe_ep_cap, &src);
+    if (vka_cspace_alloc_path(&vka, &dest)) return -1;
+    int err = seL4_CNode_Mint(dest.root, dest.capPtr, dest.capDepth,
+        src.root, src.capPtr, src.capDepth,
+        seL4_AllRights, (seL4_Word)(child_idx + 1));
+    if (err) {
+        vka_cspace_free(&vka, dest.capPtr);
+        return -1;
+    }
+    memset(out, 0, sizeof(*out));
+    out->cptr = dest.capPtr;
+    return 0;
+}
 
 void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
     seL4_CPtr ep = (seL4_CPtr)(uintptr_t)arg0;
@@ -33,16 +113,32 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
     for (int i = 0; i < MAX_PIPES; i++) pipes[i].active = 0;
     wait_init();
 
+    /* Init blocked reader table */
+    for (int i = 0; i < MAX_PIPE_READ_BLOCKED; i++) {
+        pipe_read_blocked[i].active = 0;
+        cspacepath_t path;
+        vka_cspace_alloc_path(&vka, &path);
+        read_reply_objs[i].cptr = path.capPtr;
+    }
+
     while (1) {
-
-
         seL4_Word badge;
         seL4_MessageInfo_t msg = seL4_Recv(ep, &badge);
         seL4_Word label = seL4_MessageInfo_get_label(msg);
 
+        /* ---- Fault detection: labels below PIPE_CREATE are seL4 faults ---- */
+        if (label < PIPE_CREATE && badge > 0 && badge <= MAX_ACTIVE_PROCS) {
+            int ci = (int)badge - 1;
+            if (ci >= 0 && ci < MAX_ACTIVE_PROCS
+                && active_procs[ci].active
+                && active_procs[ci].fault_on_pipe_ep) {
+                handle_child_fault(ci);
+                continue;  /* No reply for faults */
+            }
+        }
+
         switch (label) {
         case PIPE_CREATE: {
-            /* Find free pipe slot */
             int pi = -1;
             for (int i = 0; i < MAX_PIPES; i++) {
                 if (!pipes[i].active) { pi = i; break; }
@@ -62,7 +158,6 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             break;
         }
         case PIPE_WRITE: {
-            /* MR0=pipe_id, MR1=len, MR2..=data */
             int pi = (int)seL4_GetMR(0);
             int wlen = (int)seL4_GetMR(1);
             if (pi < 0 || pi >= MAX_PIPES || !pipes[pi].active) {
@@ -82,10 +177,11 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
             seL4_SetMR(0, (seL4_Word)written);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            /* Wake any blocked reader now that data is available */
+            if (written > 0) wake_one_blocked_reader(pi);
             break;
         }
         case PIPE_READ: {
-            /* MR0=pipe_id, MR1=max_len → MR0=len, MR1..=data */
             int pi = (int)seL4_GetMR(0);
             int max_len = (int)seL4_GetMR(1);
             if (pi < 0 || pi >= MAX_PIPES || !pipes[pi].active) {
@@ -94,8 +190,40 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 break;
             }
             pipe_t *p = &pipes[pi];
+
+            /* Pipe empty -- check if writer is done */
+            if (p->count == 0) {
+                if (p->write_closed) {
+                    /* EOF: writer closed, no more data */
+                    seL4_SetMR(0, 0);
+                    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                    break;
+                }
+                /* Writer alive -- block reader via SaveCaller */
+                int bi = -1;
+                for (int b = 0; b < MAX_PIPE_READ_BLOCKED; b++) {
+                    if (!pipe_read_blocked[b].active) { bi = b; break; }
+                }
+                if (bi < 0) {
+                    /* No slots -- return 0 (caller retries) */
+                    seL4_SetMR(0, 0);
+                    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                    break;
+                }
+                seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                    read_reply_objs[bi].cptr, seL4_WordBits);
+                seL4_CNode_SaveCaller(seL4_CapInitThreadCNode,
+                    read_reply_objs[bi].cptr, seL4_WordBits);
+                pipe_read_blocked[bi].active = 1;
+                pipe_read_blocked[bi].pipe_id = pi;
+                pipe_read_blocked[bi].max_len = max_len;
+                pipe_read_blocked[bi].reply_cap = read_reply_objs[bi].cptr;
+                /* Do NOT reply -- reader blocks until data or EOF */
+                break;
+            }
+
+            /* Data available -- serve immediately */
             int rlen = p->count < max_len ? p->count : max_len;
-            /* Cap at what fits in MRs (~900 bytes) */
             if (rlen > 900) rlen = 900;
             seL4_SetMR(0, (seL4_Word)rlen);
             int mr = 1;
@@ -103,7 +231,9 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             for (int i = 0; i < rlen; i++) {
                 char c = p->buf[(p->head + i) % PIPE_BUF_SIZE];
                 w |= ((seL4_Word)(uint8_t)c) << ((i % 8) * 8);
-                if (i % 8 == 7 || i == rlen - 1) { seL4_SetMR(mr++, w); w = 0; }
+                if (i % 8 == 7 || i == rlen - 1) {
+                    seL4_SetMR(mr++, w); w = 0;
+                }
             }
             p->head = (p->head + rlen) % PIPE_BUF_SIZE;
             p->count -= rlen;
@@ -114,6 +244,18 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             int pi = (int)seL4_GetMR(0);
             if (pi >= 0 && pi < MAX_PIPES && pipes[pi].active) {
                 pipes[pi].active = 0;
+                /* Wake any blocked readers with EOF */
+                wake_blocked_readers_eof(pi);
+            }
+            seL4_SetMR(0, 0);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        case PIPE_CLOSE_WRITE: {
+            int pi = (int)seL4_GetMR(0);
+            if (pi >= 0 && pi < MAX_PIPES && pipes[pi].active) {
+                pipes[pi].write_closed = 1;
+                wake_blocked_readers_eof(pi);
             }
             seL4_SetMR(0, 0);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
@@ -127,7 +269,6 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             break;
         }
         case PIPE_GETPID: {
-            /* Return caller's PID based on badge */
             int caller_idx = (int)badge - 1;
             int pid = -1;
             if (caller_idx >= 0 && caller_idx < MAX_ACTIVE_PROCS
@@ -139,11 +280,10 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             break;
         }
         case PIPE_EXIT: {
-            /* Child sends exit code before dying.
-             * After we reply, child will fault. We need to catch that fault
-             * and deliver it to the waiting parent. But pipe_server will be
-             * blocked in seL4_Recv. Solution: after reply, busy-wait briefly
-             * for the child's fault, then reap immediately. */
+            /* Child sends exit code before dying via NULL deref.
+             * After reply, child faults. The fault arrives on pipe_ep
+             * as a normal IPC message (label < PIPE_CREATE) on a
+             * future iteration. No spinning needed. */
             int caller_idx = (int)badge - 1;
             int exit_code = (int)seL4_GetMR(0);
             if (caller_idx >= 0 && caller_idx < MAX_ACTIVE_PROCS
@@ -151,25 +291,9 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 active_procs[caller_idx].exit_status = exit_code;
             }
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
-
-            /* Brief spin waiting for child to fault after PIPE_EXIT reply */
-            if (caller_idx >= 0 && caller_idx < MAX_ACTIVE_PROCS
-                && active_procs[caller_idx].active
-                && active_procs[caller_idx].ppid > 0) {
-                for (int spin = 0; spin < 100; spin++) {
-                    seL4_Yield();
-                    seL4_MessageInfo_t probe = seL4_NBRecv(
-                        active_procs[caller_idx].fault_ep.cptr, NULL);
-                    if (seL4_MessageInfo_get_label(probe) != 0) {
-                        reap_forked_child(caller_idx);
-                        break;
-                    }
-                }
-            }
             break;
         }
         case PIPE_WAIT: {
-            /* waitpid(child_pid): MR0 = child_pid (-1 for any) */
             int caller_idx = (int)badge - 1;
             int target_pid = (int)seL4_GetMR(0);
 
@@ -185,16 +309,17 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             int already_exited = 1;
             if (target_pid > 0) {
                 for (int ci = 0; ci < MAX_ACTIVE_PROCS; ci++) {
-                    if (active_procs[ci].active && active_procs[ci].pid == target_pid
+                    if (active_procs[ci].active
+                        && active_procs[ci].pid == target_pid
                         && active_procs[ci].ppid == caller_pid) {
                         already_exited = 0;
                         break;
                     }
                 }
             } else {
-                /* Wait for any child */
                 for (int ci = 0; ci < MAX_ACTIVE_PROCS; ci++) {
-                    if (active_procs[ci].active && active_procs[ci].ppid == caller_pid) {
+                    if (active_procs[ci].active
+                        && active_procs[ci].ppid == caller_pid) {
                         already_exited = 0;
                         break;
                     }
@@ -202,7 +327,6 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
 
             if (already_exited) {
-                /* Child already gone — check zombie table for exit status */
                 int zstatus = 0;
                 int zpid = target_pid;
                 for (int z = 0; z < MAX_ZOMBIES; z++) {
@@ -211,7 +335,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                         (target_pid == -1 && zombies[z].ppid == caller_pid)) {
                         zpid = zombies[z].pid;
                         zstatus = zombies[z].exit_status;
-                        zombies[z].active = 0;  /* consumed */
+                        zombies[z].active = 0;
                         break;
                     }
                 }
@@ -221,33 +345,27 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 break;
             }
 
-            /* Child still alive — save reply cap and defer */
+            /* Child still alive -- defer reply via SaveCaller */
             int wi = -1;
             for (int w = 0; w < MAX_WAIT_PENDING; w++) {
                 if (!wait_pending[w].active) { wi = w; break; }
             }
             if (wi < 0) {
-                /* No wait slots — reply with error */
                 seL4_SetMR(0, (seL4_Word)-1);
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                 break;
             }
-
-            /* SaveCaller: save the reply cap so we can reply later */
             seL4_CNode_Delete(seL4_CapInitThreadCNode,
                               wait_reply_objects[wi].cptr, seL4_WordBits);
             seL4_CNode_SaveCaller(seL4_CapInitThreadCNode,
                                    wait_reply_objects[wi].cptr, seL4_WordBits);
-
             wait_pending[wi].active = 1;
             wait_pending[wi].waiting_pid = caller_pid;
             wait_pending[wi].child_pid = target_pid;
             wait_pending[wi].reply_cap = wait_reply_objects[wi].cptr;
-            /* Do NOT reply — parent blocks until child exits */
             break;
         }
         case PIPE_FORK: {
-            /* Badge identifies the calling process (ap_idx + 1) */
             int parent_idx = (int)badge - 1;
             if (parent_idx < 0 || parent_idx >= MAX_ACTIVE_PROCS
                 || !active_procs[parent_idx].active) {
@@ -258,18 +376,6 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             int child_pid = do_fork(parent_idx);
             seL4_SetMR(0, (seL4_Word)child_pid);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
-
-            /* Reap child when it exits (wait on its fault EP) */
-            if (child_pid > 0) {
-                /* Find child's active_proc entry */
-                for (int ci = 0; ci < MAX_ACTIVE_PROCS; ci++) {
-                    if (active_procs[ci].active && active_procs[ci].pid == child_pid) {
-                        /* Non-blocking check — child may still be running */
-                        /* We'll let the normal exec cleanup handle it */
-                        break;
-                    }
-                }
-            }
             break;
         }
         case PIPE_EXEC: {
@@ -279,9 +385,6 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                 break;
             }
-            /* MR0 = pipe metadata, MR1.. = double-null string buffer
-             * MR0 bits [31:16] = stdout_pipe_id + 1 (0 = none)
-             * MR0 bits [15:0]  = stdin_pipe_id + 1  (0 = none) */
             int nmrs = seL4_MessageInfo_get_length(msg);
             seL4_Word pipe_meta_word = seL4_GetMR(0);
             int exec_stdout_pipe = (int)((pipe_meta_word >> 16) & 0xFFFF) - 1;
@@ -297,35 +400,30 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
             exec_buf[ebi] = 0;
 
-            /* First string is the path (already resolved by caller) */
             char *elf_path = exec_buf;
 
-            /* Collect argv strings after the path */
             #define MAX_USER_ARGV 16
             char *exec_argv[MAX_USER_ARGV];
             int exec_argc = 0;
             {
-                /* Skip past path null */
                 int pos = 0;
                 while (pos < ebi && exec_buf[pos] != 0) pos++;
-                pos++; /* skip null after path */
-                /* Each subsequent null-terminated string is an argv entry */
+                pos++;
                 while (pos < ebi && exec_buf[pos] != 0 && exec_argc < MAX_USER_ARGV) {
                     exec_argv[exec_argc++] = &exec_buf[pos];
                     while (pos < ebi && exec_buf[pos] != 0) pos++;
-                    pos++; /* skip null */
+                    pos++;
                 }
             }
 
-            /* Save old metadata */
             active_proc_t *ap = &active_procs[ci];
             int old_pid = ap->pid;
             int old_ppid = ap->ppid;
             uint32_t old_uid = ap->uid;
             uint32_t old_gid = ap->gid;
             vka_object_t old_fault_ep = ap->fault_ep;
+            int old_fope = ap->fault_on_pipe_ep;
 
-            /* Read + parse ELF (reuses file-scope elf_buf) */
             int esz = vfs_read(elf_path, elf_buf, sizeof(elf_buf));
             if (esz <= 0) {
                 seL4_SetMR(0, (seL4_Word)-1);
@@ -339,16 +437,20 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 break;
             }
 
-            /* Destroy old process + free old fault_ep */
             sel4utils_destroy_process(&ap->proc, &vka);
-            vka_free_object(&vka, &old_fault_ep);
 
-            /* Allocate fresh fault_ep for the new process.
-             * The old fault_ep may have residual fault state
-             * from the destroy that NBRecv cannot reliably consume
-             * on SMP (fault arrives from another core after NBRecv). */
+            /* Free old fault ep -- minted cap vs allocated endpoint */
+            if (old_fope) {
+                seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                    old_fault_ep.cptr, seL4_WordBits);
+                vka_cspace_free(&vka, old_fault_ep.cptr);
+            } else {
+                vka_free_object(&vka, &old_fault_ep);
+            }
+
+            /* Mint fresh pipe_ep as fault endpoint */
             vka_object_t new_fault_ep;
-            if (vka_alloc_endpoint(&vka, &new_fault_ep)) {
+            if (mint_pipe_fault_ep(ci, &new_fault_ep)) {
                 ap->active = 0;
                 proc_remove(old_pid);
                 seL4_SetMR(0, (seL4_Word)-1);
@@ -356,7 +458,6 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 break;
             }
 
-            /* Configure new process */
             sel4utils_process_config_t cfg = process_config_new(&simple);
             cfg = process_config_create_cnode(cfg, 12);
             cfg = process_config_create_vspace(cfg, NULL, 0);
@@ -372,9 +473,9 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 break;
             }
 
-            /* Record segments */
             ap->num_segs = 0;
-            for (int si = 0; si < elf_getNumProgramHeaders(&elf) && ap->num_segs < MAX_ELF_SEGS; si++) {
+            for (int si = 0; si < elf_getNumProgramHeaders(&elf)
+                 && ap->num_segs < MAX_ELF_SEGS; si++) {
                 if (elf_getProgramHeaderType(&elf, si) == 1) {
                     elf_seg_info_t *seg = &ap->segs[ap->num_segs++];
                     seg->vaddr = (uintptr_t)elf_getProgramHeaderVaddr(&elf, si);
@@ -383,8 +484,8 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 }
             }
 
-            /* Load ELF */
-            proc->entry_point = sel4utils_elf_load(&proc->vspace, &vspace, &vka, &vka, &elf);
+            proc->entry_point = sel4utils_elf_load(
+                &proc->vspace, &vspace, &vka, &vka, &elf);
             if (!proc->entry_point) {
                 sel4utils_destroy_process(proc, &vka);
                 ap->active = 0;
@@ -392,9 +493,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 break;
             }
             proc->sysinfo = sel4utils_elf_get_vsyscall(&elf);
-            /* PHDR_REMOVED: match exec_thread behavior — no phdr fixup */
 
-            /* Copy caps */
             seL4_CPtr cs = sel4utils_copy_cap_to_process(proc, &vka, serial_ep.cptr);
             ap->child_ser_slot = cs;
 
@@ -428,38 +527,40 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             seL4_CPtr cp2 = sel4utils_copy_cap_to_process(proc, &vka, pi_d.capPtr);
             ap->child_pipe_slot = cp2;
 
-            /* Build argv + spawn */
-            char ss[16], sf[16], st[16], sa[16], sp[16], cwd[64];
-            snprintf(ss, 16, "%lu", (unsigned long)cs);
-            snprintf(sf, 16, "%lu", (unsigned long)cf);
-            snprintf(st, 16, "%lu", (unsigned long)ct);
-            snprintf(sa, 16, "%lu", (unsigned long)ca);
-            snprintf(sp, 16, "%lu", (unsigned long)cp2);
-            /* Encode pipe redirection in CWD if present */
+            char s_ser[16], s_fs[16], s_thr[16], s_auth[16], s_pip[16];
+            char cwd[64];
+            snprintf(s_ser, 16, "%lu", (unsigned long)cs);
+            snprintf(s_fs, 16, "%lu", (unsigned long)cf);
+            snprintf(s_thr, 16, "%lu", (unsigned long)ct);
+            snprintf(s_auth, 16, "%lu", (unsigned long)ca);
+            snprintf(s_pip, 16, "%lu", (unsigned long)cp2);
+
             if (exec_stdout_pipe >= 0 || exec_stdin_pipe >= 0) {
-                int sp = exec_stdout_pipe < 0 ? 99 : exec_stdout_pipe;
-                int rp = exec_stdin_pipe < 0 ? 99 : exec_stdin_pipe;
-                snprintf(cwd, 64, "%u:%u:%d:%d:/", old_uid, old_gid, sp, rp);
+                int sp_id = exec_stdout_pipe < 0 ? 99 : exec_stdout_pipe;
+                int rp_id = exec_stdin_pipe < 0 ? 99 : exec_stdin_pipe;
+                snprintf(cwd, 64, "%u:%u:%d:%d:/",
+                         old_uid, old_gid, sp_id, rp_id);
             } else {
                 snprintf(cwd, 64, "%u:%u:/", old_uid, old_gid);
             }
-            /* Build spawn argv: [caps(5), cwd, user_argv[0], user_argv[1], ...] */
+
             char *spawn_argv[6 + MAX_USER_ARGV];
             int spawn_argc = 0;
-            spawn_argv[spawn_argc++] = ss;
-            spawn_argv[spawn_argc++] = sf;
-            spawn_argv[spawn_argc++] = st;
-            spawn_argv[spawn_argc++] = sa;
-            spawn_argv[spawn_argc++] = sp;
+            spawn_argv[spawn_argc++] = s_ser;
+            spawn_argv[spawn_argc++] = s_fs;
+            spawn_argv[spawn_argc++] = s_thr;
+            spawn_argv[spawn_argc++] = s_auth;
+            spawn_argv[spawn_argc++] = s_pip;
             spawn_argv[spawn_argc++] = cwd;
-            /* If user provided argv, use it; otherwise fall back to elf_path */
             if (exec_argc > 0) {
-                for (int ai = 0; ai < exec_argc && spawn_argc < 6 + MAX_USER_ARGV; ai++)
+                for (int ai = 0; ai < exec_argc
+                     && spawn_argc < 6 + MAX_USER_ARGV; ai++)
                     spawn_argv[spawn_argc++] = exec_argv[ai];
             } else {
                 spawn_argv[spawn_argc++] = elf_path;
             }
-            err = sel4utils_spawn_process_v(proc, &vka, &vspace, spawn_argc, spawn_argv, 1);
+            err = sel4utils_spawn_process_v(proc, &vka, &vspace,
+                                            spawn_argc, spawn_argv, 1);
             if (err) {
                 sel4utils_destroy_process(proc, &vka);
                 ap->active = 0;
@@ -467,19 +568,20 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 break;
             }
 
-            /* Restore metadata */
             ap->active = 1;
             ap->pid = old_pid;
             ap->ppid = old_ppid;
             ap->uid = old_uid;
             ap->gid = old_gid;
             ap->fault_ep = new_fault_ep;
+            ap->fault_on_pipe_ep = 1;
+            ap->stdout_pipe_id = exec_stdout_pipe;
+            ap->stdin_pipe_id = exec_stdin_pipe;
             ap->exit_status = 0;
             ap->num_threads = 0;
             for (int ti = 0; ti < MAX_THREADS_PER_PROC; ti++)
                 ap->threads[ti].active = 0;
 
-            /* Update proc name */
             for (int pi = 0; pi < PROC_MAX; pi++) {
                 if (proc_table[pi].active && proc_table[pi].pid == old_pid) {
                     int ni = 0;
@@ -489,7 +591,38 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                     break;
                 }
             }
-            /* No reply — old process destroyed, new one running */
+            /* No reply -- old process destroyed, new one running */
+            break;
+        }
+        case PIPE_DEBUG: {
+            /* Dump active_procs and pipe status via serial */
+            printf("[DEBUG] active_procs:\n");
+            for (int i = 0; i < MAX_ACTIVE_PROCS; i++) {
+                if (active_procs[i].active) {
+                    printf("  [%d] pid=%d ppid=%d fope=%d spipe=%d\n",
+                        i, active_procs[i].pid, active_procs[i].ppid,
+                        active_procs[i].fault_on_pipe_ep,
+                        active_procs[i].stdout_pipe_id);
+                }
+            }
+            printf("[DEBUG] pipes:\n");
+            for (int i = 0; i < MAX_PIPES; i++) {
+                if (pipes[i].active) {
+                    printf("  [%d] count=%d wc=%d rc=%d\n",
+                        i, pipes[i].count,
+                        pipes[i].write_closed, pipes[i].read_closed);
+                }
+            }
+            printf("[DEBUG] wait_pending:\n");
+            for (int i = 0; i < MAX_WAIT_PENDING; i++) {
+                if (wait_pending[i].active) {
+                    printf("  [%d] waiter=%d child=%d\n",
+                        i, wait_pending[i].waiting_pid,
+                        wait_pending[i].child_pid);
+                }
+            }
+            seL4_SetMR(0, 0);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }
         default:

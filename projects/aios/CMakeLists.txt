@@ -47,6 +47,7 @@ AiosPosixApp(posix_mkdir)
 AiosPosixApp(aios_top)
 AiosPosixApp(daemon)
 AiosPosixApp(fork_test)
+AiosPosixApp(pipe_test)
 AiosPosixApp(writetest)
 AiosPosixApp(diagtest)
 
