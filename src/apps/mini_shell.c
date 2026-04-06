@@ -329,6 +329,7 @@ static int run_pipeline(char **segments, int num_segments) {
     int num_pipes = num_segments - 1;
     int pipe_fds[8][2];  /* pipe_fds[i] = {read_fd, write_fd} */
     pid_t child_pids[9];
+    for (int ci = 0; ci < 9; ci++) child_pids[ci] = -1;
 
     /* Create POSIX pipes and save pipe_ids for server-side cleanup */
     int saved_pipe_ids[8];
@@ -363,15 +364,13 @@ static int run_pipeline(char **segments, int num_segments) {
         if (!find_in_path(seg, spath, sizeof(spath))) {
             ser_puts(seg);
             ser_puts(": command not found\n");
-            child_pids[si] = -1;
-            continue;
+            goto pipeline_abort;
         }
 
         pid_t pid = fork();
         if (pid < 0) {
             ser_puts("pipe: fork failed\n");
-            child_pids[si] = -1;
-            continue;
+            goto pipeline_abort;
         }
         if (pid == 0) {
             /* ---- Child ---- */
@@ -431,6 +430,17 @@ static int run_pipeline(char **segments, int num_segments) {
         }
     }
 
+    goto pipeline_wait;
+
+pipeline_abort:
+    /* Kill all already-forked children to prevent blocked pipes */
+    for (int ki = 0; ki < num_segments; ki++) {
+        if (child_pids[ki] > 0) {
+            kill(child_pids[ki], 9);
+        }
+    }
+
+pipeline_wait:
     /* Parent: close all pipe fds */
     for (int pi = 0; pi < num_pipes; pi++) {
         close(pipe_fds[pi][0]);
