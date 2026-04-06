@@ -609,11 +609,11 @@ skip_blk:
         }
         printf("[boot] Auth: isolated process\n");
 
-        /* Spawn mini_shell from disk via exec_thread (EXEC_RUN_shell)
+        /* Spawn getty from disk via exec_thread (EXEC_RUN_shell)
          * exec_thread creates proper VSpace with page tracking,
          * enabling fork()+exec() to work correctly */
         {
-            const char *sh_cmd = "/bin/mini_shell CWD=0:0:/";
+            const char *sh_cmd = "/bin/getty CWD=0:0:/";
             int sh_pl = 0;
             while (sh_cmd[sh_pl]) sh_pl++;
             seL4_SetMR(0, (seL4_Word)sh_pl);

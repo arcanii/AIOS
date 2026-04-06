@@ -47,6 +47,7 @@
 #define PIPE_DEBUG       71
 #define PIPE_EXEC_WAIT   72
 #define PIPE_CLOSE_READ  73
+#define PIPE_SET_IDENTITY 74
 
 /* ── Limits ── */
 

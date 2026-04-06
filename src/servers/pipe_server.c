@@ -718,6 +718,20 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             exec_wait.reply_cap = exec_wait_reply_obj.cptr;
             break;
         }
+        case PIPE_SET_IDENTITY: {
+            /* Update calling process uid/gid in active_procs
+             * (used by getty after login so fork+exec inherits identity) */
+            int ci = (int)badge - 1;
+            if (ci >= 0 && ci < MAX_ACTIVE_PROCS && active_procs[ci].active) {
+                active_procs[ci].uid = (uint32_t)seL4_GetMR(0);
+                active_procs[ci].gid = (uint32_t)seL4_GetMR(1);
+                seL4_SetMR(0, 0);
+            } else {
+                seL4_SetMR(0, (seL4_Word)-1);
+            }
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
         case PIPE_DEBUG: {
             /* Dump active_procs and pipe status via serial */
             printf("[DEBUG] active_procs:\n");
