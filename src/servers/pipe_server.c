@@ -732,6 +732,54 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }
+        case PIPE_SIGNAL: {
+            /* kill(pid, sig) -- POSIX signal delivery
+             * MR0 = target pid, MR1 = signal number
+             * SIGKILL(9)/SIGTERM(15): immediate process destruction
+             * sig 0: existence check only (POSIX)
+             * Others: set pending bit in target active_proc */
+            int target_pid = (int)seL4_GetMR(0);
+            int signum     = (int)seL4_GetMR(1);
+
+            /* Find target process */
+            int ti = -1;
+            for (int i = 0; i < MAX_ACTIVE_PROCS; i++) {
+                if (active_procs[i].active && active_procs[i].pid == target_pid) {
+                    ti = i;
+                    break;
+                }
+            }
+
+            if (ti < 0) {
+                /* pid not found */
+                seL4_SetMR(0, (seL4_Word)(-3)); /* -ESRCH */
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+
+            if (signum == 0) {
+                /* Existence check only */
+                seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+
+            if (signum == 9 || signum == 15) {
+                /* SIGKILL / SIGTERM: destroy process immediately */
+                int result = process_kill(target_pid);
+                seL4_SetMR(0, (seL4_Word)result);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+
+            /* Other signals: set pending bit */
+            if (signum >= 1 && signum < 32) {
+                active_procs[ti].sig_pending |= (1U << (signum - 1));
+            }
+            seL4_SetMR(0, 0);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
         case PIPE_DEBUG: {
             /* Dump active_procs and pipe status via serial */
             printf("[DEBUG] active_procs:\n");

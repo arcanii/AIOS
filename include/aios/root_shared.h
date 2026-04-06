@@ -48,6 +48,7 @@
 #define PIPE_EXEC_WAIT   72
 #define PIPE_CLOSE_READ  73
 #define PIPE_SET_IDENTITY 74
+#define PIPE_SIGNAL       75
 
 /* ── Limits ── */
 
@@ -106,6 +107,7 @@ typedef struct {
     int fault_on_pipe_ep;
     int stdout_pipe_id;
     int stdin_pipe_id;
+    uint32_t sig_pending;        /* pending signal bitmask */
 } active_proc_t;
 
 typedef struct {
@@ -163,6 +165,8 @@ extern volatile uint32_t *blk_vio;
 extern uint8_t *blk_dma;
 extern uint64_t blk_dma_pa;
 
+extern volatile uint32_t *uart;
+
 extern volatile int fg_pid;
 extern volatile seL4_CPtr fg_fault_ep;
 extern volatile int fg_killed;
@@ -174,6 +178,24 @@ extern int wait_pending_init;
 
 /* ── Cross-module function declarations ── */
 /* Add declarations here as functions are extracted from aios_root.c */
+
+/* Boot phases (src/boot/) */
+void boot_fs_init(void);
+void boot_start_services(vka_object_t *fault_ep);
+
+/* Block I/O (src/boot/blk_io.c) */
+int blk_read_sector(uint64_t sector, void *buf);
+int blk_write_sector(uint64_t sector, const void *buf);
+
+/* Spawn utilities (src/boot/spawn_util.c) */
+int spawn_with_args(const char *name, uint8_t prio,
+                    sel4utils_process_t *proc,
+                    vka_object_t *fault_ep,
+                    int ep_count, seL4_CPtr *eps,
+                    seL4_CPtr *child_slots);
+int spawn_simple(const char *name, uint8_t prio,
+                 sel4utils_process_t *proc,
+                 vka_object_t *fault_ep);
 
 int do_fork(int parent_idx);
 void wait_init(void);

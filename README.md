@@ -19,7 +19,7 @@ AIOS boots on QEMU (aarch64, Cortex-A53, 4-core SMP) and provides a Unix-like en
 - **116 programs** in `/bin/`, loaded from ext2 filesystem on disk
 - **93 sbase (suckless) Unix tools**: ls, cat, head, wc, sort, grep, sed, find, cp, rm, mkdir, touch, date, cal, seq, tr, sha1sum, sha512sum, bc, ed, tar, and more
 - **fork()+exec()+waitpid()**: Full process creation — believed to be first on bare seL4 without CAmkES/Microkit
-- **POSIX syscall shim**: 55+ syscalls (open, read, write, close, stat, fork, execve, waitpid, getpid, pipe2, ...)
+- **POSIX syscall shim**: 60+ syscalls (open, read, write, close, stat, fork, execve, waitpid, getpid, pipe2, ...)
 - **ext2 filesystem**: read/write, indirect blocks, multi-group allocation
 - **VFS layer**: mount points (/ for ext2, /proc for procfs)
 - **Process management**: isolated VSpaces, fork/exec/wait, fault recovery, process table, background exec, kill

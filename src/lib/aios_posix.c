@@ -26,6 +26,7 @@
 #define PIPE_EXEC 69
 #define PIPE_CLOSE_WRITE 70
 #define PIPE_CLOSE_READ  73
+#define PIPE_SIGNAL      75
 #include <muslcsys/vsyscall.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -36,6 +37,7 @@
 #include <pthread.h>
 #include <pwd.h>
 #include <stdio.h>
+#include "aios/aios_signal.h"
 
 static seL4_CPtr ser_ep = 0;
 static seL4_CPtr fs_ep_cap = 0;
@@ -51,6 +53,8 @@ static uint32_t aios_uid = 0;
 static uint32_t aios_gid = 0;
 static int stdout_pipe_id = -1;   /* if >= 0, stdout goes to pipe */
 static int stdin_pipe_id = -1;    /* if >= 0, stdin comes from pipe */
+
+static aios_sigstate_t sigstate;
 
 static void resolve_path(const char *pathname, char *out, int outsz) {
     if (pathname[0] == '/') {
@@ -1580,6 +1584,114 @@ static void aios_exit_cb(int code) {
     __builtin_unreachable();
 }
 
+/* ---- Signal infrastructure (v0.4.53) ---- */
+
+#ifndef __NR_rt_sigaction
+#define __NR_rt_sigaction 134
+#endif
+#ifndef __NR_rt_sigprocmask
+#define __NR_rt_sigprocmask 135
+#endif
+#ifndef __NR_rt_sigpending
+#define __NR_rt_sigpending 136
+#endif
+#ifndef __NR_kill
+#define __NR_kill 129
+#endif
+#ifndef __NR_tgkill
+#define __NR_tgkill 131
+#endif
+
+/* rt_sigaction(sig, act, oldact, sigsetsize) */
+static long aios_sys_rt_sigaction(va_list ap) {
+    int sig = va_arg(ap, int);
+    const aios_k_sigaction_t *act = va_arg(ap, const aios_k_sigaction_t *);
+    aios_k_sigaction_t *oldact = va_arg(ap, aios_k_sigaction_t *);
+    (void)va_arg(ap, long); /* sigsetsize */
+
+    if (sig < 1 || sig >= AIOS_NSIG) return -22; /* EINVAL */
+    if (SIG_UNCATCHABLE(sig)) return -22;
+
+    if (!sigstate.initialized) aios_sigstate_init(&sigstate);
+
+    if (oldact) *oldact = sigstate.actions[sig];
+    if (act) sigstate.actions[sig] = *act;
+    return 0;
+}
+
+/* rt_sigprocmask(how, set, oldset, sigsetsize) */
+static long aios_sys_rt_sigprocmask(va_list ap) {
+    int how = va_arg(ap, int);
+    const uint64_t *set = va_arg(ap, const uint64_t *);
+    uint64_t *oldset = va_arg(ap, uint64_t *);
+    (void)va_arg(ap, long); /* sigsetsize */
+
+    if (!sigstate.initialized) aios_sigstate_init(&sigstate);
+
+    if (oldset) *oldset = sigstate.blocked;
+    if (set) {
+        switch (how) {
+        case 0: /* SIG_BLOCK */
+            sigstate.blocked |= *set;
+            break;
+        case 1: /* SIG_UNBLOCK */
+            sigstate.blocked &= ~(*set);
+            break;
+        case 2: /* SIG_SETMASK */
+            sigstate.blocked = *set;
+            break;
+        default:
+            return -22; /* EINVAL */
+        }
+        /* SIGKILL(9) and SIGSTOP(19) cannot be blocked */
+        sigstate.blocked &= ~(SIG_BIT(9) | SIG_BIT(19));
+    }
+    return 0;
+}
+
+/* kill(pid, sig) -- route to pipe_server for process table access */
+static long aios_sys_kill(va_list ap) {
+    int pid = va_arg(ap, int);
+    int sig = va_arg(ap, int);
+
+    if (sig < 0 || sig >= AIOS_NSIG) return -22; /* EINVAL */
+    if (!pipe_ep) return -38; /* ENOSYS */
+
+    seL4_SetMR(0, (seL4_Word)pid);
+    seL4_SetMR(1, (seL4_Word)sig);
+    seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
+        seL4_MessageInfo_new(PIPE_SIGNAL, 0, 0, 2));
+    (void)reply;
+    return (long)seL4_GetMR(0);
+}
+
+/* tgkill(tgid, tid, sig) -- single-threaded: treat as kill(tid, sig) */
+static long aios_sys_tgkill(va_list ap) {
+    (void)va_arg(ap, int); /* tgid -- ignored for now */
+    int tid = va_arg(ap, int);
+    int sig = va_arg(ap, int);
+
+    if (sig < 0 || sig >= AIOS_NSIG) return -22;
+    if (!pipe_ep) return -38;
+
+    seL4_SetMR(0, (seL4_Word)tid);
+    seL4_SetMR(1, (seL4_Word)sig);
+    seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
+        seL4_MessageInfo_new(PIPE_SIGNAL, 0, 0, 2));
+    (void)reply;
+    return (long)seL4_GetMR(0);
+}
+
+/* rt_sigpending(set, sigsetsize) */
+static long aios_sys_rt_sigpending(va_list ap) {
+    uint64_t *set = va_arg(ap, uint64_t *);
+    (void)va_arg(ap, long); /* sigsetsize */
+
+    if (!sigstate.initialized) aios_sigstate_init(&sigstate);
+    if (set) *set = (uint64_t)sigstate.pending;
+    return 0;
+}
+
 void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     /* Skip if already initialized (e.g. by __wrap_main) */
     if (ser_ep && serial_ep == 0) return;
@@ -1675,6 +1787,13 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
 #ifdef __NR_exit_group
     muslcsys_install_syscall(__NR_exit_group, aios_sys_exit_group);
 #endif
+
+    /* Signal infrastructure (v0.4.53) */
+    muslcsys_install_syscall(__NR_rt_sigaction, aios_sys_rt_sigaction);
+    muslcsys_install_syscall(__NR_rt_sigprocmask, aios_sys_rt_sigprocmask);
+    muslcsys_install_syscall(__NR_rt_sigpending, aios_sys_rt_sigpending);
+    muslcsys_install_syscall(__NR_kill, aios_sys_kill);
+    muslcsys_install_syscall(__NR_tgkill, aios_sys_tgkill);
 
     /* Register exit callback so sel4runtime_exit sends exit code via IPC */
     sel4runtime_set_exit(aios_exit_cb);

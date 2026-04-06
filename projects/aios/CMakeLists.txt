@@ -51,6 +51,7 @@ AiosPosixApp(fork_test)
 AiosPosixApp(pipe_test)
 AiosPosixApp(writetest)
 AiosPosixApp(diagtest)
+AiosPosixApp(signal_test)
 
 # Boot services only in CPIO (launched before filesystem)
 set(BOOT_APPS tty_server auth_server)
@@ -78,6 +79,10 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/servers/fs_server.c
     ${AIOS_ROOT}/src/servers/exec_server.c
     ${AIOS_ROOT}/src/servers/pipe_server.c
+    ${AIOS_ROOT}/src/boot/blk_io.c
+    ${AIOS_ROOT}/src/boot/spawn_util.c
+    ${AIOS_ROOT}/src/boot/boot_fs_init.c
+    ${AIOS_ROOT}/src/boot/boot_services.c
     apps_cpio.o
 )
 target_link_libraries(aios_root
