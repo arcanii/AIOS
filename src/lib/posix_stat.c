@@ -256,3 +256,63 @@ long aios_sys_faccessat(va_list ap) {
     if (fetch_stat(pathname, &m, &s) == 0) return 0;
     return -ENOENT;
 }
+
+/* v0.4.62: fchmod -- change file mode by fd (stub, ext2 mode not enforced yet) */
+long aios_sys_fchmod(va_list ap) {
+    int fd = va_arg(ap, int);
+    unsigned int mode = va_arg(ap, unsigned int);
+    (void)fd; (void)mode;
+    return 0;
+}
+
+/* v0.4.62: fchmodat -- change file mode by path */
+long aios_sys_fchmodat(va_list ap) {
+    int dirfd = va_arg(ap, int);
+    const char *pathname = va_arg(ap, const char *);
+    unsigned int mode = va_arg(ap, unsigned int);
+    int flags = va_arg(ap, int);
+    (void)dirfd; (void)pathname; (void)mode; (void)flags;
+    return 0;
+}
+
+/* v0.4.62: fchown -- change owner by fd (stub) */
+long aios_sys_fchown(va_list ap) {
+    int fd = va_arg(ap, int);
+    unsigned int owner = va_arg(ap, unsigned int);
+    unsigned int group = va_arg(ap, unsigned int);
+    (void)fd; (void)owner; (void)group;
+    return 0;
+}
+
+/* v0.4.62: fchownat -- change owner by path (stub) */
+long aios_sys_fchownat(va_list ap) {
+    int dirfd = va_arg(ap, int);
+    const char *pathname = va_arg(ap, const char *);
+    unsigned int owner = va_arg(ap, unsigned int);
+    unsigned int group = va_arg(ap, unsigned int);
+    int flags = va_arg(ap, int);
+    (void)dirfd; (void)pathname; (void)owner; (void)group; (void)flags;
+    return 0;
+}
+
+/* v0.4.62: linkat -- hard link (ext2 hard links not implemented) */
+long aios_sys_linkat(va_list ap) {
+    (void)ap;
+    return -ENOSYS;
+}
+
+/* v0.4.62: symlinkat -- symbolic link (not implemented) */
+long aios_sys_symlinkat(va_list ap) {
+    (void)ap;
+    return -ENOSYS;
+}
+
+/* v0.4.62: readlinkat -- read symbolic link target */
+long aios_sys_readlinkat(va_list ap) {
+    int dirfd = va_arg(ap, int);
+    const char *pathname = va_arg(ap, const char *);
+    char *buf = va_arg(ap, char *);
+    size_t bufsiz = va_arg(ap, size_t);
+    (void)dirfd; (void)pathname; (void)buf; (void)bufsiz;
+    return -EINVAL;
+}

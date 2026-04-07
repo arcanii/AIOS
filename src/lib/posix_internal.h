@@ -25,6 +25,7 @@
 /* Syscall numbers not always defined on AArch64 */
 #ifndef __NR_times
 #define __NR_times 153
+
 #endif
 #ifndef __NR_getdents64
 #define __NR_getdents64 61
@@ -47,6 +48,59 @@
 #ifndef __NR_tgkill
 #define __NR_tgkill 131
 #endif
+
+#ifndef __NR_pread64
+#define __NR_pread64 67
+#endif
+#ifndef __NR_pwrite64
+#define __NR_pwrite64 68
+#endif
+#ifndef __NR_fchmod
+#define __NR_fchmod 52
+#endif
+#ifndef __NR_fchmodat
+#define __NR_fchmodat 53
+#endif
+#ifndef __NR_fchown
+#define __NR_fchown 55
+#endif
+#ifndef __NR_fchownat
+#define __NR_fchownat 54
+#endif
+#ifndef __NR_linkat
+#define __NR_linkat 37
+#endif
+#ifndef __NR_symlinkat
+#define __NR_symlinkat 36
+#endif
+#ifndef __NR_readlinkat
+#define __NR_readlinkat 78
+#endif
+#ifndef __NR_setuid
+#define __NR_setuid 146
+#endif
+#ifndef __NR_setgid
+#define __NR_setgid 144
+#endif
+#ifndef __NR_setsid
+#define __NR_setsid 157
+#endif
+#ifndef __NR_getpgid
+#define __NR_getpgid 155
+#endif
+#ifndef __NR_rt_sigreturn
+#define __NR_rt_sigreturn 139
+#endif
+#ifndef __NR_sigaltstack
+#define __NR_sigaltstack 132
+#endif
+#ifndef __NR_clock_nanosleep
+#define __NR_clock_nanosleep 115
+#endif
+#ifndef __NR_mprotect
+#define __NR_mprotect 226
+#endif
+
 
 /* Pipe IPC protocol labels */
 #define PIPE_FORK         65
@@ -174,5 +228,35 @@ long aios_sys_fcntl(va_list ap);
 long aios_sys_dup(va_list ap);
 long aios_sys_dup3(va_list ap);
 long aios_sys_pipe2(va_list ap);
+
+
+/* ---- v0.4.62 extended syscall handlers ---- */
+
+/* posix_file.c */
+long aios_sys_pread64(va_list ap);
+long aios_sys_pwrite64(va_list ap);
+
+/* posix_stat.c */
+long aios_sys_fchmod(va_list ap);
+long aios_sys_fchmodat(va_list ap);
+long aios_sys_fchown(va_list ap);
+long aios_sys_fchownat(va_list ap);
+long aios_sys_linkat(va_list ap);
+long aios_sys_symlinkat(va_list ap);
+long aios_sys_readlinkat(va_list ap);
+
+/* posix_proc.c */
+long aios_sys_setuid(va_list ap);
+long aios_sys_setgid(va_list ap);
+long aios_sys_setsid(va_list ap);
+long aios_sys_getpgid(va_list ap);
+long aios_sys_rt_sigreturn(va_list ap);
+long aios_sys_sigaltstack(va_list ap);
+
+/* posix_time.c */
+long aios_sys_clock_nanosleep(va_list ap);
+
+/* posix_misc.c */
+long aios_sys_mprotect(va_list ap);
 
 #endif

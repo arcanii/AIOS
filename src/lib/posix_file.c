@@ -479,3 +479,64 @@ long aios_sys_ftruncate(va_list ap) {
     return 0;  /* stub — pretend success */
 }
 
+
+/* v0.4.62: pread64 -- positional read, does not change file offset */
+long aios_sys_pread64(va_list ap) {
+    int fd = va_arg(ap, int);
+    void *buf = va_arg(ap, void *);
+    size_t count = va_arg(ap, size_t);
+    off_t offset = va_arg(ap, off_t);
+
+    if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
+        aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
+        if (!f->active) return -EBADF;
+        if (f->is_pipe) return -ESPIPE;
+        if (offset < 0 || offset >= f->size) return 0;
+        int avail = f->size - (int)offset;
+        int n = (int)count < avail ? (int)count : avail;
+        char *dst = (char *)buf;
+        for (int i = 0; i < n; i++) dst[i] = f->data[(int)offset + i];
+        /* file position (f->pos) is NOT modified */
+        return n;
+    }
+    return -EBADF;
+}
+
+/* v0.4.62: pwrite64 -- positional write, does not change file offset */
+long aios_sys_pwrite64(va_list ap) {
+    int fd = va_arg(ap, int);
+    const void *buf = va_arg(ap, const void *);
+    size_t count = va_arg(ap, size_t);
+    off_t offset = va_arg(ap, off_t);
+    (void)offset;
+
+    if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
+        aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
+        if (!f->active) return -EBADF;
+        if (f->is_pipe) return -ESPIPE;
+        /* Write via FS_WRITE_FILE IPC (offset not yet honored by ext2) */
+        if (!f->is_dir && f->path[0] && fs_ep_cap) {
+            const char *s = (const char *)buf;
+            int plen = 0; while (f->path[plen]) plen++;
+            seL4_SetMR(0, (seL4_Word)plen);
+            int mr = 1;
+            seL4_Word w = 0;
+            for (int i = 0; i < plen; i++) {
+                w |= ((seL4_Word)(uint8_t)f->path[i]) << ((i % 8) * 8);
+                if (i % 8 == 7 || i == plen - 1) { seL4_SetMR(mr++, w); w = 0; }
+            }
+            int wlen = (int)count;
+            if (wlen > 3000) wlen = 3000;
+            seL4_SetMR(mr++, (seL4_Word)wlen);
+            w = 0;
+            for (int i = 0; i < wlen; i++) {
+                w |= ((seL4_Word)(uint8_t)s[i]) << ((i % 8) * 8);
+                if (i % 8 == 7 || i == wlen - 1) { seL4_SetMR(mr++, w); w = 0; }
+            }
+            seL4_Call(fs_ep_cap, seL4_MessageInfo_new(15, 0, 0, mr));
+            return (long)wlen;
+        }
+        return (long)count;
+    }
+    return -EBADF;
+}

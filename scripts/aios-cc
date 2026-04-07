@@ -100,6 +100,8 @@ LDFLAGS=(
     -Wl,--wrap=pthread_mutex_destroy
     -Wl,--wrap=getpwuid
     -Wl,--wrap=getpwnam
+    -Wl,--wrap=getgrnam
+    -Wl,--wrap=getgrgid
     -Wl,-umuslcsys_init_muslc
 )
 

@@ -41,6 +41,8 @@ macro(AiosPosixApp name)
         -Wl,--wrap=pthread_mutex_destroy
         -Wl,--wrap=getpwuid
         -Wl,--wrap=getpwnam
+        -Wl,--wrap=getgrnam
+        -Wl,--wrap=getgrgid
     )
 endmacro()
 

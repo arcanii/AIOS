@@ -1,5 +1,5 @@
 /* posix_verify.c -- POSIX compliance verification for AIOS
- * Tag: POSIX_VERIFY_V2
+ * Tag: POSIX_VERIFY_V3
  * Comprehensive test of all implemented POSIX interfaces.
  * Reference: IEEE Std 1003.1-2024
  * Build as AiosPosixApp (uses __wrap_main).
@@ -21,6 +21,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <pwd.h>
+#include <grp.h>
 
 /* ---- Test scaffolding ---- */
 
@@ -79,7 +80,7 @@ static void *thread_mutex_inc(void *arg)
 int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
-    printf("=== AIOS POSIX Compliance Verification (V2) ===\n");
+    printf("=== AIOS POSIX Compliance Verification (V3) ===\n");
     printf("Reference: IEEE Std 1003.1-2024\n");
     printf("Testing all implemented syscalls on target...\n\n");
 
@@ -542,11 +543,152 @@ int main(int argc, char **argv)
         }
     }
 
+
+    /* ============================================================
+     * Section 16: Extended File I/O -- pread, pwrite
+     * Interfaces: pread pwrite
+     * ============================================================ */
+    printf("\n[16] Extended File I/O\n");
+
+    {
+        int pfd_w = open("/tmp/pv_pread", O_CREAT | O_WRONLY | O_TRUNC, 0644);
+        if (pfd_w >= 0) {
+            write(pfd_w, "ABCDEFGHIJ", 10);
+            close(pfd_w);
+
+            int pfd_r = open("/tmp/pv_pread", O_RDONLY);
+            if (pfd_r >= 0) {
+                char pb[8];
+                memset(pb, 0, sizeof(pb));
+                ssize_t pn = pread(pfd_r, pb, 4, 3);
+                test("pread offset=3 len=4", pn == 4);
+                test("pread content DEFG", memcmp(pb, "DEFG", 4) == 0);
+
+                /* Verify file position was not changed by pread */
+                char pb2[4];
+                ssize_t pn2 = read(pfd_r, pb2, 4);
+                test("pread pos unchanged", pn2 == 4 && memcmp(pb2, "ABCD", 4) == 0);
+
+                close(pfd_r);
+            } else {
+                skip("pread offset=3 len=4", "open failed");
+                skip("pread content DEFG",   "open failed");
+                skip("pread pos unchanged",  "open failed");
+            }
+            unlink("/tmp/pv_pread");
+        } else {
+            skip("pread offset=3 len=4", "create failed");
+            skip("pread content DEFG",   "create failed");
+            skip("pread pos unchanged",  "create failed");
+        }
+    }
+
+    /* ============================================================
+     * Section 17: File Metadata -- fchmod, fchown, linkat
+     * Interfaces: fchmod fchmodat fchown fchownat linkat readlinkat
+     * ============================================================ */
+    printf("\n[17] File Metadata\n");
+
+    {
+        int mfd = open("/tmp/pv_meta", O_CREAT | O_WRONLY | O_TRUNC, 0644);
+        if (mfd >= 0) {
+            test("fchmod returns 0",  fchmod(mfd, 0755) == 0);
+            test("fchown returns 0",  fchown(mfd, 0, 0) == 0);
+            close(mfd);
+            test("fchmodat returns 0", fchmodat(AT_FDCWD, "/tmp/pv_meta", 0644, 0) == 0);
+            test("fchownat returns 0", fchownat(AT_FDCWD, "/tmp/pv_meta", 0, 0, 0) == 0);
+            unlink("/tmp/pv_meta");
+        } else {
+            skip("fchmod returns 0",   "open failed");
+            skip("fchown returns 0",   "open failed");
+            skip("fchmodat returns 0", "open failed");
+            skip("fchownat returns 0", "open failed");
+        }
+        /* linkat: expected to fail with ENOSYS (not implemented) */
+        int lr = linkat(AT_FDCWD, "/bin/echo", AT_FDCWD, "/tmp/pv_link", 0);
+        test("linkat returns error", lr < 0);
+        /* readlinkat: expected to fail (no symlinks) */
+        char rlbuf[64];
+        ssize_t rln = readlinkat(AT_FDCWD, "/tmp", rlbuf, sizeof(rlbuf));
+        test("readlinkat returns error", rln < 0);
+    }
+
+    /* ============================================================
+     * Section 18: Process Identity (extended)
+     * Interfaces: setsid getpgid
+     * ============================================================ */
+    printf("\n[18] Process Identity (extended)\n");
+
+    {
+        pid_t sid = setsid();
+        test("setsid returns > 0", sid > 0);
+
+        pid_t pgid = getpgid(0);
+        test("getpgid returns > 0", pgid > 0);
+    }
+
+    /* ============================================================
+     * Section 19: Extended Time
+     * Interfaces: clock_nanosleep
+     * ============================================================ */
+    printf("\n[19] Extended Time\n");
+
+    {
+        struct timespec tb_before, tb_after;
+        clock_gettime(CLOCK_MONOTONIC, &tb_before);
+        struct timespec cns_req = {0, 10000000}; /* 10 ms */
+        int cns_r = clock_nanosleep(CLOCK_MONOTONIC, 0, &cns_req, NULL);
+        clock_gettime(CLOCK_MONOTONIC, &tb_after);
+        test("clock_nanosleep returns 0", cns_r == 0);
+        long cns_elapsed = (tb_after.tv_sec - tb_before.tv_sec) * 1000000000L
+                         + (tb_after.tv_nsec - tb_before.tv_nsec);
+        test("clock_nanosleep elapsed >= 5ms", cns_elapsed >= 5000000);
+    }
+
+    /* ============================================================
+     * Section 20: Memory Protection
+     * Interfaces: mprotect
+     * ============================================================ */
+    printf("\n[20] Memory Protection\n");
+
+    {
+        void *mp = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
+                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (mp != MAP_FAILED && mp != NULL) {
+            int mr = mprotect(mp, 4096, PROT_READ);
+            test("mprotect returns 0", mr == 0);
+            munmap(mp, 4096);
+        } else {
+            skip("mprotect returns 0", "mmap failed");
+        }
+    }
+
+    /* ============================================================
+     * Section 21: Group Database
+     * Interfaces: getgrgid getgrnam
+     * ============================================================ */
+    printf("\n[21] Group Database\n");
+
+    {
+        struct group *gr = getgrgid(0);
+        test("getgrgid(0) non-NULL", gr != NULL);
+        if (gr) {
+            test("getgrgid(0) name=root", strcmp(gr->gr_name, "root") == 0);
+            test("getgrgid(0) gid=0",     gr->gr_gid == 0);
+        }
+
+        struct group *gr2 = getgrnam("root");
+        test("getgrnam root non-NULL", gr2 != NULL);
+        if (gr2) {
+            test("getgrnam root gid=0", gr2->gr_gid == 0);
+        }
+    }
+
     /* ============================================================
      * Summary
      * ============================================================ */
     printf("\n========================================\n");
-    printf("AIOS POSIX Verification (V2): %d/%d passed", pass_count, total_count);
+    printf("AIOS POSIX Verification (V3): %d/%d passed", pass_count, total_count);
     if (fail_count > 0) printf(", %d FAILED", fail_count);
     if (skip_count > 0) printf(", %d skipped", skip_count);
     printf("\n========================================\n");

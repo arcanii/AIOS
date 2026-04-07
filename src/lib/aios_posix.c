@@ -473,6 +473,26 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
 #ifdef __NR_ftruncate
     muslcsys_install_syscall(__NR_ftruncate, aios_sys_ftruncate);
     muslcsys_install_syscall(__NR_times, aios_sys_times);
+
+    /* v0.4.62: extended POSIX syscalls (17 new) */
+    muslcsys_install_syscall(__NR_pread64, aios_sys_pread64);
+    muslcsys_install_syscall(__NR_pwrite64, aios_sys_pwrite64);
+    muslcsys_install_syscall(__NR_fchmod, aios_sys_fchmod);
+    muslcsys_install_syscall(__NR_fchmodat, aios_sys_fchmodat);
+    muslcsys_install_syscall(__NR_fchown, aios_sys_fchown);
+    muslcsys_install_syscall(__NR_fchownat, aios_sys_fchownat);
+    muslcsys_install_syscall(__NR_linkat, aios_sys_linkat);
+    muslcsys_install_syscall(__NR_symlinkat, aios_sys_symlinkat);
+    muslcsys_install_syscall(__NR_readlinkat, aios_sys_readlinkat);
+    muslcsys_install_syscall(__NR_setuid, aios_sys_setuid);
+    muslcsys_install_syscall(__NR_setgid, aios_sys_setgid);
+    muslcsys_install_syscall(__NR_setsid, aios_sys_setsid);
+    muslcsys_install_syscall(__NR_getpgid, aios_sys_getpgid);
+    muslcsys_install_syscall(__NR_rt_sigreturn, aios_sys_rt_sigreturn);
+    muslcsys_install_syscall(__NR_sigaltstack, aios_sys_sigaltstack);
+    muslcsys_install_syscall(__NR_clock_nanosleep, aios_sys_clock_nanosleep);
+    muslcsys_install_syscall(__NR_mprotect, aios_sys_mprotect);
+
 #endif
 }
 

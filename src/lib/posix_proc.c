@@ -242,3 +242,72 @@ long aios_sys_rt_sigpending(va_list ap) {
     if (set) *set = (uint64_t)sigstate.pending;
     return 0;
 }
+
+/* v0.4.62: setuid -- set real user ID */
+long aios_sys_setuid(va_list ap) {
+    unsigned int uid = va_arg(ap, unsigned int);
+    /* root can set any uid; non-root can only set own uid */
+    if (aios_uid == 0 || uid == aios_uid) {
+        aios_uid = uid;
+        return 0;
+    }
+    return -EPERM;
+}
+
+/* v0.4.62: setgid -- set real group ID */
+long aios_sys_setgid(va_list ap) {
+    unsigned int gid = va_arg(ap, unsigned int);
+    if (aios_uid == 0 || gid == aios_gid) {
+        aios_gid = gid;
+        return 0;
+    }
+    return -EPERM;
+}
+
+/* v0.4.62: setsid -- create new session, return session ID */
+long aios_sys_setsid(va_list ap) {
+    (void)ap;
+    return (long)(aios_pid > 0 ? aios_pid : 1);
+}
+
+/* v0.4.62: getpgid -- get process group ID (flat model: pgid == pid) */
+long aios_sys_getpgid(va_list ap) {
+    int pid = va_arg(ap, int);
+    (void)pid;
+    return (long)(aios_pid > 0 ? aios_pid : 1);
+}
+
+/* v0.4.62: rt_sigreturn -- return from signal handler
+ * AIOS dispatches signals synchronously via aios_sig_check(),
+ * so the handler runs inline and returns normally.
+ * rt_sigreturn is a no-op here; musl may call it. */
+long aios_sys_rt_sigreturn(va_list ap) {
+    (void)ap;
+    return 0;
+}
+
+/* v0.4.62: sigaltstack -- alternate signal stack
+ * Signals in AIOS are polled, no kernel stack switch needed.
+ * We store the parameters for POSIX compliance. */
+static void    *_sigalt_sp    = (void *)0;
+static size_t   _sigalt_size  = 0;
+static int      _sigalt_flags = 2; /* SS_DISABLE */
+
+long aios_sys_sigaltstack(va_list ap) {
+    /* ABI: stack_t { void *ss_sp; int ss_flags; size_t ss_size; } */
+    typedef struct { void *sp; int flags; size_t size; } aios_stack_t;
+    const aios_stack_t *ss  = va_arg(ap, const aios_stack_t *);
+    aios_stack_t       *oss = va_arg(ap, aios_stack_t *);
+
+    if (oss) {
+        oss->sp    = _sigalt_sp;
+        oss->flags = _sigalt_flags;
+        oss->size  = _sigalt_size;
+    }
+    if (ss) {
+        _sigalt_sp    = ss->sp;
+        _sigalt_flags = ss->flags;
+        _sigalt_size  = ss->size;
+    }
+    return 0;
+}

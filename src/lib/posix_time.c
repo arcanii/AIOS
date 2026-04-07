@@ -75,3 +75,47 @@ long aios_sys_times(va_list ap)
     clock_gettime(0 /* CLOCK_MONOTONIC */, &ts);
     return (long)(ts.tv_sec * 100 + ts.tv_nsec / 10000000);
 }
+
+/* v0.4.62: clock_nanosleep -- sleep with clock selection and TIMER_ABSTIME */
+long aios_sys_clock_nanosleep(va_list ap) {
+    int clock_id = va_arg(ap, int);
+    int flags = va_arg(ap, int);
+    const struct timespec *req = va_arg(ap, const struct timespec *);
+    struct timespec *rem = va_arg(ap, struct timespec *);
+    (void)clock_id;
+
+    uint64_t freq;
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+    if (freq == 0) freq = 62500000;
+
+    uint64_t target;
+    if (flags & 1) {
+        /* TIMER_ABSTIME: request is an absolute timestamp */
+        target = (uint64_t)req->tv_sec * freq
+               + (uint64_t)req->tv_nsec * freq / 1000000000ULL;
+    } else {
+        /* Relative: same semantics as nanosleep */
+        __asm__ volatile("mrs %0, cntpct_el0" : "=r"(target));
+        target += (uint64_t)req->tv_sec * freq
+                + (uint64_t)req->tv_nsec * freq / 1000000000ULL;
+    }
+
+    uint64_t now;
+    do {
+        seL4_Yield();
+        if (aios_sig_check() > 0) {
+            __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
+            if (rem && now < target) {
+                uint64_t left = target - now;
+                rem->tv_sec  = (long)(left / freq);
+                rem->tv_nsec = (long)((left % freq) * 1000000000ULL / freq);
+            } else if (rem) {
+                rem->tv_sec = 0; rem->tv_nsec = 0;
+            }
+            return -EINTR;
+        }
+        __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
+    } while (now < target);
+    if (rem) { rem->tv_sec = 0; rem->tv_nsec = 0; }
+    return 0;
+}

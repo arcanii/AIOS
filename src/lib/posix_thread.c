@@ -1,9 +1,10 @@
 /*
- * posix_thread.c -- AIOS POSIX pthread + passwd wrappers
+ * posix_thread.c -- AIOS POSIX pthread + passwd + group wrappers
  * pthread_create/join/exit/detach, pthread_mutex_*,
  * getpwuid, getpwnam
  */
 #include "posix_internal.h"
+#include <grp.h>
 
 static struct passwd _pw_buf;
 static char _pw_name[32];
@@ -150,4 +151,45 @@ int __wrap_pthread_mutex_unlock(pthread_mutex_t *mutex) {
 int __wrap_pthread_mutex_destroy(pthread_mutex_t *mutex) {
     (void)mutex;
     return 0;
+}
+
+/* ---- Group database (v0.4.62) ---- */
+
+static struct group _gr_buf;
+static char _gr_name[32];
+
+struct group *__wrap_getgrgid(gid_t gid) {
+    _gr_buf.gr_gid = gid;
+    if (gid == 0) {
+        _gr_name[0] = 'r'; _gr_name[1] = 'o'; _gr_name[2] = 'o';
+        _gr_name[3] = 't'; _gr_name[4] = 0;
+    } else {
+        /* Format GID as decimal string */
+        int v = (int)gid, pos = 0;
+        char tmp[16];
+        if (v == 0) { tmp[pos++] = '0'; }
+        else { while (v > 0 && pos < 15) { tmp[pos++] = '0' + (v % 10); v /= 10; } }
+        for (int i = 0; i < pos; i++) _gr_name[i] = tmp[pos - 1 - i];
+        _gr_name[pos] = 0;
+    }
+    _gr_buf.gr_name   = _gr_name;
+    _gr_buf.gr_passwd = "x";
+    _gr_buf.gr_mem    = (char **)0;
+    return &_gr_buf;
+}
+
+struct group *__wrap_getgrnam(const char *name) {
+    if (!name) return (struct group *)0;
+    /* Match "root" -> gid 0 */
+    if (name[0] == 'r' && name[1] == 'o' && name[2] == 'o'
+        && name[3] == 't' && name[4] == 0) {
+        return __wrap_getgrgid(0);
+    }
+    /* Default: return gid 0 with requested name */
+    _gr_buf.gr_gid = 0;
+    str_copy(_gr_name, name, sizeof(_gr_name));
+    _gr_buf.gr_name   = _gr_name;
+    _gr_buf.gr_passwd = "x";
+    _gr_buf.gr_mem    = (char **)0;
+    return &_gr_buf;
 }

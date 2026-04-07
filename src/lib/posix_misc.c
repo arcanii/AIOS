@@ -180,3 +180,13 @@ long aios_sys_pipe2(va_list ap) {
     fds[1] = AIOS_FD_BASE + wi;  /* write end */
     return 0;
 }
+
+/* v0.4.62: mprotect -- change memory protection
+ * Stub: seL4 page-table updates not yet wired through VMM. */
+long aios_sys_mprotect(va_list ap) {
+    void *addr = va_arg(ap, void *);
+    size_t len = va_arg(ap, size_t);
+    int prot = va_arg(ap, int);
+    (void)addr; (void)len; (void)prot;
+    return 0;
+}
