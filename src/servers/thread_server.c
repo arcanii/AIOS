@@ -10,6 +10,7 @@
 #include <vka/capops.h>
 #include <vka/object.h>
 #include "aios/root_shared.h"
+#include "aios/vka_audit.h"
 
 
 /* -- Create a thread inside a child process VSpace -- */
@@ -26,12 +27,15 @@ int create_child_thread(int proc_idx, seL4_Word entry, seL4_Word arg,
     aios_thread_t *t = &ap->threads[tidx];
 
     /* 1. Allocate TCB */
+    vka_audit_tcb(VKA_SUB_THREAD);
     if (vka_alloc_tcb(&vka, &t->tcb)) return -1;
 
     /* 2. Allocate fault endpoint for this thread */
+    vka_audit_endpoint(VKA_SUB_THREAD);
     if (vka_alloc_endpoint(&vka, &t->fault_ep)) goto fail_tcb;
 
     /* 3. Allocate IPC buffer frame */
+    vka_audit_frame(VKA_SUB_THREAD, 1);
     if (vka_alloc_frame(&vka, seL4_PageBits, &t->ipc_frame)) goto fail_fault;
 
     /* 4. Map IPC buffer into child VSpace */
@@ -42,6 +46,7 @@ int create_child_thread(int proc_idx, seL4_Word entry, seL4_Word arg,
     /* 6. Allocate and map stack (16 KB) */
     seL4_CPtr stack_caps[THREAD_STACK_PAGES];
     for (int i = 0; i < THREAD_STACK_PAGES; i++) {
+        vka_audit_frame(VKA_SUB_THREAD, 1); /* stack */
         if (vka_alloc_frame(&vka, seL4_PageBits, &t->stack_frames[i])) {
             for (int j = 0; j < i; j++)
                 vka_free_object(&vka, &t->stack_frames[j]);

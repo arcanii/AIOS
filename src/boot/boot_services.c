@@ -6,6 +6,7 @@
  * and spawns tty_server, auth_server, and getty.
  */
 #include "aios/root_shared.h"
+#include "aios/vka_audit.h"
 #include "aios/vfs.h"
 #include "aios/procfs.h"
 #include <sel4utils/thread.h>
@@ -31,22 +32,27 @@ void boot_start_services(vka_object_t *fault_ep) {
 
     /* Create IPC endpoints for internal servers */
     vka_object_t fs_ep_obj;
+    vka_audit_endpoint(VKA_SUB_BOOT);
     vka_alloc_endpoint(&vka, &fs_ep_obj);
     fs_ep_cap = fs_ep_obj.cptr;
 
     vka_object_t exec_ep_obj;
+    vka_audit_endpoint(VKA_SUB_BOOT);
     vka_alloc_endpoint(&vka, &exec_ep_obj);
     seL4_CPtr exec_ep_cap = exec_ep_obj.cptr;
 
     vka_object_t thread_ep_obj;
+    vka_audit_endpoint(VKA_SUB_BOOT);
     vka_alloc_endpoint(&vka, &thread_ep_obj);
     thread_ep_cap = thread_ep_obj.cptr;
 
     vka_object_t auth_ep_obj;
+    vka_audit_endpoint(VKA_SUB_BOOT);
     vka_alloc_endpoint(&vka, &auth_ep_obj);
     auth_ep_cap = auth_ep_obj.cptr;
 
     vka_object_t pipe_ep_obj;
+    vka_audit_endpoint(VKA_SUB_BOOT);
     vka_alloc_endpoint(&vka, &pipe_ep_obj);
     pipe_ep_cap = pipe_ep_obj.cptr;
 

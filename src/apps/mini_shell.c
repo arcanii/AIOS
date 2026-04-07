@@ -1176,6 +1176,37 @@ int main(int argc, char *argv[]) {
                                 while (*redir_out && ri < 255) rpath[ri++] = *redir_out++;
                                 rpath[ri] = 0;
                             }
+                            /* v0.4.65: O_APPEND -- prepend existing content */
+                            if (redir_append && fs_ep && fpos > 0) {
+                                char oldbuf[4096]; int olen = 0;
+                                int pl2 = str_len(rpath);
+                                seL4_SetMR(0, (seL4_Word)pl2);
+                                int mr2 = 1;
+                                seL4_Word w2 = 0;
+                                for (int i = 0; i < pl2; i++) {
+                                    w2 |= ((seL4_Word)(uint8_t)rpath[i]) << ((i % 8) * 8);
+                                    if (i % 8 == 7 || i == pl2 - 1) { seL4_SetMR(mr2++, w2); w2 = 0; }
+                                }
+                                seL4_MessageInfo_t rr = seL4_Call(fs_ep,
+                                    seL4_MessageInfo_new(11 /* FS_CAT */, 0, 0, mr2));
+                                seL4_Word rtotal = seL4_GetMR(0);
+                                if (rtotal > 0 && rtotal < 4000) {
+                                    int rmrs2 = (int)seL4_MessageInfo_get_length(rr) - 1;
+                                    for (int i = 0; i < rmrs2 && olen < (int)rtotal; i++) {
+                                        seL4_Word rw = seL4_GetMR(i + 1);
+                                        for (int j = 0; j < 8 && olen < (int)rtotal && olen < 4000; j++)
+                                            oldbuf[olen++] = (char)((rw >> (j * 8)) & 0xFF);
+                                    }
+                                }
+                                /* Shift fbuf to make room for old content */
+                                if (olen > 0 && olen + fpos <= 4095) {
+                                    for (int i = fpos - 1; i >= 0; i--)
+                                        fbuf[olen + i] = fbuf[i];
+                                    for (int i = 0; i < olen; i++)
+                                        fbuf[i] = oldbuf[i];
+                                    fpos += olen;
+                                }
+                            }
                             /* Write to file via FS_WRITE_FILE IPC */
                             if (fs_ep && fpos > 0) {
                                 int pl = str_len(rpath);

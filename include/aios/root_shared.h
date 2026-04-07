@@ -114,7 +114,10 @@ typedef struct {
 
 typedef struct {
     int active;
-    char buf[PIPE_BUF_SIZE];
+    char buf[PIPE_BUF_SIZE];      /* fallback static buffer */
+    char *shm_buf;                /* v0.4.65: mapped shared frame (or buf) */
+    vka_object_t shm_frame;       /* v0.4.65: backing frame object */
+    int shm_valid;                /* v0.4.65: 1 if shm_frame allocated */
     int head;
     int count;
     int read_closed;

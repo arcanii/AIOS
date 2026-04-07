@@ -22,6 +22,7 @@
 #include <sel4utils/elf.h>
 #include <simple/simple.h>
 #include "aios/root_shared.h"
+#include "aios/vka_audit.h"
 /* Signal fetch: client retrieves and clears pending bits */
 #ifndef PIPE_SIG_FETCH
 #define PIPE_SIG_FETCH 76
@@ -82,7 +83,7 @@ static void wake_one_blocked_reader(int pipe_id) {
         int mr = 1;
         seL4_Word w = 0;
         for (int i = 0; i < rlen; i++) {
-            char c = p->buf[(p->head + i) % PIPE_BUF_SIZE];
+            char c = p->shm_buf[(p->head + i) % PIPE_BUF_SIZE];
             w |= ((seL4_Word)(uint8_t)c) << ((i % 8) * 8);
             if (i % 8 == 7 || i == rlen - 1) {
                 seL4_SetMR(mr++, w); w = 0;
@@ -103,8 +104,13 @@ static void wake_one_blocked_reader(int pipe_id) {
 static void pipe_maybe_free(int pi) {
     if (pi < 0 || pi >= MAX_PIPES) return;
     pipe_t *p = &pipes[pi];
-    if (!p->active) return;
     if (p->read_refs <= 0 && p->write_refs <= 0) {
+        if (p->shm_valid) {
+            vspace_unmap_pages(&vspace, p->shm_buf, 1, seL4_PageBits, NULL);
+            vka_free_object(&vka, &p->shm_frame);
+            p->shm_buf = p->buf;
+            p->shm_valid = 0;
+        }
         p->active = 0;
     }
 }
@@ -215,6 +221,21 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             pipes[pi].write_closed = 0;
             pipes[pi].read_refs = 1;
             pipes[pi].write_refs = 1;
+            /* v0.4.65: allocate shared frame for pipe buffer */
+            pipes[pi].shm_valid = 0;
+            pipes[pi].shm_buf = pipes[pi].buf;
+            vka_audit_frame(VKA_SUB_PIPE, 1);
+            if (vka_alloc_frame(&vka, seL4_PageBits, &pipes[pi].shm_frame) == 0) {
+                void *mapped = vspace_map_pages(&vspace,
+                    &pipes[pi].shm_frame.cptr, NULL,
+                    seL4_AllRights, 1, seL4_PageBits, 1);
+                if (mapped) {
+                    pipes[pi].shm_buf = (char *)mapped;
+                    pipes[pi].shm_valid = 1;
+                } else {
+                    vka_free_object(&vka, &pipes[pi].shm_frame);
+                }
+            }
             seL4_SetMR(0, (seL4_Word)pi);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
@@ -233,7 +254,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             for (int i = 0; i < wlen && p->count < PIPE_BUF_SIZE; i++) {
                 if (i % 8 == 0 && i > 0) mr++;
                 char c = (char)((seL4_GetMR(mr) >> ((i % 8) * 8)) & 0xFF);
-                p->buf[(p->head + p->count) % PIPE_BUF_SIZE] = c;
+                p->shm_buf[(p->head + p->count) % PIPE_BUF_SIZE] = c;
                 p->count++;
                 written++;
             }
@@ -291,7 +312,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             int mr = 1;
             seL4_Word w = 0;
             for (int i = 0; i < rlen; i++) {
-                char c = p->buf[(p->head + i) % PIPE_BUF_SIZE];
+                char c = p->shm_buf[(p->head + i) % PIPE_BUF_SIZE];
                 w |= ((seL4_Word)(uint8_t)c) << ((i % 8) * 8);
                 if (i % 8 == 7 || i == rlen - 1) {
                     seL4_SetMR(mr++, w); w = 0;
@@ -305,9 +326,13 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
         case PIPE_CLOSE: {
             int pi = (int)seL4_GetMR(0);
             if (pi >= 0 && pi < MAX_PIPES && pipes[pi].active) {
+                pipes[pi].read_refs = 0;
+                pipes[pi].write_refs = 0;
                 pipes[pi].active = 0;
                 /* Wake any blocked readers with EOF */
                 wake_blocked_readers_eof(pi);
+                /* shm frame freed via pipe_maybe_free refcount path */
+                pipe_maybe_free(pi);
             }
             seL4_SetMR(0, 0);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
@@ -822,12 +847,14 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             printf("[DEBUG] pipes:\n");
             for (int i = 0; i < MAX_PIPES; i++) {
                 if (pipes[i].active) {
-                    printf("  [%d] count=%d wc=%d rc=%d wr=%d rr=%d\n",
+                    printf("  [%d] count=%d wc=%d rc=%d wr=%d rr=%d shm=%d\n",
                         i, pipes[i].count,
                         pipes[i].write_closed, pipes[i].read_closed,
-                        pipes[i].write_refs, pipes[i].read_refs);
+                        pipes[i].write_refs, pipes[i].read_refs,
+                        pipes[i].shm_valid);
                 }
             }
+            vka_audit_dump();
             printf("[DEBUG] wait_pending:\n");
             for (int i = 0; i < MAX_WAIT_PENDING; i++) {
                 if (wait_pending[i].active) {

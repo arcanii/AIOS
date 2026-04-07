@@ -129,6 +129,7 @@ typedef struct {
     int pipe_id;
     int pipe_read;
     int is_devnull;
+    int is_append;
     char path[128];
     char data[4096];
     int size;

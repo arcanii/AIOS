@@ -19,6 +19,7 @@
 #include <sel4utils/elf.h>
 #include <simple/simple.h>
 #include "aios/root_shared.h"
+#include "aios/vka_audit.h"
 #include "aios/vfs.h"
 #include "aios/procfs.h"
 
@@ -38,6 +39,7 @@ static int fork_copy_region(vspace_t *parent_vs, sel4utils_process_t *child_proc
             printf("[fork] frame alloc failed at %p\n", va);
             return -1;
         }
+        vka_audit_frame(VKA_SUB_FORK, 1);
 
         /*
          * Cannot map parent_cap directly into root — it belongs to parent's VSpace.
@@ -133,6 +135,7 @@ static int fork_share_region(vspace_t *parent_vs, sel4utils_process_t *child_pro
         cspacepath_t src_path, dup_path;
         vka_cspace_make_path(&vka, parent_cap, &src_path);
         if (vka_cspace_alloc_path(&vka, &dup_path)) continue;
+        vka_audit_cslot(VKA_SUB_FORK); /* share */
         int cerr = seL4_CNode_Copy(dup_path.root, dup_path.capPtr, dup_path.capDepth,
                                    src_path.root, src_path.capPtr, src_path.capDepth,
                                    seL4_AllRights);
@@ -176,6 +179,7 @@ static int fork_copy_into_existing(vspace_t *parent_vs, vspace_t *child_vs, uint
     vka_cspace_make_path(&vka, parent_cap, &psrc);
     vka_cspace_make_path(&vka, child_cap, &csrc);
     if (vka_cspace_alloc_path(&vka, &pdup)) return -3;
+    vka_audit_cslot(VKA_SUB_FORK); /* existing */
     if (vka_cspace_alloc_path(&vka, &cdup)) {
         vka_cspace_free(&vka, pdup.capPtr);
         return -3;
@@ -269,6 +273,7 @@ int do_fork(int parent_idx) {
     cspacepath_t pfe_src, pfe_dest;
     vka_cspace_make_path(&vka, pipe_ep_cap, &pfe_src);
     if (vka_cspace_alloc_path(&vka, &pfe_dest)) return -1;
+    vka_audit_cslot(VKA_SUB_FORK);
     if (seL4_CNode_Mint(pfe_dest.root, pfe_dest.capPtr, pfe_dest.capDepth,
             pfe_src.root, pfe_src.capPtr, pfe_src.capDepth,
             seL4_AllRights, (seL4_Word)(child_idx + 1))) {

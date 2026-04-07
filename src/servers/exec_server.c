@@ -17,6 +17,7 @@
 #include <sel4utils/elf.h>
 #include <simple/simple.h>
 #include "aios/root_shared.h"
+#include "aios/vka_audit.h"
 #include "aios/vfs.h"
 #include "aios/procfs.h"
 
@@ -44,6 +45,7 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
 
     /* Allocate a slot to save reply caps */
     cspacepath_t reply_path;
+    vka_audit_cslot(VKA_SUB_EXEC);
     int err = vka_cspace_alloc_path(&vka, &reply_path);
     if (err) {
         printf("[exec] FATAL: cannot alloc reply cslot\n");
@@ -188,7 +190,7 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         /* Mint badged fs_ep (badge = ap_idx + 1) for permission checks */
         cspacepath_t fs_src, fs_dest;
         vka_cspace_make_path(&vka, fs_ep_cap, &fs_src);
-        vka_cspace_alloc_path(&vka, &fs_dest);
+        vka_audit_cslot(VKA_SUB_EXEC); vka_cspace_alloc_path(&vka, &fs_dest);
         seL4_CNode_Mint(fs_dest.root, fs_dest.capPtr, fs_dest.capDepth,
             fs_src.root, fs_src.capPtr, fs_src.capDepth,
             seL4_AllRights, (seL4_Word)(ap_idx + 1));
@@ -199,7 +201,7 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         /* Mint badged thread_ep (badge = ap_idx + 1) and copy to child */
         cspacepath_t te_src, te_dest;
         vka_cspace_make_path(&vka, thread_ep_cap, &te_src);
-        vka_cspace_alloc_path(&vka, &te_dest);
+        vka_audit_cslot(VKA_SUB_EXEC); vka_cspace_alloc_path(&vka, &te_dest);
         seL4_CNode_Mint(te_dest.root, te_dest.capPtr, te_dest.capDepth,
             te_src.root, te_src.capPtr, te_src.capDepth,
             seL4_AllRights, (seL4_Word)(ap_idx + 1));
@@ -213,7 +215,7 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         /* Mint badged pipe_ep (badge = ap_idx + 1) for fork identification */
         cspacepath_t pip_src, pip_dest;
         vka_cspace_make_path(&vka, pipe_ep_cap, &pip_src);
-        vka_cspace_alloc_path(&vka, &pip_dest);
+        vka_audit_cslot(VKA_SUB_EXEC); vka_cspace_alloc_path(&vka, &pip_dest);
         seL4_CNode_Mint(pip_dest.root, pip_dest.capPtr, pip_dest.capDepth,
             pip_src.root, pip_src.capPtr, pip_src.capDepth,
             seL4_AllRights, (seL4_Word)(ap_idx + 1));

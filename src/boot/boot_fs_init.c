@@ -6,6 +6,7 @@
  * reads the ext2 superblock, and mounts / and /proc.
  */
 #include "aios/root_shared.h"
+#include "aios/vka_audit.h"
 #include "virtio.h"
 #include "aios/ext2.h"
 #include "aios/vfs.h"
@@ -64,6 +65,7 @@ void boot_fs_init(void) {
 
     /* Allocate 16K contiguous DMA via single untyped */
     vka_object_t dma_ut;
+    vka_audit_untyped(VKA_SUB_BOOT, 14);
     error = vka_alloc_untyped(&vka, 14, &dma_ut);
     if (error) {
         printf("[fs] DMA untyped alloc failed: %d\n", error);

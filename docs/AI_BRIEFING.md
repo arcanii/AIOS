@@ -7,7 +7,7 @@
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: main
 * **Developer**: Bryan
-* **Current Version**: v0.4.64
+* **Current Version**: v0.4.65
 
 ## Development Environment
 
@@ -70,7 +70,7 @@ This allows the user to report "Script B failed" without ambiguity.
 
 ## Build & Boot Commands
 
-### Full Rebuild
+### Full Rebuild (kernel + root task + all programs)
 
 ```
 cd ~/Desktop/github_repos/AIOS
@@ -80,20 +80,51 @@ cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=../deps/kernel/gcc.cmake \
 ninja
 ```
 
+### Incremental Rebuild (after source changes)
+
+```
+cd ~/Desktop/github_repos/AIOS/build-04
+ninja
+```
+
+Note: ninja only recompiles changed files. This is sufficient for changes to
+aios_root.c, pipe_server.c, posix_file.c, mini_shell.c, etc. A full rebuild
+(rm -rf build-04) is only needed when CPIO contents change (tty_server, auth_server).
+
 ### Rebuild sbase (parallel builder)
 
 ```
 python3 scripts/build_sbase.py [--clean] [--jobs N]
 ```
 
-### Install to Disk
+Builds 99 sbase tools into build-04/sbase/. Required after full rebuild
+(rm -rf build-04 deletes the sbase binaries).
+
+### Rebuild Disk Image (CRITICAL)
 
 ```
-python3 scripts/mkdisk.py disk/disk_ext2.img 128 \
+python3 scripts/mkdisk.py disk/disk_ext2.img \
     --rootfs disk/rootfs \
     --install-elfs build-04/sbase \
     --aios-elfs build-04/projects/aios/
 ```
+
+**IMPORTANT**: mini_shell and all user programs are loaded from the ext2 disk
+image, NOT from the CPIO archive. Only tty_server and auth_server are in CPIO
+(they start before the filesystem is mounted). After any change to mini_shell.c,
+getty.c, or any program in src/apps/, you MUST rebuild the disk image for
+changes to take effect in QEMU. Failing to do this means QEMU boots with
+stale binaries.
+
+The typical edit-test cycle is:
+1. Edit source file
+2. `cd build-04 && ninja` (incremental build)
+3. `cd .. && python3 scripts/mkdisk.py disk/disk_ext2.img --rootfs disk/rootfs --install-elfs build-04/sbase --aios-elfs build-04/projects/aios/`
+4. Boot QEMU
+
+If only aios_root.c or server thread code changed (pipe_server.c, exec_server.c,
+fs_server.c, thread_server.c, fork.c, reap.c), step 3 can be skipped -- these
+are part of the root task binary loaded directly by the ELF-loader.
 
 ### Boot QEMU
 
@@ -133,6 +164,16 @@ DASH=~/Desktop/github_repos/dash/src
     -o build-04/sbase/dash
 ```
 
+## Which binaries live where
+
+| Binary | Loaded from | Rebuild disk needed? |
+| --- | --- | --- |
+| aios_root (+ all server threads) | ELF-loader (kernel image) | No |
+| tty_server, auth_server | CPIO inside kernel image | No (but full rebuild if changed) |
+| mini_shell, getty, all apps | /bin/aios/ on ext2 disk | **Yes** |
+| sbase tools (echo, cat, ...) | /bin/ on ext2 disk | **Yes** |
+| dash | /bin/dash on ext2 disk | **Yes** |
+
 ## Repository Structure
 
 ```
@@ -147,13 +188,14 @@ AIOS/
 |   +-- lib/
 |   |   +-- aios_posix.c     # POSIX shim orchestrator (init, wrap_main, globals)
 |   |   +-- posix_internal.h # Shared header: fd struct, NR defines, function decls
-|   |   +-- posix_file.c     # File I/O: open, openat, read, write, close, lseek, /dev/null
+|   |   +-- posix_file.c     # File I/O: open, openat, read, write, close, lseek, /dev/null, O_APPEND
 |   |   +-- posix_stat.c     # Stat: fstat, fstatat, statx, fchmod, fchown, readlinkat
 |   |   +-- posix_dir.c      # Directories: getdents64, chdir, mkdirat, unlinkat
 |   |   +-- posix_proc.c     # Process: exit, clone, execve, wait4, signals, setpgid
 |   |   +-- posix_time.c     # Time: clock_gettime, gettimeofday, nanosleep, times
 |   |   +-- posix_misc.c     # Misc: ioctl, fcntl, dup, dup3, pipe2, umask, mprotect
 |   |   +-- posix_thread.c   # Threads: pthread wrappers, getpwuid, getgrnam
+|   |   +-- vka_audit.c      # VKA allocation counter (per-subsystem instrumentation)
 |   +-- boot/
 |   |   +-- boot_fs_init.c   # Filesystem init (virtio-blk + ext2 + VFS mounts)
 |   |   +-- boot_services.c  # Server threads + process spawning
@@ -174,6 +216,7 @@ AIOS/
 |   +-- aios_log.h           # Log macros: AIOS_LOG_INFO/WARN/ERROR/DEBUG
 |   +-- root_shared.h        # Shared types, limits, externs for all server threads
 |   +-- aios_signal.h        # Signal state types
+|   +-- vka_audit.h          # VKA allocation counter types and functions
 +-- scripts/
 |   +-- mkdisk.py            # Disk image CLI
 |   +-- ext2/builder.py      # ext2 image builder (multi-group, indirect blocks)
@@ -183,12 +226,12 @@ AIOS/
 |   +-- posix_audit.py       # POSIX compliance audit
 +-- disk/
 |   +-- disk_ext2.img        # 128MB ext2 disk image (gitignored)
-|   +-- rootfs/              # Filesystem content overlay
+|   +-- rootfs/              # Filesystem content overlay (/etc, /tmp, /root)
 +-- docs/
 |   +-- AI_BRIEFING.md       # This file
 |   +-- ARCHITECTURE.md, DESIGN_0.4.md, LEARNINGS.md
 |   +-- DASH_PORT.md         # dash porting guide and syscall audit
-|   +-- patches/             # Documented dep patches
+|   +-- patches/             # Documented dep patches (musl-gcc15, platsupport)
 +-- projects/aios/CMakeLists.txt  # Build config
 +-- deps/                    # gitignored: seL4, musllibc, etc.
 +-- build-04/                # gitignored: build output
@@ -241,6 +284,14 @@ AIOS/
 * Environment variables set via environ pointer
 * /dev/null handled directly in open/openat (no VFS round-trip)
 
+### Pipe Architecture (v0.4.65)
+
+Pipes use shared-memory frames allocated via vka_alloc_frame and mapped into
+the root task VSpace. Each pipe_t has a shm_buf pointer (backed by a 4K mapped
+frame) used as the ring buffer. Data still flows through IPC message registers
+for signaling, but the buffer storage is a proper mapped frame rather than
+static BSS memory. Cleanup unmaps and frees the frame when all refs are dropped.
+
 ### IPC Protocol Labels
 
 ```
@@ -262,7 +313,7 @@ PIPE_SIGNAL=75, PIPE_SIG_FETCH=76, PIPE_SHUTDOWN=77
 
 ### Implemented Syscalls (70+)
 
-File I/O: open, openat (O_CREAT), read, readv, write, writev, close, lseek, pread64, pwrite64, ftruncate
+File I/O: open, openat (O_CREAT, O_APPEND), read, readv, write, writev, close, lseek, pread64, pwrite64, ftruncate
 Directories: getdents64, chdir, mkdirat, unlinkat
 Stat: fstat, fstatat, statx, fchmod, fchmodat, fchown, fchownat
 Links: linkat (ENOSYS), symlinkat (ENOSYS), readlinkat (EINVAL)
@@ -280,9 +331,25 @@ Rename: renameat, renameat2
 ### fd Table
 
 * AIOS_FD_BASE=10, AIOS_MAX_FDS=32
-* aios_fd_t: active, is_dir, is_pipe, pipe_id, pipe_read, is_devnull, path[128], data[4096], size, pos
+* aios_fd_t: active, is_dir, is_pipe, pipe_id, pipe_read, is_devnull, is_append, path[128], data[4096], size, pos
 * fds 0-2 handled specially (stdin/stdout/stderr via serial or pipe redirect)
 * /dev/null: is_devnull=1, write returns count, read returns 0
+
+### VKA Allocator Audit (v0.4.65)
+
+Per-subsystem allocation counters track frames, endpoints, TCBs, cslots, and
+untypeds across boot, fork, exec, thread, and pipe subsystems. The audit table
+is dumped via the shell `debug` command (PIPE_DEBUG IPC).
+
+Measured allocations (typical boot + login + commands):
+* boot: 7 endpoints, 1 untyped (4 pages DMA) = 4 pages total
+* fork: ~1200+ cslots per fork (cap duplication), 0 new frames
+* exec: 4 cslots per exec (capability minting)
+* pipe: 1 frame per pipe (shared-memory buffer)
+* Pool: 4000 pages, ~3994 remaining after boot + login
+
+The 4000-page pool is heavily oversized. Fork cost is dominated by cslot
+allocation (capability duplication for VSpace pages), not frame allocation.
 
 ## External Tools
 
@@ -325,20 +392,22 @@ Rename: renameat, renameat2
 * aios-cc: Uses tr "/" "_" for object names (avoids cp.c vs libutil/cp.c collision)
 * Process exit: Overridden to trigger VM fault (not seL4_DebugHalt)
 * Multi-group ext2: Block allocation scans all groups; inode allocation group 0 only
-* mini_shell: Does not handle single-quote args (dash -c 'echo hi' broken), no > redirect
+* mini_shell: Does not handle single-quote args (dash -c 'echo hi' broken)
 * dash builtins.def: Must strip C-style comments before mkbuiltins (it is a shell script not C)
+* Disk image is gitignored: must rebuild after rm -rf build-04 (sbase binaries lost)
+* O_APPEND: implemented at shell level (read-modify-write via FS_CAT+FS_WRITE_FILE), not at VFS level. ext2 vfs_create replaces entire file content.
 
 ## Pending Items
 
 1. Dash: debug stdout for -c mode, test script file execution, interactive mode
 2. Shell: mini_shell quote handling for dash -c invocations
-3. POSIX: O_APPEND for >> redirect (dash needs this)
-4. Networking: virtio-net + TCP/IP
-5. Dynamic ELF buffer: vka_alloc_frame for >1MB binaries
-6. Process niceness: runtime seL4_TCB_SetPriority
-7. ext2 write improvements: multi-block file write, triple indirect
-8. Allocator audit: instrument vka_alloc to measure per-fork cost (band-aid at 4000 pages)
-9. Shared-memory pipes: replace IPC round-trip with vka_alloc_frame mapped into both VSpaces
+3. Networking: virtio-net + TCP/IP
+4. Dynamic ELF buffer: vka_alloc_frame for >1MB binaries
+5. Process niceness: runtime seL4_TCB_SetPriority
+6. ext2 write improvements: multi-block file write, triple indirect
+7. Allocator right-sizing: data shows 4000 pages is ~100x oversized, reduce to ~500
+8. VFS-level append: add FS_APPEND IPC op to avoid read-modify-write overhead
+9. Shared-memory pipes phase 2: map frame into writer+reader VSpaces for zero-copy I/O
 
 ## Version History (0.4.x)
 
@@ -377,29 +446,33 @@ Rename: renameat, renameat2
 | v0.4.62 | Extended POSIX 81/81 (100%), posix_verify V3 98/98 |
 | v0.4.63 | sbase integration test, utimensat fix |
 | v0.4.64 | Allocator 4000pg, /dev/null, dup2 fix, ioctl TIOCGWINSZ, fcntl F_DUPFD, setpgid, pip_dest leak fix, dash port (compiled + linked, first boot) |
+| v0.4.65 | Shared-memory pipes, VKA allocator audit, O_APPEND (>> redirect), pipe cleanup fix |
 
-## Architecture After v0.4.64
+## Architecture After v0.4.65
 
 ```
 src/aios_root.c           ~200 lines
 src/lib/aios_posix.c      ~577 lines
-src/lib/posix_internal.h   ~270 lines
-src/lib/posix_file.c       ~560 lines
+src/lib/posix_internal.h   ~275 lines (+ is_append field)
+src/lib/posix_file.c       ~592 lines (+ O_APPEND)
 src/lib/posix_stat.c       ~318 lines
 src/lib/posix_dir.c        ~188 lines
 src/lib/posix_proc.c       ~325 lines
 src/lib/posix_time.c       ~121 lines
 src/lib/posix_misc.c       ~230 lines
 src/lib/posix_thread.c     ~195 lines
+src/lib/vka_audit.c        ~65 lines (NEW)
 src/vfs.c                  ~170 lines
 src/procfs.c               ~286 lines
 src/servers/exec_server.c  ~380 lines
-src/servers/pipe_server.c  ~883 lines
+src/servers/pipe_server.c  ~900 lines (+ shm pipes, audit)
 src/servers/fs_server.c    ~12K lines
 src/servers/thread_server.c ~200 lines
 src/boot/boot_services.c   ~117 lines
-src/process/fork.c         ~255+ lines
+src/process/fork.c         ~495 lines
 src/process/reap.c         ~130 lines
+src/apps/mini_shell.c      ~1380 lines (+ O_APPEND redirect)
+include/aios/vka_audit.h   ~38 lines (NEW)
 ```
 
 ## Test Results
@@ -408,4 +481,8 @@ src/process/reap.c         ~130 lines
 posix_verify V3: 98/98 PASS
 signal_test: 20/20 PASS
 POSIX audit: 55/55 core (100%), 26/26 extended, 81/81 total (100%)
+O_APPEND: echo hello > f; echo world >> f; cat f -> hello\nworld (PASS)
+fork_test: PASS
+pipe: echo hello | cat -> hello (PASS)
+VKA audit: boot 7ep+4pg, fork cslots, pipe frames (PASS)
 ```

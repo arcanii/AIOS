@@ -26,6 +26,7 @@
 #define LOG_LEVEL LOG_LEVEL_DEBUG
 #include "aios/aios_log.h"
 #include "aios/root_shared.h"
+#include "aios/vka_audit.h"
 #include <elf/elf.h>
 #include <sel4utils/elf.h>
 #include <sel4utils/api.h>
@@ -126,7 +127,9 @@ int main(int argc, char *argv[]) {
     }
 
     vka_object_t fault_ep;
+    vka_audit_endpoint(VKA_SUB_BOOT);
     vka_alloc_endpoint(&vka, &fault_ep);
+    vka_audit_endpoint(VKA_SUB_BOOT);
     vka_alloc_endpoint(&vka, &serial_ep);
 
     /* Memory accounting */

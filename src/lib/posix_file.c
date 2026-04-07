@@ -101,6 +101,7 @@ long aios_sys_openat(va_list ap) {
     int is_creat = (flags & 0100) != 0;
     int is_wronly = ((flags & 3) == 1);
     int is_rdwr = ((flags & 3) == 2);
+    int is_append = (flags & 02000) != 0;
     flags &= ~(040000 | 02000000 | 0100000 | 0100 | 01000 | 02000);
 
     /* O_CREAT — create file via IPC if it doesn't exist */
@@ -139,6 +140,7 @@ long aios_sys_openat(va_list ap) {
             aios_fd_t *f = &aios_fds[idx];
             f->active = 1;
             f->is_dir = 0;
+            f->is_append = is_append;
             f->size = 0;
             f->pos = 0;
             str_copy(f->path, pathname, sizeof(f->path));
@@ -167,7 +169,8 @@ long aios_sys_openat(va_list ap) {
         if (n < 0) return -ENOENT;
         f->active = 1;
         f->size = n;
-        f->pos = 0;
+        f->pos = is_append ? n : 0;
+        f->is_append = is_append;
         str_copy(f->path, res_path, sizeof(f->path));
     }
     return AIOS_FD_BASE + idx;
@@ -286,6 +289,8 @@ long aios_sys_write(va_list ap) {
         if (!f->is_pipe && !f->is_dir && f->path[0] && fs_ep_cap) {
             const char *src = (const char *)buf;
             int plen = 0; while (f->path[plen]) plen++;
+            int wlen = (int)count;
+            if (wlen > 3000) wlen = 3000;
             seL4_SetMR(0, (seL4_Word)plen);
             int mr = 1;
             seL4_Word w = 0;
@@ -293,8 +298,6 @@ long aios_sys_write(va_list ap) {
                 w |= ((seL4_Word)(uint8_t)f->path[i]) << ((i % 8) * 8);
                 if (i % 8 == 7 || i == plen - 1) { seL4_SetMR(mr++, w); w = 0; }
             }
-            int wlen = (int)count;
-            if (wlen > 3000) wlen = 3000;  /* MR limit */
             seL4_SetMR(mr++, (seL4_Word)wlen);
             w = 0;
             for (int i = 0; i < wlen; i++) {
