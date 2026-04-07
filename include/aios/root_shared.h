@@ -51,6 +51,9 @@
 #define PIPE_SIGNAL       75
 #define PIPE_SIG_FETCH    76
 #define PIPE_SHUTDOWN     77
+#define PIPE_MAP_SHM     78
+#define PIPE_WRITE_SHM   79
+#define PIPE_READ_SHM    80
 
 /* ── Limits ── */
 
@@ -59,7 +62,7 @@
 #define THREAD_STACK_PAGES   4
 #define MAX_ELF_SEGS         6
 #define MAX_PIPES            8
-#define PIPE_BUF_SIZE        8192
+#define PIPE_BUF_SIZE        4096
 #define MAX_WAIT_PENDING     4
 #define MAX_ZOMBIES          8
 #define MAX_EXEC_ARGS        12
@@ -118,6 +121,9 @@ typedef struct {
     char *shm_buf;                /* v0.4.65: mapped shared frame (or buf) */
     vka_object_t shm_frame;       /* v0.4.65: backing frame object */
     int shm_valid;                /* v0.4.65: 1 if shm_frame allocated */
+    char *xfer_buf;               /* v0.4.66: transfer page mapped in root */
+    vka_object_t xfer_frame;      /* v0.4.66: transfer frame object */
+    int xfer_valid;               /* v0.4.66: 1 if xfer_frame allocated */
     int head;
     int count;
     int read_closed;
@@ -146,6 +152,7 @@ typedef struct {
     int active;
     int pipe_id;
     int max_len;
+    int is_shm;                   /* v0.4.66: 1 if reader wants SHM reply */
     seL4_CPtr reply_cap;
 } pipe_read_blocked_t;
 

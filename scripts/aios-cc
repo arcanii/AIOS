@@ -178,7 +178,7 @@ else
     OBJS=()
     for src in "${SOURCES[@]}"; do
         obj="$AIOS_TMPDIR/$(echo ${src} | tr "/" "_" | sed "s/.c$//").o"
-        ${CC} ${SYSROOT} "${INCLUDES[@]}" "${CFLAGS[@]}" -c "$src" -o "$obj"
+        ${CC} ${SYSROOT} "${INCLUDES[@]}" "${CFLAGS[@]}" "${EXTRA[@]}" -c "$src" -o "$obj"
         if [ $? -ne 0 ]; then rm -rf "$AIOS_TMPDIR"; exit 1; fi
         OBJS+=("$obj")
     done

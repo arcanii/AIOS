@@ -130,6 +130,7 @@ typedef struct {
     int pipe_read;
     int is_devnull;
     int is_append;
+    char *shm_vaddr;              /* v0.4.66: SHM xfer page in this VSpace */
     char path[128];
     char data[4096];
     int size;

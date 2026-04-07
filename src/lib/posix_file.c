@@ -4,6 +4,14 @@
  */
 #include "posix_internal.h"
 
+/* SHM phase 2 disabled: mapping xfer frame into child VSpaces leaks
+ * page table objects (sel4utils_destroy_process does not reclaim them).
+ * Server-side handlers preserved in pipe_server.c for future use.
+ * All pipe I/O uses MR-based fallback path for now. */
+static void pipe_request_shm(aios_fd_t *f) {
+    (void)f;
+}
+
 long aios_sys_open(va_list ap) {
     const char *pathname = va_arg(ap, const char *);
     int flags = va_arg(ap, int);
@@ -220,6 +228,21 @@ long aios_sys_read(va_list ap) {
         /* Pipe read */
         if (f->is_pipe && f->pipe_read && pipe_ep) {
             char *cbuf = (char *)buf;
+            /* v0.4.66: try SHM path (up to 4096 bytes per call) */
+            if (!f->shm_vaddr) pipe_request_shm(f);
+            if (f->shm_vaddr) {
+                int want = (int)count;
+                if (want > 4096) want = 4096;
+                seL4_SetMR(0, (seL4_Word)f->pipe_id);
+                seL4_SetMR(1, (seL4_Word)want);
+                seL4_Call(pipe_ep,
+                    seL4_MessageInfo_new(80 /* PIPE_READ_SHM */, 0, 0, 2));
+                int got = (int)(long)seL4_GetMR(0);
+                for (int i = 0; i < got; i++)
+                    cbuf[i] = f->shm_vaddr[i];
+                return (long)got;
+            }
+            /* Fallback: MR-based read */
             int want = (int)count;
             if (want > 900) want = 900;
             seL4_SetMR(0, (seL4_Word)f->pipe_id);
@@ -285,12 +308,14 @@ long aios_sys_write(va_list ap) {
         aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
         if (!f->active) return -EBADF;
         if (f->is_devnull) return (long)count;
-        /* Regular file write via FS_WRITE_FILE */
+        /* Regular file write -- use FS_APPEND (19) for O_APPEND fds,
+         * FS_WRITE_FILE (15) otherwise. v0.4.66 */
         if (!f->is_pipe && !f->is_dir && f->path[0] && fs_ep_cap) {
             const char *src = (const char *)buf;
             int plen = 0; while (f->path[plen]) plen++;
             int wlen = (int)count;
             if (wlen > 3000) wlen = 3000;
+            int label = f->is_append ? 19 /* FS_APPEND */ : 15 /* FS_WRITE_FILE */;
             seL4_SetMR(0, (seL4_Word)plen);
             int mr = 1;
             seL4_Word w = 0;
@@ -304,11 +329,29 @@ long aios_sys_write(va_list ap) {
                 w |= ((seL4_Word)(uint8_t)src[i]) << ((i % 8) * 8);
                 if (i % 8 == 7 || i == wlen - 1) { seL4_SetMR(mr++, w); w = 0; }
             }
-            seL4_Call(fs_ep_cap, seL4_MessageInfo_new(15 /* FS_WRITE_FILE */, 0, 0, mr));
+            seL4_Call(fs_ep_cap, seL4_MessageInfo_new(label, 0, 0, mr));
             return (long)wlen;
         }
         if (f->is_pipe && !f->pipe_read && pipe_ep) {
             const char *src = (const char *)buf;
+            /* v0.4.66: try SHM path (up to 4096 bytes per call) */
+            if (!f->shm_vaddr) pipe_request_shm(f);
+            if (f->shm_vaddr) {
+                size_t sent = 0;
+                while (sent < count) {
+                    int chunk = (int)(count - sent);
+                    if (chunk > 4096) chunk = 4096;
+                    for (int i = 0; i < chunk; i++)
+                        f->shm_vaddr[i] = src[sent + i];
+                    seL4_SetMR(0, (seL4_Word)f->pipe_id);
+                    seL4_SetMR(1, (seL4_Word)chunk);
+                    seL4_Call(pipe_ep,
+                        seL4_MessageInfo_new(79 /* PIPE_WRITE_SHM */, 0, 0, 2));
+                    sent += chunk;
+                }
+                return (long)count;
+            }
+            /* Fallback: MR-based write */
             size_t sent = 0;
             while (sent < count) {
                 int chunk = (int)(count - sent);

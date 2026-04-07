@@ -293,6 +293,45 @@ void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }
+        case FS_APPEND: {
+            /* v0.4.66: server-side append -- read existing + append new data.
+             * MR layout same as FS_WRITE_FILE: path_len, path, data_len, data */
+            seL4_Word path_len = seL4_GetMR(0);
+            char ap_path[128];
+            int appl = (path_len > 127) ? 127 : (int)path_len;
+            int ap_mr = 1;
+            for (int i = 0; i < appl; i++) {
+                if (i % 8 == 0 && i > 0) ap_mr++;
+                ap_path[i] = (char)((seL4_GetMR(ap_mr) >> ((i % 8) * 8)) & 0xFF);
+            }
+            ap_path[appl] = '\0';
+            if (!fs_check_path_write(fs_badge, ap_path)) {
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            ap_mr++;
+            seL4_Word data_len = seL4_GetMR(ap_mr++);
+            char ap_new[512];
+            int anl = (data_len > 511) ? 511 : (int)data_len;
+            for (int i = 0; i < anl; i++) {
+                if (i % 8 == 0 && i > 0) ap_mr++;
+                ap_new[i] = (char)((seL4_GetMR(ap_mr) >> ((i % 8) * 8)) & 0xFF);
+            }
+            /* Read existing file content */
+            static char ap_buf[4096];
+            int existing = vfs_read(ap_path, ap_buf, (int)sizeof(ap_buf) - anl - 1);
+            if (existing < 0) existing = 0;
+            /* Append new data */
+            for (int i = 0; i < anl && existing + i < 4095; i++)
+                ap_buf[existing + i] = ap_new[i];
+            int total = existing + anl;
+            if (total > 4095) total = 4095;
+            int ret = vfs_create(ap_path, ap_buf, total);
+            seL4_SetMR(0, (seL4_Word)(ret >= 0 ? 0 : -1));
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
         default:
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
             break;

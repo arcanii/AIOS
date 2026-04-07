@@ -7,13 +7,14 @@
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: main
 * **Developer**: Bryan
-* **Current Version**: v0.4.65
+* **Current Version**: v0.4.66
 
 ## Development Environment
 
 * **Host**: macOS Apple Silicon M3 Max
 * **Cross-compiler**: aarch64-linux-gnu-gcc (Homebrew, GCC 15)
 * **Build system**: CMake + Ninja
+* **Cross-compile wrapper**: scripts/aios-cc (passes EXTRA flags to compile + link)
 * **Scripts**: Python 3 (preferred), Bash (for simple ops)
 * **Disk tools**: Custom Python ext2 builder (scripts/ext2/builder.py)
 * **QEMU**: qemu-system-aarch64
@@ -204,7 +205,7 @@ AIOS/
 |   +-- servers/
 |   |   +-- exec_server.c    # ELF loader, process spawn, foreground wait
 |   |   +-- pipe_server.c    # Pipes, fork, exec, wait, exit, signals (central hub)
-|   |   +-- fs_server.c      # VFS dispatch (LS, CAT, STAT, MKDIR, WRITE, UNLINK)
+|   |   +-- fs_server.c      # VFS dispatch (LS, CAT, STAT, MKDIR, WRITE, UNLINK, APPEND)
 |   |   +-- thread_server.c  # Thread create/join for child processes
 |   +-- process/
 |   |   +-- fork.c           # do_fork() implementation
@@ -284,20 +285,23 @@ AIOS/
 * Environment variables set via environ pointer
 * /dev/null handled directly in open/openat (no VFS round-trip)
 
-### Pipe Architecture (v0.4.65)
+### Pipe Architecture (v0.4.66)
 
 Pipes use shared-memory frames allocated via vka_alloc_frame and mapped into
 the root task VSpace. Each pipe_t has a shm_buf pointer (backed by a 4K mapped
-frame) used as the ring buffer. Data still flows through IPC message registers
-for signaling, but the buffer storage is a proper mapped frame rather than
-static BSS memory. Cleanup unmaps and frees the frame when all refs are dropped.
+frame) used as the ring buffer (PIPE_BUF_SIZE = 4096, matching page size).
+Data flows through IPC message registers (MR-based path, up to 900 bytes per
+call). Server-side SHM transfer infrastructure is in place (PIPE_MAP_SHM,
+PIPE_WRITE_SHM, PIPE_READ_SHM ops with lazy xfer page allocation) but
+client-side mapping is disabled due to page table leak in sel4utils process
+cleanup. Cleanup unmaps and frees all frames when all refs are dropped.
 
 ### IPC Protocol Labels
 
 ```
 SER_PUTC=1, SER_GETC=2, SER_KEY_PUSH=4
 FS_LS=10, FS_CAT=11, FS_STAT=12
-FS_MKDIR=14, FS_WRITE_FILE=15, FS_UNLINK=16, FS_UNAME=17, FS_RENAME=18
+FS_MKDIR=14, FS_WRITE_FILE=15, FS_UNLINK=16, FS_UNAME=17, FS_RENAME=18, FS_APPEND=19
 EXEC_RUN=20, EXEC_NICE=21, EXEC_RUN_BG=24, EXEC_FORK=25, EXEC_WAIT=26
 THREAD_CREATE=30, THREAD_JOIN=31
 AUTH_LOGIN=40, AUTH_LOGOUT=41, AUTH_WHOAMI=42, AUTH_CHECK_FILE=43
@@ -309,11 +313,12 @@ PIPE_FORK=65, PIPE_GETPID=66, PIPE_WAIT=67, PIPE_EXIT=68, PIPE_EXEC=69
 PIPE_CLOSE_WRITE=70, PIPE_DEBUG=71, PIPE_EXEC_WAIT=72
 PIPE_CLOSE_READ=73, PIPE_SET_IDENTITY=74
 PIPE_SIGNAL=75, PIPE_SIG_FETCH=76, PIPE_SHUTDOWN=77
+PIPE_MAP_SHM=78, PIPE_WRITE_SHM=79, PIPE_READ_SHM=80
 ```
 
 ### Implemented Syscalls (70+)
 
-File I/O: open, openat (O_CREAT, O_APPEND), read, readv, write, writev, close, lseek, pread64, pwrite64, ftruncate
+File I/O: open, openat (O_CREAT, O_APPEND), read, readv, write, writev, close, lseek, pread64, pwrite64, ftruncate (FS_APPEND for server-side append)
 Directories: getdents64, chdir, mkdirat, unlinkat
 Stat: fstat, fstatat, statx, fchmod, fchmodat, fchown, fchownat
 Links: linkat (ENOSYS), symlinkat (ENOSYS), readlinkat (EINVAL)
@@ -331,7 +336,7 @@ Rename: renameat, renameat2
 ### fd Table
 
 * AIOS_FD_BASE=10, AIOS_MAX_FDS=32
-* aios_fd_t: active, is_dir, is_pipe, pipe_id, pipe_read, is_devnull, is_append, path[128], data[4096], size, pos
+* aios_fd_t: active, is_dir, is_pipe, pipe_id, pipe_read, is_devnull, is_append, shm_vaddr, path[128], data[4096], size, pos
 * fds 0-2 handled specially (stdin/stdout/stderr via serial or pipe redirect)
 * /dev/null: is_devnull=1, write returns count, read returns 0
 
@@ -360,7 +365,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * Cross-compiled via ./scripts/aios-cc with libutil + libutf
 * Note: cp.c and rm.c need special handling (libutil has cp.c/rm.c too)
 
-### dash (Debian Almquist Shell) -- NEW in v0.4.64
+### dash (Debian Almquist Shell) -- v0.4.64, stdout fixed v0.4.66
 
 * Source: ~/Desktop/github_repos/dash (cloned from github.com/tklauser/dash)
 * 468KB statically linked AArch64 ELF
@@ -368,8 +373,9 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * Config: JOBS=0, SMALL=1, GLOB_BROKEN=1, _GNU_SOURCE
 * Builtins.def: stripped C license comment block (mkbuiltins is not a C preprocessor), JOBS/SMALL conditionals removed
 * Cross-compiled with: aios-cc -I $DASH -DSHELL -include $DASH/config.h
-* Status: LINKED, first boot test shows binary executes (dash -c with no arg prints usage)
-* stdout not yet visible for dash -c "echo hello" -- likely mini_shell quote parsing issue
+* Status: WORKING. dash -c "echo hello" outputs hello. dash /tmp/script.sh works.
+* v0.4.66 fixes: aios-cc now passes EXTRA flags to compile step (config.h was never included);
+  mini_shell split_args_qa() preserves quoted args as single tokens
 
 ### Programs on Disk
 
@@ -392,22 +398,19 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * aios-cc: Uses tr "/" "_" for object names (avoids cp.c vs libutil/cp.c collision)
 * Process exit: Overridden to trigger VM fault (not seL4_DebugHalt)
 * Multi-group ext2: Block allocation scans all groups; inode allocation group 0 only
-* mini_shell: Does not handle single-quote args (dash -c 'echo hi' broken)
 * dash builtins.def: Must strip C-style comments before mkbuiltins (it is a shell script not C)
 * Disk image is gitignored: must rebuild after rm -rf build-04 (sbase binaries lost)
-* O_APPEND: implemented at shell level (read-modify-write via FS_CAT+FS_WRITE_FILE), not at VFS level. ext2 vfs_create replaces entire file content.
+* SHM pipe client mapping: disabled -- sel4utils_destroy_process does not reclaim page table objects from post-creation vspace_map_pages. Leaks ~4-8K untyped per PIPE_MAP_SHM call.
 
 ## Pending Items
 
-1. Dash: debug stdout for -c mode, test script file execution, interactive mode
-2. Shell: mini_shell quote handling for dash -c invocations
+1. SHM pipes client enablement: fix page table leak, re-enable pipe_request_shm
+2. Dash interactive mode: test stdin handling, control flow, dash-internal pipes
 3. Networking: virtio-net + TCP/IP
 4. Dynamic ELF buffer: vka_alloc_frame for >1MB binaries
 5. Process niceness: runtime seL4_TCB_SetPriority
 6. ext2 write improvements: multi-block file write, triple indirect
-7. Allocator right-sizing: data shows 4000 pages is ~100x oversized, reduce to ~500
-8. VFS-level append: add FS_APPEND IPC op to avoid read-modify-write overhead
-9. Shared-memory pipes phase 2: map frame into writer+reader VSpaces for zero-copy I/O
+7. Allocator right-sizing: 4000 pages ~100x oversized, test with 500/250/100
 
 ## Version History (0.4.x)
 
@@ -447,41 +450,45 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 | v0.4.63 | sbase integration test, utimensat fix |
 | v0.4.64 | Allocator 4000pg, /dev/null, dup2 fix, ioctl TIOCGWINSZ, fcntl F_DUPFD, setpgid, pip_dest leak fix, dash port (compiled + linked, first boot) |
 | v0.4.65 | Shared-memory pipes, VKA allocator audit, O_APPEND (>> redirect), pipe cleanup fix |
+| v0.4.66 | Dash stdout working, FS_APPEND IPC op, shell >> via FS_APPEND, SHM pipe phase 2 server-side, PIPE_BUF_SIZE fix, aios-cc EXTRA flags fix, split_args_qa |
 
-## Architecture After v0.4.65
+## Architecture After v0.4.66
 
 ```
 src/aios_root.c           ~200 lines
-src/lib/aios_posix.c      ~577 lines
-src/lib/posix_internal.h   ~275 lines (+ is_append field)
-src/lib/posix_file.c       ~592 lines (+ O_APPEND)
+src/lib/aios_posix.c      ~580 lines
+src/lib/posix_internal.h   ~272 lines (+ shm_vaddr)
+src/lib/posix_file.c       ~637 lines (+ FS_APPEND, SHM pipe paths)
 src/lib/posix_stat.c       ~318 lines
 src/lib/posix_dir.c        ~188 lines
 src/lib/posix_proc.c       ~325 lines
 src/lib/posix_time.c       ~121 lines
-src/lib/posix_misc.c       ~230 lines
+src/lib/posix_misc.c       ~233 lines
 src/lib/posix_thread.c     ~195 lines
-src/lib/vka_audit.c        ~65 lines (NEW)
+src/lib/vka_audit.c        ~65 lines
 src/vfs.c                  ~170 lines
 src/procfs.c               ~286 lines
-src/servers/exec_server.c  ~380 lines
-src/servers/pipe_server.c  ~900 lines (+ shm pipes, audit)
-src/servers/fs_server.c    ~12K lines
-src/servers/thread_server.c ~200 lines
+src/servers/exec_server.c  ~388 lines
+src/servers/pipe_server.c  ~1067 lines (+ SHM phase 2 handlers)
+src/servers/fs_server.c    ~343 lines (+ FS_APPEND)
+src/servers/thread_server.c ~227 lines
 src/boot/boot_services.c   ~117 lines
 src/process/fork.c         ~495 lines
 src/process/reap.c         ~130 lines
-src/apps/mini_shell.c      ~1380 lines (+ O_APPEND redirect)
-include/aios/vka_audit.h   ~38 lines (NEW)
+src/apps/mini_shell.c      ~1306 lines (+ split_args_qa, - >> workaround)
+include/aios/root_shared.h ~224 lines (+ SHM labels, xfer fields)
+include/aios/vka_audit.h   ~38 lines
 ```
 
-## Test Results
+## Test Results (v0.4.66)
 
 ```
 posix_verify V3: 98/98 PASS
 signal_test: 20/20 PASS
 POSIX audit: 55/55 core (100%), 26/26 extended, 81/81 total (100%)
-O_APPEND: echo hello > f; echo world >> f; cat f -> hello\nworld (PASS)
+FS_APPEND: echo hello > f; echo world >> f; cat f -> hello\nworld (PASS)
+dash -c "echo hello" -> hello (PASS)
+dash /tmp/t.sh -> hello (PASS)
 fork_test: PASS
 pipe: echo hello | cat -> hello (PASS)
 VKA audit: boot 7ep+4pg, fork cslots, pipe frames (PASS)

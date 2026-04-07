@@ -116,6 +116,28 @@ static void strip_quotes(char *s) {
         s[len-2] = '\0';
     }
 }
+/* v0.4.66: quote-aware arg splitter for correct dash -c "cmd" handling.
+ * Splits buf in-place by spaces, keeping "..." and \x27...\x27 as single tokens.
+ * Returns number of args written to argv[]. */
+static int split_args_qa(char *buf, char **argv, int max_argc) {
+    int ac = 0;
+    char *p = buf;
+    while (*p && ac < max_argc) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+        if (*p == '"' || *p == '\'' ) {
+            char q = *p++;
+            argv[ac++] = p;
+            while (*p && *p != q) p++;
+            if (*p) *p++ = '\0';
+        } else {
+            argv[ac++] = p;
+            while (*p && *p != ' ') p++;
+            if (*p) { *p = '\0'; p++; }
+        }
+    }
+    return ac;
+}
 static int uint_to_dec(uint32_t v, char *buf) {
     if (v == 0) { buf[0] = '0'; buf[1] = 0; return 1; }
     char tmp[12]; int ti = 0;
@@ -273,20 +295,13 @@ static int do_exec(const char *path, const char *arg) {
     argv0[bi] = 0;
     argv[argc++] = argv0;
 
-    /* Split arg by spaces into argv[1..] */
+    /* v0.4.66: quote-aware arg split for dash -c "cmd" */
     static char argbuf[512];
     if (arg) {
         int ai = 0;
         while (*arg && ai < 510) argbuf[ai++] = *arg++;
         argbuf[ai] = 0;
-        char *p = argbuf;
-        while (*p && argc < 31) {
-            while (*p == ' ') p++;
-            if (!*p) break;
-            argv[argc++] = p;
-            while (*p && *p != ' ') p++;
-            if (*p) { *p = 0; p++; }
-        }
+        argc += split_args_qa(argbuf, argv + argc, 31 - argc);
     }
     argv[argc] = 0;
     return fork_exec_wait(path, argv);
@@ -309,14 +324,7 @@ static int do_exec_bg(const char *path, const char *arg) {
         int ai = 0;
         while (*arg && ai < 510) bg_argbuf[ai++] = *arg++;
         bg_argbuf[ai] = 0;
-        char *p = bg_argbuf;
-        while (*p && argc < 31) {
-            while (*p == ' ') p++;
-            if (!*p) break;
-            argv[argc++] = p;
-            while (*p && *p != ' ') p++;
-            if (*p) { *p = 0; p++; }
-        }
+        argc += split_args_qa(bg_argbuf, argv + argc, 31 - argc);
     }
     argv[argc] = 0;
     return fork_exec_bg(path, argv);
@@ -406,14 +414,7 @@ static int run_pipeline(char **segments, int num_segments) {
                 const char *sa = sarg;
                 while (*sa && ai < 510) abuf[ai++] = *sa++;
                 abuf[ai] = 0;
-                char *p = abuf;
-                while (*p && ac < 31) {
-                    while (*p == ' ') p++;
-                    if (!*p) break;
-                    argv[ac++] = p;
-                    while (*p && *p != ' ') p++;
-                    if (*p) { *p = 0; p++; }
-                }
+                ac += split_args_qa(abuf, argv + ac, 31 - ac);
             }
             argv[ac] = 0;
             execv(spath, argv);
@@ -788,17 +789,9 @@ int main(int argc, char *argv[]) {
         for (int i = 0; i < len; i++) {
             if (line[i] == ' ') { line[i] = '\0'; arg = line + i + 1; break; }
         }
-        /* Strip quotes from command and args */
+        /* Strip quotes from command name only; args stay quoted for
+         * split_args_qa() in exec paths (v0.4.66 dash fix) */
         strip_quotes(line);
-        if (arg) {
-            /* Strip quotes from each space-separated arg */
-            char *p = arg;
-            while (*p) {
-                strip_quotes(p);
-                while (*p && *p != ' ') p++;
-                while (*p == ' ') p++;
-            }
-        }
 
         /* ── Detect redirection ── */
         char *redir_out = 0;    /* > filename */
@@ -846,6 +839,7 @@ int main(int argc, char *argv[]) {
 
         /* ── Builtins ── */
         if (str_eq(line, "cd")) {
+            if (arg) strip_quotes(arg);
             char cd_target[256];
             if (!arg || !arg[0]) {
                 const char *home = env_get("HOME");
@@ -1132,14 +1126,7 @@ int main(int argc, char *argv[]) {
                                 int ai2=0; const char *sa=arg;
                                 while (*sa && ai2<510) eabuf[ai2++]=*sa++;
                                 eabuf[ai2]=0;
-                                char *ep=eabuf;
-                                while (*ep && eac<31) {
-                                    while(*ep==' ') ep++;
-                                    if (!*ep) break;
-                                    eargv[eac++]=ep;
-                                    while(*ep && *ep!=' ') ep++;
-                                    if(*ep){*ep=0;ep++;}
-                                }
+                                eac += split_args_qa(eabuf, eargv + eac, 31 - eac);
                             }
                             eargv[eac] = 0;
                             execv(full_path, eargv);
@@ -1176,38 +1163,8 @@ int main(int argc, char *argv[]) {
                                 while (*redir_out && ri < 255) rpath[ri++] = *redir_out++;
                                 rpath[ri] = 0;
                             }
-                            /* v0.4.65: O_APPEND -- prepend existing content */
-                            if (redir_append && fs_ep && fpos > 0) {
-                                char oldbuf[4096]; int olen = 0;
-                                int pl2 = str_len(rpath);
-                                seL4_SetMR(0, (seL4_Word)pl2);
-                                int mr2 = 1;
-                                seL4_Word w2 = 0;
-                                for (int i = 0; i < pl2; i++) {
-                                    w2 |= ((seL4_Word)(uint8_t)rpath[i]) << ((i % 8) * 8);
-                                    if (i % 8 == 7 || i == pl2 - 1) { seL4_SetMR(mr2++, w2); w2 = 0; }
-                                }
-                                seL4_MessageInfo_t rr = seL4_Call(fs_ep,
-                                    seL4_MessageInfo_new(11 /* FS_CAT */, 0, 0, mr2));
-                                seL4_Word rtotal = seL4_GetMR(0);
-                                if (rtotal > 0 && rtotal < 4000) {
-                                    int rmrs2 = (int)seL4_MessageInfo_get_length(rr) - 1;
-                                    for (int i = 0; i < rmrs2 && olen < (int)rtotal; i++) {
-                                        seL4_Word rw = seL4_GetMR(i + 1);
-                                        for (int j = 0; j < 8 && olen < (int)rtotal && olen < 4000; j++)
-                                            oldbuf[olen++] = (char)((rw >> (j * 8)) & 0xFF);
-                                    }
-                                }
-                                /* Shift fbuf to make room for old content */
-                                if (olen > 0 && olen + fpos <= 4095) {
-                                    for (int i = fpos - 1; i >= 0; i--)
-                                        fbuf[olen + i] = fbuf[i];
-                                    for (int i = 0; i < olen; i++)
-                                        fbuf[i] = oldbuf[i];
-                                    fpos += olen;
-                                }
-                            }
-                            /* Write to file via FS_WRITE_FILE IPC */
+                            /* v0.4.66: use FS_APPEND */
+                            /* Write to file via FS_WRITE_FILE or FS_APPEND IPC */
                             if (fs_ep && fpos > 0) {
                                 int pl = str_len(rpath);
                                 seL4_SetMR(0, (seL4_Word)pl);
@@ -1223,7 +1180,7 @@ int main(int argc, char *argv[]) {
                                     w |= ((seL4_Word)(uint8_t)fbuf[i]) << ((i % 8) * 8);
                                     if (i % 8 == 7 || i == fpos - 1) { seL4_SetMR(mr++, w); w = 0; }
                                 }
-                                seL4_Call(fs_ep, seL4_MessageInfo_new(15, 0, 0, mr));
+                                seL4_Call(fs_ep, seL4_MessageInfo_new(redir_append ? 19 : 15, 0, 0, mr));
                             }
                         }
                     }
@@ -1292,14 +1249,7 @@ int main(int argc, char *argv[]) {
                                     int ai2=0; const char *sa=arg;
                                     while (*sa && ai2<510) eabuf_in[ai2++]=*sa++;
                                     eabuf_in[ai2]=0;
-                                    char *ep=eabuf_in;
-                                    while (*ep && eac<31) {
-                                        while(*ep==' ') ep++;
-                                        if (!*ep) break;
-                                        eargv[eac++]=ep;
-                                        while(*ep && *ep!=' ') ep++;
-                                        if(*ep){*ep=0;ep++;}
-                                    }
+                                    eac += split_args_qa(eabuf_in, eargv + eac, 31 - eac);
                                 }
                                 eargv[eac] = 0;
                                 execv(full_path, eargv);

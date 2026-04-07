@@ -78,21 +78,34 @@ static void wake_one_blocked_reader(int pipe_id) {
         if (p->count == 0) break;
         int max_len = pipe_read_blocked[bi].max_len;
         int rlen = p->count < max_len ? p->count : max_len;
-        if (rlen > 900) rlen = 900;
-        seL4_SetMR(0, (seL4_Word)rlen);
-        int mr = 1;
-        seL4_Word w = 0;
-        for (int i = 0; i < rlen; i++) {
-            char c = p->shm_buf[(p->head + i) % PIPE_BUF_SIZE];
-            w |= ((seL4_Word)(uint8_t)c) << ((i % 8) * 8);
-            if (i % 8 == 7 || i == rlen - 1) {
-                seL4_SetMR(mr++, w); w = 0;
+        /* v0.4.66: SHM wake -- copy to xfer page, reply with length only */
+        if (pipe_read_blocked[bi].is_shm && p->xfer_valid) {
+            if (rlen > PAGE_SIZE) rlen = PAGE_SIZE;
+            for (int i = 0; i < rlen; i++)
+                p->xfer_buf[i] = p->shm_buf[(p->head + i) % PIPE_BUF_SIZE];
+            p->head = (p->head + rlen) % PIPE_BUF_SIZE;
+            p->count -= rlen;
+            seL4_SetMR(0, (seL4_Word)rlen);
+            seL4_Send(pipe_read_blocked[bi].reply_cap,
+                      seL4_MessageInfo_new(0, 0, 0, 1));
+        } else {
+            /* MR-based wake (original path) */
+            if (rlen > 900) rlen = 900;
+            seL4_SetMR(0, (seL4_Word)rlen);
+            int mr = 1;
+            seL4_Word w = 0;
+            for (int i = 0; i < rlen; i++) {
+                char c = p->shm_buf[(p->head + i) % PIPE_BUF_SIZE];
+                w |= ((seL4_Word)(uint8_t)c) << ((i % 8) * 8);
+                if (i % 8 == 7 || i == rlen - 1) {
+                    seL4_SetMR(mr++, w); w = 0;
+                }
             }
+            p->head = (p->head + rlen) % PIPE_BUF_SIZE;
+            p->count -= rlen;
+            seL4_Send(pipe_read_blocked[bi].reply_cap,
+                      seL4_MessageInfo_new(0, 0, 0, mr));
         }
-        p->head = (p->head + rlen) % PIPE_BUF_SIZE;
-        p->count -= rlen;
-        seL4_Send(pipe_read_blocked[bi].reply_cap,
-                  seL4_MessageInfo_new(0, 0, 0, mr));
         seL4_CNode_Delete(seL4_CapInitThreadCNode,
                           pipe_read_blocked[bi].reply_cap, seL4_WordBits);
         pipe_read_blocked[bi].active = 0;
@@ -105,6 +118,12 @@ static void pipe_maybe_free(int pi) {
     if (pi < 0 || pi >= MAX_PIPES) return;
     pipe_t *p = &pipes[pi];
     if (p->read_refs <= 0 && p->write_refs <= 0) {
+        if (p->xfer_valid) {
+            vspace_unmap_pages(&vspace, p->xfer_buf, 1, seL4_PageBits, NULL);
+            vka_free_object(&vka, &p->xfer_frame);
+            p->xfer_buf = NULL;
+            p->xfer_valid = 0;
+        }
         if (p->shm_valid) {
             vspace_unmap_pages(&vspace, p->shm_buf, 1, seL4_PageBits, NULL);
             vka_free_object(&vka, &p->shm_frame);
@@ -236,6 +255,9 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                     vka_free_object(&vka, &pipes[pi].shm_frame);
                 }
             }
+            /* v0.4.66: xfer page allocated lazily on first PIPE_MAP_SHM */
+            pipes[pi].xfer_valid = 0;
+            pipes[pi].xfer_buf = NULL;
             seL4_SetMR(0, (seL4_Word)pi);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
@@ -300,6 +322,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 pipe_read_blocked[bi].active = 1;
                 pipe_read_blocked[bi].pipe_id = pi;
                 pipe_read_blocked[bi].max_len = max_len;
+                pipe_read_blocked[bi].is_shm = 0;
                 pipe_read_blocked[bi].reply_cap = read_reply_objs[bi].cptr;
                 /* Do NOT reply -- reader blocks until data or EOF */
                 break;
@@ -766,6 +789,140 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             exec_wait.active = 1;
             exec_wait.child_idx = target_idx;
             exec_wait.reply_cap = exec_wait_reply_obj.cptr;
+            break;
+        }
+        case PIPE_MAP_SHM: {
+            /* v0.4.66: lazy xfer */
+            int pi = (int)seL4_GetMR(0);
+            int ci = (int)badge - 1;
+            if (pi < 0 || pi >= MAX_PIPES || !pipes[pi].active
+                || ci < 0 || ci >= MAX_ACTIVE_PROCS
+                || !active_procs[ci].active) {
+                seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            /* Lazy alloc: create xfer frame on first request */
+            if (!pipes[pi].xfer_valid) {
+                vka_audit_frame(VKA_SUB_PIPE, 1);
+                if (vka_alloc_frame(&vka, seL4_PageBits,
+                        &pipes[pi].xfer_frame) != 0) {
+                    seL4_SetMR(0, 0);
+                    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                    break;
+                }
+                void *xm = vspace_map_pages(&vspace,
+                    &pipes[pi].xfer_frame.cptr, NULL,
+                    seL4_AllRights, 1, seL4_PageBits, 1);
+                if (!xm) {
+                    vka_free_object(&vka, &pipes[pi].xfer_frame);
+                    seL4_SetMR(0, 0);
+                    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                    break;
+                }
+                pipes[pi].xfer_buf = (char *)xm;
+                pipes[pi].xfer_valid = 1;
+            }
+            /* Copy frame cap to fresh slot */
+            cspacepath_t xsrc, xdest;
+            vka_cspace_make_path(&vka, pipes[pi].xfer_frame.cptr, &xsrc);
+            if (vka_cspace_alloc_path(&vka, &xdest) != 0) {
+                seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            if (seL4_CNode_Copy(xdest.root, xdest.capPtr, xdest.capDepth,
+                    xsrc.root, xsrc.capPtr, xsrc.capDepth,
+                    seL4_AllRights) != 0) {
+                vka_cspace_free(&vka, xdest.capPtr);
+                seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            /* Map the COPY into child VSpace */
+            void *child_vaddr = vspace_map_pages(
+                &active_procs[ci].proc.vspace,
+                &xdest.capPtr, NULL,
+                seL4_AllRights, 1, seL4_PageBits, 0);
+            if (!child_vaddr) {
+                seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                    xdest.capPtr, seL4_WordBits);
+                vka_cspace_free(&vka, xdest.capPtr);
+            }
+            seL4_SetMR(0, (seL4_Word)child_vaddr);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        case PIPE_WRITE_SHM: {
+            /* v0.4.66: writer put data in xfer page, copy to ring buffer */
+            int pi = (int)seL4_GetMR(0);
+            int wlen = (int)seL4_GetMR(1);
+            if (pi < 0 || pi >= MAX_PIPES || !pipes[pi].active
+                || !pipes[pi].xfer_valid) {
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            pipe_t *p = &pipes[pi];
+            if (wlen > PAGE_SIZE) wlen = PAGE_SIZE;
+            int written = 0;
+            for (int i = 0; i < wlen && p->count < PIPE_BUF_SIZE; i++) {
+                p->shm_buf[(p->head + p->count) % PIPE_BUF_SIZE] =
+                    p->xfer_buf[i];
+                p->count++;
+                written++;
+            }
+            seL4_SetMR(0, (seL4_Word)written);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            if (written > 0) wake_one_blocked_reader(pi);
+            break;
+        }
+        case PIPE_READ_SHM: {
+            /* v0.4.66: copy ring buffer to xfer page, reply with length */
+            int pi = (int)seL4_GetMR(0);
+            int max_len = (int)seL4_GetMR(1);
+            if (pi < 0 || pi >= MAX_PIPES || !pipes[pi].active
+                || !pipes[pi].xfer_valid) {
+                seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            pipe_t *p = &pipes[pi];
+            if (max_len > PAGE_SIZE) max_len = PAGE_SIZE;
+            if (p->count == 0) {
+                if (p->write_closed) {
+                    seL4_SetMR(0, 0);
+                    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                    break;
+                }
+                /* Block reader -- same as PIPE_READ but with is_shm flag */
+                int bi = -1;
+                for (int b = 0; b < MAX_PIPE_READ_BLOCKED; b++) {
+                    if (!pipe_read_blocked[b].active) { bi = b; break; }
+                }
+                if (bi < 0) {
+                    seL4_SetMR(0, 0);
+                    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                    break;
+                }
+                seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                    read_reply_objs[bi].cptr, seL4_WordBits);
+                seL4_CNode_SaveCaller(seL4_CapInitThreadCNode,
+                    read_reply_objs[bi].cptr, seL4_WordBits);
+                pipe_read_blocked[bi].active = 1;
+                pipe_read_blocked[bi].pipe_id = pi;
+                pipe_read_blocked[bi].max_len = max_len;
+                pipe_read_blocked[bi].is_shm = 1;
+                pipe_read_blocked[bi].reply_cap = read_reply_objs[bi].cptr;
+                break;
+            }
+            int rlen = p->count < max_len ? p->count : max_len;
+            for (int i = 0; i < rlen; i++)
+                p->xfer_buf[i] = p->shm_buf[(p->head + i) % PIPE_BUF_SIZE];
+            p->head = (p->head + rlen) % PIPE_BUF_SIZE;
+            p->count -= rlen;
+            seL4_SetMR(0, (seL4_Word)rlen);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }
         case PIPE_SET_IDENTITY: {
