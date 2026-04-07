@@ -75,6 +75,7 @@ AiosPosixApp(pipe_test)
 AiosPosixApp(writetest)
 AiosPosixApp(diagtest)
 AiosPosixApp(signal_test)
+AiosPosixApp(sbase_test)
 AiosPosixApp(shutdown)
 
 AiosPosixApp(posix_verify
