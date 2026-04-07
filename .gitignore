@@ -50,3 +50,4 @@ deps/
 # Keep dead code archive for history
 !ref/dead_code/
 !ref/dead_code/**
+src/lib/aios_posix.c.pre_modular

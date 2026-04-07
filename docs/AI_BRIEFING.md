@@ -7,7 +7,7 @@
 - **Repository**: https://github.com/arcanii/AIOS
 - **Branch**: main
 - **Developer**: Bryan
-- **Current Version**: v0.4.55
+- **Current Version**: v0.4.58
 
 ## Development Environment
 
@@ -122,8 +122,16 @@ This allows the user to report "Script B failed" without ambiguity.
     │   ├── vfs.c                # Virtual filesystem switch (mount dispatch)
     │   ├── procfs.c             # /proc: version, uptime, status, mounts, log, meminfo
     │   ├── lib/
-    │   │   ├── aios_posix.c     # POSIX shim (55+ syscalls + fork + exec + waitpid)
-    │   │   └── aios_posix.h     # POSIX shim header + IPC labels
+    │   │   ├── aios_posix.c     # POSIX shim orchestrator: globals, init, __wrap_main
+    │   │   ├── aios_posix.h     # POSIX shim header + IPC labels
+    │   │   ├── posix_internal.h # Shared state, types, prototypes for all modules
+    │   │   ├── posix_file.c     # open/read/write/close/lseek/writev/readv
+    │   │   ├── posix_stat.c     # fstat/fstatat/access/faccessat
+    │   │   ├── posix_dir.c      # mkdirat/unlinkat/chdir/getcwd/getdents64/renameat
+    │   │   ├── posix_proc.c     # exit/clone/execve/wait4/identity/signals
+    │   │   ├── posix_time.c     # clock_gettime/gettimeofday/nanosleep/times
+    │   │   ├── posix_misc.c     # uname/ioctl/fcntl/dup/dup3/umask/pipe2/utimensat
+    │   │   └── posix_thread.c   # pthread_*/getpwuid/getpwnam
     │   └── apps/                # AIOS programs (fork_test, mini_shell, tty_server, etc.)
     ├── include/aios/
     │   ├── version.h, build_number.h, ext2.h, vfs.h, procfs.h
@@ -218,9 +226,9 @@ Memory: mmap, munmap, brk, madvise (from muslcsys)
 ### sbase (suckless base utilities)
 
 - Source: ~/Desktop/github_repos/sbase
-- 93 tools cross-compiled via build_sbase.py
+- 98 tools cross-compiled via build_sbase.py
 - bc requires pre-generated bc.c via bison: `/opt/homebrew/opt/bison/bin/bison -o bc.c bc.y`
-- 5 sbase tools NOT compiled (need fork/sockets): cron, flock, setsid, time, tftp
+- 1 sbase tool NOT compiled: getconf (needs gen_getconf.py)
 
 ## Known Issues / Gotchas
 
@@ -251,12 +259,16 @@ See docs/FORK_IMPLEMENTATION.md for 15 detailed learnings. Critical ones:
 
 ## Pending Items
 
-1. **exec argv passthrough** — currently only path, not user arguments
-2. **Modularize aios_root.c** — split into 7 files (see NEXT_20260405.md)
-3. **TTY Phase 2** — getty/shell separation via fork+exec
-4. **TTY Phase 3** — multiple virtual terminals (Ctrl-A switching)
-5. **_exit() fix** — intercept at musl syscall level
-6. **COW fork** — defer .data page copy until write fault (v0.5.x)
+1. ext2 directory cache: verify unlink path via cache
+2. Getty robustness: fork retry with backoff, Ctrl-C handling
+3. Signal phase 3: cross-process delivery on read/write/nanosleep return
+4. Pipeline cleanup: SIGKILL+reap on mid-fork failure
+5. getconf: last sbase tool (99/99)
+6. Shared-memory pipes: replace IPC round-trip with mapped frames
+7. Allocator memory audit: right-size pool after cap revoke
+8. Networking: virtio-net + TCP/IP
+9. Dynamic ELF buffer: vka_alloc_frame for >1MB binaries
+10. ext2 write improvements: multi-block file write, triple indirect
 
 ## Version History (0.4.x)
 
@@ -289,3 +301,4 @@ See docs/FORK_IMPLEMENTATION.md for 15 detailed learnings. Critical ones:
 | v0.4.45-46 | **fork() + waitpid()** — process duplication on seL4 |
 | v0.4.47 | **exec()** — fork+exec+waitpid complete |
 | v0.4.57 | pthread in child processes, thread retval, cap revoke, 79/79 POSIX |
+| v0.4.58 | POSIX shim modularization: 2045-line monolith split into 9 modules |
