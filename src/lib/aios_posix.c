@@ -493,6 +493,9 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     muslcsys_install_syscall(__NR_clock_nanosleep, aios_sys_clock_nanosleep);
     muslcsys_install_syscall(__NR_mprotect, aios_sys_mprotect);
 
+    /* v0.4.64: dash prerequisites */
+    muslcsys_install_syscall(__NR_setpgid, aios_sys_setpgid);
+
 #endif
 }
 

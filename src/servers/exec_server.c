@@ -348,6 +348,8 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             vka_cspace_free(&vka, te_dest.capPtr);
             seL4_CNode_Delete(seL4_CapInitThreadCNode, fs_dest.capPtr, seL4_WordBits);
             vka_cspace_free(&vka, fs_dest.capPtr);
+            seL4_CNode_Delete(seL4_CapInitThreadCNode, pip_dest.capPtr, seL4_WordBits);
+            vka_cspace_free(&vka, pip_dest.capPtr);
             ap->active = 0;
             if (child_pid > 0) proc_remove(child_pid);
         } else {
@@ -369,6 +371,8 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             vka_cspace_free(&vka, te_dest.capPtr);
             seL4_CNode_Delete(seL4_CapInitThreadCNode, fs_dest.capPtr, seL4_WordBits);
             vka_cspace_free(&vka, fs_dest.capPtr);
+            seL4_CNode_Delete(seL4_CapInitThreadCNode, pip_dest.capPtr, seL4_WordBits);
+            vka_cspace_free(&vka, pip_dest.capPtr);
             ap->active = 0;
             if (child_pid > 0) proc_remove(child_pid);
         }

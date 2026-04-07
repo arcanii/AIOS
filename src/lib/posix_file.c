@@ -9,6 +9,27 @@ long aios_sys_open(va_list ap) {
     int flags = va_arg(ap, int);
     va_arg(ap, int); /* mode */
 
+    /* v0.4.64: /dev/null -- infinite sink, empty source */
+    {
+        const char *dn = "/dev/null";
+        int dnmatch = 1;
+        for (int i = 0; dn[i]; i++)
+            if (pathname[i] != dn[i]) { dnmatch = 0; break; }
+        if (dnmatch && pathname[9] == 0) {
+            int idx = aios_fd_alloc();
+            if (idx < 0) return -EMFILE;
+            aios_fd_t *f = &aios_fds[idx];
+            f->active = 1;
+            f->is_dir = 0;
+            f->is_pipe = 0;
+            f->is_devnull = 1;
+            f->size = 0;
+            f->pos = 0;
+            f->path[0] = 0;
+            return AIOS_FD_BASE + idx;
+        }
+    }
+
     if (!fs_ep_cap) return -ENOENT;
 
     int is_dir = (flags & 040000) != 0; /* O_DIRECTORY = 0200000 */
@@ -52,6 +73,27 @@ long aios_sys_openat(va_list ap) {
     int flags = va_arg(ap, int);
     int mode = va_arg(ap, int);
     (void)dirfd; (void)mode;
+
+    /* v0.4.64: /dev/null -- infinite sink, empty source */
+    {
+        const char *dn = "/dev/null";
+        int dnmatch = 1;
+        for (int i = 0; dn[i]; i++)
+            if (pathname[i] != dn[i]) { dnmatch = 0; break; }
+        if (dnmatch && pathname[9] == 0) {
+            int idx = aios_fd_alloc();
+            if (idx < 0) return -EMFILE;
+            aios_fd_t *f = &aios_fds[idx];
+            f->active = 1;
+            f->is_dir = 0;
+            f->is_pipe = 0;
+            f->is_devnull = 1;
+            f->size = 0;
+            f->pos = 0;
+            f->path[0] = 0;
+            return AIOS_FD_BASE + idx;
+        }
+    }
 
     if (!fs_ep_cap) return -ENOENT;
 
@@ -239,6 +281,7 @@ long aios_sys_write(va_list ap) {
     if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
         aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
         if (!f->active) return -EBADF;
+        if (f->is_devnull) return (long)count;
         /* Regular file write via FS_WRITE_FILE */
         if (!f->is_pipe && !f->is_dir && f->path[0] && fs_ep_cap) {
             const char *src = (const char *)buf;
@@ -297,6 +340,7 @@ long aios_sys_close(va_list ap) {
          * destroy the pipe buffer after the pipeline completes. */
         f->active = 0;
         f->is_pipe = 0;
+        f->is_devnull = 0;
         f->pipe_id = -1;
         return 0;
     }
@@ -344,6 +388,11 @@ long aios_sys_writev(va_list ap) {
     if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
         aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
         if (!f->active) return -EBADF;
+        if (f->is_devnull) {
+            long total = 0;
+            for (int i = 0; i < iovcnt; i++) total += (long)iov[i].iov_len;
+            return total;
+        }
         if (f->is_pipe && !f->pipe_read && pipe_ep) {
             long total = 0;
             for (int i = 0; i < iovcnt; i++) {

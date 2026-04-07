@@ -101,6 +101,10 @@
 #define __NR_mprotect 226
 #endif
 
+#ifndef __NR_setpgid
+#define __NR_setpgid 154
+#endif
+
 
 /* Pipe IPC protocol labels */
 #define PIPE_FORK         65
@@ -124,6 +128,7 @@ typedef struct {
     int is_pipe;
     int pipe_id;
     int pipe_read;
+    int is_devnull;
     char path[128];
     char data[4096];
     int size;
@@ -258,5 +263,8 @@ long aios_sys_clock_nanosleep(va_list ap);
 
 /* posix_misc.c */
 long aios_sys_mprotect(va_list ap);
+
+/* v0.4.64: dash prerequisites */
+long aios_sys_setpgid(va_list ap);
 
 #endif

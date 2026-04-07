@@ -311,3 +311,12 @@ long aios_sys_sigaltstack(va_list ap) {
     }
     return 0;
 }
+
+/* v0.4.64: setpgid -- set process group ID
+ * Flat process model: always succeeds, pgid == pid. */
+long aios_sys_setpgid(va_list ap) {
+    int pid = va_arg(ap, int);
+    int pgid = va_arg(ap, int);
+    (void)pid; (void)pgid;
+    return 0;
+}

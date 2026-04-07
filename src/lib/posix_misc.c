@@ -57,16 +57,51 @@ long aios_sys_uname(va_list ap) {
 long aios_sys_ioctl(va_list ap) {
     int fd = va_arg(ap, int);
     int req = va_arg(ap, int);
-    (void)fd; (void)req;
-    /* Stub: return 0 for stdout ioctls (TIOCGWINSZ etc.) */
-    if (fd <= 2) return 0;
+    void *argp = va_arg(ap, void *);
+    if (fd <= 2) {
+        /* v0.4.64: TIOCGWINSZ -- terminal size for isatty + dash */
+        if (req == 0x5413 && argp) {
+            unsigned short *ws = (unsigned short *)argp;
+            ws[0] = 24; ws[1] = 80; ws[2] = 0; ws[3] = 0;
+            return 0;
+        }
+        /* TIOCGPGRP -- foreground process group */
+        if (req == 0x540F && argp) {
+            *(int *)argp = aios_pid > 0 ? aios_pid : 1;
+            return 0;
+        }
+        /* TIOCSPGRP -- set fg pgrp (stub) */
+        if (req == 0x5410) return 0;
+        return 0;
+    }
     return -ENOTTY;
 }
 
 long aios_sys_fcntl(va_list ap) {
     int fd = va_arg(ap, int);
     int cmd = va_arg(ap, int);
-    (void)fd;
+    /* v0.4.64: F_DUPFD / F_DUPFD_CLOEXEC for dash fd management */
+    if (cmd == 0 || cmd == 1030) {
+        va_arg(ap, int); /* minfd -- next available aios fd */
+        if (fd < 3) {
+            int idx = aios_fd_alloc();
+            if (idx < 0) return -EMFILE;
+            aios_fds[idx].active = 1;
+            aios_fds[idx].is_devnull = 0;
+            aios_fds[idx].size = 0;
+            aios_fds[idx].pos = 0;
+            return AIOS_FD_BASE + idx;
+        }
+        if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
+            aios_fd_t *src = &aios_fds[fd - AIOS_FD_BASE];
+            if (!src->active) return -EBADF;
+            int idx = aios_fd_alloc();
+            if (idx < 0) return -EMFILE;
+            aios_fds[idx] = *src;
+            return AIOS_FD_BASE + idx;
+        }
+        return -EBADF;
+    }
     if (cmd == 1) return 0;  /* F_GETFD */
     if (cmd == 2) return 0;  /* F_SETFD */
     if (cmd == 3) return 2;  /* F_GETFL: O_RDWR */
@@ -102,6 +137,12 @@ long aios_sys_dup3(va_list ap) {
     int newfd = va_arg(ap, int);
     int flags = va_arg(ap, int);
     (void)flags;
+
+    /* v0.4.64: dup2(fd, fd) returns fd per POSIX */
+    if (oldfd == newfd) {
+        if (flags != 0) return -EINVAL;
+        return newfd;
+    }
 
     /* pipe fd -> stdin redirect: dup2(pipe_read_fd, 0) */
     if (newfd == 0 && oldfd >= AIOS_FD_BASE && oldfd < AIOS_FD_BASE + AIOS_MAX_FDS) {
