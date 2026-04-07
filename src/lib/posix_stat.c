@@ -4,6 +4,17 @@
  */
 #include "posix_internal.h"
 
+/* djb2 hash -- deterministic pseudo-inode from path string */
+static uint32_t path_to_ino(const char *path) {
+    uint32_t h = 5381;
+    while (*path) {
+        h = ((h << 5) + h) + (uint8_t)*path;
+        path++;
+    }
+    if (h == 0) h = 1;  /* reserve 0 for unused */
+    return h;
+}
+
 long aios_sys_fstat(va_list ap) {
     int fd = va_arg(ap, int);
     struct stat *st = va_arg(ap, struct stat *);
@@ -14,6 +25,8 @@ long aios_sys_fstat(va_list ap) {
 
     /* stdout/stderr/stdin */
     if (fd < 3) {
+        st->st_dev = 2;  /* separate device for ttys */
+        st->st_ino = (ino_t)(fd + 1);
         st->st_mode = 0020666; /* char device */
         st->st_blksize = 4096;
         return 0;
@@ -23,6 +36,8 @@ long aios_sys_fstat(va_list ap) {
     if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
         aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
         if (!f->active) return -EBADF;
+        st->st_dev = 1;
+        st->st_ino = path_to_ino(f->path);
         st->st_mode = 0100644; /* regular file */
         st->st_size = f->size;
         st->st_blksize = 4096;
@@ -68,6 +83,8 @@ long aios_sys_fstatat(va_list ap) {
     uint32_t mode, size;
     if (fetch_stat(lookup, &mode, &size) != 0) return -ENOENT;
 
+    st->st_dev = 1;
+    st->st_ino = path_to_ino(lookup);
     st->st_mode = mode;
     st->st_size = size;
     st->st_blksize = 4096;

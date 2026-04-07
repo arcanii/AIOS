@@ -4,10 +4,10 @@
 #include "aios_posix.h"
 int main(int argc, char *argv[]) {
     AIOS_INIT(argc, argv);
-    if (argc < 3) { fprintf(stderr, "usage: rm <file>\n"); return 1; }
+    if (argc < 2) { fprintf(stderr, "usage: rm <file>\n"); return 1; }
     seL4_CPtr fs = aios_get_fs_ep();
     if (!fs) { fprintf(stderr, "rm: no filesystem\n"); return 1; }
-    const char *path = argv[2];
+    const char *path = argv[1];
     int pl = 0; while (path[pl]) pl++;
     seL4_SetMR(0, (seL4_Word)pl);
     int mr = 1; seL4_Word w = 0;

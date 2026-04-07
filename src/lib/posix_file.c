@@ -136,6 +136,9 @@ long aios_sys_read(va_list ap) {
     void *buf = va_arg(ap, void *);
     size_t count = va_arg(ap, size_t);
 
+    /* Signal Phase 3: check pending signals on syscall entry */
+    aios_sig_check();
+
     /* stdin — check for pipe redirect */
     if (fd == 0) {
         if (stdin_pipe_id >= 0 && pipe_ep) {
@@ -203,6 +206,9 @@ long aios_sys_write(va_list ap) {
     int fd = va_arg(ap, int);
     const void *buf = va_arg(ap, const void *);
     size_t count = va_arg(ap, size_t);
+
+    /* Signal Phase 3: check pending signals on syscall entry */
+    aios_sig_check();
 
     /* stdout/stderr — check for pipe redirect */
     if (fd == 1 || fd == 2) {

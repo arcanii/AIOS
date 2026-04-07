@@ -52,6 +52,17 @@ static void cache_store(uint32_t block, const void *buf) {
     for (int j = 0; j < 1024; j++) blk_cache[slot].data[j] = src[j];
 }
 
+/* Invalidate a single block from the cache */
+static void cache_invalidate(uint32_t block) {
+    for (int i = 0; i < EXT2_CACHE_SIZE; i++) {
+        if (blk_cache[i].valid && blk_cache[i].block == block) {
+            blk_cache[i].valid = 0;
+            return;
+        }
+    }
+}
+
+
 static int read_block(ext2_ctx_t *ctx, uint32_t block, void *buf) {
     if (cache_lookup(block, buf) == 0) return 0;
     int sectors = ctx->block_size / 512;

@@ -7,7 +7,7 @@
 - **Repository**: https://github.com/arcanii/AIOS
 - **Branch**: main
 - **Developer**: Bryan
-- **Current Version**: v0.4.58
+- **Current Version**: v0.4.59
 
 ## Development Environment
 
@@ -294,6 +294,9 @@ See docs/FORK_IMPLEMENTATION.md for 15 detailed learnings. Critical ones:
 | v0.4.32 | Auth server: SHA-3-512, user DB, sessions |
 | v0.4.33-34 | Login, uid/gid propagation, getpwuid |
 | v0.4.35-36 | su/passwd, file permissions, auth isolation |
+| v0.4.53-57 | signals, fork/exec, pthreads in children, chdir validation |
+| v0.4.58 | POSIX shim modularization (9 files) |
+| v0.4.59 | ext2 cache, getty robustness, Signal Phase 3, rm fix, pseudo-inodes |
 | v0.4.37-39 | uname, pipes, quotes, redirection |
 | v0.4.40-42 | procfs, top, dmesg, $VAR, Ctrl-C, kill |
 | v0.4.56 | Background exec, jobs, 14 new sbase (93 total) |
@@ -301,4 +304,3 @@ See docs/FORK_IMPLEMENTATION.md for 15 detailed learnings. Critical ones:
 | v0.4.45-46 | **fork() + waitpid()** — process duplication on seL4 |
 | v0.4.47 | **exec()** — fork+exec+waitpid complete |
 | v0.4.57 | pthread in child processes, thread retval, cap revoke, 79/79 POSIX |
-| v0.4.58 | POSIX shim modularization: 2045-line monolith split into 9 modules |

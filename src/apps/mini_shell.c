@@ -636,6 +636,9 @@ int main(int argc, char *argv[]) {
         int len; read_line(&len);
         if (len == 0) continue;
 
+        /* skip shell comments */
+        if (line[0] == '#') continue;
+
         /* Expand $VAR references */
         {
             char expanded[256];

@@ -61,6 +61,7 @@ static void read_password(char *buf, int max) {
             if (c2 == '[') ser_getc();
             continue;
         }
+        if (c == 0x03) { buf[0] = 0; ser_puts("^C\n"); return; }
         if (c >= 0x20 && c < 127) { buf[len++] = (char)c; ser_putc('*'); }
     }
     buf[len] = '\0';
@@ -95,6 +96,7 @@ static int do_login(uint32_t *uid, uint32_t *gid,
                 if (c2 == '[') ser_getc();
                 continue;
             }
+            if (c == 0x03) { ser_puts("^C\n"); ulen = 0; break; }
             if (c >= 0x20 && c < 127) {
                 username[ulen++] = (char)c;
                 ser_putc((char)c);
@@ -208,20 +210,49 @@ int main(int argc, char *argv[]) {
         display_motd();
         ser_puts("Welcome, "); ser_puts(username); ser_puts("\n\n");
 
-        /* Fork+exec mini_shell, wait for it to exit */
-        pid_t pid = fork();
-        if (pid < 0) {
-            ser_puts("getty: fork failed\n");
-            continue;
+        /* Fork+exec mini_shell with retry and backoff */
+        int shell_started = 0;
+        for (int retry = 0; retry < 3; retry++) {
+            pid_t pid = fork();
+            if (pid < 0) {
+                ser_puts("getty: fork failed, retry ");
+                ser_putc((char)('1' + retry));
+                ser_puts("/3\n");
+                /* Backoff: busy-wait via ARM generic timer */
+                uint64_t freq, bstart, bnow;
+                __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+                __asm__ volatile("mrs %0, cntpct_el0" : "=r"(bstart));
+                uint64_t btarget = bstart + freq * (uint64_t)(retry + 1) / 2;
+                do {
+                    seL4_Yield();
+                    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(bnow));
+                } while (bnow < btarget);
+                continue;
+            }
+            if (pid == 0) {
+                char *sh_argv[] = {"mini_shell", (void *)0};
+                execv("/bin/mini_shell", sh_argv);
+                _exit(127);
+            }
+            shell_started = 1;
+            int status = 0;
+            waitpid(pid, &status, 0);
+            if (WIFSIGNALED(status)) {
+                int sig = WTERMSIG(status);
+                ser_puts("getty: shell killed by signal ");
+                if (sig >= 10) ser_putc((char)('0' + sig / 10));
+                ser_putc((char)('0' + sig % 10));
+                ser_puts("\n");
+            }
+            break;
         }
-        if (pid == 0) {
+        if (!shell_started) {
+            ser_puts("getty: persistent fork failure, running shell in-process\n");
             char *sh_argv[] = {"mini_shell", (void *)0};
             execv("/bin/mini_shell", sh_argv);
-            _exit(127);
+            /* execv returned -- log and fall through to login */
+            ser_puts("getty: execv failed, returning to login\n");
         }
-        int status = 0;
-        waitpid(pid, &status, 0);
-        /* Shell exited -- loop back to login */
         ser_puts("\n");
     }
     return 0;
