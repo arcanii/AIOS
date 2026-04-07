@@ -42,8 +42,18 @@ long aios_sys_nanosleep(va_list ap) {
     uint64_t now;
     do {
         seL4_Yield();
-        /* Signal Phase 3: check for cross-process signals */
-        aios_sig_check();
+        /* Signal Phase 4: EINTR if signal delivered during sleep */
+        if (aios_sig_check() > 0) {
+            __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
+            if (rem && now < target) {
+                uint64_t left = target - now;
+                rem->tv_sec  = (long)(left / freq);
+                rem->tv_nsec = (long)((left % freq) * 1000000000ULL / freq);
+            } else if (rem) {
+                rem->tv_sec = 0; rem->tv_nsec = 0;
+            }
+            return -EINTR;
+        }
         __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
     } while (now < target);
     if (rem) { rem->tv_sec = 0; rem->tv_nsec = 0; }

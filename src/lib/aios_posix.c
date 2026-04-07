@@ -238,9 +238,9 @@ int fetch_dir_as_getdents(const char *path, char *buf, int bufsz) {
 /* ---- Signal dispatch ---- */
 static void aios_exit_cb(int code);
 
-void aios_sig_check(void) {
-    if (!pipe_ep) return;
-    if (sig_dispatching) return;
+int aios_sig_check(void) {
+    if (!pipe_ep) return 0;
+    if (sig_dispatching) return 0;
     if (!sigstate.initialized) aios_sigstate_init(&sigstate);
 
     sig_dispatching = 1;
@@ -254,8 +254,9 @@ void aios_sig_check(void) {
 
     /* Dispatch unblocked pending signals (lowest first, POSIX order) */
     uint32_t deliverable = sigstate.pending & ~(uint32_t)sigstate.blocked;
-    if (!deliverable) { sig_dispatching = 0; return; }
+    if (!deliverable) { sig_dispatching = 0; return 0; }
 
+    int dispatched = 0;
     for (int sig = 1; sig < AIOS_NSIG; sig++) {
         if (!(deliverable & SIG_BIT(sig))) continue;
 
@@ -276,16 +277,19 @@ void aios_sig_check(void) {
                 break;
             default:
                 sig_dispatching = 0;
+                dispatched++;
                 aios_exit_cb(128 + sig);
-                break;
+                break; /* does not return */
             }
         } else if (handler == (void (*)(int))1) {
             /* SIG_IGN */
         } else {
             handler(sig);
+            dispatched++;
         }
     }
     sig_dispatching = 0;
+    return dispatched;
 }
 
 void aios_set_cwd(const char *path) {

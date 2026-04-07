@@ -30,7 +30,7 @@ FULL = [
     "time",
     "sha512-224sum", "sha512-256sum",
     "sponge", "pathchk",
-    "cols", "uudecode", "uuencode", "mknod", "ed", "tar", "renice", "xinstall",
+    "cols", "uudecode", "uuencode", "mknod", "ed", "tar", "renice", "xinstall", "getconf",
 ]
 SPECIAL = ["cp", "rm"]
 BC_PREFIX_DEFINE = '-DPREFIX="/usr/local"'  # bc.y references PREFIX

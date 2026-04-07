@@ -109,7 +109,7 @@ int  fetch_stat(const char *path, uint32_t *mode, uint32_t *size);
 int  fetch_dir_as_getdents(const char *path, char *buf, int bufsz);
 size_t aios_stdio_write(void *data, size_t count);
 int  aios_getchar(void);
-void aios_sig_check(void);
+int  aios_sig_check(void);
 
 /* ---- Syscall handlers: posix_file.c ---- */
 long aios_sys_open(va_list ap);
