@@ -48,7 +48,7 @@ This allows the user to report "Script B failed" without ambiguity.
 - Avoid sed for multi-line edits or edits with quotes/slashes
 - Always verify changes applied: grep for expected content after edit
 - Full rebuild required when CPIO contents change (rm -rf build-04)
-- Incremental ninja sufficient for aios_root.c or aios_posix.c changes
+- Incremental ninja sufficient for aios_root.c or posix_*.c changes
 - Rebuild sbase after aios_posix.c changes (`python3 scripts/build_sbase.py --clean --jobs 16`)
 
 ### Commit Protocol

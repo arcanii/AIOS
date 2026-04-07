@@ -3,7 +3,16 @@ project(aios-rootserver C ASM)
 
 set(AIOS_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
 
-add_library(aios_posix STATIC ${AIOS_ROOT}/src/lib/aios_posix.c)
+add_library(aios_posix STATIC
+    ${AIOS_ROOT}/src/lib/aios_posix.c
+    ${AIOS_ROOT}/src/lib/posix_file.c
+    ${AIOS_ROOT}/src/lib/posix_stat.c
+    ${AIOS_ROOT}/src/lib/posix_dir.c
+    ${AIOS_ROOT}/src/lib/posix_proc.c
+    ${AIOS_ROOT}/src/lib/posix_time.c
+    ${AIOS_ROOT}/src/lib/posix_misc.c
+    ${AIOS_ROOT}/src/lib/posix_thread.c
+)
 target_include_directories(aios_posix PUBLIC ${AIOS_ROOT}/src/lib ${AIOS_ROOT}/include)
 target_link_libraries(aios_posix sel4 sel4muslcsys)
 
