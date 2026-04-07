@@ -231,7 +231,7 @@ int main(int argc, char *argv[]) {
             }
             if (pid == 0) {
                 char *sh_argv[] = {"mini_shell", (void *)0};
-                execv("/bin/mini_shell", sh_argv);
+                execv("/bin/aios/mini_shell", sh_argv);
                 _exit(127);
             }
             shell_started = 1;
@@ -249,7 +249,7 @@ int main(int argc, char *argv[]) {
         if (!shell_started) {
             ser_puts("getty: persistent fork failure, running shell in-process\n");
             char *sh_argv[] = {"mini_shell", (void *)0};
-            execv("/bin/mini_shell", sh_argv);
+            execv("/bin/aios/mini_shell", sh_argv);
             /* execv returned -- log and fall through to login */
             ser_puts("getty: execv failed, returning to login\n");
         }

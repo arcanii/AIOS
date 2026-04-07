@@ -854,6 +854,26 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }
+        case PIPE_SHUTDOWN: {
+            /* Only root (badge 0 or uid 0) can shut down */
+            int shut_idx = (int)badge - 1;
+            int allowed = (badge == 0);
+            if (!allowed && shut_idx >= 0 && shut_idx < MAX_ACTIVE_PROCS
+                && active_procs[shut_idx].active
+                && active_procs[shut_idx].uid == 0) {
+                allowed = 1;
+            }
+            if (!allowed) {
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            seL4_SetMR(0, 0);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            printf("[shutdown] AIOS powering off...\n");
+            aios_system_shutdown();
+            break;
+        }
         default:
             seL4_SetMR(0, (seL4_Word)-1);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));

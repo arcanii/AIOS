@@ -98,7 +98,7 @@ void boot_start_services(vka_object_t *fault_ep) {
 
     /* Spawn getty via exec_thread (fork+exec capable VSpace) */
     {
-        const char *sh_cmd = "/bin/getty CWD=0:0:/";
+        const char *sh_cmd = "/bin/aios/getty CWD=0:0:/";
         int sh_pl = 0;
         while (sh_cmd[sh_pl]) sh_pl++;
         seL4_SetMR(0, (seL4_Word)sh_pl);

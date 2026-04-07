@@ -622,10 +622,10 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    env_set("PATH", "/bin");
+    env_set("PATH", "/bin:/bin/aios");
     env_set("HOME", session_home);
     env_set("USER", session_user);
-    env_set("SHELL", "/bin/mini_shell");
+    env_set("SHELL", "/bin/aios/mini_shell");
     env_set("TERM", "vt100");
     str_cpy(cwd, session_home);
     env_set("PWD", cwd);

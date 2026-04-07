@@ -45,10 +45,13 @@ syscalls = {}
 for m in re.finditer(r"muslcsys_install_syscall\s*\(\s*__NR_(\w+)\s*,\s*(\w+)\s*\)", posix_src):
     syscalls[m.group(1)] = m.group(2)
 
-# 2. Wrapped functions
+# 2. Wrapped functions (scan all posix_*.c modules)
 wraps = set()
-for m in re.finditer(r"(?:int|void|struct\s+\w+\s*\*)\s+__wrap_(\w+)\s*\(", posix_src):
-    wraps.add(m.group(1))
+import glob
+for _pf in glob.glob(P("src","lib","posix_*.c")) + [POSIX_C]:
+    _psrc = read_file(_pf)
+    for m in re.finditer(r"(?:int|void|struct\s+\w+\s*\*)\s*__wrap_(\w+)\s*\(", _psrc):
+        wraps.add(m.group(1))
 
 # 3. Stub detection
 stub_handlers = set()
@@ -92,6 +95,14 @@ src_files = [
     ("posix_verify.c", VERIFY_C), ("fs_server.c", FS_SRV),
     ("pipe_server.c", PIPE_SRV), ("exec_server.c", EXEC_SRV),
     ("thread_server.c", THREAD_SRV), ("mini_shell.c", SHELL_C),
+    ("posix_thread.c", P("src","lib","posix_thread.c")),
+    ("posix_file.c", P("src","lib","posix_file.c")),
+    ("posix_stat.c", P("src","lib","posix_stat.c")),
+    ("posix_dir.c", P("src","lib","posix_dir.c")),
+    ("posix_proc.c", P("src","lib","posix_proc.c")),
+    ("posix_time.c", P("src","lib","posix_time.c")),
+    ("posix_misc.c", P("src","lib","posix_misc.c")),
+    ("getty.c", P("src","apps","getty.c")),
 ]
 file_lines = [(n, count_lines(p)) for n, p in src_files]
 total_lines = sum(n for _, n in file_lines)

@@ -54,6 +54,7 @@ seL4_CPtr aios_get_serial_ep(void) { return ser_ep; }
 seL4_CPtr aios_get_fs_ep(void) { return fs_ep_cap; }
 seL4_CPtr aios_get_auth_ep(void) { return auth_ep; }
 seL4_CPtr aios_get_thread_ep(void) { return thread_ep; }
+seL4_CPtr aios_get_pipe_ep(void) { return pipe_ep; }
 
 int aios_nb_getchar(void) {
     if (!ser_ep) return -1;
@@ -317,7 +318,7 @@ int aios_get_pipe_id(int fd) {
 /* Environment variables */
 static char *aios_envp[] = {
     "HOME=/",
-    "PATH=/bin",
+    "PATH=/bin:/bin/aios",
     "USER=root",
     "SHELL=/bin/sh",
     "TERM=vt100",
@@ -396,6 +397,9 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
 #endif
 /* fstatat on aarch64 */
     muslcsys_install_syscall(__NR_fstatat, aios_sys_fstatat);
+#ifdef __NR_statx
+    muslcsys_install_syscall(__NR_statx, aios_sys_statx);
+#endif
 
     /* Easy POSIX stubs */
     muslcsys_install_syscall(__NR_exit, aios_sys_exit);

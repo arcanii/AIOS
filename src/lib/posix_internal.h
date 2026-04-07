@@ -41,6 +41,9 @@
 #ifndef __NR_kill
 #define __NR_kill 129
 #endif
+#ifndef __NR_statx
+#define __NR_statx 291
+#endif
 #ifndef __NR_tgkill
 #define __NR_tgkill 131
 #endif
@@ -55,6 +58,7 @@
 #define PIPE_CLOSE_READ   73
 #define PIPE_SIGNAL       75
 #define PIPE_SIG_FETCH    76
+#define PIPE_SHUTDOWN     77
 
 /* fd table constants */
 #define AIOS_MAX_FDS 32
@@ -127,6 +131,7 @@ long aios_sys_fstat(va_list ap);
 long aios_sys_fstatat(va_list ap);
 long aios_sys_access(va_list ap);
 long aios_sys_faccessat(va_list ap);
+long aios_sys_statx(va_list ap);
 
 /* ---- Syscall handlers: posix_dir.c ---- */
 long aios_sys_mkdirat(va_list ap);

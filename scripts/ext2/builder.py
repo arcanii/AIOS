@@ -252,7 +252,35 @@ class Ext2Builder:
                 print(f'  /bin/{name} ({len(elf_data)} bytes)')
         print(f'  Installed {installed} programs to /bin')
 
-    def build(self, path, rootfs=None, elf_dirs=None):
+    def install_elfs_subdir(self, bin_ino, elf_dirs, subdir):
+        """Install ELF binaries into /bin/<subdir>/."""
+        sub_ino = self.mkdir(bin_ino, subdir)
+        installed = 0
+        seen = set()
+        for elf_dir in elf_dirs:
+            for elf_path in sorted(glob.glob(os.path.join(elf_dir, '*'))):
+                name = os.path.basename(elf_path)
+                if name.startswith('CMake') or name.endswith('.o') or name.endswith('.a'):
+                    continue
+                if name in ('aios_root', 'apps_cpio.o'):
+                    continue
+                if os.path.isdir(elf_path):
+                    continue
+                with open(elf_path, 'rb') as f:
+                    magic = f.read(4)
+                if magic != b'\x7fELF':
+                    continue
+                if name in seen:
+                    continue
+                seen.add(name)
+                with open(elf_path, 'rb') as f:
+                    elf_data = f.read()
+                self.mkfile(sub_ino, name, elf_data)
+                installed += 1
+                print(f'  /bin/{subdir}/{name} ({len(elf_data)} bytes)')
+        print(f'  Installed {installed} programs to /bin/{subdir}')
+
+    def build(self, path, rootfs=None, elf_dirs=None, aios_dirs=None):
         self.build_metadata()
 
         root_blk = self._alloc_block()
@@ -277,6 +305,10 @@ class Ext2Builder:
         # Install ELFs to /bin
         if elf_dirs:
             self.install_elfs(bin_ino, elf_dirs)
+
+        # Install AIOS programs to /bin/aios
+        if aios_dirs:
+            self.install_elfs_subdir(bin_ino, aios_dirs, 'aios')
 
         with open(path, 'wb') as f:
             f.write(self.data)

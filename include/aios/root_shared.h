@@ -49,6 +49,8 @@
 #define PIPE_CLOSE_READ  73
 #define PIPE_SET_IDENTITY 74
 #define PIPE_SIGNAL       75
+#define PIPE_SIG_FETCH    76
+#define PIPE_SHUTDOWN     77
 
 /* ── Limits ── */
 
@@ -207,5 +209,6 @@ void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf);
 void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf);
 int process_kill(int pid);
 void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf);
+void aios_system_shutdown(void);
 
 #endif /* AIOS_ROOT_SHARED_H */

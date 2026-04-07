@@ -2,7 +2,8 @@
 """
 AIOS ext2 Disk Image Creator
 
-Usage: python3 scripts/mkdisk.py disk.img [size_mb] [--rootfs dir] [--install-elfs dir] ...
+Usage: python3 scripts/mkdisk.py disk.img [size_mb] [--rootfs dir]
+       [--install-elfs dir] [--aios-elfs dir] ...
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
@@ -13,10 +14,14 @@ if __name__ == '__main__':
     size = 128
     rootfs = None
     elf_dirs = []
+    aios_dirs = []
     args = sys.argv[1:]
     while args:
         if args[0] == '--install-elfs':
             elf_dirs.append(args[1])
+            args = args[2:]
+        elif args[0] == '--aios-elfs':
+            aios_dirs.append(args[1])
             args = args[2:]
         elif args[0] == '--rootfs':
             rootfs = args[1]
@@ -30,4 +35,6 @@ if __name__ == '__main__':
             except ValueError:
                 pass
             args = args[1:]
-    Ext2Builder(size).build(output, rootfs=rootfs, elf_dirs=elf_dirs)
+    b = Ext2Builder(size)
+    b.build(output, rootfs=rootfs, elf_dirs=elf_dirs,
+            aios_dirs=aios_dirs)

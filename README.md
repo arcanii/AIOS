@@ -14,22 +14,25 @@ External AI (Claude) is used as a development tool for code generation
 and review. This project is also a study in AI-assisted systems programming.
 The long-term goal is self-hosted development within AIOS itself.
 
-**Current version:** v0.4.54
+**Current version:** v0.4.61
 
 ## What Works
 
 - **seL4 microkernel** on AArch64/QEMU (Cortex-A53, 4-core SMP)
 - **ext2 filesystem** with read/write, indirect blocks, multi-group allocation
 - **VFS layer** with ext2 root mount and procfs at /proc
-- **55+ POSIX syscalls** via musllibc shim (open, read, write, fork, exec, pipe, dup2, ...)
+- **55+ POSIX syscalls** via musllibc shim (open, read, write, fork, exec, pipe, dup2, statx, ...)
 - **fork+exec+waitpid** process model with full ELF loading from disk
 - **POSIX signals** (sigaction, kill, sigprocmask) with cooperative handler dispatch
 - **Unix pipelines** (echo hello | cat | wc -c) with error recovery
 - **Shell operators** (&&, ||, >, <) and environment variables
-- **100+ programs** in /bin/ (79 sbase utilities + AIOS tools)
+- **125 programs** -- 99 sbase utilities in /bin/, 26 AIOS programs in /bin/aios/
 - **pthreads** (create, join, mutex) via manual TCB creation in child VSpaces
 - **Auth server** with SHA-3-512 (Keccak) passwords, login/logout, su/passwd
 - **Kernel log** ring buffer with /proc/log and /proc/uptime
+- **POSIX core 55/55 (100%)** -- all core POSIX interfaces implemented
+- **PSCI shutdown** -- clean power-off via /bin/aios/shutdown
+- **getconf** -- sysconf, confstr, pathconf, limits (99/99 sbase tools)
 
 ## Architecture
 
@@ -39,7 +42,7 @@ capability-mediated access to servers.
 
     User programs (mini_shell, sbase tools, test programs)
             |
-       aios_posix.c  (POSIX shim: 55+ syscalls, signals, pthreads)
+       aios_posix.c  (POSIX shim: 55+ syscalls, signals, pthreads, statx)
             |
        +------------+------------+------------+------------+
        |            |            |            |            |
@@ -87,7 +90,7 @@ Prerequisites: seL4 dependencies, AArch64 cross-compiler, QEMU, Python 3.
     python3 scripts/mkdisk.py disk/disk_ext2.img 128 \
         --rootfs disk/rootfs \
         --install-elfs build-04/sbase \
-        --install-elfs build-04/projects/aios/
+        --aios-elfs build-04/projects/aios/
 
     # Boot
     qemu-system-aarch64 \

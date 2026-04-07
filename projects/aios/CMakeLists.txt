@@ -39,6 +39,8 @@ macro(AiosPosixApp name)
         -Wl,--wrap=pthread_mutex_lock
         -Wl,--wrap=pthread_mutex_unlock
         -Wl,--wrap=pthread_mutex_destroy
+        -Wl,--wrap=getpwuid
+        -Wl,--wrap=getpwnam
     )
 endmacro()
 
@@ -71,6 +73,7 @@ AiosPosixApp(pipe_test)
 AiosPosixApp(writetest)
 AiosPosixApp(diagtest)
 AiosPosixApp(signal_test)
+AiosPosixApp(shutdown)
 
 AiosPosixApp(posix_verify
     SRCS ${CMAKE_CURRENT_SOURCE_DIR}/../../src/apps/posix_verify.c

@@ -75,6 +75,19 @@ volatile seL4_CPtr fg_fault_ep = 0;
 volatile int fg_killed = 0;
 
 /* ── File permission check ── */
+/* PSCI shutdown -- seL4_DebugHalt stops QEMU cleanly */
+void aios_system_shutdown(void) {
+    printf("\n");
+    printf("============================================\n");
+    printf("  AIOS shutdown complete\n");
+    printf("============================================\n");
+#ifdef CONFIG_DEBUG_BUILD
+    seL4_DebugHalt();
+#endif
+    /* Fallback: halt CPU if debug syscall unavailable */
+    while (1) { asm volatile("wfi"); }
+}
+
 int main(int argc, char *argv[]) {
     int error;
     (void)argc; (void)argv;
