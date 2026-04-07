@@ -73,14 +73,14 @@ capability-mediated access to servers.
 Prerequisites: seL4 dependencies, AArch64 cross-compiler, QEMU, Python 3.
 
     # Build
-    cd ~/Desktop/github_repos/AIOS
+    cd [your git repo root]/AIOS
     rm -rf build-04 && mkdir build-04 && cd build-04
     cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=../deps/kernel/gcc.cmake \
         -DCROSS_COMPILER_PREFIX=aarch64-linux-gnu- ..
     ninja
 
     # Build sbase utilities
-    cd ~/Desktop/github_repos/AIOS
+    cd [your git repo root]/AIOS
     python3 scripts/build_sbase.py
 
     # Create disk image
@@ -110,7 +110,7 @@ Prerequisites: seL4 dependencies, AArch64 cross-compiler, QEMU, Python 3.
 - Strict Unix philosophy: shell searches PATH, sends full path to exec
 - Correctness over performance (research OS)
 - Modular server architecture with small source files
-- Everything is IPC: all syscalls route through capability-protected endpoints
+- Everything is IPC: all syscalls route through capability-protected endpoints - add performance optimizations later (shared mem, etc)
 
 ## Documentation
 
