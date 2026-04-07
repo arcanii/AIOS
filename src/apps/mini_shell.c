@@ -843,20 +843,27 @@ int main(int argc, char *argv[]) {
 
         /* ── Builtins ── */
         if (str_eq(line, "cd")) {
+            char cd_target[256];
             if (!arg || !arg[0]) {
                 const char *home = env_get("HOME");
-                str_cpy(cwd, home ? home : "/");
+                str_cpy(cd_target, home ? home : "/");
             } else if (str_eq(arg, "..")) {
-                int l = str_len(cwd);
-                if (l > 1) { l--; while (l > 0 && cwd[l] != '/') l--; if (l == 0) l = 1; cwd[l] = '\0'; }
+                str_cpy(cd_target, cwd);
+                int l = str_len(cd_target);
+                if (l > 1) { l--; while (l > 0 && cd_target[l] != '/') l--; if (l == 0) l = 1; cd_target[l] = '\0'; }
             } else {
-                char path[256]; resolve(arg, path, sizeof(path));
-                str_cpy(cwd, path);
-                int l = str_len(cwd);
-                if (l > 1 && cwd[l-1] == '/') cwd[l-1] = '\0';
+                resolve(arg, cd_target, sizeof(cd_target));
+                int l = str_len(cd_target);
+                if (l > 1 && cd_target[l-1] == '/') cd_target[l-1] = '\0';
             }
-            env_set("PWD", cwd);
-            chdir(cwd);
+            if (chdir(cd_target) == 0) {
+                str_cpy(cwd, cd_target);
+                env_set("PWD", cwd);
+            } else {
+                ser_puts("cd: ");
+                ser_puts(arg ? arg : "(home)");
+                ser_puts(": No such directory\n");
+            }
             continue;
         } else if (str_eq(line, "exit") || str_eq(line, "logout")) {
             if (su_depth > 0) {

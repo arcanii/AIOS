@@ -12,7 +12,7 @@
 #include "aios/root_shared.h"
 
 
-/* ── Create a thread inside a child process's VSpace ── */
+/* -- Create a thread inside a child process VSpace -- */
 int create_child_thread(int proc_idx, seL4_Word entry, seL4_Word arg,
                                 int *out_tid) {
     active_proc_t *ap = &active_procs[proc_idx];
@@ -34,7 +34,7 @@ int create_child_thread(int proc_idx, seL4_Word entry, seL4_Word arg,
     /* 3. Allocate IPC buffer frame */
     if (vka_alloc_frame(&vka, seL4_PageBits, &t->ipc_frame)) goto fail_fault;
 
-    /* 4. Map IPC buffer into child's VSpace */
+    /* 4. Map IPC buffer into child VSpace */
     void *ipc_addr = vspace_map_pages(&ap->proc.vspace,
         &t->ipc_frame.cptr, NULL, seL4_AllRights, 1, seL4_PageBits, 0);
     if (!ipc_addr) goto fail_ipc;
@@ -58,11 +58,11 @@ int create_child_thread(int proc_idx, seL4_Word entry, seL4_Word arg,
         goto fail_ipc;
     }
 
-    /* 7. Configure TCB: child's CSpace + VSpace */
+    /* 7. Configure TCB: child CSpace + VSpace */
     /*
-     * fault_ep is a RAW CPtr stored in the TCB — kernel resolves it
-     * from the THREAD's CSpace at fault time, not root's.
-     * So copy the fault ep cap into the child's CSpace.
+     * fault_ep is a RAW CPtr stored in the TCB -- kernel resolves it
+     * from the THREAD CSpace at fault time, not root.
+     * So copy the fault ep cap into the child CSpace.
      * We keep the root-side cap for Recv in thread_server.
      */
     seL4_CPtr child_fault_cap = sel4utils_copy_cap_to_process(
@@ -73,7 +73,7 @@ int create_child_thread(int proc_idx, seL4_Word entry, seL4_Word arg,
     }
     seL4_Word cspace_data = api_make_guard_skip_word(seL4_WordBits - 12);
     int err = seL4_TCB_Configure(t->tcb.cptr,
-        child_fault_cap,                      /* fault ep CPtr in CHILD's CSpace */
+        child_fault_cap,                      /* fault ep CPtr in CHILD CSpace */
         ap->proc.cspace.cptr,                /* child CNode cap */
         cspace_data,                          /* 12-bit CNode guard */
         vspace_get_root(&ap->proc.vspace),    /* child PGD */
@@ -85,7 +85,7 @@ int create_child_thread(int proc_idx, seL4_Word entry, seL4_Word arg,
         goto fail_stack;
     }
 
-    /* 8. Priority — same as everything else */
+    /* 8. Priority -- same as everything else */
     seL4_TCB_SetPriority(t->tcb.cptr, seL4_CapInitThreadTCB, 200);
 
     /* 9. Set registers and start */
@@ -123,7 +123,7 @@ fail_tcb:
     return -1;
 }
 
-/* ── Thread server — handles THREAD_CREATE / THREAD_JOIN IPC ── */
+/* -- Thread server -- handles THREAD_CREATE / THREAD_JOIN IPC -- */
 void thread_server_fn(void *arg0, void *arg1, void *ipc_buf) {
     seL4_CPtr ep = (seL4_CPtr)(uintptr_t)arg0;
     (void)arg1; (void)ipc_buf;
@@ -168,7 +168,7 @@ void thread_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 break;
             }
 
-            /* Save reply cap, block on thread's fault ep */
+            /* Save reply cap, block on thread fault ep */
             seL4_CNode_Delete(seL4_CapInitThreadCNode,
                               reply_slot, seL4_WordBits);
             seL4_CNode_SaveCaller(seL4_CapInitThreadCNode,
@@ -178,7 +178,27 @@ void thread_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             seL4_Word child_badge;
             seL4_Recv(t->fault_ep.cptr, &child_badge);
 
-            /* Thread exited — clean up kernel objects */
+            /* Read x0 from faulted thread (holds return value) */
+            seL4_UserContext join_regs;
+            int join_nregs = sizeof(join_regs) / sizeof(seL4_Word);
+            seL4_TCB_ReadRegisters(t->tcb.cptr, 0, 0,
+                                   join_nregs, &join_regs);
+            seL4_Word thread_retval = join_regs.x0;
+
+            /* Thread exited -- revoke derived caps, then free objects */
+            {
+                cspacepath_t p;
+                vka_cspace_make_path(&vka, t->tcb.cptr, &p);
+                seL4_CNode_Revoke(p.root, p.capPtr, p.capDepth);
+                vka_cspace_make_path(&vka, t->fault_ep.cptr, &p);
+                seL4_CNode_Revoke(p.root, p.capPtr, p.capDepth);
+                vka_cspace_make_path(&vka, t->ipc_frame.cptr, &p);
+                seL4_CNode_Revoke(p.root, p.capPtr, p.capDepth);
+                for (int i = 0; i < THREAD_STACK_PAGES; i++) {
+                    vka_cspace_make_path(&vka, t->stack_frames[i].cptr, &p);
+                    seL4_CNode_Revoke(p.root, p.capPtr, p.capDepth);
+                }
+            }
             vka_free_object(&vka, &t->tcb);
             vka_free_object(&vka, &t->fault_ep);
             vka_free_object(&vka, &t->ipc_frame);
@@ -189,7 +209,8 @@ void thread_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             ap->num_threads--;
 
             seL4_SetMR(0, 0);
-            seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
+            seL4_SetMR(1, thread_retval);
+            seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 2));
             break;
         }
         default:
@@ -199,4 +220,3 @@ void thread_server_fn(void *arg0, void *arg1, void *ipc_buf) {
         }
     }
 }
-

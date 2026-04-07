@@ -288,3 +288,4 @@ See docs/FORK_IMPLEMENTATION.md for 15 detailed learnings. Critical ones:
 | v0.4.44 | tty_server Phase 1: line discipline |
 | v0.4.45-46 | **fork() + waitpid()** — process duplication on seL4 |
 | v0.4.47 | **exec()** — fork+exec+waitpid complete |
+| v0.4.57 | pthread in child processes, thread retval, cap revoke, 79/79 POSIX |

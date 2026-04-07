@@ -20,7 +20,17 @@ endmacro()
 macro(AiosPosixApp name)
     AiosChildApp(${name})
     target_link_libraries(${name} aios_posix)
-    target_link_options(${name} PRIVATE -Wl,--wrap=main)
+    target_link_options(${name} PRIVATE
+        -Wl,--wrap=main
+        -Wl,--wrap=pthread_create
+        -Wl,--wrap=pthread_join
+        -Wl,--wrap=pthread_exit
+        -Wl,--wrap=pthread_detach
+        -Wl,--wrap=pthread_mutex_init
+        -Wl,--wrap=pthread_mutex_lock
+        -Wl,--wrap=pthread_mutex_unlock
+        -Wl,--wrap=pthread_mutex_destroy
+    )
 endmacro()
 
 # System services

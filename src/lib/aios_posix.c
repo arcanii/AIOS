@@ -86,6 +86,8 @@ static void resolve_path(const char *pathname, char *out, int outsz) {
 seL4_CPtr aios_get_serial_ep(void) { return ser_ep; }
 seL4_CPtr aios_get_fs_ep(void) { return fs_ep_cap; }
 seL4_CPtr aios_get_auth_ep(void) { return auth_ep; }
+seL4_CPtr aios_get_thread_ep(void) { return thread_ep; }
+
 int aios_nb_getchar(void) {
     if (!ser_ep) return -1;
     seL4_SetMR(0, 0);
@@ -1017,19 +1019,31 @@ static long aios_sys_openat_creat(const char *pathname, int flags, int mode) {
 static long aios_sys_chdir(va_list ap) {
     const char *path = va_arg(ap, const char *);
     if (!path) return -ENOENT;
+    if (path[0] == '.' && path[1] == 0)
+        return 0;  /* chdir(".") is a no-op */
+
+    /* Resolve to absolute path */
+    char resolved[256];
     if (path[0] == '/') {
-        aios_set_cwd(path);
-    } else if (path[0] == '.' && path[1] == 0) {
-        /* stay */
+        int i = 0;
+        while (path[i] && i < 255) { resolved[i] = path[i]; i++; }
+        resolved[i] = 0;
     } else {
-        char resolved[256];
         int ci = 0;
         while (aios_cwd[ci] && ci < 250) { resolved[ci] = aios_cwd[ci]; ci++; }
         if (ci > 1) resolved[ci++] = '/';
         while (*path && ci < 255) resolved[ci++] = *path++;
         resolved[ci] = 0;
-        aios_set_cwd(resolved);
     }
+
+    /* Validate: must exist and be a directory */
+    uint32_t mode = 0, size = 0;
+    if (fetch_stat(resolved, &mode, &size) != 0)
+        return -ENOENT;
+    if ((mode & 0170000) != 0040000)   /* S_IFMT / S_IFDIR */
+        return -ENOTDIR;
+
+    aios_set_cwd(resolved);
     return 0;
 }
 
@@ -1506,7 +1520,7 @@ int __wrap_pthread_join(pthread_t th, void **retval) {
     seL4_Call(thread_ep,
         seL4_MessageInfo_new(AIOS_THREAD_JOIN, 0, 0, 1));
 
-    if (retval) *retval = NULL;
+    if (retval) *retval = (void *)(uintptr_t)seL4_GetMR(1);
     return (int)(long)seL4_GetMR(0);
 }
 

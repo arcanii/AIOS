@@ -30,7 +30,7 @@
 #include <sel4utils/elf.h>
 #include <sel4utils/api.h>
 
-#define ALLOCATOR_STATIC_POOL_SIZE (BIT(seL4_PageBits) * 800)
+#define ALLOCATOR_STATIC_POOL_SIZE (BIT(seL4_PageBits) * 1500)
 static char allocator_mem_pool[ALLOCATOR_STATIC_POOL_SIZE];
 static sel4utils_alloc_data_t vspace_data;
 

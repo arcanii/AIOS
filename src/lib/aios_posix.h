@@ -60,6 +60,7 @@ void aios_set_cwd(const char *path);
 seL4_CPtr aios_get_serial_ep(void);
 seL4_CPtr aios_get_fs_ep(void);
 seL4_CPtr aios_get_auth_ep(void);
+seL4_CPtr aios_get_thread_ep(void);
 int aios_nb_getchar(void);  /* non-blocking, returns -1 if no input */
 
 void aios_set_pipe_redirect(int stdout_pipe, int stdin_pipe);
