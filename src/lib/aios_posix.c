@@ -669,6 +669,35 @@ static long aios_sys_writev(va_list ap) {
         }
         return total;
     }
+
+    /* writev: pipe fd and regular aios fd support */
+    if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
+        aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
+        if (!f->active) return -EBADF;
+        if (f->is_pipe && !f->pipe_read && pipe_ep) {
+            long total = 0;
+            for (int i = 0; i < iovcnt; i++) {
+                const char *src = (const char *)iov[i].iov_base;
+                size_t sent = 0;
+                while (sent < iov[i].iov_len) {
+                    int chunk = (int)(iov[i].iov_len - sent);
+                    if (chunk > 900) chunk = 900;
+                    seL4_SetMR(0, (seL4_Word)f->pipe_id);
+                    seL4_SetMR(1, (seL4_Word)chunk);
+                    int mr = 2;
+                    seL4_Word w = 0;
+                    for (int j = 0; j < chunk; j++) {
+                        w |= ((seL4_Word)(uint8_t)src[sent + j]) << ((j % 8) * 8);
+                        if (j % 8 == 7 || j == chunk - 1) { seL4_SetMR(mr++, w); w = 0; }
+                    }
+                    seL4_Call(pipe_ep, seL4_MessageInfo_new(61, 0, 0, mr));
+                    sent += chunk;
+                }
+                total += (long)iov[i].iov_len;
+            }
+            return total;
+        }
+    }
     return -EBADF;
 }
 
@@ -680,17 +709,34 @@ static long aios_sys_readv(va_list ap) {
 
     long total = 0;
     for (int i = 0; i < iovcnt; i++) {
-        /* Rebuild va_list for aios_sys_read — just call directly */
         if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
             aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
             if (!f->active) return -EBADF;
-            int avail = f->size - f->pos;
-            int n = (int)iov[i].iov_len < avail ? (int)iov[i].iov_len : avail;
-            char *dst = (char *)iov[i].iov_base;
-            for (int j = 0; j < n; j++) dst[j] = f->data[f->pos + j];
-            f->pos += n;
-            total += n;
-            if (n < (int)iov[i].iov_len) break;
+            /* readv: pipe read via IPC */
+            if (f->is_pipe && f->pipe_read && pipe_ep) {
+                char *dst = (char *)iov[i].iov_base;
+                int want = (int)iov[i].iov_len;
+                if (want > 900) want = 900;
+                seL4_SetMR(0, (seL4_Word)f->pipe_id);
+                seL4_SetMR(1, (seL4_Word)want);
+                seL4_Call(pipe_ep, seL4_MessageInfo_new(62, 0, 0, 2));
+                int got = (int)(long)seL4_GetMR(0);
+                int mr = 1;
+                for (int k = 0; k < got; k++) {
+                    if (k % 8 == 0 && k > 0) mr++;
+                    dst[k] = (char)((seL4_GetMR(mr) >> ((k % 8) * 8)) & 0xFF);
+                }
+                total += got;
+                if (got < (int)iov[i].iov_len) break;
+            } else {
+                int avail = f->size - f->pos;
+                int n = (int)iov[i].iov_len < avail ? (int)iov[i].iov_len : avail;
+                char *dst = (char *)iov[i].iov_base;
+                for (int j = 0; j < n; j++) dst[j] = f->data[f->pos + j];
+                f->pos += n;
+                total += n;
+                if (n < (int)iov[i].iov_len) break;
+            }
         } else if (fd == 0) {
             /* stdin — check pipe redirect */
             if (stdin_pipe_id >= 0 && pipe_ep) {

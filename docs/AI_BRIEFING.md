@@ -284,7 +284,7 @@ See docs/FORK_IMPLEMENTATION.md for 15 detailed learnings. Critical ones:
 | v0.4.35-36 | su/passwd, file permissions, auth isolation |
 | v0.4.37-39 | uname, pipes, quotes, redirection |
 | v0.4.40-42 | procfs, top, dmesg, $VAR, Ctrl-C, kill |
-| v0.4.43 | Background exec, jobs, 14 new sbase (93 total) |
+| v0.4.56 | Background exec, jobs, 14 new sbase (93 total) |
 | v0.4.44 | tty_server Phase 1: line discipline |
 | v0.4.45-46 | **fork() + waitpid()** — process duplication on seL4 |
 | v0.4.47 | **exec()** — fork+exec+waitpid complete |

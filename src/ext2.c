@@ -6,18 +6,67 @@
 static uint16_t rd16(const uint8_t *p) { return p[0] | (p[1] << 8); }
 static uint32_t rd32(const uint8_t *p) { return p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24); }
 
+/* ---- Block cache: write-through, 8 entries, round-robin ---- */
+#define EXT2_CACHE_SIZE 8
+
+static struct {
+    uint32_t block;
+    uint8_t  data[1024];
+    int      valid;
+} blk_cache[EXT2_CACHE_SIZE];
+
+static int cache_next = 0;
+
+static void cache_init(void) {
+    for (int i = 0; i < EXT2_CACHE_SIZE; i++)
+        blk_cache[i].valid = 0;
+    cache_next = 0;
+}
+
+/* Return 0 on hit, -1 on miss */
+static int cache_lookup(uint32_t block, void *buf) {
+    for (int i = 0; i < EXT2_CACHE_SIZE; i++) {
+        if (blk_cache[i].valid && blk_cache[i].block == block) {
+            uint8_t *dst = (uint8_t *)buf;
+            for (int j = 0; j < 1024; j++) dst[j] = blk_cache[i].data[j];
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/* Store block in cache (update-in-place or evict round-robin) */
+static void cache_store(uint32_t block, const void *buf) {
+    for (int i = 0; i < EXT2_CACHE_SIZE; i++) {
+        if (blk_cache[i].valid && blk_cache[i].block == block) {
+            const uint8_t *src = (const uint8_t *)buf;
+            for (int j = 0; j < 1024; j++) blk_cache[i].data[j] = src[j];
+            return;
+        }
+    }
+    int slot = cache_next;
+    cache_next = (cache_next + 1) % EXT2_CACHE_SIZE;
+    blk_cache[slot].block = block;
+    blk_cache[slot].valid = 1;
+    const uint8_t *src = (const uint8_t *)buf;
+    for (int j = 0; j < 1024; j++) blk_cache[slot].data[j] = src[j];
+}
+
 static int read_block(ext2_ctx_t *ctx, uint32_t block, void *buf) {
+    if (cache_lookup(block, buf) == 0) return 0;
     int sectors = ctx->block_size / 512;
     uint8_t *p = (uint8_t *)buf;
     for (int i = 0; i < sectors; i++) {
         if (ctx->read_sector((uint64_t)block * sectors + i, p + i * 512) != 0)
             return -1;
     }
+    cache_store(block, buf);
     return 0;
 }
 
 int ext2_init(ext2_ctx_t *ctx, blk_read_fn read) {
     ctx->read_sector = read;
+    cache_init();
 
     /* Superblock at offset 1024 = sectors 2-3 */
     uint8_t sb[1024];
@@ -284,6 +333,12 @@ static int ext2_vfs_create(void *ctx, const char *path, const void *data, int le
         while (p[ni] && ni < 63) { name[ni] = p[ni]; ni++; }
         name[ni] = '\0';
     }
+    /* unlink existing before create -- ensures write-then-read consistency
+     * and prevents duplicate directory entries on overwrite */
+    uint32_t existing_ino;
+    if (ext2_lookup(e, parent_ino, name, &existing_ino) == 0) {
+        ext2_unlink(e, parent_ino, name);
+    }
     return ext2_create_file(e, parent_ino, name, data, len);
 }
 
@@ -340,6 +395,7 @@ static int write_block(ext2_ctx_t *ctx, uint32_t block, const void *buf) {
         if (ctx->write_sector((uint64_t)block * sectors + i, p + i * 512) != 0)
             return -1;
     }
+    cache_store(block, buf);
     return 0;
 }
 
