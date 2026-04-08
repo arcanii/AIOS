@@ -80,7 +80,7 @@ static int lq_pop(void) {
 
 /* ── TTY state ── */
 static int tty_mode = TTY_MODE_COOKED;
-static int tty_echo = 0;  /* OFF: mini_shell does its own echo */
+static int tty_echo = 1;  /* ON: tty_server handles echo for all programs */
 
 /* ── Output helper ── */
 static void tty_putc(char c) {
@@ -94,9 +94,8 @@ static void tty_puts(const char *s) {
 /* ── Line discipline: process one input character ── */
 static void line_discipline(char c) {
     if (tty_mode == TTY_MODE_RAW) {
-        /* Raw mode: straight into key_buf for SER_GETC, and line_queue for TTY_READ */
+        /* raw: key_buf only -- line_queue is for cooked TTY_READ */
         key_push(c);
-        lq_push(c);
         return;
     }
 
@@ -285,9 +284,14 @@ int main(int argc, char *argv[]) {
             switch (op) {
             case TTY_IOCTL_SET_RAW:
                 tty_mode = TTY_MODE_RAW;
+                lq_head = lq_tail = 0;
+                key_head = key_tail = 0;
+                line_len = 0;
                 break;
             case TTY_IOCTL_SET_COOKED:
                 tty_mode = TTY_MODE_COOKED;
+                key_head = key_tail = 0;
+                line_len = 0;
                 break;
             case TTY_IOCTL_ECHO_ON:
                 tty_echo = 1;

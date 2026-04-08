@@ -214,20 +214,28 @@ long aios_sys_read(va_list ap) {
             }
             return (long)got;
         }
+        /* v0.4.68: use TTY_READ for cooked input from line queue.
+         * tty_server line discipline handles echo, backspace, Ctrl-U.
+         * We get clean, edited lines -- no raw control chars. */
         char *cbuf = (char *)buf;
-        for (size_t i = 0; i < count; i++) {
-            int c;
-            /* v0.4.67: block until data available (POSIX read semantics).
-             * SER_GETC returns -1 when key buffer empty. Yield timeslice
-             * to avoid busy-wait. Needed for dash interactive mode. */
-            do {
-                c = aios_getchar();
-                if (c < 0) seL4_Yield();
-            } while (c < 0);
-            cbuf[i] = (char)c;
-            if (c == '\n') return (long)(i + 1);
+        int want = (int)count;
+        if (want > 900) want = 900;
+        seL4_CPtr sep = aios_get_serial_ep();
+        while (1) {
+            seL4_SetMR(0, (seL4_Word)want);
+            seL4_MessageInfo_t reply = seL4_Call(sep,
+                seL4_MessageInfo_new(71, 0, 0, 1));  /* TTY_READ */
+            int got = (int)(long)seL4_GetMR(0);
+            if (got > 0) {
+                int mr = 1;
+                for (int i = 0; i < got; i++) {
+                    if (i > 0 && i % 8 == 0) mr++;
+                    cbuf[i] = (char)((seL4_GetMR(mr) >> ((i % 8) * 8)) & 0xFF);
+                }
+                return (long)got;
+            }
+            seL4_Yield();
         }
-        return (long)count;
     }
 
     /* aios fd */

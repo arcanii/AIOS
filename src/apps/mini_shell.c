@@ -30,6 +30,11 @@ extern int aios_get_pipe_id(int fd);
 #define PIPE_KILL   64
 #define PIPE_DEBUG  71
 #define PIPE_EXEC_WAIT 72
+#define TTY_IOCTL       72
+#define TTY_IOCTL_SET_RAW  1
+#define TTY_IOCTL_SET_COOKED 2
+#define TTY_IOCTL_ECHO_ON  3
+#define TTY_IOCTL_ECHO_OFF 4
 #define AUTH_SU     48
 #define AUTH_PASSWD 47
 
@@ -67,6 +72,18 @@ static void ser_puts(const char *s) { while (*s) ser_putc(*s++); }
 static int ser_getc(void) {
     seL4_MessageInfo_t r = seL4_Call(serial_ep, seL4_MessageInfo_new(SER_GETC, 0, 0, 0));
     return (int)(long)seL4_GetMR(0);
+}
+static void tty_echo_set(int on) {
+    seL4_SetMR(0, (seL4_Word)(on ? TTY_IOCTL_ECHO_ON : TTY_IOCTL_ECHO_OFF));
+    seL4_Call(serial_ep, seL4_MessageInfo_new(TTY_IOCTL, 0, 0, 1));
+}
+static void tty_set_raw(void) {
+    seL4_SetMR(0, (seL4_Word)TTY_IOCTL_SET_RAW);
+    seL4_Call(serial_ep, seL4_MessageInfo_new(TTY_IOCTL, 0, 0, 1));
+}
+static void tty_set_cooked(void) {
+    seL4_SetMR(0, (seL4_Word)TTY_IOCTL_SET_COOKED);
+    seL4_Call(serial_ep, seL4_MessageInfo_new(TTY_IOCTL, 0, 0, 1));
 }
 
 static long parse_num(const char *s) {
@@ -480,6 +497,7 @@ static void read_line(int *len) {
     int cursor = 0;  /* cursor position within line */
     int esc_state = 0;
     *len = 0;
+    tty_set_raw();  /* raw mode: we handle our own editing + echo */
 
     while (*len < LINE_MAX - 1) {
         int c = ser_getc();
@@ -575,11 +593,13 @@ normal:
         }
     }
     line[*len] = '\0';
+    tty_set_cooked();  /* back to cooked mode for other programs */
 }
 
 /* ── Login ── */
 static void read_password(char *buf, int max) {
     int len = 0;
+    tty_set_raw();  /* raw mode for password input */
     while (len < max - 1) {
         int c = ser_getc();
         if (c < 0) continue;
@@ -596,6 +616,7 @@ static void read_password(char *buf, int max) {
         if (c >= 0x20 && c < 127) { buf[len++] = (char)c; ser_putc('*'); }
     }
     buf[len] = '\0';
+    tty_set_cooked();
 }
 
 

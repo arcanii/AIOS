@@ -13,6 +13,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include "aios_posix.h"
+#include <pwd.h>
 
 extern seL4_CPtr pipe_ep;
 
@@ -20,6 +21,11 @@ extern seL4_CPtr pipe_ep;
 #define SER_GETC  2
 #define AUTH_LOGIN 40
 #define PIPE_SET_IDENTITY 74
+#define TTY_IOCTL       72
+#define TTY_IOCTL_SET_RAW  1
+#define TTY_IOCTL_SET_COOKED 2
+#define TTY_IOCTL_ECHO_ON  3
+#define TTY_IOCTL_ECHO_OFF 4
 
 static seL4_CPtr serial_ep, fs_ep, auth_ep;
 
@@ -43,11 +49,24 @@ static int ser_getc(void) {
         seL4_MessageInfo_new(SER_GETC, 0, 0, 0));
     return (int)(long)seL4_GetMR(0);
 }
+static void tty_echo_set(int on) {
+    seL4_SetMR(0, (seL4_Word)(on ? TTY_IOCTL_ECHO_ON : TTY_IOCTL_ECHO_OFF));
+    seL4_Call(serial_ep, seL4_MessageInfo_new(TTY_IOCTL, 0, 0, 1));
+}
+static void tty_set_raw(void) {
+    seL4_SetMR(0, (seL4_Word)TTY_IOCTL_SET_RAW);
+    seL4_Call(serial_ep, seL4_MessageInfo_new(TTY_IOCTL, 0, 0, 1));
+}
+static void tty_set_cooked(void) {
+    seL4_SetMR(0, (seL4_Word)TTY_IOCTL_SET_COOKED);
+    seL4_Call(serial_ep, seL4_MessageInfo_new(TTY_IOCTL, 0, 0, 1));
+}
 
 /* ---- Password input with masking ---- */
 
 static void read_password(char *buf, int max) {
     int len = 0;
+    tty_set_raw();
     while (len < max - 1) {
         int c = ser_getc();
         if (c < 0) continue;
@@ -65,6 +84,7 @@ static void read_password(char *buf, int max) {
         if (c >= 0x20 && c < 127) { buf[len++] = (char)c; ser_putc('*'); }
     }
     buf[len] = '\0';
+    tty_set_cooked();
 }
 
 /* ---- Login (AUTH_LOGIN IPC) ---- */
@@ -82,6 +102,7 @@ static int do_login(uint32_t *uid, uint32_t *gid,
         char password[64];
         int ulen = 0;
 
+        tty_set_raw();
         ser_puts("\nAIOS login: ");
         while (ulen < 31) {
             int c = ser_getc();
@@ -103,8 +124,9 @@ static int do_login(uint32_t *uid, uint32_t *gid,
             }
         }
         username[ulen] = '\0';
-        if (ulen == 0) continue;
+        if (ulen == 0) { tty_set_cooked(); continue; }
 
+        tty_set_cooked();
         ser_puts("Password: ");
         read_password(password, 64);
 
@@ -210,7 +232,20 @@ int main(int argc, char *argv[]) {
         display_motd();
         ser_puts("Welcome, "); ser_puts(username); ser_puts("\n\n");
 
-        /* Fork+exec mini_shell with retry and backoff */
+        /* Determine login shell from /etc/passwd */
+        struct passwd *pw = getpwuid(uid);
+        const char *shell_path = "/bin/dash";
+        const char *shell_name = "dash";
+        if (pw && pw->pw_shell && pw->pw_shell[0]) {
+            shell_path = pw->pw_shell;
+            /* Extract basename for argv[0] */
+            const char *p = pw->pw_shell;
+            const char *base = p;
+            while (*p) { if (*p == '/') base = p + 1; p++; }
+            shell_name = base;
+        }
+
+        /* Fork+exec login shell with retry and backoff */
         int shell_started = 0;
         for (int retry = 0; retry < 3; retry++) {
             pid_t pid = fork();
@@ -230,8 +265,8 @@ int main(int argc, char *argv[]) {
                 continue;
             }
             if (pid == 0) {
-                char *sh_argv[] = {"mini_shell", (void *)0};
-                execv("/bin/aios/mini_shell", sh_argv);
+                char *sh_argv[] = {(char *)shell_name, (void *)0};
+                execv(shell_path, sh_argv);
                 _exit(127);
             }
             shell_started = 1;
@@ -248,8 +283,8 @@ int main(int argc, char *argv[]) {
         }
         if (!shell_started) {
             ser_puts("getty: persistent fork failure, running shell in-process\n");
-            char *sh_argv[] = {"mini_shell", (void *)0};
-            execv("/bin/aios/mini_shell", sh_argv);
+            char *sh_argv[] = {(char *)shell_name, (void *)0};
+            execv(shell_path, sh_argv);
             /* execv returned -- log and fall through to login */
             ser_puts("getty: execv failed, returning to login\n");
         }

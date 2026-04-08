@@ -7,7 +7,7 @@
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: main
 * **Developer**: Bryan
-* **Current Version**: v0.4.67
+* **Current Version**: v0.4.68
 
 ## Development Environment
 
@@ -145,7 +145,7 @@ qemu-system-aarch64 \
 ./scripts/aios-cc source.c -o output
 ```
 
-### Build dash (cross-compile)
+### Build dash (cross-compile, primary login shell)
 
 ```
 cd ~/Desktop/github_repos/AIOS
@@ -159,11 +159,14 @@ DASH=~/Desktop/github_repos/dash/src
     $DASH/builtins.c $DASH/init.c $DASH/show.c \
     $DASH/arith_yacc.c $DASH/arith_yylex.c \
     $DASH/miscbltin.c $DASH/system.c \
-    $DASH/alias.c $DASH/mail.c $DASH/histedit.c $DASH/signames.c \
-    $DASH/bltin/printf.c $DASH/bltin/test.c $DASH/bltin/times.c \
-    -I $DASH -I $DASH/bltin -DSHELL -include $DASH/config.h \
+    $DASH/alias.c $DASH/histedit.c $DASH/mail.c $DASH/signames.c \
+    $DASH/bltin/test.c $DASH/bltin/printf.c $DASH/bltin/times.c \
+    -I $DASH -include $DASH/config.h -DSHELL -DSMALL -DGLOB_BROKEN \
     -o build-04/sbase/dash
 ```
+
+IMPORTANT: Rebuild dash after any change to src/lib/posix_*.c files.
+ninja rebuilds libaios_posix.a but does NOT rebuild dash.
 
 ## Which binaries live where
 
@@ -252,7 +255,8 @@ AIOS/
 5. Starts fs_thread + exec_thread + thread_server + pipe_server
 6. Spawns tty_server + auth_server (CPIO, isolated processes)
 7. Spawns getty via exec_thread (fork+exec capable VSpace)
-8. Getty presents login prompt, authenticates via auth IPC, spawns mini_shell
+8. Getty presents login prompt, authenticates via auth IPC, reads pw_shell from
+   /etc/passwd via getpwuid(), spawns configured shell (default: /bin/dash)
 
 ### Process Model
 
@@ -261,7 +265,8 @@ AIOS/
 * exec_thread: Reads ELF from /bin/, loads into new VSpace, manages lifecycle
 * pipe_server: Central hub for pipes, fork, exec, wait, exit, signals
 * thread_server: Creates child threads within existing processes
-* mini_shell: PATH search, CWD, environment variables, exec launcher
+* dash: primary login shell (POSIX compliant, configured via /etc/passwd)
+* mini_shell: legacy shell (still on disk as fallback, no longer default)
 * User programs: isolated VSpaces, POSIX syscalls via IPC
 
 ### ELF Loading (from disk)
@@ -293,8 +298,9 @@ frame) used as the ring buffer (PIPE_BUF_SIZE = 4096, matching page size).
 Data flows through IPC message registers (MR-based path, up to 900 bytes per
 call). Server-side SHM transfer infrastructure is in place (PIPE_MAP_SHM,
 PIPE_WRITE_SHM, PIPE_READ_SHM ops with lazy xfer page allocation) but
-client-side mapping is disabled due to page table leak in sel4utils process
-cleanup. Cleanup unmaps and frees all frames when all refs are dropped.
+client-side mapping enabled in v0.4.67 with cap copy tracking and proper
+CNode_Delete/Revoke cleanup. Cleanup unmaps and frees all frames when all
+refs are dropped.
 
 ### IPC Protocol Labels
 
@@ -365,19 +371,27 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * Cross-compiled via ./scripts/aios-cc with libutil + libutf
 * Note: cp.c and rm.c need special handling (libutil has cp.c/rm.c too)
 
-### dash (Debian Almquist Shell) -- v0.4.64, fully working v0.4.67
+### dash (Debian Almquist Shell) -- PRIMARY LOGIN SHELL (v0.4.68)
 
 * Source: ~/Desktop/github_repos/dash (cloned from github.com/tklauser/dash)
 * 468KB statically linked AArch64 ELF
 * Generated headers: token.h, syntax.h, nodes.h/c, builtins.h/c, init.c, signames.c, config.h
 * Config: JOBS=0, SMALL=1, GLOB_BROKEN=1, _GNU_SOURCE
 * Builtins.def: stripped C license comment block (mkbuiltins is not a C preprocessor), JOBS/SMALL conditionals removed
-* Cross-compiled with: aios-cc -I $DASH -DSHELL -include $DASH/config.h
+* Source files: main eval parser expand exec jobs trap redir input output var cd
+  error options memalloc mystring syntax nodes builtins init show arith_yacc
+  arith_yylex miscbltin system alias histedit mail signames + bltin/test bltin/printf bltin/times
+* Cross-compiled with: aios-cc -I $DASH -include $DASH/config.h -DSHELL -DSMALL -DGLOB_BROKEN
 * IMPORTANT: dash must be rebuilt after libaios_posix.a changes (ninja does not rebuild dash)
-* Status: WORKING. -c mode, script files, pipelines, semicolons, interactive mode all functional.
-* v0.4.66 fixes: aios-cc EXTRA flags, split_args_qa quote-aware arg splitting
-* v0.4.67 fixes: PIPE_SET_PIPES for write-end closure, quote-aware pipe detection,
-  stdin blocking for interactive mode. Remaining: tty_echo=0 hides typed chars in interactive
+* Status: FULLY WORKING as primary login shell.
+  - Interactive mode with echo and backspace (tty_echo=1, TTY_READ cooked input)
+  - -c mode, script files, pipelines, semicolons
+  - Variable expansion, for loops, arithmetic, if/then/fi
+  - Getty reads /etc/passwd pw_shell field to determine login shell
+* v0.4.66: aios-cc EXTRA flags, split_args_qa quote-aware arg splitting
+* v0.4.67: PIPE_SET_PIPES, stdin blocking, quote-aware pipe detection
+* v0.4.68: tty_echo=1 default, TTY_READ for cooked stdin, RAW/COOKED mode
+  switching, getty spawns dash via /etc/passwd, dash is primary shell
 
 ### Programs on Disk
 
@@ -402,15 +416,15 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * Multi-group ext2: Block allocation scans all groups; inode allocation group 0 only
 * dash builtins.def: Must strip C-style comments before mkbuiltins (it is a shell script not C)
 * Disk image is gitignored: must rebuild after rm -rf build-04 (sbase binaries lost)
-* tty_echo: OFF by default (tty_server.c line 83). mini_shell echoes its own chars. Programs relying on terminal echo (dash interactive) see no typed input. Fix: default tty_echo=1 + remove mini_shell manual echo.
+* tty_echo: ON by default (v0.4.68). mini_shell/getty switch to RAW mode during line editing, COOKED for normal programs. Both buffers flushed on mode switch.
 * Dash rebuild: dash links against libaios_posix.a but is not rebuilt by ninja. Must manually rebuild via aios-cc after any POSIX shim change.
 
 ## Pending Items
 
-1. tty_server echo: default tty_echo=1, remove mini_shell manual echo
-2. Dash variable expansion: $i in for loops appears empty, needs investigation
-3. Allocator right-sizing: 4000 pages ~100x oversized, test with 500/250/100
-4. Networking: virtio-net + TCP/IP
+1. Allocator right-sizing: 4000 pages ~100x oversized, test with 500/250/100
+2. Networking: virtio-net + TCP/IP (see docs/DESIGN_NET.md)
+3. Dash improvements: tab completion, history, PS1, job control
+4. TTY improvements: termios, process-aware echo, virtual terminals
 5. Dynamic ELF buffer: vka_alloc_frame for >1MB binaries
 6. Process niceness: runtime seL4_TCB_SetPriority
 7. ext2 write improvements: multi-block file write, triple indirect
@@ -455,8 +469,9 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 | v0.4.65 | Shared-memory pipes, VKA allocator audit, O_APPEND (>> redirect), pipe cleanup fix |
 | v0.4.66 | Dash stdout working, FS_APPEND IPC op, shell >> via FS_APPEND, SHM pipe phase 2 server-side, PIPE_BUF_SIZE fix, aios-cc EXTRA flags fix, split_args_qa |
 | v0.4.67 | SHM pipes client enabled, dash pipelines + semicolons + interactive, PIPE_SET_PIPES, stdin blocking, quote-aware pipe detection, cap copy cleanup |
+| v0.4.68 | Dash as primary login shell, tty_echo=1, TTY_READ cooked stdin, RAW/COOKED mode switching, getty reads pw_shell from /etc/passwd, buffer isolation on mode switch, macOS sed fix |
 
-## Architecture After v0.4.67
+## Architecture After v0.4.68
 
 ```
 src/aios_root.c           ~200 lines
@@ -484,18 +499,21 @@ include/aios/root_shared.h ~227 lines (+ PIPE_SET_PIPES, xfer_copies)
 include/aios/vka_audit.h   ~38 lines
 ```
 
-## Test Results (v0.4.67)
+## Test Results (v0.4.68)
 
 ```
 posix_verify V3: 98/98 PASS
 signal_test: 20/20 PASS
 POSIX audit: 81/81 (100%)
+dash as login shell: getty reads /etc/passwd pw_shell (PASS)
+dash interactive: echo, pwd, cd, ls, backspace, exit (PASS)
+dash variable expansion: x=hello; echo $x -> hello (PASS)
+dash for loop: for i in 1 2 3; do echo num: $i; done -> 1,2,3 (PASS)
+dash arithmetic: echo $((100+200)) -> 300 (PASS)
 dash -c "echo hello" -> hello (PASS)
 dash -c "echo hello | cat" -> hello (PASS)
 dash -c "echo a; echo b" -> a\nb (PASS)
-dash interactive: echo, pwd, ls, $((2+3))=5, exit (PASS)
-dash interactive echo: FAIL (tty_echo=0)
-FS_APPEND: echo hello > f; echo world >> f; cat f -> hello\nworld (PASS)
+login -> dash -> exit -> login cycle (PASS)
 fork_test: PASS
 pipe: echo hello | cat -> hello (PASS)
 SHM pipes: 6+ pipe ops, no memory errors (PASS)

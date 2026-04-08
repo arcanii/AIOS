@@ -14,7 +14,7 @@ External AI (Claude) is used as a development tool for code generation
 and review. This project is also a study in AI-assisted systems programming.
 The long-term goal is self-hosted development within AIOS itself.
 
-**Current version:** v0.4.65
+**Current version:** v0.4.68
 
 ## What Works
 
@@ -26,8 +26,9 @@ The long-term goal is self-hosted development within AIOS itself.
 - **POSIX signals** (sigaction, kill, sigprocmask) with cooperative handler dispatch
 - **Unix pipelines** (echo hello | cat | wc -c) with error recovery
 - **Shell operators** (&&, ||, >, >>, <) and environment variables
+- **dash login shell** -- POSIX shell as primary login shell via /etc/passwd pw_shell
 - **128 programs** -- 99 sbase utilities in /bin/, 28 AIOS programs in /bin/aios/, dash in /bin/dash
-- **Shared-memory pipes** with mapped frame buffers
+- **Shared-memory pipes** with mapped frame buffers (client-side enabled)
 - **pthreads** (create, join, mutex) via manual TCB creation in child VSpaces
 - **Auth server** with SHA-3-512 (Keccak) passwords, login/logout, su/passwd
 - **Kernel log** ring buffer with /proc/log and /proc/uptime
@@ -42,7 +43,7 @@ AIOS runs as a single root task on bare seL4 (no Microkit). Server threads
 handle IPC-based services; user processes get isolated VSpaces with
 capability-mediated access to servers.
 
-    User programs (mini_shell, sbase tools, test programs)
+    User programs (dash, sbase tools, test programs)
             |
        aios_posix.c  (POSIX shim: 70+ syscalls, signals, pthreads, statx)
             |
@@ -139,13 +140,23 @@ git clone https://git.suckless.org/sbase
 cd AIOS
 ```
 
-### dash (optional -- shell port)
+### dash (login shell -- required)
 
 ```bash
 cd ..
 git clone https://github.com/tklauser/dash.git
 cd dash/src
-# Generate required headers (see docs/DASH_PORT.md for details)
+
+# Generate required headers on macOS/Linux host
+cc -o mksyntax mksyntax.c && ./mksyntax
+cc -o mknodes mknodes.c && ./mknodes nodetypes nodes.c.pat
+cc -o mkinit mkinit.c && ./mkinit *.c
+cc -DSMALL -DJOBS=0 -o mkbuiltins mkbuiltins.c 2>/dev/null || \
+  sh mkbuiltins shell.h builtins.def
+cc -o mksignames mksignames.c && ./mksignames
+
+# Create config.h for AIOS (see docs/DASH_PORT.md for full details)
+# Key defines: JOBS=0, SMALL=1, GLOB_BROKEN=1, stat64->stat mappings
 ```
 
 ## Building
@@ -169,7 +180,31 @@ python3 scripts/build_sbase.py
 
 This cross-compiles 99 sbase tools into `build-04/sbase/` using `scripts/aios-cc`.
 
-### 3. Create disk image
+### 3. Build dash shell
+
+```bash
+cd AIOS
+DASH=~/Desktop/github_repos/dash/src
+./scripts/aios-cc \
+    $DASH/main.c $DASH/eval.c $DASH/parser.c $DASH/expand.c \
+    $DASH/exec.c $DASH/jobs.c $DASH/trap.c $DASH/redir.c \
+    $DASH/input.c $DASH/output.c $DASH/var.c $DASH/cd.c \
+    $DASH/error.c $DASH/options.c $DASH/memalloc.c \
+    $DASH/mystring.c $DASH/syntax.c $DASH/nodes.c \
+    $DASH/builtins.c $DASH/init.c $DASH/show.c \
+    $DASH/arith_yacc.c $DASH/arith_yylex.c \
+    $DASH/miscbltin.c $DASH/system.c \
+    $DASH/alias.c $DASH/histedit.c $DASH/mail.c $DASH/signames.c \
+    $DASH/bltin/test.c $DASH/bltin/printf.c $DASH/bltin/times.c \
+    -I $DASH -include $DASH/config.h -DSHELL -DSMALL -DGLOB_BROKEN \
+    -o build-04/sbase/dash
+```
+
+Dash is the primary login shell. It links against `libaios_posix.a` -- if you
+change any `src/lib/posix_*.c` file, you must rebuild dash (ninja does not
+rebuild it automatically).
+
+### 4. Create disk image
 
 ```bash
 python3 scripts/mkdisk.py disk/disk_ext2.img \
@@ -185,7 +220,7 @@ change (mini_shell, getty, etc.), since these are loaded from disk at runtime.
 Only the root task and CPIO-embedded servers (tty_server, auth_server) are
 loaded directly from the kernel image.
 
-### 4. Boot
+### 5. Boot
 
 ```bash
 qemu-system-aarch64 \
@@ -197,7 +232,8 @@ qemu-system-aarch64 \
     -kernel build-04/images/aios_root-image-arm-qemu-arm-virt
 ```
 
-Login as `root` (password: `root`).
+Login as `root` (password: `root`). The login shell is dash (configured
+in `/etc/passwd`).
 
 ### Incremental Development Cycle
 
@@ -238,6 +274,7 @@ python3 scripts/mkdisk.py disk/disk_ext2.img \
 - [DESIGN_0.4.md](docs/DESIGN_0.4.md) -- 0.4.x design decisions
 - [LEARNINGS.md](docs/LEARNINGS.md) -- Hard-won lessons from seL4 development
 - [DASH_PORT.md](docs/DASH_PORT.md) -- dash shell porting guide
+- [DESIGN_NET.md](docs/DESIGN_NET.md) -- Networking subsystem design (virtio-net)
 
 ## Project Status
 
