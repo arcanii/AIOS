@@ -3,6 +3,40 @@
  * utimensat, umask, uname, ioctl, fcntl, dup, dup3, pipe2
  */
 #include "posix_internal.h"
+#include <termios.h>
+#include "aios/tty.h"
+
+/* Local termios state -- reflects tty_server RAW/COOKED/ECHO state.
+ * TCGETS returns this. TCSETS updates this and sends TTY_IOCTLs. */
+static struct termios aios_termios = {
+    .c_iflag = ICRNL,
+    .c_oflag = OPOST | ONLCR,
+    .c_cflag = CS8 | CREAD | CLOCAL | B9600,
+    .c_lflag = ECHO | ICANON | ISIG,
+    .c_cc = {
+        [VINTR]  = 0x03,   /* Ctrl-C */
+        [VQUIT]  = 0x1C,   /* Ctrl-backslash */
+        [VERASE] = 0x7F,   /* DEL */
+        [VKILL]  = 0x15,   /* Ctrl-U */
+        [VEOF]   = 0x04,   /* Ctrl-D */
+        [VMIN]   = 1,
+        [VTIME]  = 0,
+        [VSUSP]  = 0x1A,   /* Ctrl-Z */
+        [VWERASE]= 0x17,   /* Ctrl-W */
+    },
+};
+
+static void termios_apply(void) {
+    /* Sync tty_server state from termios flags */
+    int want_canon = (aios_termios.c_lflag & ICANON) != 0;
+    int want_echo  = (aios_termios.c_lflag & ECHO) != 0;
+
+    seL4_SetMR(0, (seL4_Word)(want_canon ? TTY_IOCTL_SET_COOKED : TTY_IOCTL_SET_RAW));
+    seL4_Call(ser_ep, seL4_MessageInfo_new(TTY_IOCTL, 0, 0, 1));
+
+    seL4_SetMR(0, (seL4_Word)(want_echo ? TTY_IOCTL_ECHO_ON : TTY_IOCTL_ECHO_OFF));
+    seL4_Call(ser_ep, seL4_MessageInfo_new(TTY_IOCTL, 0, 0, 1));
+}
 
 long aios_sys_utimensat(va_list ap) {
     /* Stub — ignore timestamps for now */
@@ -72,6 +106,19 @@ long aios_sys_ioctl(va_list ap) {
         }
         /* TIOCSPGRP -- set fg pgrp (stub) */
         if (req == 0x5410) return 0;
+        /* TCGETS -- get terminal attributes */
+        if (req == 0x5401 && argp) {
+            struct termios *t = (struct termios *)argp;
+            *t = aios_termios;
+            return 0;
+        }
+        /* TCSETS / TCSETSW / TCSETSF -- set terminal attributes */
+        if ((req == 0x5402 || req == 0x5403 || req == 0x5404) && argp) {
+            struct termios *t = (struct termios *)argp;
+            aios_termios = *t;
+            termios_apply();
+            return 0;
+        }
         return 0;
     }
     return -ENOTTY;

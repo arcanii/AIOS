@@ -173,7 +173,7 @@ extern vka_object_t serial_ep;
 extern uint32_t aios_total_mem;
 
 extern pipe_t pipes[MAX_PIPES];
-extern char elf_buf[1024 * 1024];
+extern char elf_buf[8 * 1024 * 1024];
 
 extern ext2_ctx_t ext2;
 extern volatile uint32_t *blk_vio;

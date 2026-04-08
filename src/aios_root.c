@@ -68,7 +68,7 @@ seL4_CPtr fs_ep_cap;
 vka_object_t serial_ep;
 uint32_t aios_total_mem = 0;
 
-char elf_buf[1024 * 1024]; /* shared between exec_thread, fork, exec */
+char elf_buf[8 * 1024 * 1024]; /* shared between exec_thread, fork, exec */
 
 /* Foreground process tracking (for Ctrl-C) */
 volatile int fg_pid = -1;

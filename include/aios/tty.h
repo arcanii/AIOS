@@ -27,6 +27,10 @@
 #define TTY_IOCTL_ECHO_ON       3
 #define TTY_IOCTL_ECHO_OFF      4
 #define TTY_IOCTL_GET_MODE      5
+#define TTY_IOCTL_TCGETS        6
+#define TTY_IOCTL_TCSETS        7
+#define TTY_IOCTL_TCSETSW       8
+#define TTY_IOCTL_TCSETSF       9
 
 /* TTY modes */
 #define TTY_MODE_COOKED  0

@@ -7,7 +7,7 @@
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: main
 * **Developer**: Bryan
-* **Current Version**: v0.4.68
+* **Current Version**: v0.4.69
 
 ## Development Environment
 
@@ -407,7 +407,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * GNU sed on macOS: PATH="/opt/homebrew/opt/gnu-sed/libexec/gnubin:$PATH"
 * texinfo: PATH="/opt/homebrew/opt/texinfo/bin:$PATH"
 * CPIO caching: ninja does not detect child ELF changes, need full rebuild
-* ELF buffer: Static 1MB (TODO: dynamic for v0.5.x)
+* ELF buffer: Static 8MB (increased from 1MB in v0.4.69, dynamic for v0.5.x)
 * DMA: Must use single untyped Retype for contiguous pages
 * Priority: All processes at 200 (different = deadlock)
 * ext2: Never use packed structs on AArch64 (use rd16/rd32)
@@ -421,13 +421,14 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 
 ## Pending Items
 
-1. Allocator right-sizing: 4000 pages ~100x oversized, test with 500/250/100
-2. Networking: virtio-net + TCP/IP (see docs/DESIGN_NET.md)
-3. Dash improvements: tab completion, history, PS1, job control
-4. TTY improvements: termios, process-aware echo, virtual terminals
-5. Dynamic ELF buffer: vka_alloc_frame for >1MB binaries
-6. Process niceness: runtime seL4_TCB_SetPriority
-7. ext2 write improvements: multi-block file write, triple indirect
+1. Networking: virtio-net + TCP/IP (see docs/DESIGN_NET.md)
+2. tcc self-hosting: compile C inside AIOS (see docs/DESIGN_TCC.md)
+3. zsh port: alternative shell with ZLE (see docs/DESIGN_ZSH.md)
+4. Allocator right-sizing: 4000 pages ~100x oversized, test with 500/250/100
+5. Dash improvements: tab completion, history, PS1, job control
+6. TTY improvements: process-aware echo, virtual terminals
+7. Process niceness: runtime seL4_TCB_SetPriority
+8. ext2 write improvements: multi-block file write, triple indirect
 
 ## Version History (0.4.x)
 
@@ -470,8 +471,9 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 | v0.4.66 | Dash stdout working, FS_APPEND IPC op, shell >> via FS_APPEND, SHM pipe phase 2 server-side, PIPE_BUF_SIZE fix, aios-cc EXTRA flags fix, split_args_qa |
 | v0.4.67 | SHM pipes client enabled, dash pipelines + semicolons + interactive, PIPE_SET_PIPES, stdin blocking, quote-aware pipe detection, cap copy cleanup |
 | v0.4.68 | Dash as primary login shell, tty_echo=1, TTY_READ cooked stdin, RAW/COOKED mode switching, getty reads pw_shell from /etc/passwd, buffer isolation on mode switch, macOS sed fix |
+| v0.4.69 | ELF buffer 8MB, morecore 4MB, termios TCGETS/TCSETS, bump scripts sed fix, DESIGN_TCC.md, DESIGN_ZSH.md |
 
-## Architecture After v0.4.68
+## Architecture After v0.4.69
 
 ```
 src/aios_root.c           ~200 lines
@@ -499,7 +501,7 @@ include/aios/root_shared.h ~227 lines (+ PIPE_SET_PIPES, xfer_copies)
 include/aios/vka_audit.h   ~38 lines
 ```
 
-## Test Results (v0.4.68)
+## Test Results (v0.4.69)
 
 ```
 posix_verify V3: 98/98 PASS
@@ -516,5 +518,6 @@ dash -c "echo a; echo b" -> a\nb (PASS)
 login -> dash -> exit -> login cycle (PASS)
 fork_test: PASS
 pipe: echo hello | cat -> hello (PASS)
-SHM pipes: 6+ pipe ops, no memory errors (PASS)
+SHM pipes: no memory errors (PASS)
+RAM: 478 MB (ELF buffer 8MB, morecore 4MB per process)
 ```

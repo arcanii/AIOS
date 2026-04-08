@@ -14,7 +14,7 @@ External AI (Claude) is used as a development tool for code generation
 and review. This project is also a study in AI-assisted systems programming.
 The long-term goal is self-hosted development within AIOS itself.
 
-**Current version:** v0.4.68
+**Current version:** v0.4.69
 
 ## What Works
 
@@ -275,6 +275,8 @@ python3 scripts/mkdisk.py disk/disk_ext2.img \
 - [LEARNINGS.md](docs/LEARNINGS.md) -- Hard-won lessons from seL4 development
 - [DASH_PORT.md](docs/DASH_PORT.md) -- dash shell porting guide
 - [DESIGN_NET.md](docs/DESIGN_NET.md) -- Networking subsystem design (virtio-net)
+- [DESIGN_TCC.md](docs/DESIGN_TCC.md) -- tcc self-hosted compilation design
+- [DESIGN_ZSH.md](docs/DESIGN_ZSH.md) -- zsh shell port design
 
 ## Project Status
 
