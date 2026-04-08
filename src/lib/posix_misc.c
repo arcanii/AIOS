@@ -150,6 +150,13 @@ long aios_sys_dup3(va_list ap) {
         if (!src->active) return -EBADF;
         if (src->is_pipe && src->pipe_read) {
             stdin_pipe_id = src->pipe_id;
+            /* v0.4.67: notify server (see stdout comment above) */
+            if (pipe_ep) {
+                seL4_SetMR(0, (seL4_Word)stdout_pipe_id);
+                seL4_SetMR(1, (seL4_Word)stdin_pipe_id);
+                seL4_Call(pipe_ep,
+                    seL4_MessageInfo_new(81 /* PIPE_SET_PIPES */, 0, 0, 2));
+            }
             return 0;
         }
     }
@@ -160,6 +167,14 @@ long aios_sys_dup3(va_list ap) {
         if (!src->active) return -EBADF;
         if (src->is_pipe && !src->pipe_read) {
             stdout_pipe_id = src->pipe_id;
+            /* v0.4.67: notify server so handle_child_fault can
+             * close write end on exit (needed for dash builtins) */
+            if (pipe_ep) {
+                seL4_SetMR(0, (seL4_Word)stdout_pipe_id);
+                seL4_SetMR(1, (seL4_Word)stdin_pipe_id);
+                seL4_Call(pipe_ep,
+                    seL4_MessageInfo_new(81 /* PIPE_SET_PIPES */, 0, 0, 2));
+            }
             return newfd;
         }
     }
@@ -211,11 +226,13 @@ long aios_sys_pipe2(va_list ap) {
     aios_fds[ri].is_pipe = 1;
     aios_fds[ri].pipe_id = pipe_id;
     aios_fds[ri].pipe_read = 1;
+    aios_fds[ri].shm_vaddr = 0;
 
     aios_fds[wi].active = 1;
     aios_fds[wi].is_pipe = 1;
     aios_fds[wi].pipe_id = pipe_id;
     aios_fds[wi].pipe_read = 0;
+    aios_fds[wi].shm_vaddr = 0;
 
     fds[0] = AIOS_FD_BASE + ri;  /* read end */
     fds[1] = AIOS_FD_BASE + wi;  /* write end */

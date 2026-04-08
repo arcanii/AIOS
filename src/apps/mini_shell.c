@@ -755,8 +755,14 @@ int main(int argc, char *argv[]) {
         {
             /* Count pipe segments */
             int pipe_positions[8];
+            /* v0.4.67: quote-aware pipe scan */
             int num_pipes = 0;
             for (int ci = 0; ci < len && num_pipes < 8; ci++) {
+                if (line[ci] == '"' || line[ci] == '\'' ) {
+                    char q = line[ci++];
+                    while (ci < len && line[ci] != q) ci++;
+                    continue;
+                }
                 if (line[ci] == '|' && (ci + 1 >= len || line[ci+1] != '|')) {
                     pipe_positions[num_pipes++] = ci;
                 }

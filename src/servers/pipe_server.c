@@ -119,6 +119,17 @@ static void pipe_maybe_free(int pi) {
     pipe_t *p = &pipes[pi];
     if (p->read_refs <= 0 && p->write_refs <= 0) {
         if (p->xfer_valid) {
+            /* v0.4.67: delete cap copies so untyped can be reclaimed */
+            for (int ci = 0; ci < p->xfer_copy_count; ci++) {
+                seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                    p->xfer_copies[ci], seL4_WordBits);
+                vka_cspace_free(&vka, p->xfer_copies[ci]);
+            }
+            p->xfer_copy_count = 0;
+            /* Revoke any remaining derived caps, then free */
+            cspacepath_t xp;
+            vka_cspace_make_path(&vka, p->xfer_frame.cptr, &xp);
+            seL4_CNode_Revoke(xp.root, xp.capPtr, xp.capDepth);
             vspace_unmap_pages(&vspace, p->xfer_buf, 1, seL4_PageBits, NULL);
             vka_free_object(&vka, &p->xfer_frame);
             p->xfer_buf = NULL;
@@ -137,6 +148,7 @@ static void pipe_maybe_free(int pi) {
 /* Handle child fault arriving on pipe_ep */
 static void handle_child_fault(int child_idx) {
     active_proc_t *ch = &active_procs[child_idx];
+
     if (!ch->active || !ch->fault_on_pipe_ep) return;
 
     /* Auto-close write end if child was writing to a pipe.
@@ -148,6 +160,7 @@ static void handle_child_fault(int child_idx) {
         pipes[ch->stdout_pipe_id].write_refs--;
         if (pipes[ch->stdout_pipe_id].write_refs <= 0) {
             pipes[ch->stdout_pipe_id].write_closed = 1;
+
             wake_blocked_readers_eof(ch->stdout_pipe_id);
         }
         pipe_maybe_free(ch->stdout_pipe_id);
@@ -258,6 +271,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             /* v0.4.66: xfer page allocated lazily on first PIPE_MAP_SHM */
             pipes[pi].xfer_valid = 0;
             pipes[pi].xfer_buf = NULL;
+            pipes[pi].xfer_copy_count = 0;
             seL4_SetMR(0, (seL4_Word)pi);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
@@ -848,6 +862,9 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 seL4_CNode_Delete(seL4_CapInitThreadCNode,
                     xdest.capPtr, seL4_WordBits);
                 vka_cspace_free(&vka, xdest.capPtr);
+            } else if (pipes[pi].xfer_copy_count < 2) {
+                pipes[pi].xfer_copies[pipes[pi].xfer_copy_count++] =
+                    xdest.capPtr;
             }
             seL4_SetMR(0, (seL4_Word)child_vaddr);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
@@ -922,6 +939,27 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             p->head = (p->head + rlen) % PIPE_BUF_SIZE;
             p->count -= rlen;
             seL4_SetMR(0, (seL4_Word)rlen);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        case PIPE_SET_PIPES: {
+            /* v0.4.67: update stdout/stdin pipe IDs in active_proc.
+             * Sent by dup2 so server knows pipe assignments even
+             * for forked children that never call exec. */
+            int ci = (int)badge - 1;
+            if (ci >= 0 && ci < MAX_ACTIVE_PROCS
+                && active_procs[ci].active) {
+                int new_stdout = (int)seL4_GetMR(0);
+                int new_stdin  = (int)seL4_GetMR(1);
+
+                if (new_stdout >= -1)
+                    active_procs[ci].stdout_pipe_id = new_stdout;
+                if (new_stdin >= -1)
+                    active_procs[ci].stdin_pipe_id = new_stdin;
+                seL4_SetMR(0, 0);
+            } else {
+                seL4_SetMR(0, (seL4_Word)-1);
+            }
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }

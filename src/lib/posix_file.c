@@ -4,12 +4,15 @@
  */
 #include "posix_internal.h"
 
-/* SHM phase 2 disabled: mapping xfer frame into child VSpaces leaks
- * page table objects (sel4utils_destroy_process does not reclaim them).
- * Server-side handlers preserved in pipe_server.c for future use.
- * All pipe I/O uses MR-based fallback path for now. */
+/* v0.4.67: SHM pipe transfer -- request xfer page mapping from server.
+ * Cap copies cleaned up by pipe_maybe_free (CNode_Revoke + cslot free). */
 static void pipe_request_shm(aios_fd_t *f) {
-    (void)f;
+    if (!pipe_ep || f->shm_vaddr) return;
+    seL4_SetMR(0, (seL4_Word)f->pipe_id);
+    seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
+        seL4_MessageInfo_new(78 /* PIPE_MAP_SHM */, 0, 0, 1));
+    seL4_Word vaddr = seL4_GetMR(0);
+    if (vaddr) f->shm_vaddr = (char *)vaddr;
 }
 
 long aios_sys_open(va_list ap) {
@@ -213,8 +216,14 @@ long aios_sys_read(va_list ap) {
         }
         char *cbuf = (char *)buf;
         for (size_t i = 0; i < count; i++) {
-            int c = aios_getchar();
-            if (c < 0) return (long)i;
+            int c;
+            /* v0.4.67: block until data available (POSIX read semantics).
+             * SER_GETC returns -1 when key buffer empty. Yield timeslice
+             * to avoid busy-wait. Needed for dash interactive mode. */
+            do {
+                c = aios_getchar();
+                if (c < 0) seL4_Yield();
+            } while (c < 0);
             cbuf[i] = (char)c;
             if (c == '\n') return (long)(i + 1);
         }
@@ -388,6 +397,7 @@ long aios_sys_close(va_list ap) {
         f->is_pipe = 0;
         f->is_devnull = 0;
         f->pipe_id = -1;
+        f->shm_vaddr = 0;
         return 0;
     }
     /* Reset stdin/stdout pipe redirect on close */

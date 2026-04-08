@@ -54,6 +54,7 @@
 #define PIPE_MAP_SHM     78
 #define PIPE_WRITE_SHM   79
 #define PIPE_READ_SHM    80
+#define PIPE_SET_PIPES   81
 
 /* ── Limits ── */
 
@@ -124,6 +125,8 @@ typedef struct {
     char *xfer_buf;               /* v0.4.66: transfer page mapped in root */
     vka_object_t xfer_frame;      /* v0.4.66: transfer frame object */
     int xfer_valid;               /* v0.4.66: 1 if xfer_frame allocated */
+    seL4_CPtr xfer_copies[2];    /* v0.4.67: cap copies for child mappings */
+    int xfer_copy_count;          /* v0.4.67: number of active copies */
     int head;
     int count;
     int read_closed;

@@ -7,7 +7,7 @@
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: main
 * **Developer**: Bryan
-* **Current Version**: v0.4.66
+* **Current Version**: v0.4.67
 
 ## Development Environment
 
@@ -313,7 +313,7 @@ PIPE_FORK=65, PIPE_GETPID=66, PIPE_WAIT=67, PIPE_EXIT=68, PIPE_EXEC=69
 PIPE_CLOSE_WRITE=70, PIPE_DEBUG=71, PIPE_EXEC_WAIT=72
 PIPE_CLOSE_READ=73, PIPE_SET_IDENTITY=74
 PIPE_SIGNAL=75, PIPE_SIG_FETCH=76, PIPE_SHUTDOWN=77
-PIPE_MAP_SHM=78, PIPE_WRITE_SHM=79, PIPE_READ_SHM=80
+PIPE_MAP_SHM=78, PIPE_WRITE_SHM=79, PIPE_READ_SHM=80, PIPE_SET_PIPES=81
 ```
 
 ### Implemented Syscalls (70+)
@@ -365,7 +365,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * Cross-compiled via ./scripts/aios-cc with libutil + libutf
 * Note: cp.c and rm.c need special handling (libutil has cp.c/rm.c too)
 
-### dash (Debian Almquist Shell) -- v0.4.64, stdout fixed v0.4.66
+### dash (Debian Almquist Shell) -- v0.4.64, fully working v0.4.67
 
 * Source: ~/Desktop/github_repos/dash (cloned from github.com/tklauser/dash)
 * 468KB statically linked AArch64 ELF
@@ -373,9 +373,11 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * Config: JOBS=0, SMALL=1, GLOB_BROKEN=1, _GNU_SOURCE
 * Builtins.def: stripped C license comment block (mkbuiltins is not a C preprocessor), JOBS/SMALL conditionals removed
 * Cross-compiled with: aios-cc -I $DASH -DSHELL -include $DASH/config.h
-* Status: WORKING. dash -c "echo hello" outputs hello. dash /tmp/script.sh works.
-* v0.4.66 fixes: aios-cc now passes EXTRA flags to compile step (config.h was never included);
-  mini_shell split_args_qa() preserves quoted args as single tokens
+* IMPORTANT: dash must be rebuilt after libaios_posix.a changes (ninja does not rebuild dash)
+* Status: WORKING. -c mode, script files, pipelines, semicolons, interactive mode all functional.
+* v0.4.66 fixes: aios-cc EXTRA flags, split_args_qa quote-aware arg splitting
+* v0.4.67 fixes: PIPE_SET_PIPES for write-end closure, quote-aware pipe detection,
+  stdin blocking for interactive mode. Remaining: tty_echo=0 hides typed chars in interactive
 
 ### Programs on Disk
 
@@ -400,17 +402,18 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * Multi-group ext2: Block allocation scans all groups; inode allocation group 0 only
 * dash builtins.def: Must strip C-style comments before mkbuiltins (it is a shell script not C)
 * Disk image is gitignored: must rebuild after rm -rf build-04 (sbase binaries lost)
-* SHM pipe client mapping: disabled -- sel4utils_destroy_process does not reclaim page table objects from post-creation vspace_map_pages. Leaks ~4-8K untyped per PIPE_MAP_SHM call.
+* tty_echo: OFF by default (tty_server.c line 83). mini_shell echoes its own chars. Programs relying on terminal echo (dash interactive) see no typed input. Fix: default tty_echo=1 + remove mini_shell manual echo.
+* Dash rebuild: dash links against libaios_posix.a but is not rebuilt by ninja. Must manually rebuild via aios-cc after any POSIX shim change.
 
 ## Pending Items
 
-1. SHM pipes client enablement: fix page table leak, re-enable pipe_request_shm
-2. Dash interactive mode: test stdin handling, control flow, dash-internal pipes
-3. Networking: virtio-net + TCP/IP
-4. Dynamic ELF buffer: vka_alloc_frame for >1MB binaries
-5. Process niceness: runtime seL4_TCB_SetPriority
-6. ext2 write improvements: multi-block file write, triple indirect
-7. Allocator right-sizing: 4000 pages ~100x oversized, test with 500/250/100
+1. tty_server echo: default tty_echo=1, remove mini_shell manual echo
+2. Dash variable expansion: $i in for loops appears empty, needs investigation
+3. Allocator right-sizing: 4000 pages ~100x oversized, test with 500/250/100
+4. Networking: virtio-net + TCP/IP
+5. Dynamic ELF buffer: vka_alloc_frame for >1MB binaries
+6. Process niceness: runtime seL4_TCB_SetPriority
+7. ext2 write improvements: multi-block file write, triple indirect
 
 ## Version History (0.4.x)
 
@@ -451,45 +454,49 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 | v0.4.64 | Allocator 4000pg, /dev/null, dup2 fix, ioctl TIOCGWINSZ, fcntl F_DUPFD, setpgid, pip_dest leak fix, dash port (compiled + linked, first boot) |
 | v0.4.65 | Shared-memory pipes, VKA allocator audit, O_APPEND (>> redirect), pipe cleanup fix |
 | v0.4.66 | Dash stdout working, FS_APPEND IPC op, shell >> via FS_APPEND, SHM pipe phase 2 server-side, PIPE_BUF_SIZE fix, aios-cc EXTRA flags fix, split_args_qa |
+| v0.4.67 | SHM pipes client enabled, dash pipelines + semicolons + interactive, PIPE_SET_PIPES, stdin blocking, quote-aware pipe detection, cap copy cleanup |
 
-## Architecture After v0.4.66
+## Architecture After v0.4.67
 
 ```
 src/aios_root.c           ~200 lines
 src/lib/aios_posix.c      ~580 lines
 src/lib/posix_internal.h   ~272 lines (+ shm_vaddr)
-src/lib/posix_file.c       ~637 lines (+ FS_APPEND, SHM pipe paths)
+src/lib/posix_file.c       ~647 lines (+ SHM pipe client, stdin blocking)
 src/lib/posix_stat.c       ~318 lines
 src/lib/posix_dir.c        ~188 lines
 src/lib/posix_proc.c       ~325 lines
 src/lib/posix_time.c       ~121 lines
-src/lib/posix_misc.c       ~233 lines
+src/lib/posix_misc.c       ~250 lines (+ PIPE_SET_PIPES from dup2)
 src/lib/posix_thread.c     ~195 lines
 src/lib/vka_audit.c        ~65 lines
 src/vfs.c                  ~170 lines
 src/procfs.c               ~286 lines
 src/servers/exec_server.c  ~388 lines
-src/servers/pipe_server.c  ~1067 lines (+ SHM phase 2 handlers)
+src/servers/pipe_server.c  ~1105 lines (+ SHM client, cap cleanup, PIPE_SET_PIPES)
 src/servers/fs_server.c    ~343 lines (+ FS_APPEND)
 src/servers/thread_server.c ~227 lines
 src/boot/boot_services.c   ~117 lines
 src/process/fork.c         ~495 lines
 src/process/reap.c         ~130 lines
-src/apps/mini_shell.c      ~1306 lines (+ split_args_qa, - >> workaround)
-include/aios/root_shared.h ~224 lines (+ SHM labels, xfer fields)
+src/apps/mini_shell.c      ~1312 lines (+ quote-aware pipe/chain detection)
+include/aios/root_shared.h ~227 lines (+ PIPE_SET_PIPES, xfer_copies)
 include/aios/vka_audit.h   ~38 lines
 ```
 
-## Test Results (v0.4.66)
+## Test Results (v0.4.67)
 
 ```
 posix_verify V3: 98/98 PASS
 signal_test: 20/20 PASS
-POSIX audit: 55/55 core (100%), 26/26 extended, 81/81 total (100%)
-FS_APPEND: echo hello > f; echo world >> f; cat f -> hello\nworld (PASS)
+POSIX audit: 81/81 (100%)
 dash -c "echo hello" -> hello (PASS)
-dash /tmp/t.sh -> hello (PASS)
+dash -c "echo hello | cat" -> hello (PASS)
+dash -c "echo a; echo b" -> a\nb (PASS)
+dash interactive: echo, pwd, ls, $((2+3))=5, exit (PASS)
+dash interactive echo: FAIL (tty_echo=0)
+FS_APPEND: echo hello > f; echo world >> f; cat f -> hello\nworld (PASS)
 fork_test: PASS
 pipe: echo hello | cat -> hello (PASS)
-VKA audit: boot 7ep+4pg, fork cslots, pipe frames (PASS)
+SHM pipes: 6+ pipe ops, no memory errors (PASS)
 ```
