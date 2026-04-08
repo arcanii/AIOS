@@ -7,6 +7,9 @@ Architectures / Hardware Supported
 - :white_medium_square: AArch64 (Raspberry Pi 5)
 - :white_medium_square: X86-64 
 
+## Latest Achievements
+- shell is using DASH (https://github.com/tklauser/dash)
+
 ## Overview
 
 AIOS is an experimental OS exploring how far POSIX compliance and Unix
