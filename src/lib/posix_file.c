@@ -176,13 +176,25 @@ long aios_sys_openat(va_list ap) {
         f->pos = 0;
         str_copy(f->path, res_path, sizeof(f->path));
     } else {
-        int n = fetch_file(res_path, f->data, sizeof(f->data));
-        if (n < 0) return -ENOENT;
-        f->active = 1;
-        f->size = n;
-        f->pos = is_append ? n : 0;
-        f->is_append = is_append;
+        /* Get file size first */
+        uint32_t fmode, fsize;
+        if (fetch_stat(res_path, &fmode, &fsize) != 0) return -ENOENT;
         str_copy(f->path, res_path, sizeof(f->path));
+        f->is_append = is_append;
+        if ((int)fsize <= (int)sizeof(f->data) - 1) {
+            /* Small file: load into buffer (old fast path) */
+            int n = fetch_file(res_path, f->data, sizeof(f->data));
+            if (n < 0) return -ENOENT;
+            f->active = 1;
+            f->size = n;
+            f->pos = is_append ? n : 0;
+        } else {
+            /* Large file: demand-read via FS_PREAD */
+            f->active = 1;
+            f->size = (int)fsize;
+            f->pos = is_append ? (int)fsize : 0;
+            f->data[0] = 0;
+        }
     }
     return AIOS_FD_BASE + idx;
 }
@@ -278,6 +290,21 @@ long aios_sys_read(va_list ap) {
         if (avail <= 0) return 0;
         int n = (int)count < avail ? (int)count : avail;
         char *dst = (char *)buf;
+        if (f->size > (int)sizeof(f->data) - 1) {
+            /* Large file: on-demand read via FS_PREAD */
+            int total = 0;
+            while (total < n) {
+                int chunk = n - total;
+                if (chunk > 900) chunk = 900;
+                int got = fetch_pread(f->path, f->pos + total,
+                                      dst + total, chunk);
+                if (got <= 0) break;
+                total += got;
+            }
+            f->pos += total;
+            return total;
+        }
+        /* Small file: read from buffer */
         for (int i = 0; i < n; i++) dst[i] = f->data[f->pos + i];
         f->pos += n;
         return n;
@@ -328,26 +355,21 @@ long aios_sys_write(va_list ap) {
         /* Regular file write -- use FS_APPEND (19) for O_APPEND fds,
          * FS_WRITE_FILE (15) otherwise. v0.4.66 */
         if (!f->is_pipe && !f->is_dir && f->path[0] && fs_ep_cap) {
+            /* v0.4.70: Write directly to disk via FS_PWRITE */
             const char *src = (const char *)buf;
-            int plen = 0; while (f->path[plen]) plen++;
-            int wlen = (int)count;
-            if (wlen > 3000) wlen = 3000;
-            int label = f->is_append ? 19 /* FS_APPEND */ : 15 /* FS_WRITE_FILE */;
-            seL4_SetMR(0, (seL4_Word)plen);
-            int mr = 1;
-            seL4_Word w = 0;
-            for (int i = 0; i < plen; i++) {
-                w |= ((seL4_Word)(uint8_t)f->path[i]) << ((i % 8) * 8);
-                if (i % 8 == 7 || i == plen - 1) { seL4_SetMR(mr++, w); w = 0; }
+            size_t total = 0;
+            while (total < count) {
+                int chunk = (int)(count - total);
+                if (chunk > 800) chunk = 800;
+                int wrote = fetch_pwrite(f->path,
+                    f->is_append ? f->size : f->pos,
+                    src + total, chunk);
+                if (wrote <= 0) break;
+                total += wrote;
+                f->pos += wrote;
+                if (f->pos > f->size) f->size = f->pos;
             }
-            seL4_SetMR(mr++, (seL4_Word)wlen);
-            w = 0;
-            for (int i = 0; i < wlen; i++) {
-                w |= ((seL4_Word)(uint8_t)src[i]) << ((i % 8) * 8);
-                if (i % 8 == 7 || i == wlen - 1) { seL4_SetMR(mr++, w); w = 0; }
-            }
-            seL4_Call(fs_ep_cap, seL4_MessageInfo_new(label, 0, 0, mr));
-            return (long)wlen;
+            return (long)total;
         }
         if (f->is_pipe && !f->pipe_read && pipe_ep) {
             const char *src = (const char *)buf;
@@ -477,6 +499,27 @@ long aios_sys_writev(va_list ap) {
                     sent += chunk;
                 }
                 total += (long)iov[i].iov_len;
+            }
+            return total;
+        }
+        /* Regular file writev via FS_PWRITE */
+        if (!f->is_pipe && !f->is_dir && f->path[0] && fs_ep_cap) {
+            long total = 0;
+            for (int i = 0; i < iovcnt; i++) {
+                const char *src = (const char *)iov[i].iov_base;
+                size_t iov_sent = 0;
+                while (iov_sent < iov[i].iov_len) {
+                    int chunk = (int)(iov[i].iov_len - iov_sent);
+                    if (chunk > 800) chunk = 800;
+                    int wrote = fetch_pwrite(f->path,
+                        f->is_append ? f->size : f->pos,
+                        src + iov_sent, chunk);
+                    if (wrote <= 0) break;
+                    iov_sent += wrote;
+                    f->pos += wrote;
+                    if (f->pos > f->size) f->size = f->pos;
+                }
+                total += (long)iov_sent;
             }
             return total;
         }

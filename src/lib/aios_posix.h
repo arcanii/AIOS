@@ -24,6 +24,8 @@
 #define AIOS_FS_LS       10
 #define AIOS_FS_CAT      11
 #define AIOS_FS_STAT     12
+#define AIOS_FS_PREAD    13
+#define AIOS_FS_PWRITE   20
 #define AIOS_FS_OPEN     13
 #define AIOS_FS_READ     14
 #define AIOS_FS_CLOSE    15

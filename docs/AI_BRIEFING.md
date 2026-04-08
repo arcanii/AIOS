@@ -306,8 +306,8 @@ refs are dropped.
 
 ```
 SER_PUTC=1, SER_GETC=2, SER_KEY_PUSH=4
-FS_LS=10, FS_CAT=11, FS_STAT=12
-FS_MKDIR=14, FS_WRITE_FILE=15, FS_UNLINK=16, FS_UNAME=17, FS_RENAME=18, FS_APPEND=19
+FS_LS=10, FS_CAT=11, FS_STAT=12, FS_PREAD=13
+FS_MKDIR=14, FS_WRITE_FILE=15, FS_UNLINK=16, FS_UNAME=17, FS_RENAME=18, FS_APPEND=19, FS_PWRITE=20
 EXEC_RUN=20, EXEC_NICE=21, EXEC_RUN_BG=24, EXEC_FORK=25, EXEC_WAIT=26
 THREAD_CREATE=30, THREAD_JOIN=31
 AUTH_LOGIN=40, AUTH_LOGOUT=41, AUTH_WHOAMI=42, AUTH_CHECK_FILE=43
@@ -398,7 +398,9 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * 99 sbase Unix tools in /bin/
 * 28 AIOS programs in /bin/aios/
 * dash in /bin/dash
-* Total: 128 programs
+* tcc in /bin/tcc (compiler, tcc -c works, linking needs runtime bundle)
+* SDK in /usr/ (211 musl headers, libc.a, libtcc1.a, CRT objects, tcc headers)
+* Total: 130 programs
 
 ## Known Issues / Gotchas
 
@@ -421,8 +423,8 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 
 ## Pending Items
 
-1. Networking: virtio-net + TCP/IP (see docs/DESIGN_NET.md)
-2. tcc self-hosting: compile C inside AIOS (see docs/DESIGN_TCC.md)
+1. tcc linking: bundle AIOS runtime libs into libaios.a, tcc-compatible CRT (see docs/DESIGN_TCC.md)
+2. Networking: virtio-net + TCP/IP (see docs/DESIGN_NET.md)
 3. zsh port: alternative shell with ZLE (see docs/DESIGN_ZSH.md)
 4. Allocator right-sizing: 4000 pages ~100x oversized, test with 500/250/100
 5. Dash improvements: tab completion, history, PS1, job control
@@ -472,6 +474,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 | v0.4.67 | SHM pipes client enabled, dash pipelines + semicolons + interactive, PIPE_SET_PIPES, stdin blocking, quote-aware pipe detection, cap copy cleanup |
 | v0.4.68 | Dash as primary login shell, tty_echo=1, TTY_READ cooked stdin, RAW/COOKED mode switching, getty reads pw_shell from /etc/passwd, buffer isolation on mode switch, macOS sed fix |
 | v0.4.69 | ELF buffer 8MB, morecore 4MB, termios TCGETS/TCSETS, bump scripts sed fix, DESIGN_TCC.md, DESIGN_ZSH.md |
+| v0.4.70 | tcc cross-compiled and running, tcc -c produces .o files, FS_PREAD (large file reads), FS_PWRITE (positioned writes), writev for regular files, tcc SDK on disk (211 headers + libc.a), ext2 block allocation for writes |
 
 ## Architecture After v0.4.69
 
@@ -501,23 +504,21 @@ include/aios/root_shared.h ~227 lines (+ PIPE_SET_PIPES, xfer_copies)
 include/aios/vka_audit.h   ~38 lines
 ```
 
-## Test Results (v0.4.69)
+## Test Results (v0.4.70)
 
 ```
 posix_verify V3: 98/98 PASS
 signal_test: 20/20 PASS
 POSIX audit: 81/81 (100%)
-dash as login shell: getty reads /etc/passwd pw_shell (PASS)
-dash interactive: echo, pwd, cd, ls, backspace, exit (PASS)
-dash variable expansion: x=hello; echo $x -> hello (PASS)
-dash for loop: for i in 1 2 3; do echo num: $i; done -> 1,2,3 (PASS)
-dash arithmetic: echo $((100+200)) -> 300 (PASS)
-dash -c "echo hello" -> hello (PASS)
-dash -c "echo hello | cat" -> hello (PASS)
-dash -c "echo a; echo b" -> a\nb (PASS)
-login -> dash -> exit -> login cycle (PASS)
+dash as login shell: PASS
+tcc -v: "tcc version 0.9.28rc (AArch64 Linux)" (PASS)
+tcc -c test.c -o test.o: 1038 bytes AArch64 .o (PASS)
+tcc -o (link): needs AIOS runtime bundle (EXPECTED)
+FS_PREAD: tccdefs.h 13KB read (PASS)
+FS_PWRITE: writev file output (PASS)
+ls /usr/include: 211 headers (PASS)
+ls /usr/lib: libc.a, libtcc1.a, CRT objects (PASS)
 fork_test: PASS
 pipe: echo hello | cat -> hello (PASS)
-SHM pipes: no memory errors (PASS)
 RAM: 478 MB (ELF buffer 8MB, morecore 4MB per process)
 ```

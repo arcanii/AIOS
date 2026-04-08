@@ -15,6 +15,7 @@ if __name__ == '__main__':
     rootfs = None
     elf_dirs = []
     aios_dirs = []
+    sdk_dirs = []
     args = sys.argv[1:]
     while args:
         if args[0] == '--install-elfs':
@@ -22,6 +23,9 @@ if __name__ == '__main__':
             args = args[2:]
         elif args[0] == '--aios-elfs':
             aios_dirs.append(args[1])
+            args = args[2:]
+        elif args[0] == '--install-sdk':
+            sdk_dirs.append(args[1])
             args = args[2:]
         elif args[0] == '--rootfs':
             rootfs = args[1]
@@ -37,4 +41,4 @@ if __name__ == '__main__':
             args = args[1:]
     b = Ext2Builder(size)
     b.build(output, rootfs=rootfs, elf_dirs=elf_dirs,
-            aios_dirs=aios_dirs)
+            aios_dirs=aios_dirs, sdk_dirs=sdk_dirs)

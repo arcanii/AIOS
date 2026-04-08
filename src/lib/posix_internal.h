@@ -170,6 +170,8 @@ static inline void str_copy(char *d, const char *s, int max) {
 void resolve_path(const char *pathname, char *out, int outsz);
 int  aios_fd_alloc(void);
 int  fetch_file(const char *path, char *buf, int bufsz);
+int  fetch_pread(const char *path, int offset, char *buf, int count);
+int  fetch_pwrite(const char *path, int offset, const char *data, int len);
 int  fetch_stat(const char *path, uint32_t *mode, uint32_t *size);
 int  fetch_dir_as_getdents(const char *path, char *buf, int bufsz);
 size_t aios_stdio_write(void *data, size_t count);

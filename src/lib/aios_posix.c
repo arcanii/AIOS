@@ -97,6 +97,54 @@ int fetch_file(const char *path, char *buf, int bufsz) {
     return got;
 }
 
+int fetch_pread(const char *path, int offset, char *buf, int count) {
+    if (!fs_ep_cap) return -1;
+    int pl = str_len(path);
+    /* MR0=path_len, MR1=offset, MR2=max_bytes, MR3+=path */
+    seL4_SetMR(0, (seL4_Word)pl);
+    seL4_SetMR(1, (seL4_Word)offset);
+    seL4_SetMR(2, (seL4_Word)count);
+    int mr = 3;
+    seL4_Word w = 0;
+    for (int i = 0; i < pl; i++) {
+        w |= ((seL4_Word)(uint8_t)path[i]) << ((i % 8) * 8);
+        if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
+    }
+    seL4_MessageInfo_t reply = seL4_Call(fs_ep_cap,
+        seL4_MessageInfo_new(AIOS_FS_PREAD, 0, 0, mr));
+    seL4_Word got = seL4_GetMR(0);
+    if (got == 0) return 0;
+    int rmrs = (int)seL4_MessageInfo_get_length(reply) - 1;
+    int copied = 0;
+    for (int i = 0; i < rmrs && copied < (int)got; i++) {
+        seL4_Word rw = seL4_GetMR(i + 1);
+        for (int j = 0; j < 8 && copied < (int)got; j++)
+            buf[copied++] = (char)((rw >> (j * 8)) & 0xFF);
+    }
+    return copied;
+}
+
+int fetch_pwrite(const char *path, int offset, const char *data, int len) {
+    if (!fs_ep_cap) return -1;
+    int pl = str_len(path);
+    seL4_SetMR(0, (seL4_Word)pl);
+    seL4_SetMR(1, (seL4_Word)offset);
+    seL4_SetMR(2, (seL4_Word)len);
+    int mr = 3;
+    seL4_Word w = 0;
+    for (int i = 0; i < pl; i++) {
+        w |= ((seL4_Word)(uint8_t)path[i]) << ((i % 8) * 8);
+        if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
+    }
+    for (int i = 0; i < len; i++) {
+        w |= ((seL4_Word)(uint8_t)data[i]) << ((i % 8) * 8);
+        if (i % 8 == 7 || i == len - 1) { seL4_SetMR(mr++, w); w = 0; }
+    }
+    seL4_MessageInfo_t reply = seL4_Call(fs_ep_cap,
+        seL4_MessageInfo_new(AIOS_FS_PWRITE, 0, 0, mr));
+    return (int)(long)seL4_GetMR(0);
+}
+
 int fetch_stat(const char *path, uint32_t *mode, uint32_t *size) {
     if (!fs_ep_cap) return -1;
     int pl = str_len(path);

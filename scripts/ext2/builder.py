@@ -209,6 +209,14 @@ class Ext2Builder:
             self._write_dir_blocks(parent_ino)
         return ino
 
+    def find_dir_entry(self, parent_ino, name):
+        """Find existing directory entry by name. Returns inode or None."""
+        if parent_ino in self.dirs:
+            for entry_name, entry_ino, entry_type in self.dirs[parent_ino]:
+                if entry_name == name and entry_type == 2:
+                    return entry_ino
+        return None
+
     def install_rootfs(self, parent_ino, rootfs_dir, dir_inos=None):
         """Recursively install files from a host directory."""
         if dir_inos is None:
@@ -216,7 +224,11 @@ class Ext2Builder:
         for entry in sorted(os.listdir(rootfs_dir)):
             host_path = os.path.join(rootfs_dir, entry)
             if os.path.isdir(host_path):
-                ino = self.mkdir(parent_ino, entry)
+                existing = self.find_dir_entry(parent_ino, entry)
+                if existing:
+                    ino = existing
+                else:
+                    ino = self.mkdir(parent_ino, entry)
                 dir_inos['/' + entry] = ino
                 self.install_rootfs(ino, host_path, dir_inos)
             else:
@@ -280,7 +292,7 @@ class Ext2Builder:
                 print(f'  /bin/{subdir}/{name} ({len(elf_data)} bytes)')
         print(f'  Installed {installed} programs to /bin/{subdir}')
 
-    def build(self, path, rootfs=None, elf_dirs=None, aios_dirs=None):
+    def build(self, path, rootfs=None, elf_dirs=None, aios_dirs=None, sdk_dirs=None):
         self.build_metadata()
 
         root_blk = self._alloc_block()
@@ -309,6 +321,13 @@ class Ext2Builder:
         # Install AIOS programs to /bin/aios
         if aios_dirs:
             self.install_elfs_subdir(bin_ino, aios_dirs, 'aios')
+
+        # Install SDK directories (headers, libraries for tcc)
+        if sdk_dirs:
+            for sdk_dir in sdk_dirs:
+                if os.path.isdir(sdk_dir):
+                    print(f'Installing SDK from {sdk_dir}:')
+                    self.install_rootfs(2, sdk_dir)
 
         with open(path, 'wb') as f:
             f.write(self.data)

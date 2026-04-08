@@ -113,6 +113,39 @@ void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, mrs + 1));
             break;
         }
+        case FS_PREAD: {
+            /* Positioned file read: path + offset + max_bytes */
+            seL4_Word pr_pathlen = seL4_GetMR(0);
+            seL4_Word pr_offset  = seL4_GetMR(1);
+            seL4_Word pr_maxbytes = seL4_GetMR(2);
+            char pr_path[128];
+            int pr_pl = (pr_pathlen > 127) ? 127 : (int)pr_pathlen;
+            int pr_mr = 3;
+            for (int i = 0; i < pr_pl; i++) {
+                if (i % 8 == 0 && i > 0) pr_mr++;
+                pr_path[i] = (char)((seL4_GetMR(pr_mr) >> ((i % 8) * 8)) & 0xFF);
+            }
+            pr_path[pr_pl] = '\0';
+
+            int max_data = (int)seL4_MsgMaxLength - 1;
+            max_data = max_data * 8;
+            int want = (int)pr_maxbytes;
+            if (want > max_data) want = max_data;
+            if (want > (int)sizeof(fs_buf)) want = (int)sizeof(fs_buf);
+
+            int got = vfs_pread(pr_path, (int)pr_offset, fs_buf, want);
+            if (got < 0) got = 0;
+            int pr_rmrs = (got + 7) / 8;
+            seL4_SetMR(0, (seL4_Word)got);
+            for (int i = 0; i < pr_rmrs; i++) {
+                seL4_Word w = 0;
+                for (int j = 0; j < 8 && i*8+j < got; j++)
+                    w |= ((seL4_Word)(uint8_t)fs_buf[i*8+j]) << (j*8);
+                seL4_SetMR(i + 1, w);
+            }
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, pr_rmrs + 1));
+            break;
+        }
         case FS_STAT: {
             seL4_Word path_len = seL4_GetMR(0);
             char st_path[128];
@@ -290,6 +323,36 @@ void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
             int ret = vfs_rename(old_path, new_path);
             seL4_SetMR(0, (seL4_Word)(ret >= 0 ? 0 : -1));
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        case FS_PWRITE: {
+            /* Positioned file write: path + offset + data */
+            /* MR0=path_len MR1=offset MR2=data_len MR3+=path then data */
+            seL4_Word pw_pathlen = seL4_GetMR(0);
+            seL4_Word pw_offset  = seL4_GetMR(1);
+            seL4_Word pw_datalen = seL4_GetMR(2);
+            char pw_path[128];
+            int pw_pl = (pw_pathlen > 127) ? 127 : (int)pw_pathlen;
+            int pw_mr = 3;
+            for (int i = 0; i < pw_pl; i++) {
+                if (i % 8 == 0 && i > 0) pw_mr++;
+                pw_path[i] = (char)((seL4_GetMR(pw_mr) >> ((i % 8) * 8)) & 0xFF);
+            }
+            pw_path[pw_pl] = '\0';
+            if (!fs_check_path_write(fs_badge, pw_path)) {
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            pw_mr++;
+            int pw_dl = (pw_datalen > 900) ? 900 : (int)pw_datalen;
+            for (int i = 0; i < pw_dl; i++) {
+                if (i % 8 == 0 && i > 0) pw_mr++;
+                fs_buf[i] = (char)((seL4_GetMR(pw_mr) >> ((i % 8) * 8)) & 0xFF);
+            }
+            int ret = vfs_pwrite(pw_path, (int)pw_offset, fs_buf, pw_dl);
+            seL4_SetMR(0, (seL4_Word)(ret >= 0 ? ret : -1));
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }

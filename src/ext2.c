@@ -75,6 +75,10 @@ static int read_block(ext2_ctx_t *ctx, uint32_t block, void *buf) {
     return 0;
 }
 
+/* Forward declarations for static functions used by pwrite */
+static int write_block(ext2_ctx_t *ctx, uint32_t block, const void *buf);
+static int write_inode(ext2_ctx_t *ctx, uint32_t ino, struct ext2_inode *inode);
+
 int ext2_init(ext2_ctx_t *ctx, blk_read_fn read) {
     ctx->read_sector = read;
     cache_init();
@@ -211,6 +215,122 @@ int ext2_read_file(ext2_ctx_t *ctx, uint32_t ino, char *buf, int bufsize) {
     return copied;
 }
 
+/* Set block number for an inode at given index, allocating indirect blocks as needed */
+static int ext2_set_block_num(ext2_ctx_t *ctx, struct ext2_inode *inode,
+                              int index, uint32_t blk_num) {
+    int ptrs_per_block = (int)(ctx->block_size / 4);
+
+    /* Direct blocks: 0-11 */
+    if (index < 12) {
+        inode->i_block[index] = blk_num;
+        return 0;
+    }
+
+    /* Single indirect: 12 .. 12+ptrs_per_block-1 */
+    index -= 12;
+    if (index < ptrs_per_block) {
+        if (!inode->i_block[12]) {
+            int ib = ext2_alloc_block(ctx);
+            if (ib < 0) return -1;
+            uint8_t zero[1024];
+            for (int i = 0; i < (int)ctx->block_size; i++) zero[i] = 0;
+            write_block(ctx, ib, zero);
+            inode->i_block[12] = (uint32_t)ib;
+        }
+        uint8_t ind_buf[1024];
+        if (read_block(ctx, inode->i_block[12], ind_buf) != 0) return -2;
+        ind_buf[index * 4]     = blk_num & 0xFF;
+        ind_buf[index * 4 + 1] = (blk_num >> 8) & 0xFF;
+        ind_buf[index * 4 + 2] = (blk_num >> 16) & 0xFF;
+        ind_buf[index * 4 + 3] = (blk_num >> 24) & 0xFF;
+        write_block(ctx, inode->i_block[12], ind_buf);
+        return 0;
+    }
+
+    return -3; /* double indirect write not yet supported */
+}
+
+/* Positioned write: write len bytes at offset, allocating blocks as needed */
+int ext2_pwrite_file(ext2_ctx_t *ctx, uint32_t ino, int offset,
+                     const uint8_t *data, int len) {
+    struct ext2_inode inode;
+    if (ext2_read_inode(ctx, ino, &inode) != 0) return -1;
+
+    int block_size = (int)ctx->block_size;
+    int written = 0;
+
+    while (written < len) {
+        int cur_off = offset + written;
+        int block_idx = cur_off / block_size;
+        int block_off = cur_off % block_size;
+
+        /* Get or allocate block */
+        int blk_num = ext2_get_block_num(ctx, &inode, block_idx);
+        if (blk_num == 0) {
+            blk_num = ext2_alloc_block(ctx);
+            if (blk_num < 0) return -2;
+            /* Zero the new block */
+            uint8_t zero[1024];
+            for (int i = 0; i < block_size; i++) zero[i] = 0;
+            write_block(ctx, blk_num, zero);
+            if (ext2_set_block_num(ctx, &inode, block_idx, (uint32_t)blk_num) != 0)
+                return -3;
+        }
+
+        /* Read block, patch in our data, write back */
+        uint8_t blk[1024];
+        if (read_block(ctx, blk_num, blk) != 0) return -4;
+        int chunk = block_size - block_off;
+        if (chunk > len - written) chunk = len - written;
+        for (int i = 0; i < chunk; i++)
+            blk[block_off + i] = data[written + i];
+        write_block(ctx, blk_num, blk);
+
+        written += chunk;
+    }
+
+    /* Extend file size if needed */
+    int end_pos = offset + len;
+    if (end_pos > (int)inode.i_size)
+        inode.i_size = (uint32_t)end_pos;
+
+    /* Update block count */
+    int blocks_used = ((int)inode.i_size + block_size - 1) / block_size;
+    inode.i_blocks = (uint32_t)(blocks_used * (block_size / 512));
+
+    write_inode(ctx, ino, &inode);
+    return len;
+}
+
+/* Positioned read: read up to bufsize bytes starting at offset */
+int ext2_pread_file(ext2_ctx_t *ctx, uint32_t ino, int offset, char *buf, int bufsize) {
+    struct ext2_inode inode;
+    if (ext2_read_inode(ctx, ino, &inode) != 0) return -1;
+
+    int size = (int)inode.i_size;
+    if (offset >= size) return 0;
+    int avail = size - offset;
+    if (avail > bufsize) avail = bufsize;
+
+    int copied = 0;
+    int block_idx = offset / (int)ctx->block_size;
+    int block_off = offset % (int)ctx->block_size;
+
+    while (copied < avail) {
+        int blk_num = ext2_get_block_num(ctx, &inode, block_idx);
+        if (blk_num == 0) break;
+        uint8_t blk[1024];
+        if (read_block(ctx, blk_num, blk) != 0) return -2;
+        int start = block_off;
+        int chunk = (int)ctx->block_size - start;
+        if (chunk > avail - copied) chunk = avail - copied;
+        for (int i = 0; i < chunk; i++) buf[copied++] = blk[start + i];
+        block_idx++;
+        block_off = 0;
+    }
+    return copied;
+}
+
 int ext2_lookup(ext2_ctx_t *ctx, uint32_t dir_ino, const char *name, uint32_t *out_ino) {
     struct ext2_inode inode;
     if (ext2_read_inode(ctx, dir_ino, &inode) != 0) return -1;
@@ -272,6 +392,21 @@ static int ext2_vfs_read(void *ctx, const char *path, char *buf, int bufsize) {
     uint32_t ino;
     if (ext2_resolve_path(e, path, &ino) != 0) return -1;
     return ext2_read_file(e, ino, buf, bufsize);
+}
+
+static int ext2_vfs_pwrite(void *ctx, const char *path, int offset,
+                          const void *data, int len) {
+    ext2_ctx_t *e = (ext2_ctx_t *)ctx;
+    uint32_t ino;
+    if (ext2_resolve_path(e, path, &ino) != 0) return -1;
+    return ext2_pwrite_file(e, ino, offset, (const uint8_t *)data, len);
+}
+
+static int ext2_vfs_pread(void *ctx, const char *path, int offset, char *buf, int bufsize) {
+    ext2_ctx_t *e = (ext2_ctx_t *)ctx;
+    uint32_t ino;
+    if (ext2_resolve_path(e, path, &ino) != 0) return -1;
+    return ext2_pread_file(e, ino, offset, buf, bufsize);
 }
 
 static int ext2_vfs_stat(void *ctx, const char *path, uint32_t *mode, uint32_t *size) {
@@ -383,6 +518,8 @@ static int ext2_vfs_unlink(void *ctx, const char *path) {
 fs_ops_t ext2_fs_ops = {
     .fs_list = ext2_vfs_list,
     .fs_read = ext2_vfs_read,
+    .fs_pread = ext2_vfs_pread,
+    .fs_pwrite = ext2_vfs_pwrite,
     .fs_stat = ext2_vfs_stat,
     .fs_resolve = ext2_vfs_resolve,
     .fs_mkdir = ext2_vfs_mkdir,
