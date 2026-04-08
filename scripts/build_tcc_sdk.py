@@ -46,18 +46,30 @@ def stage_musl_headers():
 def stage_musl_libs():
     dst = os.path.join(SDK, "usr", "lib")
     os.makedirs(dst, exist_ok=True)
-    # libc.a from musl
-    src = os.path.join(MUSL_LIB, "libc.a")
-    if os.path.exists(src):
-        shutil.copy2(src, dst)
+    # libc.a -- augmented archive (AIOS runtime + musl)
+    # Built by scripts/build_libaios.py
+    libaios = os.path.join(BUILD, "libaios_full.a")
+    if os.path.exists(libaios):
+        shutil.copy2(libaios, os.path.join(dst, "libc.a"))
         sz = os.path.getsize(os.path.join(dst, "libc.a"))
-        print(f"  /usr/lib/libc.a ({sz} bytes)")
-    # CRT objects: use AIOS crt0.o as crt1.o (tcc expects crt1.o)
-    # crt0.o is the sel4runtime entry point
-    crt0 = os.path.join(AIOS_CRT, "crt0.o")
-    if os.path.exists(crt0):
-        shutil.copy2(crt0, os.path.join(dst, "crt1.o"))
-        print(f"  /usr/lib/crt1.o (from AIOS crt0.o)")
+        print(f"  /usr/lib/libc.a (augmented, {sz} bytes)")
+    else:
+        src = os.path.join(MUSL_LIB, "libc.a")
+        if os.path.exists(src):
+            shutil.copy2(src, dst)
+            sz = os.path.getsize(os.path.join(dst, "libc.a"))
+            print(f"  /usr/lib/libc.a (musl-only fallback, {sz} bytes)")
+    # crt1.o -- custom CRT with __aios_entry init
+    # Built by scripts/build_libaios.py
+    aios_crt1 = os.path.join(BUILD, "aios_crt1.o")
+    if os.path.exists(aios_crt1):
+        shutil.copy2(aios_crt1, os.path.join(dst, "crt1.o"))
+        print(f"  /usr/lib/crt1.o (aios_crt1, AIOS init)")
+    else:
+        crt0 = os.path.join(AIOS_CRT, "crt0.o")
+        if os.path.exists(crt0):
+            shutil.copy2(crt0, os.path.join(dst, "crt1.o"))
+            print(f"  /usr/lib/crt1.o (crt0.o fallback, no AIOS init)")
     for crt in ["crti.o", "crtn.o"]:
         src = os.path.join(AIOS_CRT, crt)
         if os.path.exists(src):

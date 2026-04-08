@@ -182,12 +182,21 @@ long aios_sys_openat(va_list ap) {
         str_copy(f->path, res_path, sizeof(f->path));
         f->is_append = is_append;
         if ((int)fsize <= (int)sizeof(f->data) - 1) {
-            /* Small file: load into buffer (old fast path) */
-            int n = fetch_file(res_path, f->data, sizeof(f->data));
-            if (n < 0) return -ENOENT;
+            /* Small file: load into buffer via fetch_pread loop.
+             * FS_CAT (fetch_file) truncates at ~952 bytes per IPC.
+             * fetch_pread handles multi-round-trip correctly. */
+            int loaded = 0;
+            while (loaded < (int)fsize) {
+                int got = fetch_pread(res_path, loaded,
+                    f->data + loaded, (int)fsize - loaded);
+                if (got <= 0) break;
+                loaded += got;
+            }
+            if (loaded <= 0) return -ENOENT;
+            f->data[loaded] = 0;
             f->active = 1;
-            f->size = n;
-            f->pos = is_append ? n : 0;
+            f->size = loaded;
+            f->pos = is_append ? loaded : 0;
         } else {
             /* Large file: demand-read via FS_PREAD */
             f->active = 1;

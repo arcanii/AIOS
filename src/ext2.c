@@ -6,8 +6,11 @@
 static uint16_t rd16(const uint8_t *p) { return p[0] | (p[1] << 8); }
 static uint32_t rd32(const uint8_t *p) { return p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24); }
 
-/* ---- Block cache: write-through, 8 entries, round-robin ---- */
-#define EXT2_CACHE_SIZE 8
+/* ---- Block cache: write-through, round-robin ----
+ * 2048 entries (~2MB) needed: tcc output write involves ~1400
+ * cache operations (159 data blocks + inode/bitmap/indirect
+ * overhead). Block 0 (ELF header) must survive until exec reads. */
+#define EXT2_CACHE_SIZE 2048
 
 static struct {
     uint32_t block;

@@ -7,7 +7,7 @@
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: main
 * **Developer**: Bryan
-* **Current Version**: v0.4.69
+* **Current Version**: v0.4.71
 
 ## Development Environment
 
@@ -398,9 +398,10 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * 99 sbase Unix tools in /bin/
 * 28 AIOS programs in /bin/aios/
 * dash in /bin/dash
-* tcc in /bin/tcc (compiler, tcc -c works, linking needs runtime bundle)
-* SDK in /usr/ (211 musl headers, libc.a, libtcc1.a, CRT objects, tcc headers)
-* Total: 130 programs
+* tcc in /bin/tcc (compiler, tcc -c and tcc -o both work, exec blocked by virtio-blk bug)
+* hello_test in /bin/hello_test (aios-cc proof-of-concept)
+* SDK in /usr/ (211 musl headers, augmented libc.a with AIOS runtime, libtcc1.a, custom CRT, tcc headers)
+* Total: 131 programs
 
 ## Known Issues / Gotchas
 
@@ -423,13 +424,13 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 
 ## Pending Items
 
-1. tcc linking: bundle AIOS runtime libs into libaios.a, tcc-compatible CRT (see docs/DESIGN_TCC.md)
-2. Networking: virtio-net + TCP/IP (see docs/DESIGN_NET.md)
-3. zsh port: alternative shell with ZLE (see docs/DESIGN_ZSH.md)
-4. Allocator right-sizing: 4000 pages ~100x oversized, test with 500/250/100
-5. Dash improvements: tab completion, history, PS1, job control
-6. TTY improvements: process-aware echo, virtual terminals
-7. Process niceness: runtime seL4_TCB_SetPriority
+1. virtio-blk stale reads: device reads return 0xFF for runtime-written blocks (see docs/NEXT_20260409a.md Bug 1)
+2. tcc program TLS/IPC: tcc-compiled programs run but produce no output (see docs/NEXT_20260409a.md Bug 2)
+3. Networking: virtio-net + TCP/IP (see docs/DESIGN_NET.md)
+4. zsh port: alternative shell with ZLE (see docs/DESIGN_ZSH.md)
+5. Allocator right-sizing: 4000 pages ~100x oversized, test with 500/250/100
+6. Dash improvements: tab completion, history, PS1, job control
+7. TTY improvements: process-aware echo, virtual terminals
 8. ext2 write improvements: multi-block file write, triple indirect
 
 ## Version History (0.4.x)
@@ -475,6 +476,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 | v0.4.68 | Dash as primary login shell, tty_echo=1, TTY_READ cooked stdin, RAW/COOKED mode switching, getty reads pw_shell from /etc/passwd, buffer isolation on mode switch, macOS sed fix |
 | v0.4.69 | ELF buffer 8MB, morecore 4MB, termios TCGETS/TCSETS, bump scripts sed fix, DESIGN_TCC.md, DESIGN_ZSH.md |
 | v0.4.70 | tcc cross-compiled and running, tcc -c produces .o files, FS_PREAD (large file reads), FS_PWRITE (positioned writes), writev for regular files, tcc SDK on disk (211 headers + libc.a), ext2 block allocation for writes |
+| v0.4.71 | tcc -o linking (custom CRT, augmented libc, TLS LE relocs, MRI merge), small file truncation fix, munmap reclaim, build_apps.py. Blocked: virtio-blk stale reads + tcc program TLS/IPC |
 
 ## Architecture After v0.4.69
 
@@ -504,21 +506,21 @@ include/aios/root_shared.h ~227 lines (+ PIPE_SET_PIPES, xfer_copies)
 include/aios/vka_audit.h   ~38 lines
 ```
 
-## Test Results (v0.4.70)
+## Test Results (v0.4.71)
 
 ```
 posix_verify V3: 98/98 PASS
 signal_test: 20/20 PASS
 POSIX audit: 81/81 (100%)
 dash as login shell: PASS
-tcc -v: "tcc version 0.9.28rc (AArch64 Linux)" (PASS)
+tcc -v: PASS
 tcc -c test.c -o test.o: 1038 bytes AArch64 .o (PASS)
-tcc -o (link): needs AIOS runtime bundle (EXPECTED)
-FS_PREAD: tccdefs.h 13KB read (PASS)
-FS_PWRITE: writev file output (PASS)
-ls /usr/include: 211 headers (PASS)
-ls /usr/lib: libc.a, libtcc1.a, CRT objects (PASS)
+tcc -o /tmp/hello /root/hello.c: 162367 bytes ELF (PASS)
+tcc -o exec: FAIL (virtio-blk stale reads, see NEXT_20260409a.md)
+tcc program output: FAIL (silent IPC, TLS offset issue)
+hello_test (aios-cc same source): PASS (printf + file write)
 fork_test: PASS
 pipe: echo hello | cat -> hello (PASS)
-RAM: 478 MB (ELF buffer 8MB, morecore 4MB per process)
+Programs: 131
+RAM: 478 MB
 ```

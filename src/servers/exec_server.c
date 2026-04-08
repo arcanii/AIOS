@@ -125,6 +125,7 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         elf_path[epi] = '\0';
 
         int elf_size = vfs_read(elf_path, elf_buf, sizeof(elf_buf));
+        printf("[exec] %s: elf_size=%d\n", elf_path, elf_size);
         if (elf_size <= 0) {
             seL4_SetMR(0, (seL4_Word)-1);
             seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
