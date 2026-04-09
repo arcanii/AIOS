@@ -26,13 +26,24 @@ static long _entry_parse(const char *s) {
 int __aios_entry(int argc, char **argv, char **envp) {
     (void)envp;
 
-    /* Debug: kernel-level putchar, no TLS/IPC needed */
-    seL4_DebugPutChar('E');
-    seL4_DebugPutChar('N');
-    seL4_DebugPutChar('T');
-    seL4_DebugPutChar('R');
-    seL4_DebugPutChar('Y');
-    seL4_DebugPutChar('\n');
+    /* v0.4.72: tcc linker does not process .init_array constructors.
+     * Two critical initialisations are missing in tcc-compiled binaries:
+     *   1. __sysinfo (musl syscall dispatch pointer) stays NULL
+     *      -- every musl syscall hits raw svc #0 and faults on seL4
+     *   2. muslcsys_init_muslc (musl libc internal init) never runs
+     *      -- stdio FILE structures not fully initialised
+     * Fix both here before any musl function is called. Safe for
+     * aios-cc binaries: __sysinfo is already set by the constructor
+     * so the if-guard skips the block. */
+    {
+        extern long __sysinfo;
+        extern long sel4_vsyscall(long, ...);
+        if (!__sysinfo) {
+            __sysinfo = (long)sel4_vsyscall;
+            extern void muslcsys_init_muslc(void);
+            muslcsys_init_muslc();
+        }
+    }
 
     seL4_CPtr serial = 0, fs = 0, thr = 0, ath = 0, pip = 0;
     if (argc > 0 && argv[0]) serial = (seL4_CPtr)_entry_parse(argv[0]);
@@ -43,6 +54,7 @@ int __aios_entry(int argc, char **argv, char **envp) {
     thread_ep = thr;
     auth_ep = ath;
     pipe_ep = pip;
+
     aios_init(serial, fs);
 
     /* Parse uid:gid:spipe:rpipe:/path from argv[5] */

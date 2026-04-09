@@ -144,19 +144,28 @@ long aios_sys_openat(va_list ap) {
             seL4_Call(fs_ep_cap,
                 seL4_MessageInfo_new(15 /* FS_WRITE_FILE */, 0, 0, mr + 1));
         }
-        /* If write-only, return a dummy fd */
-        if (is_wronly || is_rdwr) {
+        /* v0.4.72: write-only fd with resolved path and correct size */
+        if (is_wronly || is_rdwr) {{
             int idx = aios_fd_alloc();
             if (idx < 0) return -EMFILE;
             aios_fd_t *f = &aios_fds[idx];
             f->active = 1;
             f->is_dir = 0;
+            f->is_tty = 0;
             f->is_append = is_append;
-            f->size = 0;
-            f->pos = 0;
-            str_copy(f->path, pathname, sizeof(f->path));
+            /* Use resolved path (p) not raw pathname */
+            str_copy(f->path, p, sizeof(f->path));
+            /* Get existing size for append mode */
+            uint32_t _fm, _fs;
+            if (is_append && fetch_stat(p, &_fm, &_fs) == 0) {{
+                f->size = (int)_fs;
+                f->pos = (int)_fs;
+            }} else {{
+                f->size = 0;
+                f->pos = 0;
+            }}
             return AIOS_FD_BASE + idx;
-        }
+        }}
     }
 
     int idx = aios_fd_alloc();
@@ -192,7 +201,7 @@ long aios_sys_openat(va_list ap) {
                 if (got <= 0) break;
                 loaded += got;
             }
-            if (loaded <= 0) return -ENOENT;
+            if (fsize > 0 && loaded <= 0) return -ENOENT;  /* EMPTY_FILE_FIX_V072 */
             f->data[loaded] = 0;
             f->active = 1;
             f->size = loaded;
@@ -331,8 +340,28 @@ long aios_sys_write(va_list ap) {
     /* Signal Phase 4: return EINTR if signal was delivered */
     if (aios_sig_check() > 0) return -EINTR;
 
-    /* stdout/stderr — check for pipe redirect */
+    /* stdout/stderr -- check for file or pipe redirect REDIR_WRITE_V072 */
     if (fd == 1 || fd == 2) {
+        int _redir = (fd == 1) ? stdout_redir_idx : stderr_redir_idx;
+        if (_redir >= 0) {  /* REDIR_COPY_V072 */
+            aios_fd_t *rf = (fd == 1) ? &stdout_redir_copy : &stderr_redir_copy;
+            if (rf->path[0] && fs_ep_cap) {
+                const char *src = (const char *)buf;
+                size_t total = 0;
+                while (total < count) {
+                    int chunk = (int)(count - total);
+                    if (chunk > 800) chunk = 800;
+                    int wrote = fetch_pwrite(rf->path,
+                        rf->is_append ? rf->size : rf->pos,
+                        src + total, chunk);
+                    if (wrote <= 0) break;
+                    total += wrote;
+                    rf->pos += wrote;
+                    if (rf->pos > rf->size) rf->size = rf->pos;
+                }
+                return (long)total;
+            }
+        }
         if (stdout_pipe_id >= 0 && pipe_ep) {
             /* Write to pipe instead of serial */
             const char *src = (const char *)buf;

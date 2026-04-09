@@ -7,7 +7,7 @@
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: main
 * **Developer**: Bryan
-* **Current Version**: v0.4.71
+* **Current Version**: v0.4.72
 
 ## Development Environment
 
@@ -398,7 +398,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * 99 sbase Unix tools in /bin/
 * 28 AIOS programs in /bin/aios/
 * dash in /bin/dash
-* tcc in /bin/tcc (compiler, tcc -c and tcc -o both work, exec blocked by virtio-blk bug)
+* tcc in /bin/tcc (compiler, tcc -c and tcc -o work, compile-and-run works)
 * hello_test in /bin/hello_test (aios-cc proof-of-concept)
 * SDK in /usr/ (211 musl headers, augmented libc.a with AIOS runtime, libtcc1.a, custom CRT, tcc headers)
 * Total: 131 programs
@@ -425,7 +425,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 ## Pending Items
 
 1. virtio-blk stale reads: device reads return 0xFF for runtime-written blocks (see docs/NEXT_20260409a.md Bug 1)
-2. tcc program TLS/IPC: tcc-compiled programs run but produce no output (see docs/NEXT_20260409a.md Bug 2)
+2. ~~tcc program TLS/IPC~~ FIXED in v0.4.72: __sysinfo init + muslcsys_init_muslc + arm64 direct ADRP (see docs/NEXT_20260409b.md)
 3. Networking: virtio-net + TCP/IP (see docs/DESIGN_NET.md)
 4. zsh port: alternative shell with ZLE (see docs/DESIGN_ZSH.md)
 5. Allocator right-sizing: 4000 pages ~100x oversized, test with 500/250/100
@@ -477,6 +477,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 | v0.4.69 | ELF buffer 8MB, morecore 4MB, termios TCGETS/TCSETS, bump scripts sed fix, DESIGN_TCC.md, DESIGN_ZSH.md |
 | v0.4.70 | tcc cross-compiled and running, tcc -c produces .o files, FS_PREAD (large file reads), FS_PWRITE (positioned writes), writev for regular files, tcc SDK on disk (211 headers + libc.a), ext2 block allocation for writes |
 | v0.4.71 | tcc -o linking (custom CRT, augmented libc, TLS LE relocs, MRI merge), small file truncation fix, munmap reclaim, build_apps.py. Blocked: virtio-blk stale reads + tcc program TLS/IPC |
+| v0.4.72 | tcc compile-and-run working (3 fixes: __sysinfo init, muslcsys_init_muslc, arm64 direct ADRP). Shell > and >> redirect for builtins. Empty file open fix. See docs/NEXT_20260409b.md |
 
 ## Architecture After v0.4.69
 
@@ -506,18 +507,21 @@ include/aios/root_shared.h ~227 lines (+ PIPE_SET_PIPES, xfer_copies)
 include/aios/vka_audit.h   ~38 lines
 ```
 
-## Test Results (v0.4.71)
+## Test Results (v0.4.72)
 
 ```
 posix_verify V3: 98/98 PASS
 signal_test: 20/20 PASS
 POSIX audit: 81/81 (100%)
 dash as login shell: PASS
+echo hello > /tmp/t.txt: PASS (v0.4.72 redirect fix)
+echo line2 >> /tmp/t.txt: PASS (v0.4.72 append fix)
 tcc -v: PASS
 tcc -c test.c -o test.o: 1038 bytes AArch64 .o (PASS)
-tcc -o /tmp/hello /root/hello.c: 162367 bytes ELF (PASS)
-tcc -o exec: FAIL (virtio-blk stale reads, see NEXT_20260409a.md)
-tcc program output: FAIL (silent IPC, TLS offset issue)
+tcc -o /tmp/hello /tmp/hello.c: 166KB ELF (PASS)
+tcc program output (puts): PASS (v0.4.72 -- __sysinfo + ADRP fix)
+tcc program globals: PASS (v0.4.72 ADRP fix)
+tcc program strings: PASS (v0.4.72 ADRP fix)
 hello_test (aios-cc same source): PASS (printf + file write)
 fork_test: PASS
 pipe: echo hello | cat -> hello (PASS)

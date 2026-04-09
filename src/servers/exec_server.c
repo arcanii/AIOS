@@ -173,6 +173,7 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
         }
 
+
         /* Load ELF into child's VSpace */
         proc->entry_point = sel4utils_elf_load(
             &proc->vspace, &vspace, &vka, &vka, &elf);

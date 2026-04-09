@@ -135,6 +135,7 @@ long aios_sys_fcntl(va_list ap) {
             if (idx < 0) return -EMFILE;
             aios_fds[idx].active = 1;
             aios_fds[idx].is_devnull = 0;
+            aios_fds[idx].is_tty = 1;  /* REDIR_DUP_V072: mark as terminal copy */
             aios_fds[idx].size = 0;
             aios_fds[idx].pos = 0;
             return AIOS_FD_BASE + idx;
@@ -159,10 +160,11 @@ long aios_sys_fcntl(va_list ap) {
 long aios_sys_dup(va_list ap) {
     int oldfd = va_arg(ap, int);
     if (oldfd < 3) {
-        /* dup stdin/stdout/stderr — allocate new aios fd pointing to same */
+        /* dup stdin/stdout/stderr -- allocate new aios fd pointing to same */
         int idx = aios_fd_alloc();
         if (idx < 0) return -EMFILE;
         aios_fds[idx].active = 1;
+        aios_fds[idx].is_tty = 1;  /* v0.4.72: mark as terminal copy */
         aios_fds[idx].size = 0;
         aios_fds[idx].pos = 0;
         return AIOS_FD_BASE + idx;
@@ -208,14 +210,19 @@ long aios_sys_dup3(va_list ap) {
         }
     }
 
-    /* pipe fd -> stdout redirect: dup2(pipe_write_fd, 1) */
+    /* v0.4.72: dup2(aios_fd, stdout/stderr) -- redirect or restore */
     if ((newfd == 1 || newfd == 2) && oldfd >= AIOS_FD_BASE && oldfd < AIOS_FD_BASE + AIOS_MAX_FDS) {
         aios_fd_t *src = &aios_fds[oldfd - AIOS_FD_BASE];
         if (!src->active) return -EBADF;
+        /* Terminal restore: saved fd from dup(1) / fcntl(1,F_DUPFD) */
+        if (src->is_tty) {
+            if (newfd == 1) { stdout_redir_idx = -1; stdout_pipe_id = -1; }
+            if (newfd == 2) stderr_redir_idx = -1;
+            return newfd;
+        }
+        /* Pipe redirect */
         if (src->is_pipe && !src->pipe_read) {
             stdout_pipe_id = src->pipe_id;
-            /* v0.4.67: notify server so handle_child_fault can
-             * close write end on exit (needed for dash builtins) */
             if (pipe_ep) {
                 seL4_SetMR(0, (seL4_Word)stdout_pipe_id);
                 seL4_SetMR(1, (seL4_Word)stdin_pipe_id);
@@ -224,6 +231,10 @@ long aios_sys_dup3(va_list ap) {
             }
             return newfd;
         }
+        /* File redirect: copy fd state so close cannot invalidate REDIR_COPY_V072 */
+        if (newfd == 1) { stdout_redir_copy = *src; stdout_redir_idx = 0; }
+        else { stderr_redir_copy = *src; stderr_redir_idx = 0; }
+        return newfd;
     }
 
     /* aios fd -> aios fd copy */

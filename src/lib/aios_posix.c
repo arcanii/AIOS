@@ -20,6 +20,10 @@ uint32_t aios_uid = 0;
 uint32_t aios_gid = 0;
 int stdout_pipe_id = -1;
 int stdin_pipe_id = -1;
+int stdout_redir_idx = -1;  /* REDIR_STDIO_V072 */
+int stderr_redir_idx = -1;
+aios_fd_t stdout_redir_copy;  /* REDIR_COPY_V072 */
+aios_fd_t stderr_redir_copy;
 
 aios_sigstate_t sigstate;
 int sig_dispatching = 0;
@@ -164,6 +168,26 @@ int fetch_stat(const char *path, uint32_t *mode, uint32_t *size) {
 }
 
 size_t aios_stdio_write(void *data, size_t count) {
+    /* v0.4.72: file redirect for shell > and >> */
+    if (stdout_redir_idx >= 0) {
+        aios_fd_t *rf = &stdout_redir_copy;
+        if (rf->active && rf->path[0] && fs_ep_cap) {
+            const char *src = (const char *)data;
+            size_t total = 0;
+            while (total < count) {
+                int chunk = (int)(count - total);
+                if (chunk > 800) chunk = 800;
+                int wrote = fetch_pwrite(rf->path,
+                    rf->is_append ? rf->size : rf->pos,
+                    src + total, chunk);
+                if (wrote <= 0) break;
+                total += wrote;
+                rf->pos += wrote;
+                if (rf->pos > rf->size) rf->size = rf->pos;
+            }
+            return total;
+        }
+    }
     /* Check for pipe redirect (stdout_pipe_id set by __wrap_main) */
     if (stdout_pipe_id >= 0 && pipe_ep) {
         const char *src = (const char *)data;

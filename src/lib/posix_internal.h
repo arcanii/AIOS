@@ -130,6 +130,7 @@ typedef struct {
     int pipe_read;
     int is_devnull;
     int is_append;
+    int is_tty;               /* REDIR_FIX_V072: marks fd as terminal copy */
     char *shm_vaddr;              /* v0.4.66: SHM xfer page in this VSpace */
     char path[128];
     char data[4096];
@@ -149,6 +150,10 @@ extern uint32_t aios_uid;
 extern uint32_t aios_gid;
 extern int stdout_pipe_id;
 extern int stdin_pipe_id;
+extern int stdout_redir_idx;
+extern int stderr_redir_idx;
+extern aios_fd_t stdout_redir_copy;  /* REDIR_COPY_V072 */
+extern aios_fd_t stderr_redir_copy;
 
 extern aios_sigstate_t sigstate;
 extern int sig_dispatching;
