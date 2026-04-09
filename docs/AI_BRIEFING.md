@@ -425,7 +425,9 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * ELF buffer: Static 8MB (increased from 1MB in v0.4.69, dynamic for v0.5.x)
 * DMA: Must use single untyped Retype for contiguous pages
 * Priority: All processes at 200 (different = deadlock)
-* Ctrl-C (SIGINT): kills foreground process but programs in infinite read loops (tail -f, blocking reads) cannot be interrupted. URGENT: need signal check in nanosleep/read paths to return EINTR.
+* Ctrl-C (SIGINT): two-stage delivery (v0.4.73). First ^C sets SIGINT pending, process
+  self-terminates via SIG_DFL. Second ^C force-destroys (fallback). fg_pid tracked
+  via pipe_server PIPE_EXEC for fork+exec processes.
 * ext2: Never use packed structs on AArch64 (use rd16/rd32)
 * aios-cc: Uses tr "/" "_" for object names (avoids cp.c vs libutil/cp.c collision)
 * Process exit: Overridden to trigger VM fault (not seL4_DebugHalt)
@@ -437,7 +439,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 
 ## Pending Items
 
-1. **URGENT: Ctrl-C signal delivery to blocked processes** -- tail -f and blocking reads hang, Ctrl-C cannot interrupt. Need PIPE_SIG_FETCH check in nanosleep/read to return EINTR. See docs/NEXT_20260410a.md
+1. ~~Ctrl-C signal delivery~~ FIXED in v0.4.73: two-stage SIGINT, fg_pid tracking for fork+exec, signal check in TTY_READ loop
 2. virtio-blk stale reads: partially mitigated by dmb sy barrier (v0.4.73), needs stress testing. See docs/NEXT_20260409a.md
 3. ~~tcc program TLS/IPC~~ FIXED in v0.4.72
 4. Networking: virtio-net + TCP/IP (see docs/DESIGN_NET.md)
@@ -538,7 +540,7 @@ echo line2 >> /tmp/t.txt: PASS
 tcc -v / tcc -c / tcc -o / tcc run: PASS
 fork_test: PASS
 pipe: echo hello | cat -> hello (PASS)
-Ctrl-C on tail -f: FAIL (hangs, cannot interrupt blocking read loop)
+Ctrl-C on tail -f: PASS (clean exit back to shell prompt)
 Programs on disk: 131 (99 sbase + 28 aios + dash + tcc + hello_test)
 Drives: 2 (128MB system + 16MB log)
 RAM: 476 MB

@@ -173,22 +173,34 @@ int main(int argc, char *argv[]) {
         if (uart && !(uart[UART_FR / 4] & FR_RXFE)) {
             char c = (char)(uart[UART_DR / 4] & 0xFF);
             if (c == 0x03 && fg_pid > 0) {
-                /* Ctrl-C: signal foreground process to die */
-                fg_killed = 1;
-                seL4_CPtr kep = fg_fault_ep;
-                /* Destroy child process (stops execution) */
-                for (int ki = 0; ki < MAX_ACTIVE_PROCS; ki++) {
-                    if (active_procs[ki].active && active_procs[ki].pid == fg_pid) {
-                        sel4utils_destroy_process(&active_procs[ki].proc, &vka);
+                /* Ctrl-C: two-stage SIGINT delivery.
+                 * First ^C: set SIGINT pending, process self-terminates
+                 * via SIG_DFL at its next signal check point.
+                 * Second ^C: force-destroy (fallback for caught SIGINT). */
+                int ki;
+                for (ki = 0; ki < MAX_ACTIVE_PROCS; ki++) {
+                    if (active_procs[ki].active &&
+                        active_procs[ki].pid == fg_pid)
                         break;
+                }
+                if (ki < MAX_ACTIVE_PROCS) {
+                    if (active_procs[ki].sig_pending & (1U << 1)) {
+                        /* SIGINT already pending -- force kill */
+                        fg_killed = 1;
+                        seL4_CPtr kep = fg_fault_ep;
+                        sel4utils_destroy_process(
+                            &active_procs[ki].proc, &vka);
+                        if (kep) {
+                            seL4_SetMR(0, 0xDEAD);
+                            seL4_Send(kep,
+                                seL4_MessageInfo_new(0, 0, 0, 1));
+                        }
+                    } else {
+                        /* First ^C: send SIGINT (bit 1 = signal 2) */
+                        active_procs[ki].sig_pending |= (1U << 1);
                     }
                 }
-                /* Unblock exec_thread via fault EP */
-                if (kep) {
-                    seL4_SetMR(0, 0xDEAD);
-                    seL4_Send(kep, seL4_MessageInfo_new(0, 0, 0, 1));
-                }
-                /* Push ^C to serial so shell sees it */
+                /* Push ^C to serial (unblocks TTY_READ, shows ^C) */
                 seL4_SetMR(0, (seL4_Word)0x03);
                 seL4_Call(serial_ep.cptr,
                           seL4_MessageInfo_new(SER_KEY_PUSH, 0, 0, 1));

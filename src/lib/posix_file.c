@@ -264,6 +264,7 @@ long aios_sys_read(va_list ap) {
                 }
                 return (long)got;
             }
+            if (aios_sig_check() > 0) return -EINTR;
             seL4_Yield();
         }
     }

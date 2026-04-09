@@ -151,6 +151,12 @@ static void handle_child_fault(int child_idx) {
 
     if (!ch->active || !ch->fault_on_pipe_ep) return;
 
+    /* Clear foreground tracking if this was the fg process */
+    if (ch->pid == fg_pid) {
+        fg_pid = -1;
+        fg_fault_ep = 0;
+    }
+
     /* Auto-close write end if child was writing to a pipe.
      * Guard: if exit_cb already sent PIPE_CLOSE_WRITE, write_closed
      * is set and refs already decremented. Only act on crashes. */
@@ -448,6 +454,11 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             if (caller_idx >= 0 && caller_idx < MAX_ACTIVE_PROCS
                 && active_procs[caller_idx].active) {
                 active_procs[caller_idx].exit_status = exit_code;
+                /* Clear fg tracking so Ctrl-C state is clean */
+                if (active_procs[caller_idx].pid == fg_pid) {
+                    fg_pid = -1;
+                    fg_fault_ep = 0;
+                }
             }
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
             break;
@@ -776,6 +787,11 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
             exec_done[ci] = 1;
             check_exec_wait(ci);
+
+            /* Track as foreground process for Ctrl-C */
+            fg_pid = old_pid;
+            fg_fault_ep = new_fault_ep.cptr;
+
             /* No reply -- old process destroyed, new one running */
             break;
         }

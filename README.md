@@ -23,7 +23,7 @@ External AI (Claude) is used as a development tool for code generation
 and review. This project is also a study in AI-assisted systems programming.
 The long-term goal is self-hosted development within AIOS itself.
 
-**Current version:** v0.4.69
+**Current version:** v0.4.73
 
 ## What Works
 
@@ -36,11 +36,15 @@ The long-term goal is self-hosted development within AIOS itself.
 - **Unix pipelines** (echo hello | cat | wc -c) with error recovery
 - **Shell operators** (&&, ||, >, >>, <) and environment variables
 - **dash login shell** -- POSIX shell as primary login shell via /etc/passwd pw_shell
-- **128 programs** -- 99 sbase utilities in /bin/, 28 AIOS programs in /bin/aios/, dash in /bin/dash
+- **131 programs** -- 99 sbase utilities in /bin/, 28 AIOS programs in /bin/aios/, dash, tcc, hello_test
+- **tcc compiler** -- cross-compiled TinyCC runs on AIOS, compile-and-run working
+- **Dual-drive support** -- system disk + log disk, identified by ext2 volume label
+- **File-based logging** -- boot entries with timestamps persisted to /log/aios.log
+- **Ctrl-C (SIGINT)** -- two-stage signal delivery: SIGINT first, force-kill on second ^C
 - **Shared-memory pipes** with mapped frame buffers (client-side enabled)
 - **pthreads** (create, join, mutex) via manual TCB creation in child VSpaces
 - **Auth server** with SHA-3-512 (Keccak) passwords, login/logout, su/passwd
-- **Kernel log** ring buffer with /proc/log and /proc/uptime
+- **Kernel log** ring buffer + serial echo + file log (/log/aios.log)
 - **POSIX core 55/55 (100%)** -- all core POSIX interfaces implemented
 - **PSCI shutdown** -- clean power-off via /bin/aios/shutdown
 - **getconf** -- sysconf, confstr, pathconf, limits (99/99 sbase tools)
@@ -224,6 +228,17 @@ python3 scripts/mkdisk.py disk/disk_ext2.img \
 
 Creates a 128MB ext2 image with all programs installed.
 
+### 4b. Create log disk (optional, enables file logging)
+
+```bash
+MKE2FS=/opt/homebrew/opt/e2fsprogs/sbin/mke2fs  # macOS
+dd if=/dev/zero of=disk/log_ext2.img bs=1M count=16
+$MKE2FS -b 1024 -I 128 -t ext2 -L "aios-log" disk/log_ext2.img
+```
+
+Creates a 16MB ext2 log disk. At boot, AIOS identifies it by volume label
+("aios-log") and mounts at /log. Boot entries are written to /log/aios.log.
+
 **Important:** The disk image must be rebuilt whenever programs in `src/apps/`
 change (mini_shell, getty, etc.), since these are loaded from disk at runtime.
 Only the root task and CPIO-embedded servers (tty_server, auth_server) are
@@ -238,8 +253,14 @@ qemu-system-aarch64 \
     -nographic -serial mon:stdio \
     -drive file=disk/disk_ext2.img,format=raw,if=none,id=hd0 \
     -device virtio-blk-device,drive=hd0 \
+    -drive file=disk/log_ext2.img,format=raw,if=none,id=hd1 \
+    -device virtio-blk-device,drive=hd1 \
     -kernel build-04/images/aios_root-image-arm-qemu-arm-virt
 ```
+
+The log drive is optional -- if absent, boot prints "No log drive" and
+continues without file logging. Drive order does not matter (identified
+by volume label).
 
 Login as `root` (password: `root`). The login shell is dash (configured
 in `/etc/passwd`).
