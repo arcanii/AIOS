@@ -64,6 +64,12 @@ ext2_ctx_t ext2;
 volatile uint32_t *blk_vio;
 uint8_t *blk_dma;
 uint64_t blk_dma_pa;
+
+/* Log drive (second virtio-blk device) */
+ext2_ctx_t ext2_log;
+volatile uint32_t *blk_vio_log;
+uint8_t *blk_dma_log;
+uint64_t blk_dma_pa_log;
 seL4_CPtr fs_ep_cap;
 vka_object_t serial_ep;
 uint32_t aios_total_mem = 0;

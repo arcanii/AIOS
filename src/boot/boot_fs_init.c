@@ -1,9 +1,10 @@
 /*
  * boot_fs_init.c -- Virtio-blk discovery + ext2 filesystem init
  *
- * Extracted from aios_root.c (v0.4.53 modularization).
- * Probes virtio MMIO for a block device, initializes the DMA ring,
- * reads the ext2 superblock, and mounts / and /proc.
+ * Probes ALL virtio-mmio block devices. Reads each ext2 superblock
+ * and checks the volume label (s_volume_name). Drives labeled
+ * "aios-log" are handed to boot_log_drive_init. The first
+ * unlabeled ext2 drive becomes the root filesystem.
  */
 #include "aios/root_shared.h"
 #include "aios/vka_audit.h"
@@ -48,20 +49,22 @@ void boot_fs_init(void) {
         return;
     }
 
-    /* Find block device */
-    int blk_slot = -1;
-    for (int i = 0; i < VIRTIO_NUM_SLOTS; i++) {
-        volatile uint32_t *slot = (volatile uint32_t *)((uintptr_t)vio_vaddr + i * VIRTIO_SLOT_SIZE);
-        if (slot[0] == VIRTIO_MAGIC && slot[VIRTIO_MMIO_DEVICE_ID/4] == VIRTIO_BLK_DEVICE_ID) {
-            blk_slot = i;
-            break;
+    /* Discover all block device slots */
+    int blk_slots[4];
+    int num_blk_devs = 0;
+    for (int i = 0; i < VIRTIO_NUM_SLOTS && num_blk_devs < 4; i++) {
+        volatile uint32_t *sl = (volatile uint32_t *)
+            ((uintptr_t)vio_vaddr + i * VIRTIO_SLOT_SIZE);
+        if (sl[0] == VIRTIO_MAGIC &&
+            sl[VIRTIO_MMIO_DEVICE_ID/4] == VIRTIO_BLK_DEVICE_ID) {
+            blk_slots[num_blk_devs++] = i;
         }
     }
-    if (blk_slot < 0) {
+    if (num_blk_devs == 0) {
         printf("[fs] No block device (add -drive to QEMU)\n");
         return;
     }
-    volatile uint32_t *vio = (volatile uint32_t *)((uintptr_t)vio_vaddr + blk_slot * VIRTIO_SLOT_SIZE);
+    printf("[fs] Found %d block device(s)\n", num_blk_devs);
 
     /* Allocate 16K contiguous DMA via single untyped */
     vka_object_t dma_ut;
@@ -71,8 +74,6 @@ void boot_fs_init(void) {
         printf("[fs] DMA untyped alloc failed: %d\n", error);
         return;
     }
-
-    /* Retype untyped into 4 contiguous frames */
     seL4_CPtr dma_caps[4];
     for (int i = 0; i < 4; i++) {
         seL4_CPtr slot;
@@ -84,90 +85,125 @@ void boot_fs_init(void) {
         if (error) { printf("[fs] DMA retype %d failed: %d\n", i, error); return; }
         dma_caps[i] = slot;
     }
-
-    /* Map DMA pages */
     void *dma_vaddr = vspace_map_pages(&vspace, dma_caps, NULL,
         seL4_AllRights, 4, seL4_PageBits, 0);
-    if (!dma_vaddr) {
-        printf("[fs] DMA map failed\n");
-        return;
-    }
+    if (!dma_vaddr) { printf("[fs] DMA map failed\n"); return; }
 
     seL4_ARM_Page_GetAddress_t ga = seL4_ARM_Page_GetAddress(dma_caps[0]);
     if (ga.error) { printf("[fs] DMA GetAddress failed\n"); return; }
     uint64_t dma_pa = ga.paddr;
 
-    /* Zero DMA region */
-    uint8_t *dma = (uint8_t *)dma_vaddr;
-    for (int i = 0; i < 16384; i++) dma[i] = 0;
+    /* Probe each block device: read superblock, check s_volume_name.
+     * Reuse the same DMA buffer for probing (zeroed between probes). */
+    int blk_slot = -1;
+    int log_slot_found = -1;
+    volatile uint32_t *vio = NULL;
 
-    /* Legacy virtio init */
-    VIO_W(VIRTIO_MMIO_STATUS, 0);
-    VIO_W(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACK);
-    VIO_W(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER);
-    VIO_W(VIRTIO_MMIO_GUEST_PAGE_SIZE, 4096);
-    VIO_W(VIRTIO_MMIO_DRV_FEATURES, 0);
-    VIO_W(VIRTIO_MMIO_QUEUE_SEL, 0);
-    uint32_t qmax = VIO_R(VIRTIO_MMIO_QUEUE_NUM_MAX);
-    uint32_t qsz = qmax < 16 ? qmax : 16;
-    VIO_W(VIRTIO_MMIO_QUEUE_NUM, qsz);
-    VIO_W(VIRTIO_MMIO_QUEUE_PFN, (uint32_t)(dma_pa / 4096));
-    VIO_W(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK);
+    for (int d = 0; d < num_blk_devs; d++) {
+        vio = (volatile uint32_t *)
+            ((uintptr_t)vio_vaddr + blk_slots[d] * VIRTIO_SLOT_SIZE);
 
-    /* Read sector 2 (ext2 superblock) */
-    struct virtq_desc  *desc  = (struct virtq_desc *)(dma);
-    struct virtq_avail *avail = (struct virtq_avail *)(dma + 0x100);
-    struct virtq_used  *used  = (struct virtq_used  *)(dma + 0x1000);
-    struct virtio_blk_req *req = (struct virtio_blk_req *)(dma + 0x2000);
-    uint64_t req_pa = dma_pa + 0x2000;
+        /* Zero DMA region (resets avail/used indices for clean probe) */
+        uint8_t *dma = (uint8_t *)dma_vaddr;
+        for (int z = 0; z < 16384; z++) dma[z] = 0;
 
-    req->type = VIRTIO_BLK_T_IN;
-    req->reserved = 0;
-    req->sector = 2;
-    req->status = 0xFF;
+        /* Legacy virtio init */
+        VIO_W(VIRTIO_MMIO_STATUS, 0);
+        VIO_W(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACK);
+        VIO_W(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER);
+        VIO_W(VIRTIO_MMIO_GUEST_PAGE_SIZE, 4096);
+        VIO_W(VIRTIO_MMIO_DRV_FEATURES, 0);
+        VIO_W(VIRTIO_MMIO_QUEUE_SEL, 0);
+        uint32_t qmax = VIO_R(VIRTIO_MMIO_QUEUE_NUM_MAX);
+        uint32_t qsz = qmax < 16 ? qmax : 16;
+        VIO_W(VIRTIO_MMIO_QUEUE_NUM, qsz);
+        VIO_W(VIRTIO_MMIO_QUEUE_PFN, (uint32_t)(dma_pa / 4096));
+        VIO_W(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER
+              | VIRTIO_STATUS_DRIVER_OK);
 
-    desc[0].addr  = req_pa;      desc[0].len = 16;
-    desc[0].flags = VIRTQ_DESC_F_NEXT; desc[0].next = 1;
-    desc[1].addr  = req_pa + 16; desc[1].len = 512;
-    desc[1].flags = VIRTQ_DESC_F_WRITE | VIRTQ_DESC_F_NEXT; desc[1].next = 2;
-    desc[2].addr  = req_pa + 16 + 512; desc[2].len = 1;
-    desc[2].flags = VIRTQ_DESC_F_WRITE; desc[2].next = 0;
+        /* Read sector 2 (ext2 superblock) */
+        struct virtq_desc  *desc  = (struct virtq_desc *)(dma);
+        struct virtq_avail *avail = (struct virtq_avail *)(dma + 0x100);
+        struct virtq_used  *used  = (struct virtq_used  *)(dma + 0x1000);
+        struct virtio_blk_req *req = (struct virtio_blk_req *)(dma + 0x2000);
+        uint64_t req_pa = dma_pa + 0x2000;
 
-    __asm__ volatile("dmb sy" ::: "memory");
-    avail->ring[avail->idx % qsz] = 0;
-    __asm__ volatile("dmb sy" ::: "memory");
-    avail->idx += 1;
-    __asm__ volatile("dmb sy" ::: "memory");
-    VIO_W(VIRTIO_MMIO_QUEUE_NOTIFY, 0);
+        req->type = VIRTIO_BLK_T_IN;
+        req->reserved = 0;
+        req->sector = 2;
+        req->status = 0xFF;
 
-    uint16_t last_used = 0;
-    int done = 0;
-    for (int t = 0; t < 10000000; t++) {
+        desc[0].addr  = req_pa;      desc[0].len = 16;
+        desc[0].flags = VIRTQ_DESC_F_NEXT; desc[0].next = 1;
+        desc[1].addr  = req_pa + 16; desc[1].len = 512;
+        desc[1].flags = VIRTQ_DESC_F_WRITE | VIRTQ_DESC_F_NEXT; desc[1].next = 2;
+        desc[2].addr  = req_pa + 16 + 512; desc[2].len = 1;
+        desc[2].flags = VIRTQ_DESC_F_WRITE; desc[2].next = 0;
+
         __asm__ volatile("dmb sy" ::: "memory");
-        if (used->idx != last_used) { done = 1; break; }
+        avail->ring[avail->idx % qsz] = 0;
+        __asm__ volatile("dmb sy" ::: "memory");
+        avail->idx += 1;
+        __asm__ volatile("dmb sy" ::: "memory");
+        VIO_W(VIRTIO_MMIO_QUEUE_NOTIFY, 0);
+
+        uint16_t last_used = 0;
+        int probe_done = 0;
+        for (int t = 0; t < 10000000; t++) {
+            __asm__ volatile("dmb sy" ::: "memory");
+            if (used->idx != last_used) { probe_done = 1; break; }
+        }
+        __asm__ volatile("dmb sy" ::: "memory");
+        VIO_R(VIRTIO_MMIO_INTERRUPT_STATUS);
+        VIO_W(VIRTIO_MMIO_INTERRUPT_ACK, 1);
+
+        if (!probe_done || req->status != 0) {
+            printf("[fs] Slot %d: read failed\n", blk_slots[d]);
+            VIO_W(VIRTIO_MMIO_STATUS, 0);
+            continue;
+        }
+
+        /* Check ext2 magic */
+        uint16_t ext2_magic = req->data[0x38] | (req->data[0x39] << 8);
+        if (ext2_magic != 0xEF53) {
+            printf("[fs] Slot %d: not ext2 (0x%04x)\n",
+                   blk_slots[d], ext2_magic);
+            VIO_W(VIRTIO_MMIO_STATUS, 0);
+            continue;
+        }
+
+        /* Check s_volume_name at superblock offset 0x78 (16 bytes) */
+        int is_log = (req->data[0x78] == 'a' && req->data[0x79] == 'i' &&
+                      req->data[0x7a] == 'o' && req->data[0x7b] == 's' &&
+                      req->data[0x7c] == '-' && req->data[0x7d] == 'l' &&
+                      req->data[0x7e] == 'o' && req->data[0x7f] == 'g');
+        if (is_log) {
+            printf("[fs] Slot %d: log drive (aios-log)\n", blk_slots[d]);
+            log_slot_found = blk_slots[d];
+            VIO_W(VIRTIO_MMIO_STATUS, 0);
+            continue;
+        }
+
+        /* This is the system disk */
+        blk_slot = blk_slots[d];
+        printf("[fs] Slot %d: system disk\n", blk_slot);
+        break;
     }
-    VIO_R(VIRTIO_MMIO_INTERRUPT_STATUS);
-    VIO_W(VIRTIO_MMIO_INTERRUPT_ACK, 1);
 
-    if (!done) { printf("[fs] Read timeout\n"); return; }
-    if (req->status != 0) { printf("[fs] Read error status=%u\n", req->status); return; }
-
-    /* Check ext2 magic */
-    uint16_t ext2_magic = req->data[0x38] | (req->data[0x39] << 8);
-    if (ext2_magic != 0xEF53) {
-        printf("[fs] ext2 not found (got 0x%04x)\n", ext2_magic);
+    if (blk_slot < 0) {
+        printf("[fs] No system disk found\n");
         return;
     }
 
     /* Save virtio state for fs thread */
     blk_vio = vio;
-    blk_dma = dma;
+    blk_dma = (uint8_t *)dma_vaddr;
     blk_dma_pa = dma_pa;
 
     /* Init ext2 + VFS */
     vfs_init();
     proc_init();
-    int fs_err = ext2_init(&ext2, blk_read_sector);
+    int fs_err = ext2_init(&ext2, blk_read_sector, 0);
     if (fs_err == 0) {
         ext2_init_write(&ext2, blk_write_sector);
         vfs_mount("/", &ext2_fs_ops, &ext2);
@@ -179,5 +215,12 @@ void boot_fs_init(void) {
         printf("[boot] Filesystems mounted\n");
     } else {
         printf("[fs] ext2 init failed: %d\n", fs_err);
+    }
+
+    /* Mount log drive if found during probe */
+    if (log_slot_found >= 0) {
+        boot_log_drive_init(vio_vaddr, log_slot_found);
+    } else {
+        printf("[boot] No log drive (optional)\n");
     }
 }

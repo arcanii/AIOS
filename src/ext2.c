@@ -16,6 +16,7 @@ static struct {
     uint32_t block;
     uint8_t  data[1024];
     int      valid;
+    int      dev_id;
 } blk_cache[EXT2_CACHE_SIZE];
 
 static int cache_next = 0;
@@ -27,9 +28,9 @@ static void cache_init(void) {
 }
 
 /* Return 0 on hit, -1 on miss */
-static int cache_lookup(uint32_t block, void *buf) {
+static int cache_lookup(int dev_id, uint32_t block, void *buf) {
     for (int i = 0; i < EXT2_CACHE_SIZE; i++) {
-        if (blk_cache[i].valid && blk_cache[i].block == block) {
+        if (blk_cache[i].valid && blk_cache[i].dev_id == dev_id && blk_cache[i].block == block) {
             uint8_t *dst = (uint8_t *)buf;
             for (int j = 0; j < 1024; j++) dst[j] = blk_cache[i].data[j];
             return 0;
@@ -39,9 +40,9 @@ static int cache_lookup(uint32_t block, void *buf) {
 }
 
 /* Store block in cache (update-in-place or evict round-robin) */
-static void cache_store(uint32_t block, const void *buf) {
+static void cache_store(int dev_id, uint32_t block, const void *buf) {
     for (int i = 0; i < EXT2_CACHE_SIZE; i++) {
-        if (blk_cache[i].valid && blk_cache[i].block == block) {
+        if (blk_cache[i].valid && blk_cache[i].dev_id == dev_id && blk_cache[i].block == block) {
             const uint8_t *src = (const uint8_t *)buf;
             for (int j = 0; j < 1024; j++) blk_cache[i].data[j] = src[j];
             return;
@@ -51,14 +52,15 @@ static void cache_store(uint32_t block, const void *buf) {
     cache_next = (cache_next + 1) % EXT2_CACHE_SIZE;
     blk_cache[slot].block = block;
     blk_cache[slot].valid = 1;
+    blk_cache[slot].dev_id = dev_id;
     const uint8_t *src = (const uint8_t *)buf;
     for (int j = 0; j < 1024; j++) blk_cache[slot].data[j] = src[j];
 }
 
 /* Invalidate a single block from the cache */
-static void cache_invalidate(uint32_t block) {
+static void cache_invalidate(int dev_id, uint32_t block) {
     for (int i = 0; i < EXT2_CACHE_SIZE; i++) {
-        if (blk_cache[i].valid && blk_cache[i].block == block) {
+        if (blk_cache[i].valid && blk_cache[i].dev_id == dev_id && blk_cache[i].block == block) {
             blk_cache[i].valid = 0;
             return;
         }
@@ -67,14 +69,14 @@ static void cache_invalidate(uint32_t block) {
 
 
 static int read_block(ext2_ctx_t *ctx, uint32_t block, void *buf) {
-    if (cache_lookup(block, buf) == 0) return 0;
+    if (cache_lookup(ctx->dev_id, block, buf) == 0) return 0;
     int sectors = ctx->block_size / 512;
     uint8_t *p = (uint8_t *)buf;
     for (int i = 0; i < sectors; i++) {
         if (ctx->read_sector((uint64_t)block * sectors + i, p + i * 512) != 0)
             return -1;
     }
-    cache_store(block, buf);
+    cache_store(ctx->dev_id, block, buf);
     return 0;
 }
 
@@ -82,9 +84,10 @@ static int read_block(ext2_ctx_t *ctx, uint32_t block, void *buf) {
 static int write_block(ext2_ctx_t *ctx, uint32_t block, const void *buf);
 static int write_inode(ext2_ctx_t *ctx, uint32_t ino, struct ext2_inode *inode);
 
-int ext2_init(ext2_ctx_t *ctx, blk_read_fn read) {
+int ext2_init(ext2_ctx_t *ctx, blk_read_fn read, int dev_id) {
     ctx->read_sector = read;
-    cache_init();
+    ctx->dev_id = dev_id;
+    if (dev_id == 0) cache_init();
 
     /* Superblock at offset 1024 = sectors 2-3 */
     uint8_t sb[1024];
@@ -99,6 +102,15 @@ int ext2_init(ext2_ctx_t *ctx, blk_read_fn read) {
     ctx->blocks_per_group = rd32(sb + 32);
     ctx->first_data_block = rd32(sb + 20);
 
+    /* Read inode size: rev 0 = always 128, rev 1+ = s_inode_size at offset 88 */
+    uint32_t rev = rd32(sb + 76);
+    if (rev >= 1) {
+        ctx->inode_size = rd16(sb + 88);
+        if (ctx->inode_size == 0) ctx->inode_size = 128;
+    } else {
+        ctx->inode_size = 128;
+    }
+
     /* Group descriptor (block after superblock) */
     uint8_t gd[1024];
     if (read_block(ctx, ctx->first_data_block + 1, gd) != 0) return -3;
@@ -109,10 +121,10 @@ int ext2_init(ext2_ctx_t *ctx, blk_read_fn read) {
 
 int ext2_read_inode(ext2_ctx_t *ctx, uint32_t ino, struct ext2_inode *out) {
     uint32_t idx = ino - 1;
-    uint32_t inode_size = 128;
-    uint32_t inodes_per_block = ctx->block_size / inode_size;
+    uint32_t isz = ctx->inode_size;
+    uint32_t inodes_per_block = ctx->block_size / isz;
     uint32_t block = ctx->inode_table_block + idx / inodes_per_block;
-    uint32_t offset = (idx % inodes_per_block) * inode_size;
+    uint32_t offset = (idx % inodes_per_block) * isz;
 
     uint8_t blk[1024];
     if (read_block(ctx, block, blk) != 0) return -1;
@@ -546,7 +558,7 @@ static int write_block(ext2_ctx_t *ctx, uint32_t block, const void *buf) {
         if (ctx->write_sector((uint64_t)block * sectors + i, p + i * 512) != 0)
             return -1;
     }
-    cache_store(block, buf);
+    cache_store(ctx->dev_id, block, buf);
     return 0;
 }
 
@@ -569,7 +581,7 @@ int ext2_alloc_block(ext2_ctx_t *ctx) {
 
     for (int g = 0; g < num_groups && g < 32; g++) {
         uint32_t bb_block = rd32(bgdt_buf + g * 32 + 0); /* bg_block_bitmap */
-        uint32_t group_start = (g == 0) ? 1 : g * ctx->blocks_per_group;
+        uint32_t group_start = g * ctx->blocks_per_group + ctx->first_data_block;
 
         uint8_t bmp[1024];
         if (read_block(ctx, bb_block, bmp) != 0) continue;
@@ -613,10 +625,10 @@ int ext2_alloc_inode(ext2_ctx_t *ctx) {
 /* Write an inode to disk */
 static int write_inode(ext2_ctx_t *ctx, uint32_t ino, struct ext2_inode *inode) {
     uint32_t idx = ino - 1;
-    uint32_t inode_size = 128;
-    uint32_t inodes_per_block = ctx->block_size / inode_size;
+    uint32_t isz = ctx->inode_size;
+    uint32_t inodes_per_block = ctx->block_size / isz;
     uint32_t block = ctx->inode_table_block + idx / inodes_per_block;
-    uint32_t offset = (idx % inodes_per_block) * inode_size;
+    uint32_t offset = (idx % inodes_per_block) * isz;
 
     uint8_t blk[1024];
     if (read_block(ctx, block, blk) != 0) return -1;
@@ -753,7 +765,7 @@ int ext2_create_file(ext2_ctx_t *ctx, uint32_t parent_ino, const char *name,
     struct ext2_inode inode;
     uint8_t *p = (uint8_t *)&inode;
     for (int i = 0; i < (int)sizeof(inode); i++) p[i] = 0;
-    inode.i_mode = 0x81A4; /* -rw-r--r-- */
+    inode.i_mode = 0x81ED; /* -rwxr-xr-x */
     inode.i_size = len;
     inode.i_links_count = 1;
     inode.i_blocks = ctx->block_size / 512;

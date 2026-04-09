@@ -7,7 +7,7 @@
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: main
 * **Developer**: Bryan
-* **Current Version**: v0.4.72
+* **Current Version**: v0.4.73
 
 ## Development Environment
 
@@ -136,8 +136,15 @@ qemu-system-aarch64 \
     -nographic -serial mon:stdio \
     -drive file=disk/disk_ext2.img,format=raw,if=none,id=hd0 \
     -device virtio-blk-device,drive=hd0 \
+    -drive file=disk/log_ext2.img,format=raw,if=none,id=hd1 \
+    -device virtio-blk-device,drive=hd1 \
     -kernel build-04/images/aios_root-image-arm-qemu-arm-virt
 ```
+
+The second drive (log_ext2.img) is optional. If absent, boot prints
+"No log drive (optional)" and continues without file logging. The boot
+code identifies drives by ext2 volume label -- "aios-log" is the log
+drive, any unlabeled ext2 is the system disk. Drive order does not matter.
 
 ### Cross-Compile External Programs
 
@@ -185,7 +192,7 @@ AIOS/
 +-- src/
 |   +-- aios_root.c          # Root task: boot, drivers, exec/fs/thread/auth servers
 |   +-- aios_auth.c          # Auth server: SHA-3-512, user DB, sessions, permissions
-|   +-- aios_log.c           # Kernel log: 16KB ring buffer + serial echo
+|   +-- aios_log.c           # Kernel log: ring buffer + serial + file (/log/aios.log)
 |   +-- ext2.c               # ext2 filesystem (read + write + indirect blocks)
 |   +-- vfs.c                # Virtual filesystem switch (mount dispatch)
 |   +-- procfs.c             # /proc: version, uptime, status, mounts, log, meminfo
@@ -201,9 +208,10 @@ AIOS/
 |   |   +-- posix_thread.c   # Threads: pthread wrappers, getpwuid, getgrnam
 |   |   +-- vka_audit.c      # VKA allocation counter (per-subsystem instrumentation)
 |   +-- boot/
-|   |   +-- boot_fs_init.c   # Filesystem init (virtio-blk + ext2 + VFS mounts)
+|   |   +-- boot_fs_init.c   # Multi-device virtio-blk probe + ext2 mount (volume label)
+|   |   +-- boot_log_init.c  # Second virtio-blk device: DMA, virtio init, /log mount
 |   |   +-- boot_services.c  # Server threads + process spawning
-|   |   +-- blk_io.c         # Block I/O (virtio-blk read/write)
+|   |   +-- blk_io.c         # Block I/O (virtio-blk read/write, main + log devices)
 |   |   +-- spawn_util.c     # spawn_with_args, spawn_simple
 |   +-- servers/
 |   |   +-- exec_server.c    # ELF loader, process spawn, foreground wait
@@ -229,8 +237,9 @@ AIOS/
 |   +-- bump-patch.sh, bump-minor.sh, bump-build.sh, version.sh
 |   +-- posix_audit.py       # POSIX compliance audit
 +-- disk/
-|   +-- disk_ext2.img        # 128MB ext2 disk image (gitignored)
-|   +-- rootfs/              # Filesystem content overlay (/etc, /tmp, /root)
+|   +-- disk_ext2.img        # 128MB ext2 system disk (gitignored)
+|   +-- log_ext2.img         # 16MB ext2 log disk, label "aios-log" (gitignored)
+|   +-- rootfs/              # Filesystem content overlay (/etc, /tmp, /root, /log)
 +-- docs/
 |   +-- AI_BRIEFING.md       # This file
 |   +-- ARCHITECTURE.md, DESIGN_0.4.md, LEARNINGS.md
@@ -249,10 +258,13 @@ AIOS/
 ### Boot Sequence
 
 1. ELF-loader loads kernel + root task
-2. Root task initializes: allocator (4000 pages), SMP, virtio-blk, ext2, VFS
-3. VFS mounts: / (ext2) and /proc (procfs)
-4. Auth init: load /etc/passwd (SHA-3-512), auto-login root
-5. Starts fs_thread + exec_thread + thread_server + pipe_server
+2. Root task initializes: allocator (4000 pages), SMP
+3. Probe all virtio-blk devices, identify system disk by volume label
+4. Init ext2 on system disk, VFS mounts: / (ext2) and /proc (procfs)
+5. If log drive found (label "aios-log"): init second virtio-blk, mount /log
+6. Auth init: load /etc/passwd (SHA-3-512), auto-login root
+7. Starts fs_thread + exec_thread + thread_server + pipe_server
+8. fs_thread creates /log/aios.log, flushes boot ring buffer to file
 6. Spawns tty_server + auth_server (CPIO, isolated processes)
 7. Spawns getty via exec_thread (fork+exec capable VSpace)
 8. Getty presents login prompt, authenticates via auth IPC, reads pw_shell from
@@ -273,7 +285,7 @@ AIOS/
 
 1. Shell searches $PATH, sends full path to exec_thread
 2. exec_thread reads ELF via VFS (ext2 with indirect blocks)
-3. elf_newFile() parses from 1MB static buffer (TODO: dynamic)
+3. elf_newFile() parses from 8MB static buffer
 4. sel4utils_elf_load() maps segments into child VSpace
 5. __wrap_main intercepts: extracts caps [ser, fs, thread, auth, pipe, CWD], sets CWD, calls real main
 6. Process exits via VM fault -> exec_thread cleans up -> shell resumes
@@ -413,6 +425,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * ELF buffer: Static 8MB (increased from 1MB in v0.4.69, dynamic for v0.5.x)
 * DMA: Must use single untyped Retype for contiguous pages
 * Priority: All processes at 200 (different = deadlock)
+* Ctrl-C (SIGINT): kills foreground process but programs in infinite read loops (tail -f, blocking reads) cannot be interrupted. URGENT: need signal check in nanosleep/read paths to return EINTR.
 * ext2: Never use packed structs on AArch64 (use rd16/rd32)
 * aios-cc: Uses tr "/" "_" for object names (avoids cp.c vs libutil/cp.c collision)
 * Process exit: Overridden to trigger VM fault (not seL4_DebugHalt)
@@ -424,14 +437,15 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 
 ## Pending Items
 
-1. virtio-blk stale reads: device reads return 0xFF for runtime-written blocks (see docs/NEXT_20260409a.md Bug 1)
-2. ~~tcc program TLS/IPC~~ FIXED in v0.4.72: __sysinfo init + muslcsys_init_muslc + arm64 direct ADRP (see docs/NEXT_20260409b.md)
-3. Networking: virtio-net + TCP/IP (see docs/DESIGN_NET.md)
-4. zsh port: alternative shell with ZLE (see docs/DESIGN_ZSH.md)
-5. Allocator right-sizing: 4000 pages ~100x oversized, test with 500/250/100
-6. Dash improvements: tab completion, history, PS1, job control
-7. TTY improvements: process-aware echo, virtual terminals
-8. ext2 write improvements: multi-block file write, triple indirect
+1. **URGENT: Ctrl-C signal delivery to blocked processes** -- tail -f and blocking reads hang, Ctrl-C cannot interrupt. Need PIPE_SIG_FETCH check in nanosleep/read to return EINTR. See docs/NEXT_20260410a.md
+2. virtio-blk stale reads: partially mitigated by dmb sy barrier (v0.4.73), needs stress testing. See docs/NEXT_20260409a.md
+3. ~~tcc program TLS/IPC~~ FIXED in v0.4.72
+4. Networking: virtio-net + TCP/IP (see docs/DESIGN_NET.md)
+5. zsh port: alternative shell with ZLE (see docs/DESIGN_ZSH.md)
+6. Allocator right-sizing: 4000 pages ~100x oversized, test with 500/250/100
+7. Dash improvements: tab completion, history, PS1, job control
+8. TTY improvements: process-aware echo, virtual terminals
+9. ext2 write improvements: free blocks on unlink, triple indirect
 
 ## Version History (0.4.x)
 
@@ -478,8 +492,9 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 | v0.4.70 | tcc cross-compiled and running, tcc -c produces .o files, FS_PREAD (large file reads), FS_PWRITE (positioned writes), writev for regular files, tcc SDK on disk (211 headers + libc.a), ext2 block allocation for writes |
 | v0.4.71 | tcc -o linking (custom CRT, augmented libc, TLS LE relocs, MRI merge), small file truncation fix, munmap reclaim, build_apps.py. Blocked: virtio-blk stale reads + tcc program TLS/IPC |
 | v0.4.72 | tcc compile-and-run working (3 fixes: __sysinfo init, muslcsys_init_muslc, arm64 direct ADRP). Shell > and >> redirect for builtins. Empty file open fix. See docs/NEXT_20260409b.md |
+| v0.4.73 | Second virtio-blk drive (log disk), ext2 multi-device cache (dev_id), volume label disk probe, file-based logging (/log/aios.log), ext2 inode_size from superblock, alloc_block group_start fix, post-completion dmb sy barrier, create_file 0755 permissions. See docs/NEXT_20260410a.md |
 
-## Architecture After v0.4.69
+## Architecture After v0.4.73
 
 ```
 src/aios_root.c           ~200 lines
@@ -507,24 +522,24 @@ include/aios/root_shared.h ~227 lines (+ PIPE_SET_PIPES, xfer_copies)
 include/aios/vka_audit.h   ~38 lines
 ```
 
-## Test Results (v0.4.72)
+## Test Results (v0.4.73)
 
 ```
 posix_verify V3: 98/98 PASS
 signal_test: 20/20 PASS
 POSIX audit: 81/81 (100%)
 dash as login shell: PASS
-echo hello > /tmp/t.txt: PASS (v0.4.72 redirect fix)
-echo line2 >> /tmp/t.txt: PASS (v0.4.72 append fix)
-tcc -v: PASS
-tcc -c test.c -o test.o: 1038 bytes AArch64 .o (PASS)
-tcc -o /tmp/hello /tmp/hello.c: 166KB ELF (PASS)
-tcc program output (puts): PASS (v0.4.72 -- __sysinfo + ADRP fix)
-tcc program globals: PASS (v0.4.72 ADRP fix)
-tcc program strings: PASS (v0.4.72 ADRP fix)
-hello_test (aios-cc same source): PASS (printf + file write)
+Second drive mount: PASS (volume label probe, either QEMU order)
+ls /log: PASS (log ext2 directory listing)
+cat /log/aios.log: PASS (boot entries with timestamps)
+cd /log: PASS (cross-mount chdir)
+echo hello > /tmp/t.txt: PASS
+echo line2 >> /tmp/t.txt: PASS
+tcc -v / tcc -c / tcc -o / tcc run: PASS
 fork_test: PASS
 pipe: echo hello | cat -> hello (PASS)
-Programs: 131
-RAM: 478 MB
+Ctrl-C on tail -f: FAIL (hangs, cannot interrupt blocking read loop)
+Programs on disk: 131 (99 sbase + 28 aios + dash + tcc + hello_test)
+Drives: 2 (128MB system + 16MB log)
+RAM: 476 MB
 ```

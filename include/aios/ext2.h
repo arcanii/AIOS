@@ -96,12 +96,14 @@ typedef struct {
     uint32_t block_size;
     uint32_t inodes_per_group;
     uint32_t inode_table_block;
+    uint32_t inode_size;
     uint32_t blocks_per_group;
     uint32_t first_data_block;
     blk_write_fn write_sector;
+    int dev_id;
 } ext2_ctx_t;
 
-int ext2_init(ext2_ctx_t *ctx, blk_read_fn read);
+int ext2_init(ext2_ctx_t *ctx, blk_read_fn read, int dev_id);
 int ext2_read_inode(ext2_ctx_t *ctx, uint32_t ino, struct ext2_inode *out);
 int ext2_read_block(ext2_ctx_t *ctx, uint32_t block, void *buf);
 int ext2_lookup(ext2_ctx_t *ctx, uint32_t dir_ino, const char *name, uint32_t *out_ino);
@@ -117,6 +119,9 @@ int ext2_alloc_inode(ext2_ctx_t *ctx);
 int ext2_mkdir(ext2_ctx_t *ctx, uint32_t parent_ino, const char *name);
 int ext2_create_file(ext2_ctx_t *ctx, uint32_t parent_ino, const char *name, const void *data, int len);
 int ext2_unlink(ext2_ctx_t *ctx, uint32_t parent_ino, const char *name);
+int ext2_pread_file(ext2_ctx_t *ctx, uint32_t ino, int offset, char *buf, int bufsize);
+int ext2_pwrite_file(ext2_ctx_t *ctx, uint32_t ino, int offset,
+                     const uint8_t *data, int len);
 
 
 /* VFS adapter */

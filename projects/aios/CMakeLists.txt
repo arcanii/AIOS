@@ -112,6 +112,7 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/boot/blk_io.c
     ${AIOS_ROOT}/src/boot/spawn_util.c
     ${AIOS_ROOT}/src/boot/boot_fs_init.c
+    ${AIOS_ROOT}/src/boot/boot_log_init.c
     ${AIOS_ROOT}/src/lib/vka_audit.c
     ${AIOS_ROOT}/src/boot/boot_services.c
     apps_cpio.o

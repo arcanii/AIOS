@@ -11,6 +11,7 @@
 #include "aios/vfs.h"
 #include "aios/ext2.h"
 #include "aios/procfs.h"
+#include "aios/aios_log.h"
 
 int fs_check_write_perm(int badge) {
     if (badge == 0) return 1;  /* unbadged = internal (root) */
@@ -39,6 +40,9 @@ void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
     seL4_CPtr ep = (seL4_CPtr)(uintptr_t)arg0;
     static char fs_buf[4096];
     (void)ep; /* used below in Recv */
+
+    /* Init file logging on /log drive */
+    aios_log_file_init();
 
     /* quiet */
 

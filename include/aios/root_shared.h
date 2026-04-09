@@ -180,6 +180,12 @@ extern volatile uint32_t *blk_vio;
 extern uint8_t *blk_dma;
 extern uint64_t blk_dma_pa;
 
+/* Log drive (second virtio-blk) */
+extern ext2_ctx_t ext2_log;
+extern volatile uint32_t *blk_vio_log;
+extern uint8_t *blk_dma_log;
+extern uint64_t blk_dma_pa_log;
+
 extern volatile uint32_t *uart;
 
 extern volatile int fg_pid;
@@ -201,6 +207,13 @@ void boot_start_services(vka_object_t *fault_ep);
 /* Block I/O (src/boot/blk_io.c) */
 int blk_read_sector(uint64_t sector, void *buf);
 int blk_write_sector(uint64_t sector, const void *buf);
+
+/* Log drive I/O (src/boot/blk_io.c) */
+int blk_read_sector_log(uint64_t sector, void *buf);
+int blk_write_sector_log(uint64_t sector, const void *buf);
+
+/* Log drive init (src/boot/boot_log_init.c) */
+void boot_log_drive_init(void *vio_vaddr, int log_slot);
 
 /* Spawn utilities (src/boot/spawn_util.c) */
 int spawn_with_args(const char *name, uint8_t prio,
