@@ -9,6 +9,7 @@ Architectures / Hardware Supported
 
 ## Latest Achievements
 - shell is using DASH (https://github.com/tklauser/dash)
+- C compiler is TinyCC (https://github.com/TinyCC/tinycc)
 
 ## Overview
 
