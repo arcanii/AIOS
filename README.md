@@ -12,6 +12,7 @@ Architectures / Hardware Supported
 - Networking: virtio-net driver, TCP/IP stack, HTTP server
 - shell is using DASH (https://github.com/tklauser/dash)
 - C compiler is TinyCC (https://github.com/TinyCC/tinycc)
+- Graphic Display buffer working (Display buffer IPC)
 
 ## Overview
 
