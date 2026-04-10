@@ -64,6 +64,40 @@ void boot_start_services(vka_object_t *fault_ep) {
     start_server_thread((sel4utils_thread_entry_fn)pipe_server_fn, pipe_ep_cap);
     proc_add("pipe_server", 200);
 
+    /* Start network threads (if virtio-net detected) */
+    if (net_available) {
+        vka_object_t net_ep_obj;
+        vka_audit_endpoint(VKA_SUB_BOOT);
+        vka_alloc_endpoint(&vka, &net_ep_obj);
+        net_ep_cap = net_ep_obj.cptr;
+
+        /* Driver thread: receives notification cap as arg0 */
+        start_server_thread((sel4utils_thread_entry_fn)net_driver_fn,
+                            net_drv_ntfn_cap);
+
+        /* Server thread: receives IPC endpoint as arg0,
+         * notification bound to TCB for RX delivery */
+        {
+            sel4utils_thread_t net_srv;
+            error = sel4utils_configure_thread(&vka, &vspace, &vspace, 0,
+                simple_get_cnode(&simple), seL4_NilData, &net_srv);
+            if (!error) {
+                seL4_TCB_SetPriority(net_srv.tcb.cptr,
+                    simple_get_tcb(&simple), 200);
+                int bind_err = seL4_TCB_BindNotification(
+                    net_srv.tcb.cptr, net_srv_ntfn_cap);
+                printf("[boot] net srv ntfn bind: err=%d cap=%lu\n",
+                       bind_err, (unsigned long)net_srv_ntfn_cap);
+                sel4utils_start_thread(&net_srv,
+                    (sel4utils_thread_entry_fn)net_server_fn,
+                    (void *)(uintptr_t)net_ep_cap, NULL, 1);
+            }
+        }
+        proc_add("net_driver", 200);
+        proc_add("net_server", 200);
+        printf("[boot] Network threads started\n");
+    }
+
     /* Spawn tty_server (CPIO, isolated process) */
     sel4utils_process_t serial_proc;
     seL4_CPtr caps[1], slots[1];

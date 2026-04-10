@@ -56,6 +56,21 @@
 #define PIPE_READ_SHM    80
 #define PIPE_SET_PIPES   81
 
+/* ---- NET IPC labels (90-109) ---- */
+#define NET_SOCKET       90
+#define NET_BIND         91
+#define NET_LISTEN       92
+#define NET_ACCEPT       93
+#define NET_CONNECT      94
+#define NET_SENDTO       95
+#define NET_RECVFROM     96
+#define NET_CLOSE_SOCK   97
+#define NET_GETINFO      98
+#define NET_SETSOCKOPT   99
+#define NET_SENDTO_SHM   100
+#define NET_RECVFROM_SHM 101
+#define NET_MAP_SHM      102
+
 /* ── Limits ── */
 
 #define MAX_ACTIVE_PROCS     16
@@ -188,6 +203,20 @@ extern uint64_t blk_dma_pa_log;
 
 extern volatile uint32_t *uart;
 
+/* Network state (virtio-net) */
+extern volatile uint32_t *net_vio;
+extern uint8_t *net_dma;
+extern uint64_t net_dma_pa;
+extern uint8_t net_mac[6];
+extern int net_available;
+extern int net_vio_slot;
+extern seL4_CPtr net_ep_cap;
+extern seL4_CPtr net_drv_ntfn_cap;
+extern seL4_CPtr net_srv_ntfn_cap;
+
+struct net_rx_ring;
+extern struct net_rx_ring net_rx_ring;
+
 extern volatile int fg_pid;
 extern volatile seL4_CPtr fg_fault_ep;
 extern volatile int fg_killed;
@@ -235,6 +264,10 @@ void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf);
 void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf);
 int process_kill(int pid);
 void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf);
+void boot_net_init(void);
+void net_driver_fn(void *arg0, void *arg1, void *ipc_buf);
+void net_server_fn(void *arg0, void *arg1, void *ipc_buf);
+
 void aios_system_shutdown(void);
 
 #endif /* AIOS_ROOT_SHARED_H */

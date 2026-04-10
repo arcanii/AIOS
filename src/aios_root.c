@@ -27,6 +27,7 @@
 #include "aios/aios_log.h"
 #include "aios/root_shared.h"
 #include "aios/vka_audit.h"
+#include "aios/net.h"
 #include <elf/elf.h>
 #include <sel4utils/elf.h>
 #include <sel4utils/api.h>
@@ -80,6 +81,18 @@ char elf_buf[8 * 1024 * 1024]; /* shared between exec_thread, fork, exec */
 volatile int fg_pid = -1;
 volatile seL4_CPtr fg_fault_ep = 0;
 volatile int fg_killed = 0;
+
+/* Network state (virtio-net) */
+volatile uint32_t *net_vio = NULL;
+uint8_t *net_dma = NULL;
+uint64_t net_dma_pa = 0;
+uint8_t net_mac[6] = {0};
+int net_available = 0;
+int net_vio_slot = -1;
+seL4_CPtr net_ep_cap = 0;
+seL4_CPtr net_drv_ntfn_cap = 0;
+seL4_CPtr net_srv_ntfn_cap = 0;
+struct net_rx_ring net_rx_ring;
 
 /* ── File permission check ── */
 /* PSCI shutdown -- seL4_DebugHalt stops QEMU cleanly */
@@ -164,13 +177,18 @@ int main(int argc, char *argv[]) {
     /* Phase 2: Filesystem (virtio-blk + ext2 + VFS) */
     boot_fs_init();
 
+    /* Phase 2b: Network (optional virtio-net) */
+    boot_net_init();
+
     /* Phase 3: Server threads + process spawning */
     boot_start_services(&fault_ep);
 
     /* Main loop: keyboard polling + exec requests */
     while (1) {
-        /* Poll UART for keyboard */
-        if (uart && !(uart[UART_FR / 4] & FR_RXFE)) {
+        /* Poll UART for keyboard -- drain FIFO in burst for paste */
+        int uart_batch = 0;
+        while (uart && !(uart[UART_FR / 4] & FR_RXFE) && uart_batch < 64) {
+            uart_batch++;
             char c = (char)(uart[UART_DR / 4] & 0xFF);
             if (c == 0x03 && fg_pid > 0) {
                 /* Ctrl-C: two-stage SIGINT delivery.
@@ -185,16 +203,14 @@ int main(int argc, char *argv[]) {
                 }
                 if (ki < MAX_ACTIVE_PROCS) {
                     if (active_procs[ki].sig_pending & (1U << 1)) {
-                        /* SIGINT already pending -- force kill */
+                        /* SIGINT already pending -- force kill -- mark inactive
+                         * before destroy so reap/exec do not double-free */
                         fg_killed = 1;
-                        seL4_CPtr kep = fg_fault_ep;
+                        active_procs[ki].active = 0;
                         sel4utils_destroy_process(
                             &active_procs[ki].proc, &vka);
-                        if (kep) {
-                            seL4_SetMR(0, 0xDEAD);
-                            seL4_Send(kep,
-                                seL4_MessageInfo_new(0, 0, 0, 1));
-                        }
+                        fg_pid = -1;
+                        fg_fault_ep = 0;
                     } else {
                         /* First ^C: send SIGINT (bit 1 = signal 2) */
                         active_procs[ki].sig_pending |= (1U << 1);
@@ -208,6 +224,15 @@ int main(int argc, char *argv[]) {
                 seL4_SetMR(0, (seL4_Word)c);
                 seL4_Call(serial_ep.cptr,
                           seL4_MessageInfo_new(SER_KEY_PUSH, 0, 0, 1));
+            }
+        }
+
+        /* Phase 1 polling: check virtio-net interrupt status */
+        if (net_available && net_vio) {
+            uint32_t isr = net_vio[VIRTIO_MMIO_INTERRUPT_STATUS / 4];
+            if (isr) {
+                net_vio[VIRTIO_MMIO_INTERRUPT_ACK / 4] = isr;
+                seL4_Signal(net_drv_ntfn_cap);
             }
         }
 

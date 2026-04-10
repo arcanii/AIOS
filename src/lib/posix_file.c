@@ -462,10 +462,18 @@ long aios_sys_close(va_list ap) {
          * Instead, aios_exit_cb sends PIPE_CLOSE_WRITE when the
          * writer process exits. The shell sends PIPE_CLOSE to
          * destroy the pipe buffer after the pipeline completes. */
+        /* Socket close: notify server to free slot */
+        if (f->is_socket && net_ep) {
+            seL4_SetMR(0, (seL4_Word)f->socket_id);
+            seL4_Call(net_ep,
+                seL4_MessageInfo_new(NET_CLOSE_SOCK_L, 0, 0, 1));
+        }
         f->active = 0;
         f->is_pipe = 0;
+        f->is_socket = 0;
         f->is_devnull = 0;
         f->pipe_id = -1;
+        f->socket_id = -1;
         f->shm_vaddr = 0;
         return 0;
     }

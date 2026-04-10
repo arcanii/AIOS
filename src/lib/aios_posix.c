@@ -14,6 +14,7 @@ seL4_CPtr fs_ep_cap = 0;
 seL4_CPtr thread_ep = 0;
 seL4_CPtr auth_ep = 0;
 seL4_CPtr pipe_ep = 0;
+seL4_CPtr net_ep = 0;
 
 char aios_cwd[256] = "/";
 uint32_t aios_uid = 0;
@@ -568,6 +569,17 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     /* v0.4.64: dash prerequisites */
     muslcsys_install_syscall(__NR_setpgid, aios_sys_setpgid);
 
+    /* M3+M4: socket syscalls */
+    muslcsys_install_syscall(__NR_listen, aios_sys_listen);
+    muslcsys_install_syscall(202, aios_sys_accept4);  /* __NR_accept */
+    muslcsys_install_syscall(242, aios_sys_accept4);  /* __NR_accept4 */
+    muslcsys_install_syscall(__NR_socket, aios_sys_socket);
+    muslcsys_install_syscall(__NR_bind, aios_sys_bind);
+    muslcsys_install_syscall(__NR_sendto, aios_sys_sendto);
+    muslcsys_install_syscall(__NR_recvfrom, aios_sys_recvfrom);
+    muslcsys_install_syscall(__NR_setsockopt, aios_sys_setsockopt);
+    muslcsys_install_syscall(__NR_shutdown_sock, aios_sys_shutdown_sock);
+
 #endif
 }
 
@@ -600,21 +612,23 @@ static long _auto_parse(const char *s) {
 int __real_main(int argc, char **argv) __attribute__((weak));
 
 int __wrap_main(int argc, char **argv) {
-    /* argv layout: [serial_ep, fs_ep, thread_ep, auth_ep, pipe_ep, CWD, progname, arg1, ...] */
-    seL4_CPtr serial = 0, fs = 0, thr = 0, ath = 0, pip = 0;
+    /* argv layout: [ser, fs, thread, auth, pipe, net, CWD, progname, arg1, ...] */
+    seL4_CPtr serial = 0, fs = 0, thr = 0, ath = 0, pip = 0, nt = 0;
     if (argc > 0 && argv[0]) serial = (seL4_CPtr)_auto_parse(argv[0]);
     if (argc > 1 && argv[1]) fs = (seL4_CPtr)_auto_parse(argv[1]);
     if (argc > 2 && argv[2]) thr = (seL4_CPtr)_auto_parse(argv[2]);
     if (argc > 3 && argv[3]) ath = (seL4_CPtr)_auto_parse(argv[3]);
     if (argc > 4 && argv[4]) pip = (seL4_CPtr)_auto_parse(argv[4]);
+    if (argc > 5 && argv[5]) nt  = (seL4_CPtr)_auto_parse(argv[5]);
     thread_ep = thr;
     auth_ep = ath;
     pipe_ep = pip;
+    net_ep = nt;
     aios_init(serial, fs);
 
-    /* Parse uid:gid:/path from argv[5] */
-    if (argc > 5 && argv[5]) {
-        const char *s = argv[5];
+    /* Parse uid:gid:/path from argv[6] (shifted by net_ep at [5]) */
+    if (argc > 6 && argv[6]) {
+        const char *s = argv[6];
         if (s[0] >= '0' && s[0] <= '9') {
             /* Format: uid:gid:[spipe:rpipe:]/path */
             uint32_t uid = 0;
@@ -647,6 +661,6 @@ int __wrap_main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 
-    /* Strip 6 args (ser, fs, thread, auth, pipe, cwd): real main sees [progname, arg1, ...] */
-    return __real_main(argc - 6, argv + 6);
+    /* Strip 7 args (ser, fs, thread, auth, pipe, net, cwd) */
+    return __real_main(argc - 7, argv + 7);
 }

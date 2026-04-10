@@ -12,6 +12,7 @@ add_library(aios_posix STATIC
     ${AIOS_ROOT}/src/lib/posix_time.c
     ${AIOS_ROOT}/src/lib/posix_misc.c
     ${AIOS_ROOT}/src/lib/posix_thread.c
+    ${AIOS_ROOT}/src/lib/posix_net.c
     ${AIOS_ROOT}/src/lib/aios_entry.c
 )
 target_include_directories(aios_posix PUBLIC ${AIOS_ROOT}/src/lib ${AIOS_ROOT}/include)
@@ -115,6 +116,11 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/boot/boot_log_init.c
     ${AIOS_ROOT}/src/lib/vka_audit.c
     ${AIOS_ROOT}/src/boot/boot_services.c
+    ${AIOS_ROOT}/src/boot/boot_net_init.c
+    ${AIOS_ROOT}/src/servers/net_driver.c
+    ${AIOS_ROOT}/src/servers/net_server.c
+    ${AIOS_ROOT}/src/net/net_stack.c
+    ${AIOS_ROOT}/src/net/net_tcp.c
     apps_cpio.o
 )
 target_link_libraries(aios_root

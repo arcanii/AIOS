@@ -105,6 +105,41 @@
 #define __NR_setpgid 154
 #endif
 
+/* M3: Socket syscall numbers (AArch64 musl) */
+#ifndef __NR_listen
+#define __NR_listen 201
+#endif
+#ifndef __NR_accept4
+#define __NR_accept4 202
+#endif
+#ifndef __NR_socket
+#define __NR_socket 198
+#endif
+#ifndef __NR_bind
+#define __NR_bind 200
+#endif
+#ifndef __NR_sendto
+#define __NR_sendto 206
+#endif
+#ifndef __NR_recvfrom
+#define __NR_recvfrom 207
+#endif
+#ifndef __NR_setsockopt
+#define __NR_setsockopt 208
+#endif
+#ifndef __NR_shutdown_sock
+#define __NR_shutdown_sock 210
+#endif
+
+/* Net IPC labels (client side) */
+#define NET_SOCKET_L      90
+#define NET_BIND_L        91
+#define NET_SENDTO_L      95
+#define NET_RECVFROM_L    96
+#define NET_LISTEN_L      92
+#define NET_ACCEPT_L      93
+#define NET_CLOSE_SOCK_L  97
+
 
 /* Pipe IPC protocol labels */
 #define PIPE_FORK         65
@@ -131,6 +166,8 @@ typedef struct {
     int is_devnull;
     int is_append;
     int is_tty;               /* REDIR_FIX_V072: marks fd as terminal copy */
+    int is_socket;            /* M3: fd is a network socket */
+    int socket_id;            /* M3: index in net_server socket table (0-7) */
     char *shm_vaddr;              /* v0.4.66: SHM xfer page in this VSpace */
     char path[128];
     char data[4096];
@@ -144,6 +181,7 @@ extern seL4_CPtr fs_ep_cap;
 extern seL4_CPtr thread_ep;
 extern seL4_CPtr auth_ep;
 extern seL4_CPtr pipe_ep;
+extern seL4_CPtr net_ep;
 
 extern char aios_cwd[256];
 extern uint32_t aios_uid;
@@ -208,6 +246,16 @@ long aios_sys_chdir(va_list ap);
 long aios_sys_getcwd(va_list ap);
 long aios_sys_getdents64(va_list ap);
 long aios_sys_renameat(va_list ap);
+
+/* ---- Syscall handlers: posix_net.c ---- */
+long aios_sys_socket(va_list ap);
+long aios_sys_bind(va_list ap);
+long aios_sys_sendto(va_list ap);
+long aios_sys_recvfrom(va_list ap);
+long aios_sys_setsockopt(va_list ap);
+long aios_sys_listen(va_list ap);
+long aios_sys_accept4(va_list ap);
+long aios_sys_shutdown_sock(va_list ap);
 
 /* ---- Syscall handlers: posix_proc.c ---- */
 long aios_sys_exit(va_list ap);

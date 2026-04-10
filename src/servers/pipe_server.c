@@ -721,13 +721,19 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             seL4_CPtr cp2 = sel4utils_copy_cap_to_process(proc, &vka, pi_d.capPtr);
             ap->child_pipe_slot = cp2;
 
-            char s_ser[16], s_fs[16], s_thr[16], s_auth[16], s_pip[16];
+            /* M3: copy net_ep to child (0 if no network) */
+            seL4_CPtr cn = 0;
+            if (net_ep_cap)
+                cn = sel4utils_copy_cap_to_process(proc, &vka, net_ep_cap);
+
+            char s_ser[16], s_fs[16], s_thr[16], s_auth[16], s_pip[16], s_net[16];
             char cwd[64];
             snprintf(s_ser, 16, "%lu", (unsigned long)cs);
             snprintf(s_fs, 16, "%lu", (unsigned long)cf);
             snprintf(s_thr, 16, "%lu", (unsigned long)ct);
             snprintf(s_auth, 16, "%lu", (unsigned long)ca);
             snprintf(s_pip, 16, "%lu", (unsigned long)cp2);
+            snprintf(s_net, 16, "%lu", (unsigned long)cn);
 
             if (exec_stdout_pipe >= 0 || exec_stdin_pipe >= 0) {
                 int sp_id = exec_stdout_pipe < 0 ? 99 : exec_stdout_pipe;
@@ -738,17 +744,18 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 snprintf(cwd, 64, "%u:%u:%s", old_uid, old_gid, child_cwd);
             }
 
-            char *spawn_argv[6 + MAX_USER_ARGV];
+            char *spawn_argv[7 + MAX_USER_ARGV];
             int spawn_argc = 0;
             spawn_argv[spawn_argc++] = s_ser;
             spawn_argv[spawn_argc++] = s_fs;
             spawn_argv[spawn_argc++] = s_thr;
             spawn_argv[spawn_argc++] = s_auth;
             spawn_argv[spawn_argc++] = s_pip;
+            spawn_argv[spawn_argc++] = s_net;
             spawn_argv[spawn_argc++] = cwd;
             if (exec_argc > 0) {
                 for (int ai = 0; ai < exec_argc
-                     && spawn_argc < 6 + MAX_USER_ARGV; ai++)
+                     && spawn_argc < 7 + MAX_USER_ARGV; ai++)
                     spawn_argv[spawn_argc++] = exec_argv[ai];
             } else {
                 spawn_argv[spawn_argc++] = elf_path;

@@ -49,15 +49,20 @@ void boot_fs_init(void) {
         return;
     }
 
-    /* Discover all block device slots */
+    /* Discover all device slots (block + net) */
     int blk_slots[4];
     int num_blk_devs = 0;
-    for (int i = 0; i < VIRTIO_NUM_SLOTS && num_blk_devs < 4; i++) {
+    int net_slot_found = -1;
+    for (int i = 0; i < VIRTIO_NUM_SLOTS; i++) {
         volatile uint32_t *sl = (volatile uint32_t *)
             ((uintptr_t)vio_vaddr + i * VIRTIO_SLOT_SIZE);
-        if (sl[0] == VIRTIO_MAGIC &&
-            sl[VIRTIO_MMIO_DEVICE_ID/4] == VIRTIO_BLK_DEVICE_ID) {
+        if (sl[0] != VIRTIO_MAGIC) continue;
+        uint32_t devid = sl[VIRTIO_MMIO_DEVICE_ID/4];
+        if (devid == VIRTIO_BLK_DEVICE_ID && num_blk_devs < 4) {
             blk_slots[num_blk_devs++] = i;
+        }
+        if (devid == VIRTIO_NET_DEVICE_ID && net_slot_found < 0) {
+            net_slot_found = i;
         }
     }
     if (num_blk_devs == 0) {
@@ -222,5 +227,16 @@ void boot_fs_init(void) {
         boot_log_drive_init(vio_vaddr, log_slot_found);
     } else {
         printf("[boot] No log drive (optional)\n");
+    }
+
+    /* Record network device for boot_net_init */
+    if (net_slot_found >= 0) {
+        net_vio_slot = net_slot_found;
+        net_available = 1;
+        net_vio = (volatile uint32_t *)
+            ((uintptr_t)vio_vaddr + net_slot_found * VIRTIO_SLOT_SIZE);
+        printf("[fs] Slot %d: virtio-net\n", net_slot_found);
+    } else {
+        net_available = 0;
     }
 }
