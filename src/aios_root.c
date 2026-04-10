@@ -28,6 +28,7 @@
 #include "aios/root_shared.h"
 #include "aios/vka_audit.h"
 #include "aios/net.h"
+#include "aios/gpu.h"
 #include <elf/elf.h>
 #include <sel4utils/elf.h>
 #include <sel4utils/api.h>
@@ -45,6 +46,10 @@ allocman_t *allocman;
 #define UART_DR   0x000
 #define UART_FR   0x018
 #define FR_RXFE   (1 << 4)
+#define UART_IMSC 0x038   /* interrupt mask set/clear */
+#define UART_ICR  0x044   /* interrupt clear */
+#define UART0_IRQ 33      /* PL011 UART0 SPI 1 on QEMU virt */
+#define IMSC_RXIM (1<<4)  /* RX interrupt mask bit */
 volatile uint32_t *uart;
 
 /* ── Thread management ── */
@@ -93,6 +98,21 @@ seL4_CPtr net_ep_cap = 0;
 seL4_CPtr net_drv_ntfn_cap = 0;
 seL4_CPtr net_srv_ntfn_cap = 0;
 struct net_rx_ring net_rx_ring;
+
+/* Display state (virtio-gpu) */
+volatile uint32_t *gpu_vio = NULL;
+uint8_t *gpu_dma = NULL;
+uint64_t gpu_dma_pa = 0;
+uint32_t *gpu_fb = NULL;
+uint64_t gpu_fb_pa = 0;
+int gpu_available = 0;
+int gpu_vio_slot = -1;
+seL4_CPtr disp_ep_cap = 0;
+static seL4_CPtr uart_irq_cap = 0;
+static seL4_CPtr main_ntfn_cap = 0;
+static int irq_uart_active = 0;
+uint32_t gpu_width = 0;
+uint32_t gpu_height = 0;
 
 /* ── File permission check ── */
 /* PSCI shutdown -- seL4_DebugHalt stops QEMU cleanly */
@@ -180,10 +200,54 @@ int main(int argc, char *argv[]) {
     /* Phase 2b: Network (optional virtio-net) */
     boot_net_init();
 
+    /* Phase 2c: Display (optional virtio-gpu) */
+    boot_display_init();
+
     /* Phase 3: Server threads + process spawning */
     boot_start_services(&fault_ep);
 
-    /* Main loop: keyboard polling + exec requests */
+    /* --- UART IRQ + notification setup --- */
+    {
+        vka_object_t ntfn_obj;
+        int ierr = vka_alloc_notification(&vka, &ntfn_obj);
+        if (!ierr) {
+            main_ntfn_cap = ntfn_obj.cptr;
+            /* NOTE: do NOT bind notification to TCB -- bound notifications
+             * interfere with seL4_Call (SER_KEY_PUSH IPC) by returning
+             * the notification badge instead of the expected reply.
+             * seL4_Wait on an unbound notification works fine. */
+        }
+        if (main_ntfn_cap && uart) {
+            /* Get IRQ handler cap for UART0 */
+            cspacepath_t irq_path;
+            ierr = vka_cspace_alloc_path(&vka, &irq_path);
+            if (!ierr) {
+                ierr = simple_get_IRQ_handler(&simple, UART0_IRQ, irq_path);
+                if (!ierr) {
+                    uart_irq_cap = irq_path.capPtr;
+                    /* Bind IRQ to our notification */
+                    ierr = seL4_IRQHandler_SetNotification(
+                        uart_irq_cap, main_ntfn_cap);
+                    if (!ierr) {
+                        /* Enable PL011 RX interrupt */
+                        uart[UART_IMSC / 4] |= IMSC_RXIM;
+                        seL4_IRQHandler_Ack(uart_irq_cap);
+                        irq_uart_active = 1;
+                        printf("[boot] UART IRQ %d bound (notification)\n",
+                               UART0_IRQ);
+                    } else {
+                        printf("[boot] IRQ SetNotification failed: %d\n", ierr);
+                    }
+                } else {
+                    printf("[boot] UART IRQ handler failed: %d\n", ierr);
+                }
+            }
+        }
+        if (!irq_uart_active)
+            printf("[boot] UART: polling mode (IRQ unavailable)\n");
+    }
+
+    /* Main loop: event-driven or polling fallback */
     while (1) {
         /* Poll UART for keyboard -- drain FIFO in burst for paste */
         int uart_batch = 0;
@@ -236,7 +300,17 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        seL4_Yield();
+        /* ACK UART IRQ if active (clears interrupt, re-arms) */
+        if (irq_uart_active && uart_irq_cap) {
+            uart[UART_ICR / 4] = IMSC_RXIM;  /* clear RX interrupt */
+            seL4_IRQHandler_Ack(uart_irq_cap);
+        }
+
+        if (irq_uart_active && main_ntfn_cap) {
+            seL4_Wait(main_ntfn_cap, NULL);  /* sleep until event */
+        } else {
+            seL4_Yield();  /* fallback: busy-poll */
+        }
     }
 
 idle:

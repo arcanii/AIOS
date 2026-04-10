@@ -13,6 +13,7 @@ typedef enum {
     VKA_SUB_THREAD,
     VKA_SUB_PIPE,
     VKA_SUB_NET,
+    VKA_SUB_GPU,
     VKA_SUB_OTHER,
     VKA_SUB_COUNT
 } vka_subsystem_t;

@@ -7,7 +7,7 @@
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: main
 * **Developer**: Bryan
-* **Current Version**: v0.4.74
+* **Current Version**: v0.4.75
 
 ## Development Environment
 
@@ -443,7 +443,8 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 2. virtio-blk stale reads: partially mitigated by dmb sy barrier (v0.4.73), needs stress testing. See docs/NEXT_20260409a.md
 3. ~~tcc program TLS/IPC~~ FIXED in v0.4.72
 4. ~~Networking~~ DONE in v0.4.74: virtio-net driver, ARP/ICMP, UDP sockets, TCP + HTTP server (M1-M4)
-5. zsh port: alternative shell with ZLE (see docs/DESIGN_ZSH.md)
+5. ~~Display server~~ DONE in v0.4.75: ramfb framebuffer, font rendering, display IPC, fbshow, UART IRQ
+6. zsh port: alternative shell with ZLE (see docs/DESIGN_ZSH.md)
 6. Allocator right-sizing: 4000 pages ~100x oversized, test with 500/250/100
 7. Dash improvements: tab completion, history, PS1, job control
 8. TTY improvements: process-aware echo, virtual terminals
@@ -496,6 +497,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 | v0.4.72 | tcc compile-and-run working (3 fixes: __sysinfo init, muslcsys_init_muslc, arm64 direct ADRP). Shell > and >> redirect for builtins. Empty file open fix. See docs/NEXT_20260409b.md |
 | v0.4.74 | Networking: virtio-net driver (128KB DMA, two-thread RX/TX), ARP/ICMP/UDP/TCP protocol stack, POSIX socket API, HTTP server user program. See docs/NEXT_20260410b.md |
 | v0.4.73 | Second virtio-blk drive (log disk), ext2 multi-device cache (dev_id), volume label disk probe, file-based logging (/log/aios.log), ext2 inode_size from superblock, alloc_block group_start fix, post-completion dmb sy barrier, create_file 0755 permissions. See docs/NEXT_20260410a.md |
+| v0.4.75 | Display server: ramfb framebuffer (1024x768), 8x8 bitmap font, splash images, display server IPC (5 commands), fbshow user program, disp_ep capability propagation, UART IRQ notification (seL4_Wait replaces polling). See docs/NEXT_20260411a.md |
 
 ## Architecture After v0.4.74
 

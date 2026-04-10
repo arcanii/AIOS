@@ -98,7 +98,18 @@ void boot_start_services(vka_object_t *fault_ep) {
         printf("[boot] Network threads started\n");
     }
 
-    /* Spawn tty_server (CPIO, isolated process) */
+    /* Start display server */
+    {
+        vka_object_t disp_ep_obj;
+        vka_audit_endpoint(VKA_SUB_BOOT);
+        vka_alloc_endpoint(&vka, &disp_ep_obj);
+        disp_ep_cap = disp_ep_obj.cptr;
+        start_server_thread((sel4utils_thread_entry_fn)display_server_fn,
+                            disp_ep_cap);
+        proc_add("display_server", 200);
+    }
+
+        /* Spawn tty_server (CPIO, isolated process) */
     sel4utils_process_t serial_proc;
     seL4_CPtr caps[1], slots[1];
     caps[0] = serial_ep.cptr;

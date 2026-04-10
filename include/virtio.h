@@ -45,6 +45,7 @@
 #define VIRTIO_BLK_T_OUT            1   /* write */
 #define VIRTIO_BLK_DEVICE_ID        2   /* device ID for block */
 #define VIRTIO_NET_DEVICE_ID        1   /* device ID for network */
+#define VIRTIO_GPU_DEVICE_ID        16  /* device ID for GPU */
 #define VIRTIO_SLOT_SIZE            0x200 /* MMIO slot spacing */
 
 /* ── Virtqueue ─────────────────────────────────────────── */

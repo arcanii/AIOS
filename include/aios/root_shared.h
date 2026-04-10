@@ -71,6 +71,13 @@
 #define NET_RECVFROM_SHM 101
 #define NET_MAP_SHM      102
 
+/* ---- DISPLAY IPC labels (110-119) ---- */
+#define DISP_FB_INFO     110
+#define DISP_SHOW_FILE   111
+#define DISP_TEXT        112
+#define DISP_FILL_RECT   113
+#define DISP_CLEAR       114
+
 /* ── Limits ── */
 
 #define MAX_ACTIVE_PROCS     16
@@ -217,6 +224,18 @@ extern seL4_CPtr net_srv_ntfn_cap;
 struct net_rx_ring;
 extern struct net_rx_ring net_rx_ring;
 
+/* Display state (virtio-gpu) */
+extern volatile uint32_t *gpu_vio;
+extern uint8_t *gpu_dma;
+extern uint64_t gpu_dma_pa;
+extern uint32_t *gpu_fb;
+extern uint64_t gpu_fb_pa;
+extern int gpu_available;
+extern int gpu_vio_slot;
+extern uint32_t gpu_width;
+extern uint32_t gpu_height;
+extern seL4_CPtr disp_ep_cap;
+
 extern volatile int fg_pid;
 extern volatile seL4_CPtr fg_fault_ep;
 extern volatile int fg_killed;
@@ -265,8 +284,10 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf);
 int process_kill(int pid);
 void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf);
 void boot_net_init(void);
+void boot_display_init(void);
 void net_driver_fn(void *arg0, void *arg1, void *ipc_buf);
 void net_server_fn(void *arg0, void *arg1, void *ipc_buf);
+void display_server_fn(void *arg0, void *arg1, void *ipc_buf);
 
 void aios_system_shutdown(void);
 

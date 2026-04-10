@@ -726,7 +726,13 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             if (net_ep_cap)
                 cn = sel4utils_copy_cap_to_process(proc, &vka, net_ep_cap);
 
-            char s_ser[16], s_fs[16], s_thr[16], s_auth[16], s_pip[16], s_net[16];
+            /* Copy disp_ep to child (0 if no display) */
+            seL4_CPtr cd = 0;
+            if (disp_ep_cap)
+                cd = sel4utils_copy_cap_to_process(proc, &vka, disp_ep_cap);
+
+            char s_ser[16], s_fs[16], s_thr[16], s_auth[16], s_pip[16];
+            char s_net[16], s_disp[16];
             char cwd[64];
             snprintf(s_ser, 16, "%lu", (unsigned long)cs);
             snprintf(s_fs, 16, "%lu", (unsigned long)cf);
@@ -734,6 +740,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             snprintf(s_auth, 16, "%lu", (unsigned long)ca);
             snprintf(s_pip, 16, "%lu", (unsigned long)cp2);
             snprintf(s_net, 16, "%lu", (unsigned long)cn);
+            snprintf(s_disp, 16, "%lu", (unsigned long)cd);
 
             if (exec_stdout_pipe >= 0 || exec_stdin_pipe >= 0) {
                 int sp_id = exec_stdout_pipe < 0 ? 99 : exec_stdout_pipe;
@@ -744,7 +751,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 snprintf(cwd, 64, "%u:%u:%s", old_uid, old_gid, child_cwd);
             }
 
-            char *spawn_argv[7 + MAX_USER_ARGV];
+            char *spawn_argv[8 + MAX_USER_ARGV];
             int spawn_argc = 0;
             spawn_argv[spawn_argc++] = s_ser;
             spawn_argv[spawn_argc++] = s_fs;
@@ -752,6 +759,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             spawn_argv[spawn_argc++] = s_auth;
             spawn_argv[spawn_argc++] = s_pip;
             spawn_argv[spawn_argc++] = s_net;
+            spawn_argv[spawn_argc++] = s_disp;
             spawn_argv[spawn_argc++] = cwd;
             if (exec_argc > 0) {
                 for (int ai = 0; ai < exec_argc
@@ -905,13 +913,13 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
             pipe_t *p = &pipes[pi];
             if (wlen > PAGE_SIZE) wlen = PAGE_SIZE;
-            int written = 0;
-            for (int i = 0; i < wlen && p->count < PIPE_BUF_SIZE; i++) {
-                p->shm_buf[(p->head + p->count) % PIPE_BUF_SIZE] =
+            int avail = PIPE_BUF_SIZE - p->count;
+            int written = (wlen < avail) ? wlen : avail;
+            /* Copy from xfer page to ring buffer */
+            for (int i = 0; i < written; i++)
+                p->shm_buf[(p->head + p->count + i) % PIPE_BUF_SIZE] =
                     p->xfer_buf[i];
-                p->count++;
-                written++;
-            }
+            p->count += written;
             seL4_SetMR(0, (seL4_Word)written);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             if (written > 0) wake_one_blocked_reader(pi);
@@ -957,6 +965,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 break;
             }
             int rlen = p->count < max_len ? p->count : max_len;
+            /* Copy from ring buffer to xfer page */
             for (int i = 0; i < rlen; i++)
                 p->xfer_buf[i] = p->shm_buf[(p->head + i) % PIPE_BUF_SIZE];
             p->head = (p->head + rlen) % PIPE_BUF_SIZE;

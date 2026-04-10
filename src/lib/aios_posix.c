@@ -15,6 +15,7 @@ seL4_CPtr thread_ep = 0;
 seL4_CPtr auth_ep = 0;
 seL4_CPtr pipe_ep = 0;
 seL4_CPtr net_ep = 0;
+seL4_CPtr disp_ep = 0;
 
 char aios_cwd[256] = "/";
 uint32_t aios_uid = 0;
@@ -624,11 +625,14 @@ int __wrap_main(int argc, char **argv) {
     auth_ep = ath;
     pipe_ep = pip;
     net_ep = nt;
+    seL4_CPtr dsp = 0;
+    if (argc > 6 && argv[6]) dsp = (seL4_CPtr)_auto_parse(argv[6]);
+    disp_ep = dsp;
     aios_init(serial, fs);
 
-    /* Parse uid:gid:/path from argv[6] (shifted by net_ep at [5]) */
-    if (argc > 6 && argv[6]) {
-        const char *s = argv[6];
+    /* Parse uid:gid:/path from argv[7] (shifted by net_ep at [5]) */
+    if (argc > 7 && argv[7]) {
+        const char *s = argv[7];
         if (s[0] >= '0' && s[0] <= '9') {
             /* Format: uid:gid:[spipe:rpipe:]/path */
             uint32_t uid = 0;
@@ -661,6 +665,6 @@ int __wrap_main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 
-    /* Strip 7 args (ser, fs, thread, auth, pipe, net, cwd) */
-    return __real_main(argc - 7, argv + 7);
+    /* Strip 8 args (ser, fs, thread, auth, pipe, net, disp, cwd) */
+    return __real_main(argc - 8, argv + 8);
 }

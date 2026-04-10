@@ -8,7 +8,7 @@
 vka_audit_entry_t vka_audit[VKA_SUB_COUNT];
 
 const char *vka_sub_names[VKA_SUB_COUNT] = {
-    "boot", "fork", "exec", "thread", "pipe", "other"
+    "boot", "fork", "exec", "thread", "pipe", "net", "gpu", "other"
 };
 
 void vka_audit_frame(vka_subsystem_t sub, int pages) {

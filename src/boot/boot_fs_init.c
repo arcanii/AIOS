@@ -10,6 +10,7 @@
 #include "aios/vka_audit.h"
 #include "virtio.h"
 #include "aios/ext2.h"
+#include "aios/gpu.h"
 #include "aios/vfs.h"
 #include "aios/procfs.h"
 #define LOG_MODULE "boot"
@@ -53,6 +54,7 @@ void boot_fs_init(void) {
     int blk_slots[4];
     int num_blk_devs = 0;
     int net_slot_found = -1;
+    int gpu_slot_found = -1;
     for (int i = 0; i < VIRTIO_NUM_SLOTS; i++) {
         volatile uint32_t *sl = (volatile uint32_t *)
             ((uintptr_t)vio_vaddr + i * VIRTIO_SLOT_SIZE);
@@ -63,6 +65,9 @@ void boot_fs_init(void) {
         }
         if (devid == VIRTIO_NET_DEVICE_ID && net_slot_found < 0) {
             net_slot_found = i;
+        }
+        if (devid == VIRTIO_GPU_DEVICE_ID && gpu_slot_found < 0) {
+            gpu_slot_found = i;
         }
     }
     if (num_blk_devs == 0) {
@@ -238,5 +243,16 @@ void boot_fs_init(void) {
         printf("[fs] Slot %d: virtio-net\n", net_slot_found);
     } else {
         net_available = 0;
+    }
+
+    /* Record GPU device for boot_display_init */
+    if (gpu_slot_found >= 0) {
+        gpu_vio_slot = gpu_slot_found;
+        gpu_available = 1;
+        gpu_vio = (volatile uint32_t *)
+            ((uintptr_t)vio_vaddr + gpu_slot_found * VIRTIO_SLOT_SIZE);
+        printf("[fs] Slot %d: virtio-gpu\n", gpu_slot_found);
+    } else {
+        gpu_available = 0;
     }
 }

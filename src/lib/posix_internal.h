@@ -182,6 +182,7 @@ extern seL4_CPtr thread_ep;
 extern seL4_CPtr auth_ep;
 extern seL4_CPtr pipe_ep;
 extern seL4_CPtr net_ep;
+extern seL4_CPtr disp_ep;
 
 extern char aios_cwd[256];
 extern uint32_t aios_uid;

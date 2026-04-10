@@ -79,6 +79,7 @@ AiosPosixApp(diagtest)
 AiosPosixApp(signal_test)
 AiosPosixApp(sbase_test)
 AiosPosixApp(shutdown)
+AiosPosixApp(fbshow)
 
 AiosPosixApp(posix_verify
     SRCS ${CMAKE_CURRENT_SOURCE_DIR}/../../src/apps/posix_verify.c
@@ -117,6 +118,8 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/lib/vka_audit.c
     ${AIOS_ROOT}/src/boot/boot_services.c
     ${AIOS_ROOT}/src/boot/boot_net_init.c
+    ${AIOS_ROOT}/src/boot/boot_display_init.c
+    ${AIOS_ROOT}/src/servers/display_server.c
     ${AIOS_ROOT}/src/servers/net_driver.c
     ${AIOS_ROOT}/src/servers/net_server.c
     ${AIOS_ROOT}/src/net/net_stack.c

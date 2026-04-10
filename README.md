@@ -8,6 +8,8 @@ Architectures / Hardware Supported
 - :white_medium_square: X86-64 
 
 ## Latest Achievements
+- Graphical display output via ramfb framebuffer (1024x768)
+- Networking: virtio-net driver, TCP/IP stack, HTTP server
 - shell is using DASH (https://github.com/tklauser/dash)
 - C compiler is TinyCC (https://github.com/TinyCC/tinycc)
 
@@ -23,7 +25,7 @@ External AI (Claude) is used as a development tool for code generation
 and review. This project is also a study in AI-assisted systems programming.
 The long-term goal is self-hosted development within AIOS itself.
 
-**Current version:** v0.4.73
+**Current version:** v0.4.75
 
 ## What Works
 
@@ -36,7 +38,11 @@ The long-term goal is self-hosted development within AIOS itself.
 - **Unix pipelines** (echo hello | cat | wc -c) with error recovery
 - **Shell operators** (&&, ||, >, >>, <) and environment variables
 - **dash login shell** -- POSIX shell as primary login shell via /etc/passwd pw_shell
-- **131 programs** -- 99 sbase utilities in /bin/, 28 AIOS programs in /bin/aios/, dash, tcc, hello_test
+- **Graphical display** -- ramfb framebuffer (1024x768), 8x8 bitmap font, splash images from disk
+- **Display server IPC** -- user programs draw to framebuffer via disp_ep (fbshow command)
+- **Networking** -- virtio-net driver, ARP/ICMP/UDP/TCP stack, HTTP server, POSIX sockets
+- **UART IRQ wakeup** -- PL011 interrupt-driven main loop (seL4_Wait replaces busy-polling)
+- **132+ programs** -- 99 sbase utilities, 29 AIOS programs, dash, tcc, hello_test, httpd
 - **tcc compiler** -- cross-compiled TinyCC runs on AIOS, compile-and-run working
 - **Dual-drive support** -- system disk + log disk, identified by ext2 volume label
 - **File-based logging** -- boot entries with timestamps persisted to /log/aios.log
@@ -60,20 +66,19 @@ capability-mediated access to servers.
             |
        aios_posix.c  (POSIX shim: 70+ syscalls, signals, pthreads, statx)
             |
-       +------------+------------+------------+------------+
-       |            |            |            |            |
-    pipe_server  exec_server  fs_server  thread_srv  auth_server
-     (pipes,     (ELF load,   (VFS       (pthreads)  (SHA-3-512,
-      fork,       process      dispatch,               users,
-      exec,       lifecycle)   ext2 I/O)               sessions)
-      wait,
-      signals)
+       +--------+--------+--------+--------+--------+---------+
+       |        |        |        |        |        |         |
+    pipe_srv exec_srv fs_srv  thread  auth_srv net_srv disp_srv
+    (pipes,  (ELF,    (VFS,   (pthr)  (SHA-3,  (TCP/  (frame-
+     fork,   process  ext2          users,  IP,    buffer,
+     exec,   life-    I/O)          sess)   HTTP)  fbshow)
+     wait)   cycle)
             |
        +----------+----------+
        |          |          |
      ext2.c    procfs.c    vfs.c
        |
-    virtio-blk driver
+    virtio-blk + virtio-net + ramfb drivers
        |
     seL4 microkernel (AArch64, 4-core SMP)
        |
@@ -250,20 +255,36 @@ loaded directly from the kernel image.
 qemu-system-aarch64 \
     -machine virt,virtualization=on \
     -cpu cortex-a53 -smp 4 -m 2G \
-    -nographic -serial mon:stdio \
+    -serial mon:stdio \
+    -device ramfb \
     -drive file=disk/disk_ext2.img,format=raw,if=none,id=hd0 \
     -device virtio-blk-device,drive=hd0 \
     -drive file=disk/log_ext2.img,format=raw,if=none,id=hd1 \
     -device virtio-blk-device,drive=hd1 \
+    -device virtio-net-device,netdev=net0 \
+    -netdev user,id=net0,hostfwd=tcp::8080-:80 \
     -kernel build-04/images/aios_root-image-arm-qemu-arm-virt
 ```
 
-The log drive is optional -- if absent, boot prints "No log drive" and
-continues without file logging. Drive order does not matter (identified
-by volume label).
+A QEMU window opens showing the framebuffer (boot splash + optional
+splash image). The serial console runs in the terminal via stdio.
+The log drive, network, and display are all optional -- omit any
+`-device` line and boot continues without that subsystem.
 
 Login as `root` (password: `root`). The login shell is dash (configured
 in `/etc/passwd`).
+
+To display an image on the framebuffer:
+```bash
+# On host: convert PNG to raw format
+pip3 install Pillow
+python3 scripts/png_to_raw.py image.png --resize 1024x768
+
+# Rebuild disk, boot, then in AIOS shell:
+fbshow /images/splash.raw
+fbshow --info
+fbshow --clear
+```
 
 ### Incremental Development Cycle
 
