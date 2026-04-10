@@ -7,7 +7,7 @@
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: main
 * **Developer**: Bryan
-* **Current Version**: v0.4.73
+* **Current Version**: v0.4.74
 
 ## Development Environment
 
@@ -442,7 +442,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 1. ~~Ctrl-C signal delivery~~ FIXED in v0.4.73: two-stage SIGINT, fg_pid tracking for fork+exec, signal check in TTY_READ loop
 2. virtio-blk stale reads: partially mitigated by dmb sy barrier (v0.4.73), needs stress testing. See docs/NEXT_20260409a.md
 3. ~~tcc program TLS/IPC~~ FIXED in v0.4.72
-4. Networking: virtio-net + TCP/IP (see docs/DESIGN_NET.md)
+4. ~~Networking~~ DONE in v0.4.74: virtio-net driver, ARP/ICMP, UDP sockets, TCP + HTTP server (M1-M4)
 5. zsh port: alternative shell with ZLE (see docs/DESIGN_ZSH.md)
 6. Allocator right-sizing: 4000 pages ~100x oversized, test with 500/250/100
 7. Dash improvements: tab completion, history, PS1, job control
@@ -494,9 +494,10 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 | v0.4.70 | tcc cross-compiled and running, tcc -c produces .o files, FS_PREAD (large file reads), FS_PWRITE (positioned writes), writev for regular files, tcc SDK on disk (211 headers + libc.a), ext2 block allocation for writes |
 | v0.4.71 | tcc -o linking (custom CRT, augmented libc, TLS LE relocs, MRI merge), small file truncation fix, munmap reclaim, build_apps.py. Blocked: virtio-blk stale reads + tcc program TLS/IPC |
 | v0.4.72 | tcc compile-and-run working (3 fixes: __sysinfo init, muslcsys_init_muslc, arm64 direct ADRP). Shell > and >> redirect for builtins. Empty file open fix. See docs/NEXT_20260409b.md |
+| v0.4.74 | Networking: virtio-net driver (128KB DMA, two-thread RX/TX), ARP/ICMP/UDP/TCP protocol stack, POSIX socket API, HTTP server user program. See docs/NEXT_20260410b.md |
 | v0.4.73 | Second virtio-blk drive (log disk), ext2 multi-device cache (dev_id), volume label disk probe, file-based logging (/log/aios.log), ext2 inode_size from superblock, alloc_block group_start fix, post-completion dmb sy barrier, create_file 0755 permissions. See docs/NEXT_20260410a.md |
 
-## Architecture After v0.4.73
+## Architecture After v0.4.74
 
 ```
 src/aios_root.c           ~200 lines
@@ -509,6 +510,7 @@ src/lib/posix_proc.c       ~325 lines
 src/lib/posix_time.c       ~121 lines
 src/lib/posix_misc.c       ~250 lines (+ PIPE_SET_PIPES from dup2)
 src/lib/posix_thread.c     ~195 lines
+src/lib/posix_net.c        ~170 lines
 src/lib/vka_audit.c        ~65 lines
 src/vfs.c                  ~170 lines
 src/procfs.c               ~286 lines
@@ -516,15 +518,21 @@ src/servers/exec_server.c  ~388 lines
 src/servers/pipe_server.c  ~1105 lines (+ SHM client, cap cleanup, PIPE_SET_PIPES)
 src/servers/fs_server.c    ~343 lines (+ FS_APPEND)
 src/servers/thread_server.c ~227 lines
+src/servers/net_driver.c   ~85 lines
+src/servers/net_server.c   ~320 lines
+src/net/net_stack.c        ~350 lines
+src/net/net_tcp.c          ~100 lines
 src/boot/boot_services.c   ~117 lines
+src/boot/boot_net_init.c   ~140 lines
 src/process/fork.c         ~495 lines
 src/process/reap.c         ~130 lines
 src/apps/mini_shell.c      ~1312 lines (+ quote-aware pipe/chain detection)
 include/aios/root_shared.h ~227 lines (+ PIPE_SET_PIPES, xfer_copies)
 include/aios/vka_audit.h   ~38 lines
+include/aios/net.h         ~210 lines
 ```
 
-## Test Results (v0.4.73)
+## Test Results (v0.4.74)
 
 ```
 posix_verify V3: 98/98 PASS
@@ -541,7 +549,13 @@ tcc -v / tcc -c / tcc -o / tcc run: PASS
 fork_test: PASS
 pipe: echo hello | cat -> hello (PASS)
 Ctrl-C on tail -f: PASS (clean exit back to shell prompt)
-Programs on disk: 131 (99 sbase + 28 aios + dash + tcc + hello_test)
+virtio-net detection: PASS
+ARP: PASS (gratuitous ARP + request/reply)
+ICMP ping: PASS (echo request/reply)
+UDP socket: PASS (sendto/recvfrom)
+TCP handshake: PASS (SYN/SYN-ACK/ACK)
+HTTP curl: PASS (curl localhost:8080 returns response)
+Programs on disk: 132+ (99 sbase + 28 aios + dash + tcc + hello_test + httpd)
 Drives: 2 (128MB system + 16MB log)
 RAM: 476 MB
 ```
