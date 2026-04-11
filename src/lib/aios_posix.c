@@ -18,6 +18,7 @@ seL4_CPtr net_ep = 0;
 seL4_CPtr disp_ep = 0;
 
 char aios_cwd[256] = "/";
+char aios_progpath[128];  /* v0.4.78: stored for /proc/self/exe */
 uint32_t aios_uid = 0;
 uint32_t aios_gid = 0;
 int stdout_pipe_id = -1;
@@ -710,6 +711,13 @@ int __wrap_main(int argc, char **argv) {
      * musl defaults to full buffering, which loses output on exit */
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
+
+    /* v0.4.78: store program path for /proc/self/exe */
+    if (argc > 8 && argv[8]) {
+        int pi = 0;
+        while (argv[8][pi] && pi < 127) { aios_progpath[pi] = argv[8][pi]; pi++; }
+        aios_progpath[pi] = 0;
+    }
 
     /* Strip 8 args (ser, fs, thread, auth, pipe, net, disp, cwd) */
     return __real_main(argc - 8, argv + 8);

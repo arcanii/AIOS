@@ -313,6 +313,21 @@ long aios_sys_readlinkat(va_list ap) {
     const char *pathname = va_arg(ap, const char *);
     char *buf = va_arg(ap, char *);
     size_t bufsiz = va_arg(ap, size_t);
-    (void)dirfd; (void)pathname; (void)buf; (void)bufsiz;
+    (void)dirfd;
+
+    /* v0.4.78: /proc/self/exe -- return stored program path */
+    if (pathname) {
+        const char *pse = "/proc/self/exe";
+        int match = 1;
+        for (int i = 0; pse[i]; i++)
+            if (pathname[i] != pse[i]) { match = 0; break; }
+        if (match && pathname[14] == 0 && aios_progpath[0]) {
+            int len = 0;
+            while (aios_progpath[len]) len++;
+            if (len > (int)bufsiz) len = (int)bufsiz;
+            for (int i = 0; i < len; i++) buf[i] = aios_progpath[i];
+            return (long)len;
+        }
+    }
     return -EINVAL;
 }

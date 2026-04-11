@@ -185,6 +185,7 @@ extern seL4_CPtr net_ep;
 extern seL4_CPtr disp_ep;
 
 extern char aios_cwd[256];
+extern char aios_progpath[128];
 extern uint32_t aios_uid;
 extern uint32_t aios_gid;
 extern int stdout_pipe_id;
