@@ -449,7 +449,9 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 8. ~~Large file open~~ FIXED in v0.4.76: fetch_stat for real size, FS_PREAD path works
 9. ~~Stability fixes~~ DONE in v0.4.76: Mint/Copy/Register error checks, fs_ls_total race
 10. ~~src/arch isolation~~ DONE in v0.4.76: arch.h dispatcher, aarch64 + x86_64 barrier/page headers
-11. zsh port: alternative shell with ZLE (see docs/DESIGN_ZSH.md)
+11. ~~DTB hardware discovery~~ DONE in v0.4.77: libfdt parsing, dynamic UART/virtio/fw_cfg addresses
+12. ~~procfs reads broken~~ FIXED in v0.4.77: openat zero-size stat fallback, ls /proc directory mode
+13. zsh port: alternative shell with ZLE (see docs/DESIGN_ZSH.md)
 12. Allocator right-sizing: 4000 pages ~100x oversized, test with 500/250/100
 13. Dash improvements: tab completion, history, PS1, job control
 14. TTY improvements: process-aware echo, virtual terminals
@@ -504,6 +506,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 | v0.4.73 | Second virtio-blk drive (log disk), ext2 multi-device cache (dev_id), volume label disk probe, file-based logging (/log/aios.log), ext2 inode_size from superblock, alloc_block group_start fix, post-completion dmb sy barrier, create_file 0755 permissions. See docs/NEXT_20260410a.md |
 | v0.4.75 | Display server: ramfb framebuffer (1024x768), 8x8 bitmap font, splash images, display server IPC (5 commands), fbshow user program, disp_ep capability propagation, UART IRQ notification (seL4_Wait replaces polling). See docs/NEXT_20260411a.md |
 | v0.4.76 | TCC compilation verified (single/multi-file, libc.a linking). UART IRQ freeze fix (QEMU PL011 ICR race). Large file open fix (fetch_stat for real size). Stability: seL4 cap error checks, fs_ls_total race. Architecture isolation: src/arch/ layer with aarch64 + x86_64 barrier/page macros (34 inline asm replaced). See docs/NEXT_20260411b.md |
+| v0.4.77 | DTB hardware discovery (libfdt): UART, virtio, fw_cfg, CPU, memory from device tree. Hardcoded MMIO addresses replaced with DTB values. Dynamic /proc/version. Procfs zero-size open fix. ls /proc directory listing fix. See docs/NEXT_20260411c.md |
 
 ## Architecture After v0.4.76
 

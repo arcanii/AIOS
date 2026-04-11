@@ -1,4 +1,5 @@
 #include "aios/procfs.h"
+#include "aios/hw_info.h"
 #include "aios/aios_log.h"
 #include <stdio.h>
 
@@ -93,9 +94,20 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
 
     int w = 0;
     if (path[0] == 'v' && path[1] == 'e') {
-        /* /proc/version */
-        const char *ver = "AIOS 0.4.x (seL4 15.0.0, AArch64, 4-core SMP)\n";
-        while (*ver && w < bufsize - 1) buf[w++] = *ver++;
+        /* /proc/version -- dynamic CPU info from DTB */
+        {
+            const char *p1 = "AIOS 0.4.x (seL4 15.0.0, ";
+            while (*p1 && w < bufsize - 1) buf[w++] = *p1++;
+            const char *cp = hw_info.cpu_compat;
+            while (*cp && w < bufsize - 1) buf[w++] = *cp++;
+            const char *p2 = ", ";
+            while (*p2 && w < bufsize - 1) buf[w++] = *p2++;
+            int nc = hw_info.cpu_count;
+            if (nc >= 10) buf[w++] = '0' + nc / 10;
+            buf[w++] = '0' + nc % 10;
+            const char *p3 = "-core SMP)\n";
+            while (*p3 && w < bufsize - 1) buf[w++] = *p3++;
+        }
     } else if (path[0] == 'm' && path[1] == 'o') {
         /* /proc/mounts */
         const char *mnt = "/dev/vda / ext2 ro 0 0\nproc /proc proc rw 0 0\n";
@@ -267,7 +279,11 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
 
 static int procfs_stat(void *ctx, const char *path, uint32_t *mode, uint32_t *size) {
     (void)ctx;
-    *mode = 0100444; /* regular, read-only */
+    if (path[0] == '/' && path[1] == '\0') {
+        *mode = 040555;  /* directory, read+execute */
+    } else {
+        *mode = 0100444; /* regular, read-only */
+    }
     *size = 0;
     return 0;
 }

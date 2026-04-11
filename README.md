@@ -8,6 +8,7 @@ Architectures / Hardware Supported
 - :white_medium_square: X86-64 
 
 ## Latest Achievements
+- DTB hardware discovery -- device tree parsing for dynamic UART, virtio, CPU config
 - TCC compiler compiles C programs on AIOS (single-file, multi-file, libc linking)
 - Architecture isolation layer (src/arch/) for future x86-64 support
 - Graphical display output via ramfb framebuffer (1024x768)
@@ -27,7 +28,7 @@ External AI (Claude) is used as a development tool for code generation
 and review. This project is also a study in AI-assisted systems programming.
 The long-term goal is self-hosted development within AIOS itself.
 
-**Current version:** v0.4.76
+**Current version:** v0.4.77
 
 ## What Works
 

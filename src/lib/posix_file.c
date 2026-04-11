@@ -78,10 +78,10 @@ long aios_sys_open(va_list ap) {
          * ELF binaries) need the true size so the read path can
          * switch to on-demand FS_PREAD for data beyond the buffer. */
         uint32_t st_mode, st_size;
-        if (fetch_stat(res_path, &st_mode, &st_size) == 0) {
+        if (fetch_stat(res_path, &st_mode, &st_size) == 0 && st_size > 0) {
             f->size = (int)st_size;
         } else {
-            f->size = n;
+            f->size = n;  /* procfs/dynamic files: stat returns 0, use buffered amount */
         }
     }
     return AIOS_FD_BASE + idx;
@@ -199,7 +199,15 @@ long aios_sys_openat(va_list ap) {
         if (fetch_stat(res_path, &fmode, &fsize) != 0) return -ENOENT;
         str_copy(f->path, res_path, sizeof(f->path));
         f->is_append = is_append;
-        if ((int)fsize <= (int)sizeof(f->data) - 1) {
+        if (fsize == 0) {
+            /* Zero-size from stat: procfs and dynamic files report
+             * size=0 because content is generated on read.  Use
+             * fetch_file (FS_CAT) which reads the actual content. */
+            int n = fetch_file(res_path, f->data, sizeof(f->data));
+            f->active = 1;
+            f->size = (n > 0) ? n : 0;
+            f->pos = 0;
+        } else if ((int)fsize <= (int)sizeof(f->data) - 1) {
             /* Small file: load into buffer via fetch_pread loop.
              * FS_CAT (fetch_file) truncates at ~952 bytes per IPC.
              * fetch_pread handles multi-round-trip correctly. */

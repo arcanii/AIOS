@@ -18,8 +18,9 @@
 #include "aios/aios_log.h"
 #include <stdio.h>
 #include "arch.h"
+#include "aios/hw_info.h"
 
-#define FWCFG_PADDR     0x09020000UL
+#define FWCFG_PADDR     hw_info.fwcfg_paddr
 #define FWCFG_FILE_DIR  0x0019
 #define DRM_FORMAT_XRGB8888  0x34325258
 #define FW_CFG_DMA_SELECT  0x08

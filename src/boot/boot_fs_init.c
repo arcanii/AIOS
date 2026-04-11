@@ -19,6 +19,7 @@
 #include <sel4platsupport/device.h>
 #include <stdio.h>
 #include "arch.h"
+#include "aios/hw_info.h"
 
 #define VIRTIO_BASE_ADDR 0xa000000UL
 #define VIRTIO_SLOT_SIZE 0x200
@@ -36,7 +37,7 @@ void boot_fs_init(void) {
     int vio_ok = 1;
     for (int p = 0; p < 4; p++) {
         error = sel4platsupport_alloc_frame_at(&vka,
-            VIRTIO_BASE_ADDR + p * 0x1000, seL4_PageBits, &vio_frames[p]);
+            hw_info.virtio_base + p * 0x1000, seL4_PageBits, &vio_frames[p]);
         if (error) { vio_ok = 0; break; }
         vio_caps[p] = vio_frames[p].cptr;
     }

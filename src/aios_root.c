@@ -26,6 +26,7 @@
 #define LOG_LEVEL LOG_LEVEL_DEBUG
 #include "aios/aios_log.h"
 #include "aios/root_shared.h"
+#include "aios/hw_info.h"
 #include "aios/vka_audit.h"
 #include "aios/net.h"
 #include "aios/gpu.h"
@@ -152,11 +153,15 @@ int main(int argc, char *argv[]) {
 
     aios_log_init();
 
-    /* Map UART */
+    /* Parse device tree for hardware discovery */
+    boot_dtb_init();
+    boot_hw_report();
+
+    /* Map UART (address from DTB) */
     uart = NULL;
     {
         vka_object_t frame;
-        error = sel4platsupport_alloc_frame_at(&vka, UART0_PADDR,
+        error = sel4platsupport_alloc_frame_at(&vka, hw_info.uart_paddr,
                                                 seL4_PageBits, &frame);
         if (!error) {
             void *v = vspace_map_pages(&vspace, &frame.cptr, NULL,
@@ -222,7 +227,7 @@ int main(int argc, char *argv[]) {
             cspacepath_t irq_path;
             ierr = vka_cspace_alloc_path(&vka, &irq_path);
             if (!ierr) {
-                ierr = simple_get_IRQ_handler(&simple, UART0_IRQ, irq_path);
+                ierr = simple_get_IRQ_handler(&simple, hw_info.uart_irq, irq_path);
                 if (!ierr) {
                     uart_irq_cap = irq_path.capPtr;
                     /* Bind IRQ to our notification */
@@ -233,8 +238,8 @@ int main(int argc, char *argv[]) {
                         uart[UART_IMSC / 4] |= IMSC_RXIM;
                         seL4_IRQHandler_Ack(uart_irq_cap);
                         irq_uart_active = 1;
-                        printf("[boot] UART IRQ %d bound (notification)\n",
-                               UART0_IRQ);
+                        printf("[boot] UART IRQ %u bound (notification)\n",
+                               hw_info.uart_irq);
                     } else {
                         printf("[boot] IRQ SetNotification failed: %d\n", ierr);
                     }

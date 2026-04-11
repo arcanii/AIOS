@@ -119,6 +119,7 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/boot/boot_services.c
     ${AIOS_ROOT}/src/boot/boot_net_init.c
     ${AIOS_ROOT}/src/boot/boot_display_init.c
+    ${AIOS_ROOT}/src/boot/boot_dtb.c
     ${AIOS_ROOT}/src/servers/display_server.c
     ${AIOS_ROOT}/src/servers/net_driver.c
     ${AIOS_ROOT}/src/servers/net_server.c
@@ -126,13 +127,11 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/net/net_tcp.c
     apps_cpio.o
 )
-target_link_libraries(aios_root
-    sel4runtime sel4
+target_link_libraries(aios_root sel4runtime sel4
     sel4allocman sel4vka sel4utils
     sel4simple sel4simple-default
     sel4platsupport sel4muslcsys muslc
-    cpio elf
-)
+    cpio elf fdt)
 target_include_directories(aios_root PRIVATE ${AIOS_ROOT}/include ${AIOS_ROOT}/src/arch)
 target_link_options(aios_root PRIVATE -Wl,--no-copy-dt-needed-entries)
 
