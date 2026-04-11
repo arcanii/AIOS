@@ -409,10 +409,34 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * v0.4.68: tty_echo=1 default, TTY_READ for cooked stdin, RAW/COOKED mode
   switching, getty spawns dash via /etc/passwd, dash is primary shell
 
+### mbedTLS v3.6.3 -- CRYPTO LIBRARY (v0.4.82)
+
+* Source: ~/Desktop/github_repos/mbedtls (cloned from github.com/Mbed-TLS/mbedtls, tag v3.6.3)
+* Config: bare-metal AArch64 (disabled FS_IO, NET_C, TIMING_C, x86 accel, PSA file storage; enabled ENTROPY_HARDWARE_ALT)
+* Build: 81 crypto objects compiled with aios-cc, archived into build-04/libmbedcrypto.a (1181 KB)
+* GCC fix: `-isystem $(gcc -print-file-name=include)` restores arm_neon.h under -nostdinc
+* Entropy: /dev/urandom callback (splitmix64 + ARM CNTPCT_EL0)
+* Verified: AES-256-GCM, SHA-256, ECDSA-P256, x25519 ECDH, CTR-DRBG -- all 5/5 PASS on AIOS
+
+### SSH server (sshd) -- KEY EXCHANGE WORKING (v0.4.82)
+
+* Source: src/ssh/ (sshd_main.c, ssh_transport.c, ssh_kex.c, ssh_crypto.c, ssh_session.h)
+* Built with: aios-cc + libmbedcrypto.a + -DMBEDTLS_ALLOW_PRIVATE_ACCESS
+* Port: 2222 (development), single-connection sequential model
+* Algorithms: curve25519-sha256 (kex), ecdsa-sha2-nistp256 (hostkey), aes256-ctr (cipher), hmac-sha2-256 (mac)
+* Strict KEX: kex-strict-s-v00@openssh.com (Terrapin countermeasure)
+* Status: version exchange + KEXINIT + ECDH key exchange + NEWKEYS complete
+* Verified with: OpenSSH 10.3 (Homebrew/OpenSSL 3.6.1)
+* Next: encrypted transport (AES-256-CTR + HMAC-SHA-256), user auth, shell channel
+* Key learnings:
+  - ECDSA signs SHA-256(H), not H directly (OpenSSH ssh_ecdsa_sign hashes before ECDSA_do_sign)
+  - x25519 shared secret: use raw LE bytes as mpint data (OpenSSH sshbuf_put_bignum2_bytes convention)
+  - SSH packet padding: total of (packet_length || padding_length || payload || padding) must be multiple of 8
+
 ### Programs on Disk
 
-* 99 sbase Unix tools in /bin/
-* 29 AIOS programs in /bin/aios/
+* 101 sbase Unix tools + sshd in /bin/
+* 32 AIOS programs in /bin/aios/ (includes test_mbedtls, test_crypto)
 * dash in /bin/dash
 * tcc in /bin/tcc (compiler, tcc -c and tcc -o work, compile-and-run works)
 * hello_test in /bin/hello_test (aios-cc proof-of-concept)
@@ -473,8 +497,11 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 24. reap_check: cannot use seL4_NBRecv on minted fault EPs (steals from shared pipe_ep). Need different orphan detection approach.
 25. ~~TCP stream sockets~~ DONE in v0.4.81: read()/write() on socket fds, 4KB circular RX buffer, dedicated virtio-net IRQ
 26. ~~Virtio-net IRQ~~ FIXED in v0.4.81: dedicated seL4 IRQ handler, was piggybacking on UART
-27. SSH server: cross-compile mbedTLS, Ed25519+AES-256-GCM, SSH transport over TCP, auth via auth_server IPC
+27. ~~SSH server (Phase 1-2)~~ DONE in v0.4.82: mbedTLS cross-compile, ECDSA-P256 host key, x25519 ECDH, KEXINIT, NEWKEYS verified with OpenSSH 10.3
 28. TCP improvements: retransmission, window advertisement, connect() implementation, SHM data path
+29. SSH Phase 3: AES-256-CTR + HMAC-SHA-256 encrypted transport
+30. SSH Phase 4: password auth via auth_server IPC
+31. SSH Phase 5: session channel, pty-req, shell spawning, data relay
 
 ## Version History (0.4.x)
 
