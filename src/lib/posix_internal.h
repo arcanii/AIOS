@@ -105,6 +105,10 @@
 #define __NR_setpgid 154
 #endif
 
+#ifndef __NR_futex
+#define __NR_futex 98
+#endif
+
 /* M3: Socket syscall numbers (AArch64 musl) */
 #ifndef __NR_listen
 #define __NR_listen 201
@@ -165,6 +169,7 @@ typedef struct {
     int pipe_read;
     int is_devnull;
     int is_append;
+    int is_nonblock;          /* v0.4.79: O_NONBLOCK for pipes */
     int is_tty;               /* REDIR_FIX_V072: marks fd as terminal copy */
     int is_socket;            /* M3: fd is a network socket */
     int socket_id;            /* M3: index in net_server socket table (0-7) */
@@ -338,5 +343,6 @@ long aios_sys_setrlimit(va_list ap);
 long aios_sys_sysinfo(va_list ap);
 long aios_sys_getrusage(va_list ap);
 long aios_sys_membarrier(va_list ap);
+long aios_sys_futex(va_list ap);
 
 #endif

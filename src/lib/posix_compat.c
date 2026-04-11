@@ -40,6 +40,9 @@
 #ifndef __NR_membarrier
 #define __NR_membarrier 283
 #endif
+#ifndef __NR_futex
+#define __NR_futex 98
+#endif
 
 /* ---- ppoll: stub that returns immediately with 0 ready fds ----
  * Many programs use poll() to check if stdin is readable.
@@ -196,3 +199,31 @@ long aios_sys_membarrier(va_list ap) {
     (void)cmd;
     return 0;
 }
+/* ---- futex: fast userspace mutex (stub) ----
+ * FUTEX_WAIT (0): compare *uaddr with val; if equal return -ETIMEDOUT
+ * FUTEX_WAKE (1): return 0 (no waiters to wake)
+ * Others: return -ENOSYS
+ * Required by musl threading internals and pthreads.
+ */
+#ifndef FUTEX_WAIT
+#define FUTEX_WAIT 0
+#define FUTEX_WAKE 1
+#endif
+
+long aios_sys_futex(va_list ap) {
+    int *uaddr = va_arg(ap, int *);
+    int futex_op = va_arg(ap, int);
+    int val = va_arg(ap, int);
+    int op = futex_op & 0x7F;  /* mask out FUTEX_PRIVATE_FLAG */
+    if (op == FUTEX_WAKE) {
+        (void)uaddr; (void)val;
+        return 0;  /* no waiters woken */
+    }
+    if (op == FUTEX_WAIT) {
+        if (uaddr && *uaddr != val) return -EAGAIN;
+        /* Value matches -- would block; return timeout */
+        return -110;  /* ETIMEDOUT */
+    }
+    return -ENOSYS;
+}
+

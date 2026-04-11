@@ -8,10 +8,14 @@ Architectures / Hardware Supported
 - :white_medium_square: X86-64 
 
 ## Latest Achievements
-- Linux compatibility layer -- 10 compat syscalls (getrandom, poll, prlimit64, sysinfo, etc.)
+- O_NONBLOCK for pipes -- pipe2 flags, fcntl F_GETFL/F_SETFL, server-side EAGAIN
+- futex stub -- FUTEX_WAIT/WAKE for musl pthreads internals
+- /proc/self/fd support -- fstatat, readlinkat for open file descriptors
+- Pipe EOF fix -- close() signals EOF when last write reference drops (fixes builtin|external freezes)
+- Linux compatibility layer -- 11 compat syscalls (getrandom, futex, poll, prlimit64, sysinfo, etc.)
 - ext2 block/inode freeing -- unlink now reclaims disk space (was leaking since v0.4.19)
 - Virtual devices -- /dev/urandom, /dev/random, /dev/zero
-- Expanded procfs -- /proc/cpuinfo, /proc/stat, /proc/loadavg, /proc/self/exe
+- Expanded procfs -- /proc/cpuinfo, /proc/stat, /proc/loadavg, /proc/self/exe, /proc/self/fd
 - DTB hardware discovery -- device tree parsing for dynamic UART, virtio, CPU config
 - Networking: virtio-net driver, TCP/IP stack, HTTP server
 - Shell is using DASH (https://github.com/tklauser/dash)
@@ -29,14 +33,14 @@ External AI (Claude) is used as a development tool for code generation
 and review. This project is also a study in AI-assisted systems programming.
 The long-term goal is self-hosted development within AIOS itself.
 
-**Current version:** v0.4.78
+**Current version:** v0.4.79
 
 ## What Works
 
 - **seL4 microkernel** on AArch64/QEMU (Cortex-A53, 4-core SMP)
 - **ext2 filesystem** with read/write, indirect blocks, multi-group allocation, block/inode freeing on unlink
 - **VFS layer** with ext2 root mount and procfs at /proc
-- **80+ POSIX syscalls** via musllibc shim (open, read, write, fork, exec, pipe, dup2, statx, getrandom, poll, ...)
+- **81+ POSIX syscalls** via musllibc shim (open, read, write, fork, exec, pipe, dup2, statx, getrandom, futex, poll, ...)
 - **fork+exec+waitpid** process model with full ELF loading from disk
 - **POSIX signals** (sigaction, kill, sigprocmask) with cooperative handler dispatch
 - **Unix pipelines** (echo hello | cat | wc -c) with error recovery
@@ -56,9 +60,10 @@ The long-term goal is self-hosted development within AIOS itself.
 - **pthreads** (create, join, mutex) via manual TCB creation in child VSpaces
 - **Auth server** with SHA-3-512 (Keccak) passwords, login/logout, su/passwd
 - **Kernel log** ring buffer + serial echo + file log (/log/aios.log)
-- **Linux compat layer** -- getrandom, ppoll, pselect6, prlimit64, prctl, sysinfo, getrusage, membarrier
+- **Linux compat layer** -- getrandom, futex, ppoll, pselect6, prlimit64, prctl, sysinfo, getrusage, membarrier
+- **O_NONBLOCK pipes** -- pipe2 flags, fcntl F_GETFL/F_SETFL, server-side EAGAIN for nonblocking reads
 - **Virtual devices** -- /dev/urandom (splitmix64 PRNG), /dev/random, /dev/zero
-- **Extended procfs** -- cpuinfo, stat, loadavg, /proc/self/exe via readlinkat
+- **Extended procfs** -- cpuinfo, stat, loadavg, /proc/self/exe, /proc/self/fd via readlinkat
 - **POSIX core 55/55 (100%)** -- all core POSIX interfaces implemented
 - **PSCI shutdown** -- clean power-off via /bin/aios/shutdown
 - **getconf** -- sysconf, confstr, pathconf, limits (99/99 sbase tools)
@@ -72,7 +77,7 @@ capability-mediated access to servers.
 
     User programs (dash, sbase tools, test programs)
             |
-       aios_posix.c  (POSIX shim: 80+ syscalls, signals, pthreads, statx)
+       aios_posix.c  (POSIX shim: 81+ syscalls, signals, pthreads, statx)
             |
        +--------+--------+--------+--------+--------+---------+
        |        |        |        |        |        |         |
@@ -328,6 +333,7 @@ python3 scripts/mkdisk.py disk/disk_ext2.img \
 
 ## Documentation
 
+- [ENVIRONMENT_BUILD.md](docs/ENVIRONMENT_BUILD.md) -- Step-by-step build environment setup
 - [AI_BRIEFING.md](docs/AI_BRIEFING.md) -- Project context for AI sessions
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) -- System design
 - [DESIGN_0.4.md](docs/DESIGN_0.4.md) -- 0.4.x design decisions

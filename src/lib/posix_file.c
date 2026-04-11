@@ -15,6 +15,52 @@ static void pipe_request_shm(aios_fd_t *f) {
     if (vaddr) f->shm_vaddr = (char *)vaddr;
 }
 
+
+/* v0.4.79: generate /proc/self/fd directory entries (getdents64 format) */
+static int procfd_gen_dirents(char *buf, int bufsz) {
+    int out = 0;
+    uint64_t ino = 0xFD00;
+    uint64_t doff = 0;
+
+    /* Write one dirent record. Returns bytes written or 0 if full. */
+    #define PFD_DIRENT(nm, nlen, dt) do { \
+        int rl = (19 + (nlen) + 1 + 7) & ~7; \
+        if (rl < 24) rl = 24; \
+        if (out + rl > bufsz) goto pfd_done; \
+        doff += rl; \
+        uint64_t _ino = ino++; \
+        for(int _j=0;_j<8;_j++) buf[out+_j]=(char)((_ino>>(_j*8))&0xFF); \
+        for(int _j=0;_j<8;_j++) buf[out+8+_j]=(char)((doff>>(_j*8))&0xFF); \
+        buf[out+16]=(char)(rl&0xFF); buf[out+17]=(char)((rl>>8)&0xFF); \
+        buf[out+18]=(char)(dt); \
+        for(int _j=0;_j<(nlen);_j++) buf[out+19+_j]=(nm)[_j]; \
+        buf[out+19+(nlen)]=0; \
+        for(int _j=19+(nlen)+1;_j<rl;_j++) buf[out+_j]=0; \
+        out += rl; \
+    } while(0)
+
+    PFD_DIRENT(".", 1, 4);   /* DT_DIR */
+    PFD_DIRENT("..", 2, 4);
+    PFD_DIRENT("0", 1, 10);  /* DT_LNK */
+    PFD_DIRENT("1", 1, 10);
+    PFD_DIRENT("2", 1, 10);
+
+    for (int _ai = 0; _ai < AIOS_MAX_FDS; _ai++) {
+        if (!aios_fds[_ai].active) continue;
+        int fdn = AIOS_FD_BASE + _ai;
+        char nb[6]; int ni = 0;
+        int v = fdn;
+        if (v >= 100) { nb[ni++] = (char)('0' + v/100); v %= 100; }
+        if (fdn >= 10) { nb[ni++] = (char)('0' + v/10); v %= 10; }
+        nb[ni++] = (char)('0' + v);
+        PFD_DIRENT(nb, ni, 10);
+    }
+
+    #undef PFD_DIRENT
+pfd_done:
+    return out;
+}
+
 long aios_sys_open(va_list ap) {
     const char *pathname = va_arg(ap, const char *);
     int flags = va_arg(ap, int);
@@ -61,6 +107,30 @@ long aios_sys_open(va_list ap) {
                 str_copy(f->path, dp, sizeof(f->path));
                 return AIOS_FD_BASE + idx;
             }
+        }
+    }
+
+    /* v0.4.79: /proc/self/fd in aios_sys_open (procfd_open_intercept) */
+    {
+        char _rp[256];
+        resolve_path(pathname, _rp, sizeof(_rp));
+        const char *_psf = "/proc/self/fd";
+        int _pm = 1;
+        for (int _i = 0; _psf[_i]; _i++)
+            if (_rp[_i] != _psf[_i]) { _pm = 0; break; }
+        if (_pm && _rp[13] == 0) {
+            int idx = aios_fd_alloc();
+            if (idx < 0) return -EMFILE;
+            aios_fd_t *_f = &aios_fds[idx];
+            _f->active = 1;
+            _f->is_dir = 1;
+            _f->is_pipe = 0;
+            _f->is_devnull = 0;
+            _f->is_nonblock = 0;
+            _f->pos = 0;
+            str_copy(_f->path, "/proc/self/fd", sizeof(_f->path));
+            _f->size = procfd_gen_dirents(_f->data, (int)sizeof(_f->data));
+            return AIOS_FD_BASE + idx;
         }
     }
 
@@ -158,6 +228,30 @@ long aios_sys_openat(va_list ap) {
                 str_copy(f->path, dp, sizeof(f->path));
                 return AIOS_FD_BASE + idx;
             }
+        }
+    }
+
+    /* v0.4.79: /proc/self/fd -- synthetic directory of open fds */
+    {
+        char _rp[256];
+        resolve_path(pathname, _rp, sizeof(_rp));
+        const char *_psf = "/proc/self/fd";
+        int _pm = 1;
+        for (int _i = 0; _psf[_i]; _i++)
+            if (_rp[_i] != _psf[_i]) { _pm = 0; break; }
+        if (_pm && _rp[13] == 0) {
+            int idx = aios_fd_alloc();
+            if (idx < 0) return -EMFILE;
+            aios_fd_t *_f = &aios_fds[idx];
+            _f->active = 1;
+            _f->is_dir = 1;
+            _f->is_pipe = 0;
+            _f->is_devnull = 0;
+            _f->is_nonblock = 0;
+            _f->pos = 0;
+            str_copy(_f->path, "/proc/self/fd", sizeof(_f->path));
+            _f->size = procfd_gen_dirents(_f->data, (int)sizeof(_f->data));
+            return AIOS_FD_BASE + idx;
         }
     }
 
@@ -297,8 +391,9 @@ long aios_sys_read(va_list ap) {
             if (want > 900) want = 900;
             seL4_SetMR(0, (seL4_Word)stdin_pipe_id);
             seL4_SetMR(1, (seL4_Word)want);
+            seL4_SetMR(2, 0);  /* v0.4.79: blocking read */
             seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
-                seL4_MessageInfo_new(62, 0, 0, 2));
+                seL4_MessageInfo_new(62, 0, 0, 3));
             int got = (int)(long)seL4_GetMR(0);
             int mr = 1;
             for (int i = 0; i < got; i++) {
@@ -346,9 +441,11 @@ long aios_sys_read(va_list ap) {
                 if (want > 4096) want = 4096;
                 seL4_SetMR(0, (seL4_Word)f->pipe_id);
                 seL4_SetMR(1, (seL4_Word)want);
+                seL4_SetMR(2, (seL4_Word)(f->is_nonblock ? 1 : 0));
                 seL4_Call(pipe_ep,
-                    seL4_MessageInfo_new(80 /* PIPE_READ_SHM */, 0, 0, 2));
+                    seL4_MessageInfo_new(80 /* PIPE_READ_SHM */, 0, 0, 3));
                 int got = (int)(long)seL4_GetMR(0);
+                if (got == -1) return -EAGAIN;  /* v0.4.79: nonblocking */
                 for (int i = 0; i < got; i++)
                     cbuf[i] = f->shm_vaddr[i];
                 return (long)got;
@@ -358,9 +455,11 @@ long aios_sys_read(va_list ap) {
             if (want > 900) want = 900;
             seL4_SetMR(0, (seL4_Word)f->pipe_id);
             seL4_SetMR(1, (seL4_Word)want);
+            seL4_SetMR(2, (seL4_Word)(f->is_nonblock ? 1 : 0));
             seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
-                seL4_MessageInfo_new(62, 0, 0, 2));
+                seL4_MessageInfo_new(62, 0, 0, 3));
             int got = (int)(long)seL4_GetMR(0);
+            if (got == -1) return -EAGAIN;  /* v0.4.79: nonblocking */
             int mr = 1;
             for (int i = 0; i < got; i++) {
                 if (i % 8 == 0 && i > 0) mr++;
@@ -545,13 +644,27 @@ long aios_sys_close(va_list ap) {
     int fd = va_arg(ap, int);
     if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
         aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
-        /* close() never sends PIPE_CLOSE_WRITE.
-         * Reason: in fork+dup2+exec pipelines, the child does
-         * dup2(write_fd, 1) then close(write_fd). If close sent
-         * PIPE_CLOSE_WRITE, EOF fires before exec even runs.
-         * Instead, aios_exit_cb sends PIPE_CLOSE_WRITE when the
-         * writer process exits. The shell sends PIPE_CLOSE to
-         * destroy the pipe buffer after the pipeline completes. */
+        /* v0.4.79: send PIPE_CLOSE_WRITE only if this is the
+         * last write reference to the pipe. Prevents premature
+         * EOF in fork+dup2+exec (stdout still holds the pipe),
+         * but allows EOF when builtins close write end after use. */
+        if (f->is_pipe && !f->pipe_read && pipe_ep) {
+            int pid = f->pipe_id;
+            int last_write_ref = 1;
+            if (stdout_pipe_id == pid) last_write_ref = 0;
+            for (int _ci = 0; _ci < AIOS_MAX_FDS && last_write_ref; _ci++) {
+                if (&aios_fds[_ci] == f) continue;
+                if (aios_fds[_ci].active && aios_fds[_ci].is_pipe
+                    && !aios_fds[_ci].pipe_read
+                    && aios_fds[_ci].pipe_id == pid)
+                    last_write_ref = 0;
+            }
+            if (last_write_ref) {
+                seL4_SetMR(0, (seL4_Word)pid);
+                seL4_Call(pipe_ep,
+                    seL4_MessageInfo_new(70 /* PIPE_CLOSE_WRITE */, 0, 0, 1));
+            }
+        }
         /* Socket close: notify server to free slot */
         if (f->is_socket && net_ep) {
             seL4_SetMR(0, (seL4_Word)f->socket_id);

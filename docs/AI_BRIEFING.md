@@ -7,7 +7,7 @@
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: main
 * **Developer**: Bryan
-* **Current Version**: v0.4.78
+* **Current Version**: v0.4.79
 
 ## Development Environment
 
@@ -334,7 +334,7 @@ PIPE_SIGNAL=75, PIPE_SIG_FETCH=76, PIPE_SHUTDOWN=77
 PIPE_MAP_SHM=78, PIPE_WRITE_SHM=79, PIPE_READ_SHM=80, PIPE_SET_PIPES=81
 ```
 
-### Implemented Syscalls (80+)
+### Implemented Syscalls (81+)
 
 File I/O: open, openat (O_CREAT, O_APPEND), read, readv, write, writev, close, lseek, pread64, pwrite64, ftruncate (FS_APPEND for server-side append)
 Directories: getdents64, chdir, mkdirat, unlinkat
@@ -350,12 +350,12 @@ Pipes: pipe2
 Signals: rt_sigaction, rt_sigprocmask, rt_sigpending, rt_sigreturn, sigaltstack, kill, tgkill
 Memory: mmap, munmap, brk, madvise, mprotect (stub)
 Rename: renameat, renameat2
-Linux compat: ppoll, pselect6, getrandom (splitmix64), prlimit64, prctl, getrlimit, setrlimit, sysinfo, getrusage, membarrier
+Linux compat: ppoll, pselect6, getrandom (splitmix64), prlimit64, prctl, getrlimit, setrlimit, sysinfo, getrusage, membarrier, futex (WAIT/WAKE stub)
 
 ### fd Table
 
 * AIOS_FD_BASE=10, AIOS_MAX_FDS=32
-* aios_fd_t: active, is_dir, is_pipe, pipe_id, pipe_read, is_devnull, is_append, shm_vaddr, path[128], data[4096], size, pos
+* aios_fd_t: active, is_dir, is_pipe, pipe_id, pipe_read, is_devnull, is_append, is_nonblock, is_tty, is_socket, socket_id, shm_vaddr, path[128], data[4096], size, pos
 * fds 0-2 handled specially (stdin/stdout/stderr via serial or pipe redirect)
 * /dev/null: is_devnull=1, write returns count, read returns 0
 * /dev/urandom, /dev/random: is_devnull=1, read returns splitmix64 PRNG bytes
@@ -460,6 +460,14 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 14. TTY improvements: process-aware echo, virtual terminals
 15. ~~ext2 free blocks on unlink~~ DONE in v0.4.78: ext2_free_block/inode, BGDT count updates
 16. ext2 write improvements: triple indirect
+17. ~~O_NONBLOCK pipes~~ DONE in v0.4.79: pipe2 flags, fcntl F_GETFL/F_SETFL, server EAGAIN
+18. ~~futex stub~~ DONE in v0.4.79: WAIT/WAKE for musl pthreads
+19. ~~close() pipe EOF~~ FIXED in v0.4.79: last-write-ref PIPE_CLOSE_WRITE (builtin|external freeze)
+20. ~~Zombie overflow~~ FIXED in v0.4.79: evicts oldest entry with warning
+21. ~~Fork ReadRegisters leak~~ FIXED in v0.4.79: destroys child process + frees fault EP
+22. /proc/self/fd listing: external command opendir does not route through client intercept (syscall dispatch investigation)
+23. File redirects across exec: cmd > file lost after fork+exec (server-side fd table needed)
+24. reap_check: cannot use seL4_NBRecv on minted fault EPs (steals from shared pipe_ep). Need different orphan detection approach.
 
 ## Version History (0.4.x)
 
@@ -512,6 +520,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 | v0.4.76 | TCC compilation verified (single/multi-file, libc.a linking). UART IRQ freeze fix (QEMU PL011 ICR race). Large file open fix (fetch_stat for real size). Stability: seL4 cap error checks, fs_ls_total race. Architecture isolation: src/arch/ layer with aarch64 + x86_64 barrier/page macros (34 inline asm replaced). See docs/NEXT_20260411b.md |
 | v0.4.77 | DTB hardware discovery (libfdt): UART, virtio, fw_cfg, CPU, memory from device tree. Hardcoded MMIO addresses replaced with DTB values. Dynamic /proc/version. Procfs zero-size open fix. ls /proc directory listing fix. See docs/NEXT_20260411c.md |
 | v0.4.78 | Linux compat layer (10 syscalls: getrandom, ppoll, prlimit64, sysinfo, etc.). ext2 block/inode freeing on unlink with BGDT count updates. /dev/urandom, /dev/random, /dev/zero virtual devices. /proc/cpuinfo, /proc/stat, /proc/loadavg. readlinkat /proc/self/exe. Bumped MAX_ZOMBIES=16, MAX_PIPES=16, MAX_WAIT_PENDING=8. See docs/NEXT_20260411d.md |
+| v0.4.79 | O_NONBLOCK for pipes (pipe2 flags, fcntl F_GETFL/F_SETFL, server EAGAIN). futex stub (WAIT/WAKE). /proc/self/fd stat+readlinkat. close() EOF fix (last-write-ref PIPE_CLOSE_WRITE). Zombie overflow guard. Fork ReadRegisters cleanup. procfs /self directory. See docs/NEXT_20260411e.md |
 
 ## Architecture After v0.4.76
 

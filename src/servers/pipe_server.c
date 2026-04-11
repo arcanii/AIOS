@@ -324,6 +324,15 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                     seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                     break;
                 }
+                /* v0.4.79: O_NONBLOCK -- return -1 instead of blocking */
+                {
+                    int nb_flags = (int)seL4_GetMR(2);
+                    if (nb_flags & 1) {
+                        seL4_SetMR(0, (seL4_Word)(-1));
+                        seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                        break;
+                    }
+                }
                 /* Writer alive -- block reader via SaveCaller */
                 int bi = -1;
                 for (int b = 0; b < MAX_PIPE_READ_BLOCKED; b++) {
@@ -951,6 +960,15 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                     seL4_SetMR(0, 0);
                     seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                     break;
+                }
+                /* v0.4.79: O_NONBLOCK -- return -1 instead of blocking */
+                {
+                    int nb_flags = (int)seL4_GetMR(2);
+                    if (nb_flags & 1) {
+                        seL4_SetMR(0, (seL4_Word)(-1));
+                        seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                        break;
+                    }
                 }
                 /* Block reader -- same as PIPE_READ but with is_shm flag */
                 int bi = -1;

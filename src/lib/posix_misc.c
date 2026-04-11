@@ -152,8 +152,23 @@ long aios_sys_fcntl(va_list ap) {
     }
     if (cmd == 1) return 0;  /* F_GETFD */
     if (cmd == 2) return 0;  /* F_SETFD */
-    if (cmd == 3) return 2;  /* F_GETFL: O_RDWR */
-    if (cmd == 4) return 0;  /* F_SETFL */
+    if (cmd == 3) {  /* F_GETFL */
+        int fl = 2;  /* O_RDWR base */
+        if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
+            aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
+            if (f->active && f->is_nonblock) fl |= 0x800;
+            if (f->active && f->is_append) fl |= 0x400;
+        }
+        return fl;
+    }
+    if (cmd == 4) {  /* F_SETFL */
+        int newfl = va_arg(ap, int);
+        if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
+            aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
+            if (f->active) f->is_nonblock = (newfl & 0x800) ? 1 : 0;
+        }
+        return 0;
+    }
     return -EINVAL;
 }
 
@@ -264,7 +279,6 @@ long aios_sys_dup3(va_list ap) {
 long aios_sys_pipe2(va_list ap) {
     int *fds = va_arg(ap, int *);
     int flags = va_arg(ap, int);
-    (void)flags;
     if (!pipe_ep) return -ENOSYS;
 
     /* Create pipe via IPC */
@@ -291,6 +305,11 @@ long aios_sys_pipe2(va_list ap) {
     aios_fds[wi].pipe_id = pipe_id;
     aios_fds[wi].pipe_read = 0;
     aios_fds[wi].shm_vaddr = 0;
+
+    /* v0.4.79: propagate O_NONBLOCK to both ends */
+    int nb = (flags & 0x800) ? 1 : 0;
+    aios_fds[ri].is_nonblock = nb;
+    aios_fds[wi].is_nonblock = nb;
 
     fds[0] = AIOS_FD_BASE + ri;  /* read end */
     fds[1] = AIOS_FD_BASE + wi;  /* write end */

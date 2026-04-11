@@ -357,7 +357,11 @@ int do_fork(int parent_idx) {
         int rr = seL4_TCB_ReadRegisters(parent->proc.thread.tcb.cptr, 0, 0,
                                sizeof(parent_regs) / sizeof(seL4_Word), &parent_regs);
         if (rr) {
+            /* v0.4.79: ReadRegisters cleanup -- destroy configured child */
             printf("[fork] ReadRegisters failed: %d\n", rr);
+            sel4utils_destroy_process(cp, &vka);
+            seL4_CNode_Delete(pfe_dest.root, pfe_dest.capPtr, pfe_dest.capDepth);
+            vka_cspace_free(&vka, pfe_dest.capPtr);
             return -1;
         }
     }

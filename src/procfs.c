@@ -66,8 +66,8 @@ static int procfs_list(void *ctx, uint32_t ino, char *buf, int bufsize) {
     (void)ctx; (void)ino;
     int w = 0;
     /* List virtual files */
-    const char *entries[] = { "d .\n", "d ..\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n" };
-    for (int i = 0; i < 11 && w < bufsize - 1; i++) {
+    const char *entries[] = { "d .\n", "d ..\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "d self\n" };
+    for (int i = 0; i < 12 && w < bufsize - 1; i++) {
     
         const char *e = entries[i];
         while (*e && w < bufsize - 1) buf[w++] = *e++;
@@ -308,12 +308,32 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
 
 static int procfs_stat(void *ctx, const char *path, uint32_t *mode, uint32_t *size) {
     (void)ctx;
-    if (path[0] == '/' && path[1] == '\0') {
-        *mode = 040555;  /* directory, read+execute */
-    } else {
-        *mode = 0100444; /* regular, read-only */
-    }
     *size = 0;
+    /* /proc root */
+    if (path[0] == '/' && path[1] == '\0') {
+        *mode = 040555;
+        return 0;
+    }
+    /* v0.4.79: /proc/self and /proc/self/fd directories */
+    if (path[0] == '/' && path[1] == 's' && path[2] == 'e'
+        && path[3] == 'l' && path[4] == 'f') {
+        if (path[5] == 0) { *mode = 040555; return 0; }
+        if (path[5] == '/') {
+            if (path[6] == 'f' && path[7] == 'd') {
+                if (path[8] == 0) { *mode = 040555; return 0; }
+                if (path[8] == '/') { *mode = 0120777; return 0; }
+            }
+            if (path[6] == 'e' && path[7] == 'x' && path[8] == 'e'
+                && path[9] == 0) { *mode = 0120777; return 0; }
+        }
+    }
+    /* /proc/N -- pid directories */
+    if (path[0] == '/' && path[1] >= '0' && path[1] <= '9') {
+        const char *p = path + 1;
+        while (*p >= '0' && *p <= '9') p++;
+        if (*p == 0 || *p == '/') { *mode = 040555; return 0; }
+    }
+    *mode = 0100444;
     return 0;
 }
 

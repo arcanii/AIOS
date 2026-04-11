@@ -627,6 +627,9 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     muslcsys_install_syscall(__NR_getrusage, aios_sys_getrusage);
     muslcsys_install_syscall(__NR_membarrier, aios_sys_membarrier);
 
+    /* v0.4.79: futex for multithreaded programs */
+    muslcsys_install_syscall(__NR_futex, aios_sys_futex);
+
 
 #endif
 }

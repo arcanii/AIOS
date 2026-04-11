@@ -113,6 +113,33 @@ long aios_sys_fstatat(va_list ap) {
         lookup = resolved;
     }
 
+    /* v0.4.79: /proc/self/fd client-side intercept */
+    {
+        const char *_ps = "/proc/self";
+        int _pm = 1;
+        for (int _i = 0; _ps[_i]; _i++)
+            if (lookup[_i] != _ps[_i]) { _pm = 0; break; }
+        if (_pm) {
+            char *_p = (char *)st;
+            for (int _i = 0; _i < (int)sizeof(struct stat); _i++) _p[_i] = 0;
+            st->st_dev = 3;
+            st->st_blksize = 4096;
+            st->st_nlink = 1;
+            if (lookup[10] == 0 || (lookup[10] == '/' && lookup[11] == 'f' && lookup[12] == 'd' && lookup[13] == 0)) {
+                /* /proc/self or /proc/self/fd -- directory */
+                st->st_ino = 0xFD00;
+                st->st_mode = 040555;
+                return 0;
+            }
+            if (lookup[10] == '/' && lookup[11] == 'f' && lookup[12] == 'd' && lookup[13] == '/') {
+                /* /proc/self/fd/N -- symlink */
+                st->st_ino = 0xFD01;
+                st->st_mode = 0120777;
+                return 0;
+            }
+        }
+    }
+
     uint32_t mode, size;
     if (fetch_stat(lookup, &mode, &size) != 0) return -ENOENT;
 
@@ -327,6 +354,49 @@ long aios_sys_readlinkat(va_list ap) {
             if (len > (int)bufsiz) len = (int)bufsiz;
             for (int i = 0; i < len; i++) buf[i] = aios_progpath[i];
             return (long)len;
+        }
+    }
+
+    /* v0.4.79: /proc/self/fd/N -- return path of open fd */
+    if (pathname) {
+        const char *_pfx = "/proc/self/fd/";
+        int _fm = 1;
+        for (int _i = 0; _pfx[_i]; _i++)
+            if (pathname[_i] != _pfx[_i]) { _fm = 0; break; }
+        if (_fm && pathname[14] >= '0' && pathname[14] <= '9') {
+            int fdnum = 0;
+            const char *_dp = pathname + 14;
+            while (*_dp >= '0' && *_dp <= '9') {
+                fdnum = fdnum * 10 + (*_dp - '0'); _dp++;
+            }
+            if (*_dp != 0) return -ENOENT;
+            /* fd 0-2: terminal */
+            if (fdnum < 3) {
+                const char *_tty = "/dev/tty";
+                int len = 8;
+                if (len > (int)bufsiz) len = (int)bufsiz;
+                for (int _i = 0; _i < len; _i++) buf[_i] = _tty[_i];
+                return (long)len;
+            }
+            /* aios fds */
+            if (fdnum >= AIOS_FD_BASE && fdnum < AIOS_FD_BASE + AIOS_MAX_FDS) {
+                aios_fd_t *_f = &aios_fds[fdnum - AIOS_FD_BASE];
+                if (!_f->active) return -ENOENT;
+                if (_f->is_pipe) {
+                    const char *_pp = "pipe:[0]";
+                    int len = 8;
+                    if (len > (int)bufsiz) len = (int)bufsiz;
+                    for (int _i = 0; _i < len; _i++) buf[_i] = _pp[_i];
+                    return (long)len;
+                }
+                int len = 0;
+                while (_f->path[len]) len++;
+                if (len == 0) return -ENOENT;
+                if (len > (int)bufsiz) len = (int)bufsiz;
+                for (int _i = 0; _i < len; _i++) buf[_i] = _f->path[_i];
+                return (long)len;
+            }
+            return -ENOENT;
         }
     }
     return -EINVAL;
