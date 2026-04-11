@@ -71,9 +71,18 @@ long aios_sys_open(va_list ap) {
         int n = fetch_file(res_path, f->data, sizeof(f->data));
         if (n < 0) return -ENOENT;
         f->active = 1;
-        f->size = n;
         f->pos = 0;
         str_copy(f->path, res_path, sizeof(f->path));
+        /* Use stat to get real file size -- fetch_file returns only
+         * what fits in IPC MRs (~900 bytes).  Large files (libc.a,
+         * ELF binaries) need the true size so the read path can
+         * switch to on-demand FS_PREAD for data beyond the buffer. */
+        uint32_t st_mode, st_size;
+        if (fetch_stat(res_path, &st_mode, &st_size) == 0) {
+            f->size = (int)st_size;
+        } else {
+            f->size = n;
+        }
     }
     return AIOS_FD_BASE + idx;
 }

@@ -18,6 +18,7 @@
 #include "aios/aios_log.h"
 #include <sel4platsupport/device.h>
 #include <stdio.h>
+#include "arch.h"
 
 #define VIRTIO_BASE_ADDR 0xa000000UL
 #define VIRTIO_SLOT_SIZE 0x200
@@ -90,7 +91,7 @@ void boot_fs_init(void) {
         error = vka_cspace_alloc(&vka, &slot);
         if (error) { printf("[fs] DMA cslot alloc failed\n"); return; }
         error = seL4_Untyped_Retype(dma_ut.cptr,
-            seL4_ARM_SmallPageObject, seL4_PageBits,
+            ARCH_PAGE_OBJECT, seL4_PageBits,
             seL4_CapInitThreadCNode, 0, 0, slot, 1);
         if (error) { printf("[fs] DMA retype %d failed: %d\n", i, error); return; }
         dma_caps[i] = slot;
@@ -150,20 +151,20 @@ void boot_fs_init(void) {
         desc[2].addr  = req_pa + 16 + 512; desc[2].len = 1;
         desc[2].flags = VIRTQ_DESC_F_WRITE; desc[2].next = 0;
 
-        __asm__ volatile("dmb sy" ::: "memory");
+        arch_dmb();
         avail->ring[avail->idx % qsz] = 0;
-        __asm__ volatile("dmb sy" ::: "memory");
+        arch_dmb();
         avail->idx += 1;
-        __asm__ volatile("dmb sy" ::: "memory");
+        arch_dmb();
         VIO_W(VIRTIO_MMIO_QUEUE_NOTIFY, 0);
 
         uint16_t last_used = 0;
         int probe_done = 0;
         for (int t = 0; t < 10000000; t++) {
-            __asm__ volatile("dmb sy" ::: "memory");
+            arch_dmb();
             if (used->idx != last_used) { probe_done = 1; break; }
         }
-        __asm__ volatile("dmb sy" ::: "memory");
+        arch_dmb();
         VIO_R(VIRTIO_MMIO_INTERRUPT_STATUS);
         VIO_W(VIRTIO_MMIO_INTERRUPT_ACK, 1);
 

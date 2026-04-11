@@ -13,6 +13,7 @@
 #define LOG_LEVEL LOG_LEVEL_DEBUG
 #include "aios/aios_log.h"
 #include <stdio.h>
+#include "arch.h"
 
 void boot_net_init(void) {
     if (!net_available) return;
@@ -46,7 +47,7 @@ void boot_net_init(void) {
             return;
         }
         error = seL4_Untyped_Retype(dma_ut.cptr,
-            seL4_ARM_SmallPageObject, seL4_PageBits,
+            ARCH_PAGE_OBJECT, seL4_PageBits,
             seL4_CapInitThreadCNode, 0, 0, slot, 1);
         if (error) {
             printf("[net] DMA retype %d failed: %d\n", i, error);
@@ -131,7 +132,7 @@ void boot_net_init(void) {
         rx_avail->ring[i] = i;
     }
     rx_avail->idx = NET_QUEUE_SIZE;
-    __asm__ volatile("dmb sy" ::: "memory");
+    arch_dmb();
     net_vio[VIRTIO_MMIO_QUEUE_NOTIFY / 4] = 0;  /* kick RX queue */
 
     /* Read MAC from config space (6 bytes at offset 0x100) */

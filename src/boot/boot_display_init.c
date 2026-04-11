@@ -17,6 +17,7 @@
 #define LOG_LEVEL LOG_LEVEL_DEBUG
 #include "aios/aios_log.h"
 #include <stdio.h>
+#include "arch.h"
 
 #define FWCFG_PADDR     0x09020000UL
 #define FWCFG_FILE_DIR  0x0019
@@ -269,7 +270,7 @@ void boot_display_init(void) {
 
     /* Enumerate fw_cfg files */
     *fw_sel = bswap16(FWCFG_FILE_DIR);
-    __asm__ volatile("dsb sy" ::: "memory");
+    arch_dsb();
 
     uint32_t fcount = 0;
     for (int i = 0; i < 4; i++)
@@ -338,7 +339,7 @@ void boot_display_init(void) {
         error = vka_cspace_alloc(&vka, &slot);
         if (error) { printf("[gpu] FB cslot %u\n", i); return; }
         error = seL4_Untyped_Retype(fb_ut.cptr,
-            seL4_ARM_SmallPageObject, seL4_PageBits,
+            ARCH_PAGE_OBJECT, seL4_PageBits,
             seL4_CapInitThreadCNode, 0, 0, slot, 1);
         if (error) { printf("[gpu] FB retype %u: %d\n", i, error); return; }
         fb_caps[i] = slot;
@@ -372,18 +373,18 @@ void boot_display_init(void) {
     da->length  = bswap32(28);
     da->address = bswap64(dma_pa + 128);
 
-    __asm__ volatile("dsb sy" ::: "memory");
+    arch_dsb();
 
     volatile uint32_t *fw_dma_hi = (volatile uint32_t *)((uintptr_t)fw_vaddr + 0x10);
     volatile uint32_t *fw_dma_lo = (volatile uint32_t *)((uintptr_t)fw_vaddr + 0x14);
 
     *fw_dma_hi = bswap32((uint32_t)(dma_pa >> 32));
-    __asm__ volatile("dsb sy" ::: "memory");
+    arch_dsb();
     *fw_dma_lo = bswap32((uint32_t)(dma_pa & 0xFFFFFFFF));
-    __asm__ volatile("dsb sy" ::: "memory");
+    arch_dsb();
 
     for (int t = 0; t < 10000000; t++) {
-        __asm__ volatile("dmb sy" ::: "memory");
+        arch_dmb();
         if (da->control == 0) break;
     }
 

@@ -694,18 +694,24 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             cspacepath_t fs_s, fs_d;
             vka_cspace_make_path(&vka, fs_ep_cap, &fs_s);
             vka_cspace_alloc_path(&vka, &fs_d);
-            seL4_CNode_Mint(fs_d.root, fs_d.capPtr, fs_d.capDepth,
-                fs_s.root, fs_s.capPtr, fs_s.capDepth,
-                seL4_AllRights, (seL4_Word)(ci + 1));
+            {
+                int merr = seL4_CNode_Mint(fs_d.root, fs_d.capPtr, fs_d.capDepth,
+                    fs_s.root, fs_s.capPtr, fs_s.capDepth,
+                    seL4_AllRights, (seL4_Word)(ci + 1));
+                if (merr) printf("[pipe] WARN: fs_ep Mint failed: %d\n", merr);
+            }
             seL4_CPtr cf = sel4utils_copy_cap_to_process(proc, &vka, fs_d.capPtr);
             ap->child_fs_slot = cf;
 
             cspacepath_t te_s, te_d;
             vka_cspace_make_path(&vka, thread_ep_cap, &te_s);
             vka_cspace_alloc_path(&vka, &te_d);
-            seL4_CNode_Mint(te_d.root, te_d.capPtr, te_d.capDepth,
-                te_s.root, te_s.capPtr, te_s.capDepth,
-                seL4_AllRights, (seL4_Word)(ci + 1));
+            {
+                int merr = seL4_CNode_Mint(te_d.root, te_d.capPtr, te_d.capDepth,
+                    te_s.root, te_s.capPtr, te_s.capDepth,
+                    seL4_AllRights, (seL4_Word)(ci + 1));
+                if (merr) printf("[pipe] WARN: thread_ep Mint failed: %d\n", merr);
+            }
             seL4_CPtr ct = sel4utils_copy_cap_to_process(proc, &vka, te_d.capPtr);
             ap->child_thread_slot = ct;
 
@@ -715,9 +721,12 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             cspacepath_t pi_s, pi_d;
             vka_cspace_make_path(&vka, pipe_ep_cap, &pi_s);
             vka_cspace_alloc_path(&vka, &pi_d);
-            seL4_CNode_Mint(pi_d.root, pi_d.capPtr, pi_d.capDepth,
-                pi_s.root, pi_s.capPtr, pi_s.capDepth,
-                seL4_AllRights, (seL4_Word)(ci + 1));
+            {
+                int merr = seL4_CNode_Mint(pi_d.root, pi_d.capPtr, pi_d.capDepth,
+                    pi_s.root, pi_s.capPtr, pi_s.capDepth,
+                    seL4_AllRights, (seL4_Word)(ci + 1));
+                if (merr) printf("[pipe] WARN: pipe_ep Mint failed: %d\n", merr);
+            }
             seL4_CPtr cp2 = sel4utils_copy_cap_to_process(proc, &vka, pi_d.capPtr);
             ap->child_pipe_slot = cp2;
 

@@ -14,6 +14,7 @@
 #include "aios/aios_log.h"
 #include <sel4platsupport/device.h>
 #include <stdio.h>
+#include "arch.h"
 
 #define VIRTIO_SLOT_SIZE 0x200
 
@@ -43,7 +44,7 @@ void boot_log_drive_init(void *vio_vaddr, int log_slot) {
         error = vka_cspace_alloc(&vka, &slot);
         if (error) { printf("[boot] Log cslot failed\n"); return; }
         error = seL4_Untyped_Retype(dma_ut.cptr,
-            seL4_ARM_SmallPageObject, seL4_PageBits,
+            ARCH_PAGE_OBJECT, seL4_PageBits,
             seL4_CapInitThreadCNode, 0, 0, slot, 1);
         if (error) { printf("[boot] Log retype %d failed\n", i); return; }
         dma_caps[i] = slot;

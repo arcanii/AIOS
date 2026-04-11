@@ -68,12 +68,11 @@ void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             ls_path[lpl] = '\0';
             if (lpl == 0) { ls_path[0] = '/'; ls_path[1] = '\0'; }
 
-            /* Only fetch listing on first round (offset==0) */
-            static int fs_ls_total = 0;
-            if (ls_offset == 0) {
-                fs_ls_total = vfs_list(ls_path, fs_buf, sizeof(fs_buf));
-                if (fs_ls_total < 0) fs_ls_total = 0;
-            }
+            /* Always regenerate listing -- the static variable caused
+             * a race when multiple clients interleaved LS rounds.
+             * fs_server is single-threaded so this is safe. */
+            int fs_ls_total = vfs_list(ls_path, fs_buf, sizeof(fs_buf));
+            if (fs_ls_total < 0) fs_ls_total = 0;
 
             /* Send chunk starting at offset */
             int remaining = fs_ls_total - (int)ls_offset;

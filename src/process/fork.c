@@ -351,8 +351,16 @@ int do_fork(int parent_idx) {
 
     /* 5. Read parent registers */
     seL4_UserContext parent_regs;
-    seL4_TCB_ReadRegisters(parent->proc.thread.tcb.cptr, 0, 0,
-                           sizeof(parent_regs) / sizeof(seL4_Word), &parent_regs);
+    for (unsigned _ri = 0; _ri < sizeof(parent_regs)/sizeof(seL4_Word); _ri++)
+        ((seL4_Word *)&parent_regs)[_ri] = 0;
+    {
+        int rr = seL4_TCB_ReadRegisters(parent->proc.thread.tcb.cptr, 0, 0,
+                               sizeof(parent_regs) / sizeof(seL4_Word), &parent_regs);
+        if (rr) {
+            printf("[fork] ReadRegisters failed: %d\n", rr);
+            return -1;
+        }
+    }
 
     /* 6. Overwrite child's .data with parent's content */
     for (int s = 0; s < parent->num_segs; s++) {
@@ -399,8 +407,11 @@ int do_fork(int parent_idx) {
         };
         for (int ci = 0; ci < 5; ci++) {
             if (slots[ci] == 0) continue;
-            seL4_CNode_Copy(child_cnode, slots[ci], depth,
+            int cerr = seL4_CNode_Copy(child_cnode, slots[ci], depth,
                             parent_cnode, slots[ci], depth, seL4_AllRights);
+            if (cerr)
+                printf("[fork] WARN: cap copy slot %lu failed: %d\n",
+                       (unsigned long)slots[ci], cerr);
         }
         child->child_ser_slot = parent->child_ser_slot;
         child->child_fs_slot = parent->child_fs_slot;
@@ -460,8 +471,11 @@ int do_fork(int parent_idx) {
     child_regs.x4 = 0;
     child_regs.x5 = 0;
 
-    seL4_TCB_WriteRegisters(cp->thread.tcb.cptr, 0, 0,
-                            sizeof(child_regs) / sizeof(seL4_Word), &child_regs);
+    {
+        int wr = seL4_TCB_WriteRegisters(cp->thread.tcb.cptr, 0, 0,
+                                sizeof(child_regs) / sizeof(seL4_Word), &child_regs);
+        if (wr) printf("[fork] WARN: WriteRegisters failed: %d\n", wr);
+    }
 
     /* 11. Write MR0=0 and MR1=child_pid to child's IPC buffer */
     {

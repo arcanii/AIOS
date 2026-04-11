@@ -185,9 +185,14 @@ void thread_server_fn(void *arg0, void *arg1, void *ipc_buf) {
 
             /* Read x0 from faulted thread (holds return value) */
             seL4_UserContext join_regs;
+            for (unsigned _ri = 0; _ri < sizeof(join_regs)/sizeof(seL4_Word); _ri++)
+                ((seL4_Word *)&join_regs)[_ri] = 0;
             int join_nregs = sizeof(join_regs) / sizeof(seL4_Word);
-            seL4_TCB_ReadRegisters(t->tcb.cptr, 0, 0,
-                                   join_nregs, &join_regs);
+            {
+                int rr = seL4_TCB_ReadRegisters(t->tcb.cptr, 0, 0,
+                                       join_nregs, &join_regs);
+                if (rr) printf("[thread] WARN: ReadRegisters failed: %d\n", rr);
+            }
             seL4_Word thread_retval = join_regs.x0;
 
             /* Thread exited -- revoke derived caps, then free objects */

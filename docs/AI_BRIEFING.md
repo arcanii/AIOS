@@ -7,7 +7,7 @@
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: main
 * **Developer**: Bryan
-* **Current Version**: v0.4.75
+* **Current Version**: v0.4.76
 
 ## Development Environment
 
@@ -444,11 +444,16 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 3. ~~tcc program TLS/IPC~~ FIXED in v0.4.72
 4. ~~Networking~~ DONE in v0.4.74: virtio-net driver, ARP/ICMP, UDP sockets, TCP + HTTP server (M1-M4)
 5. ~~Display server~~ DONE in v0.4.75: ramfb framebuffer, font rendering, display IPC, fbshow, UART IRQ
-6. zsh port: alternative shell with ZLE (see docs/DESIGN_ZSH.md)
-6. Allocator right-sizing: 4000 pages ~100x oversized, test with 500/250/100
-7. Dash improvements: tab completion, history, PS1, job control
-8. TTY improvements: process-aware echo, virtual terminals
-9. ext2 write improvements: free blocks on unlink, triple indirect
+6. ~~TCC compilation~~ VERIFIED in v0.4.76: single-file, multi-file, multi-header, libc.a linking
+7. ~~UART IRQ freeze~~ FIXED in v0.4.76: QEMU PL011 ICR race, RXFE check before seL4_Wait
+8. ~~Large file open~~ FIXED in v0.4.76: fetch_stat for real size, FS_PREAD path works
+9. ~~Stability fixes~~ DONE in v0.4.76: Mint/Copy/Register error checks, fs_ls_total race
+10. ~~src/arch isolation~~ DONE in v0.4.76: arch.h dispatcher, aarch64 + x86_64 barrier/page headers
+11. zsh port: alternative shell with ZLE (see docs/DESIGN_ZSH.md)
+12. Allocator right-sizing: 4000 pages ~100x oversized, test with 500/250/100
+13. Dash improvements: tab completion, history, PS1, job control
+14. TTY improvements: process-aware echo, virtual terminals
+15. ext2 write improvements: free blocks on unlink, triple indirect
 
 ## Version History (0.4.x)
 
@@ -498,6 +503,18 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 | v0.4.74 | Networking: virtio-net driver (128KB DMA, two-thread RX/TX), ARP/ICMP/UDP/TCP protocol stack, POSIX socket API, HTTP server user program. See docs/NEXT_20260410b.md |
 | v0.4.73 | Second virtio-blk drive (log disk), ext2 multi-device cache (dev_id), volume label disk probe, file-based logging (/log/aios.log), ext2 inode_size from superblock, alloc_block group_start fix, post-completion dmb sy barrier, create_file 0755 permissions. See docs/NEXT_20260410a.md |
 | v0.4.75 | Display server: ramfb framebuffer (1024x768), 8x8 bitmap font, splash images, display server IPC (5 commands), fbshow user program, disp_ep capability propagation, UART IRQ notification (seL4_Wait replaces polling). See docs/NEXT_20260411a.md |
+| v0.4.76 | TCC compilation verified (single/multi-file, libc.a linking). UART IRQ freeze fix (QEMU PL011 ICR race). Large file open fix (fetch_stat for real size). Stability: seL4 cap error checks, fs_ls_total race. Architecture isolation: src/arch/ layer with aarch64 + x86_64 barrier/page macros (34 inline asm replaced). See docs/NEXT_20260411b.md |
+
+## Architecture After v0.4.76
+
+```
+src/arch/
+  arch.h                     -- architecture dispatcher
+  aarch64/barriers.h          -- dmb, dsb, isb macros
+  aarch64/page.h              -- ARCH_PAGE_OBJECT, arch_page_get_address
+  x86_64/barriers.h           -- mfence stubs
+  x86_64/page.h               -- x86 page stubs
+```
 
 ## Architecture After v0.4.74
 
@@ -534,7 +551,7 @@ include/aios/vka_audit.h   ~38 lines
 include/aios/net.h         ~210 lines
 ```
 
-## Test Results (v0.4.74)
+## Test Results (v0.4.76)
 
 ```
 posix_verify V3: 98/98 PASS
@@ -547,7 +564,9 @@ cat /log/aios.log: PASS (boot entries with timestamps)
 cd /log: PASS (cross-mount chdir)
 echo hello > /tmp/t.txt: PASS
 echo line2 >> /tmp/t.txt: PASS
-tcc -v / tcc -c / tcc -o / tcc run: PASS
+tcc -o single file (stdio.h): PASS (hello from tcc)
+tcc -o multi-header (stdio+string+stdlib): PASS (sum=6 len=5)
+tcc -c + multi-file link: PASS (add=7, mul=30)
 fork_test: PASS
 pipe: echo hello | cat -> hello (PASS)
 Ctrl-C on tail -f: PASS (clean exit back to shell prompt)

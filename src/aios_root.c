@@ -300,14 +300,24 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        /* ACK UART IRQ if active (clears interrupt, re-arms) */
+        /* ACK UART IRQ if active (re-arms for next delivery) */
         if (irq_uart_active && uart_irq_cap) {
-            uart[UART_ICR / 4] = IMSC_RXIM;  /* clear RX interrupt */
             seL4_IRQHandler_Ack(uart_irq_cap);
         }
 
+        /* Sleep only if FIFO is empty.
+         * QEMU PL011 bug: writing ICR clears RX flag even when
+         * data remains in FIFO, and the flag only re-asserts on
+         * NEW data via pl011_put_fifo.  If we sleep with data in
+         * the FIFO, the main loop blocks forever.  Fix: skip the
+         * ICR write (unnecessary for level-triggered RX) and
+         * check RXFE before sleeping. */
         if (irq_uart_active && main_ntfn_cap) {
-            seL4_Wait(main_ntfn_cap, NULL);  /* sleep until event */
+            if (uart && !(uart[UART_FR / 4] & FR_RXFE)) {
+                seL4_Yield();  /* FIFO has data -- drain next iter */
+            } else {
+                seL4_Wait(main_ntfn_cap, NULL);  /* FIFO empty -- sleep */
+            }
         } else {
             seL4_Yield();  /* fallback: busy-poll */
         }

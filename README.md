@@ -8,11 +8,12 @@ Architectures / Hardware Supported
 - :white_medium_square: X86-64 
 
 ## Latest Achievements
+- TCC compiler compiles C programs on AIOS (single-file, multi-file, libc linking)
+- Architecture isolation layer (src/arch/) for future x86-64 support
 - Graphical display output via ramfb framebuffer (1024x768)
 - Networking: virtio-net driver, TCP/IP stack, HTTP server
-- shell is using DASH (https://github.com/tklauser/dash)
+- Shell is using DASH (https://github.com/tklauser/dash)
 - C compiler is TinyCC (https://github.com/TinyCC/tinycc)
-- Graphic Display buffer working (Display buffer IPC)
 
 ## Overview
 
@@ -26,7 +27,7 @@ External AI (Claude) is used as a development tool for code generation
 and review. This project is also a study in AI-assisted systems programming.
 The long-term goal is self-hosted development within AIOS itself.
 
-**Current version:** v0.4.75
+**Current version:** v0.4.76
 
 ## What Works
 
@@ -44,7 +45,8 @@ The long-term goal is self-hosted development within AIOS itself.
 - **Networking** -- virtio-net driver, ARP/ICMP/UDP/TCP stack, HTTP server, POSIX sockets
 - **UART IRQ wakeup** -- PL011 interrupt-driven main loop (seL4_Wait replaces busy-polling)
 - **132+ programs** -- 99 sbase utilities, 29 AIOS programs, dash, tcc, hello_test, httpd
-- **tcc compiler** -- cross-compiled TinyCC runs on AIOS, compile-and-run working
+- **tcc compiler** -- TinyCC compiles C programs on AIOS (single-file, multi-file, libc.a linking)
+- **Architecture layer** -- src/arch/ with aarch64 + x86_64 stubs (barriers, page ops)
 - **Dual-drive support** -- system disk + log disk, identified by ext2 volume label
 - **File-based logging** -- boot entries with timestamps persisted to /log/aios.log
 - **Ctrl-C (SIGINT)** -- two-stage signal delivery: SIGINT first, force-kill on second ^C

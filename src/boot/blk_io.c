@@ -7,6 +7,7 @@
 #include "aios/root_shared.h"
 #include "virtio.h"
 #include <stdio.h>
+#include "arch.h"
 
 int blk_read_sector(uint64_t sector, void *buf) {
     struct virtq_desc  *desc  = (struct virtq_desc *)(blk_dma);
@@ -27,19 +28,19 @@ int blk_read_sector(uint64_t sector, void *buf) {
     desc[2].addr = req_pa + 16 + 512; desc[2].len = 1;
     desc[2].flags = VIRTQ_DESC_F_WRITE; desc[2].next = 0;
 
-    __asm__ volatile("dmb sy" ::: "memory");
+    arch_dmb();
     avail->ring[avail->idx % 16] = 0;
-    __asm__ volatile("dmb sy" ::: "memory");
+    arch_dmb();
     avail->idx += 1;
-    __asm__ volatile("dmb sy" ::: "memory");
+    arch_dmb();
     blk_vio[VIRTIO_MMIO_QUEUE_NOTIFY / 4] = 0;
 
     uint16_t last = used->idx;
     for (int t = 0; t < 10000000; t++) {
-        __asm__ volatile("dmb sy" ::: "memory");
+        arch_dmb();
         if (used->idx != last) break;
     }
-    __asm__ volatile("dmb sy" ::: "memory");
+    arch_dmb();
     blk_vio[VIRTIO_MMIO_INTERRUPT_ACK / 4] = blk_vio[VIRTIO_MMIO_INTERRUPT_STATUS / 4];
 
     if (used->idx == last || req->status != 0) return -1;
@@ -71,19 +72,19 @@ int blk_write_sector(uint64_t sector, const void *buf) {
     desc[2].addr = req_pa + 16 + 512; desc[2].len = 1;
     desc[2].flags = VIRTQ_DESC_F_WRITE; desc[2].next = 0;
 
-    __asm__ volatile("dmb sy" ::: "memory");
+    arch_dmb();
     avail->ring[avail->idx % 16] = 0;
-    __asm__ volatile("dmb sy" ::: "memory");
+    arch_dmb();
     avail->idx += 1;
-    __asm__ volatile("dmb sy" ::: "memory");
+    arch_dmb();
     blk_vio[VIRTIO_MMIO_QUEUE_NOTIFY / 4] = 0;
 
     uint16_t last = used->idx;
     for (int t = 0; t < 10000000; t++) {
-        __asm__ volatile("dmb sy" ::: "memory");
+        arch_dmb();
         if (used->idx != last) break;
     }
-    __asm__ volatile("dmb sy" ::: "memory");
+    arch_dmb();
     blk_vio[VIRTIO_MMIO_INTERRUPT_ACK / 4] = blk_vio[VIRTIO_MMIO_INTERRUPT_STATUS / 4];
 
     if (used->idx == last || req->status != 0) return -1;
@@ -111,19 +112,19 @@ int blk_read_sector_log(uint64_t sector, void *buf) {
     desc[2].addr = req_pa + 16 + 512; desc[2].len = 1;
     desc[2].flags = VIRTQ_DESC_F_WRITE; desc[2].next = 0;
 
-    __asm__ volatile("dmb sy" ::: "memory");
+    arch_dmb();
     avail->ring[avail->idx % 16] = 0;
-    __asm__ volatile("dmb sy" ::: "memory");
+    arch_dmb();
     avail->idx += 1;
-    __asm__ volatile("dmb sy" ::: "memory");
+    arch_dmb();
     blk_vio_log[VIRTIO_MMIO_QUEUE_NOTIFY / 4] = 0;
 
     uint16_t last = used->idx;
     for (int t = 0; t < 10000000; t++) {
-        __asm__ volatile("dmb sy" ::: "memory");
+        arch_dmb();
         if (used->idx != last) break;
     }
-    __asm__ volatile("dmb sy" ::: "memory");
+    arch_dmb();
     blk_vio_log[VIRTIO_MMIO_INTERRUPT_ACK / 4] =
         blk_vio_log[VIRTIO_MMIO_INTERRUPT_STATUS / 4];
 
@@ -156,19 +157,19 @@ int blk_write_sector_log(uint64_t sector, const void *buf) {
     desc[2].addr = req_pa + 16 + 512; desc[2].len = 1;
     desc[2].flags = VIRTQ_DESC_F_WRITE; desc[2].next = 0;
 
-    __asm__ volatile("dmb sy" ::: "memory");
+    arch_dmb();
     avail->ring[avail->idx % 16] = 0;
-    __asm__ volatile("dmb sy" ::: "memory");
+    arch_dmb();
     avail->idx += 1;
-    __asm__ volatile("dmb sy" ::: "memory");
+    arch_dmb();
     blk_vio_log[VIRTIO_MMIO_QUEUE_NOTIFY / 4] = 0;
 
     uint16_t last = used->idx;
     for (int t = 0; t < 10000000; t++) {
-        __asm__ volatile("dmb sy" ::: "memory");
+        arch_dmb();
         if (used->idx != last) break;
     }
-    __asm__ volatile("dmb sy" ::: "memory");
+    arch_dmb();
     blk_vio_log[VIRTIO_MMIO_INTERRUPT_ACK / 4] =
         blk_vio_log[VIRTIO_MMIO_INTERRUPT_STATUS / 4];
 

@@ -10,6 +10,7 @@
 #include "aios/net.h"
 #include "virtio.h"
 #include <stdio.h>
+#include "arch.h"
 
 /* be16/be32 provided by net.h */
 
@@ -100,9 +101,9 @@ int net_tx_send(const uint8_t *frame, uint32_t len) {
     tx_desc[idx].next  = 0;
 
     tx_avail->ring[idx] = idx;
-    __asm__ volatile("dmb sy" ::: "memory");
+    arch_dmb();
     tx_avail->idx++;
-    __asm__ volatile("dmb sy" ::: "memory");
+    arch_dmb();
 
     net_vio[VIRTIO_MMIO_QUEUE_NOTIFY / 4] = 1;
     stats.tx_packets++;

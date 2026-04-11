@@ -15,7 +15,7 @@ add_library(aios_posix STATIC
     ${AIOS_ROOT}/src/lib/posix_net.c
     ${AIOS_ROOT}/src/lib/aios_entry.c
 )
-target_include_directories(aios_posix PUBLIC ${AIOS_ROOT}/src/lib ${AIOS_ROOT}/include)
+target_include_directories(aios_posix PUBLIC ${AIOS_ROOT}/src/lib ${AIOS_ROOT}/include ${AIOS_ROOT}/src/arch)
 target_link_libraries(aios_posix sel4 sel4muslcsys)
 
 macro(AiosChildApp name)
@@ -25,7 +25,7 @@ macro(AiosChildApp name)
         sel4platsupport sel4utils sel4simple sel4simple-default
         sel4vka sel4allocman
     )
-    target_include_directories(${name} PRIVATE ${AIOS_ROOT}/include ${AIOS_ROOT}/src/lib)
+    target_include_directories(${name} PRIVATE ${AIOS_ROOT}/include ${AIOS_ROOT}/src/lib ${AIOS_ROOT}/src/arch)
 endmacro()
 
 macro(AiosPosixApp name)
@@ -133,7 +133,7 @@ target_link_libraries(aios_root
     sel4platsupport sel4muslcsys muslc
     cpio elf
 )
-target_include_directories(aios_root PRIVATE ${AIOS_ROOT}/include)
+target_include_directories(aios_root PRIVATE ${AIOS_ROOT}/include ${AIOS_ROOT}/src/arch)
 target_link_options(aios_root PRIVATE -Wl,--no-copy-dt-needed-entries)
 
 DeclareRootserver(aios_root)
