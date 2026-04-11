@@ -18,6 +18,7 @@
 #define SSH_MAX_PAYLOAD     2048    /* max payload we accept */
 #define SOCK_CHUNK          900     /* AIOS socket max per read/write */
 #define SSH_MAX_VERSION_LEN 255     /* RFC 4253 section 4.2 */
+#define SSH_MAC_LEN         32      /* HMAC-SHA-256 output */
 
 /* Listening port (use 2222 during development, 22 for production) */
 #define SSHD_PORT           2222
@@ -33,6 +34,7 @@
 #define SSH_MSG_DEBUG                   4
 #define SSH_MSG_SERVICE_REQUEST         5
 #define SSH_MSG_SERVICE_ACCEPT          6
+#define SSH_MSG_EXT_INFO                7
 #define SSH_MSG_KEXINIT                20
 #define SSH_MSG_NEWKEYS                21
 
@@ -123,11 +125,13 @@ typedef struct {
     int          shared_secret_len;
 
     /* Derived session keys (for Phase 3 encryption) */
-    uint8_t      iv_c2s[12];
-    uint8_t      iv_s2c[12];
+    uint8_t      iv_c2s[16];
+    uint8_t      iv_s2c[16];
     uint8_t      key_c2s[32];
     uint8_t      key_s2c[32];
-    int          encrypted;          /* 1 after NEWKEYS */
+    uint8_t      mac_c2s[32];        /* Integrity key (letter E) */
+    uint8_t      mac_s2c[32];        /* Integrity key (letter F) */
+    int          encrypted;          /* 1 after encrypt_init */
 
     /* Auth state (populated in Phase 3) */
     uint32_t     uid;
@@ -135,10 +139,25 @@ typedef struct {
     uint32_t     auth_token;
     int          authenticated;
 
-    /* Channel state (populated in Phase 4) */
+    /* Channel state */
     uint32_t     client_channel;
     uint32_t     server_channel;
     int          channel_open;
+
+    /* Channel flow control (Phase 5) */
+    uint32_t     client_window;     /* bytes client willing to receive */
+    uint32_t     client_max_pkt;    /* max packet size client accepts */
+    uint32_t     server_window;     /* bytes we are willing to receive */
+
+    /* PTY state */
+    uint32_t     term_width;
+    uint32_t     term_height;
+    int          has_pty;
+
+    /* Non-blocking packet reassembly state */
+    uint8_t      nb_dec_hdr[4];   /* decrypted header cache */
+    uint32_t     nb_pkt_len;      /* packet length from header */
+    int          nb_hdr_done;     /* header decrypted flag */
 } ssh_session_t;
 
 /* ----------------------------------------------------------------
@@ -212,6 +231,9 @@ int ssh_version_exchange(ssh_session_t *s);
  * payload buffer must be at least SSH_BUF_SIZE bytes. */
 int ssh_read_packet(ssh_session_t *s, uint8_t *payload, int *payload_len);
 
+/* Non-blocking variant: returns 0 on success, 1 if no data, -1 on error */
+int ssh_read_packet_nb(ssh_session_t *s, uint8_t *payload, int *payload_len);
+
 /* Write one SSH binary packet from payload.
  * Handles padding and 900-byte chunked socket writes. */
 int ssh_write_packet(ssh_session_t *s, const uint8_t *payload, int payload_len);
@@ -273,5 +295,39 @@ int  ssh_derive_keys(ssh_session_t *s,
 
 /* Cleanup ECDH state between connections */
 void ssh_ecdh_cleanup(void);
+
+/* ----------------------------------------------------------------
+ * Function declarations -- ssh_auth.c
+ * ---------------------------------------------------------------- */
+
+/* Run SSH user authentication (RFC 4252) */
+int  ssh_do_userauth(ssh_session_t *s);
+
+/* ----------------------------------------------------------------
+ * Function declarations -- ssh_channel.c
+ * ---------------------------------------------------------------- */
+
+/* Run SSH session channel: open, pty-req, shell, data relay (RFC 4254) */
+int  ssh_do_channel(ssh_session_t *s);
+
+/* ----------------------------------------------------------------
+ * Function declarations -- ssh_encrypt.c
+ * ---------------------------------------------------------------- */
+
+/* Initialize AES-256-CTR + HMAC-SHA-256 from session keys */
+int  ssh_encrypt_init(ssh_session_t *s);
+
+/* Encrypt data (send / s2c direction) */
+void ssh_ctr_encrypt(const uint8_t *in, uint8_t *out, int len);
+
+/* Decrypt data (recv / c2s direction) */
+void ssh_ctr_decrypt(const uint8_t *in, uint8_t *out, int len);
+
+/* Compute MAC for send direction */
+void ssh_mac_compute_send(const uint8_t *data, int len, uint8_t mac[32]);
+
+/* Verify MAC for recv direction (0 = OK, -1 = fail) */
+int  ssh_mac_verify_recv(const uint8_t *data, int len,
+                         const uint8_t expected[32]);
 
 #endif /* SSH_SESSION_H */

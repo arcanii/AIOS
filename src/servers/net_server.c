@@ -202,6 +202,7 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
         if (s->has_blocked) {
             int n = data_len;
             if (n > s->blocked_max) n = s->blocked_max;
+            printf("[net-srv] TCP sock %d: wake blocked reader (%d/%d bytes)\n", si, n, data_len);
             seL4_SetMR(0, (seL4_Word)n);
             seL4_SetMR(1, 0);
             seL4_SetMR(2, 0);
@@ -215,6 +216,20 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
             seL4_CNode_Delete(seL4_CapInitThreadCNode,
                               s->blocked_cap, seL4_WordBits);
             s->has_blocked = 0;
+
+            /* Buffer remaining TCP data that did not fit in the read */
+            if (n < data_len) {
+                int remaining = data_len - n;
+                int mask = SOCK_RX_BUF_SZ - 1;
+                int free_sp = SOCK_RX_BUF_SZ - 1 -
+                    ((s->rx_head - s->rx_tail) & mask);
+                int to_buf = remaining;
+                if (to_buf > free_sp) to_buf = free_sp;
+                for (int j = 0; j < to_buf; j++) {
+                    s->rxbuf[s->rx_head & mask] = data[n + j];
+                    s->rx_head++;
+                }
+            }
         } else {
             /* Append to TCP circular buffer */
             int mask = SOCK_RX_BUF_SZ - 1;
@@ -298,6 +313,12 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
         seL4_Word badge = 0;
         seL4_MessageInfo_t msg = seL4_Recv(ep, &badge);
         seL4_Word label = seL4_MessageInfo_get_label(msg);
+
+        if (label == 0 && badge != 0) {
+            /* Notification wake -- re-poll ring immediately */
+            printf("[net-srv] NTFN-WAKE badge=0x%lx\n", (unsigned long)badge);
+            continue;
+        }
 
         if (label == NET_SOCKET) {
             int type = (int)seL4_GetMR(1);
@@ -393,6 +414,7 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
         } else if (label == NET_RECVFROM) {
             int sid = (int)seL4_GetMR(0);
             int max = (int)seL4_GetMR(1);
+            int nb  = (int)seL4_GetMR(2);  /* v0.4.84: O_NONBLOCK flag */
             if (sid < 0 || sid >= MAX_NET_SOCKETS || !sockets[sid].in_use) {
                 seL4_SetMR(0, (seL4_Word)-1);
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
@@ -420,11 +442,18 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                     seL4_SetMR(0, 0);
                     seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                 } else {
-                    seL4_CNode_SaveCaller(seL4_CapInitThreadCNode,
-                        blocked_slots[sid], seL4_WordBits);
-                    sk->blocked_cap = blocked_slots[sid];
-                    sk->blocked_max = max;
-                    sk->has_blocked = 1;
+                    if (nb) {
+                        /* v0.4.84: O_NONBLOCK -- return EAGAIN */
+                        seL4_SetMR(0, (seL4_Word)(-11));
+                        seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                    } else {
+                        seL4_CNode_SaveCaller(seL4_CapInitThreadCNode,
+                            blocked_slots[sid], seL4_WordBits);
+                        sk->blocked_cap = blocked_slots[sid];
+                        sk->blocked_max = max;
+                        sk->has_blocked = 1;
+                        printf("[net-srv] TCP sock %d: reader blocked (max=%d)\n", sid, max);
+                    }
                 }
             } else if (sockets[sid].rxlen > 0) {
                 /* UDP: single datagram */
@@ -447,11 +476,16 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 sk->rxlen = 0;
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, mr2));
             } else {
-                seL4_CNode_SaveCaller(seL4_CapInitThreadCNode,
-                    blocked_slots[sid], seL4_WordBits);
-                sockets[sid].blocked_cap = blocked_slots[sid];
-                sockets[sid].blocked_max = max;
-                sockets[sid].has_blocked = 1;
+                if (nb) {
+                    seL4_SetMR(0, (seL4_Word)(-11));
+                    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                } else {
+                    seL4_CNode_SaveCaller(seL4_CapInitThreadCNode,
+                        blocked_slots[sid], seL4_WordBits);
+                    sockets[sid].blocked_cap = blocked_slots[sid];
+                    sockets[sid].blocked_max = max;
+                    sockets[sid].has_blocked = 1;
+                }
             }
 
         } else if (label == NET_CLOSE_SOCK) {

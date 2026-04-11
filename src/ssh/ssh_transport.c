@@ -10,6 +10,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <errno.h>
+#include <fcntl.h>
 
 /* ----------------------------------------------------------------
  * Low-level socket I/O with 900-byte chunking
@@ -114,6 +116,141 @@ int ssh_version_exchange(ssh_session_t *s)
 }
 
 /* ----------------------------------------------------------------
+ * Read one SSH binary packet (encrypted mode)
+ *
+ * AES-256-CTR decryption + HMAC-SHA-256 verification.
+ * The CTR stream is continuous across packets (not reset).
+ *
+ * Wire format: [encrypted(4 + pkt_len)] [MAC(32)]
+ * MAC input:   seq_num(4) || plaintext(4 + pkt_len)
+ * ---------------------------------------------------------------- */
+
+static int ssh_read_encrypted(ssh_session_t *s,
+                               uint8_t *payload, int *payload_len)
+{
+    /* 1. Read and decrypt 4-byte packet length */
+    uint8_t enc_hdr[4], dec_hdr[4];
+    if (s->has_peek) {
+        /* Use peeked byte as first byte of encrypted header */
+        enc_hdr[0] = s->peek_byte;
+        s->has_peek = 0;
+        if (sock_read_exact(s->sockfd, enc_hdr + 1, 3) < 0) {
+            printf("[sshd] enc-read: header(peek) failed\n");
+            return -1;
+        }
+    } else {
+        if (sock_read_exact(s->sockfd, enc_hdr, 4) < 0) {
+            printf("[sshd] enc-read: header failed\n");
+            return -1;
+        }
+    }
+    ssh_ctr_decrypt(enc_hdr, dec_hdr, 4);
+
+    uint32_t pkt_len = ssh_get_u32(dec_hdr);
+    if (pkt_len < 2 || pkt_len > SSH_BUF_SIZE - 4) {
+        printf("[sshd] enc-read: bad pkt_len %u\n", (unsigned)pkt_len);
+        return -1;
+    }
+
+    /* 2. Read and decrypt body (padding_length + payload + padding) */
+    uint8_t enc_body[SSH_BUF_SIZE];
+    uint8_t dec_body[SSH_BUF_SIZE];
+    if (sock_read_exact(s->sockfd, enc_body, (int)pkt_len) < 0) {
+        printf("[sshd] enc-read: body failed\n");
+        return -1;
+    }
+    ssh_ctr_decrypt(enc_body, dec_body, (int)pkt_len);
+
+    /* 3. Read MAC (plaintext, 32 bytes) */
+    uint8_t mac_recv[SSH_MAC_LEN];
+    if (sock_read_exact(s->sockfd, mac_recv, SSH_MAC_LEN) < 0) {
+        printf("[sshd] enc-read: MAC read failed\n");
+        return -1;
+    }
+
+    /* 4. Verify MAC: HMAC(key, seq(4) || pkt_length(4) || body(pkt_len)) */
+    uint8_t mac_input[SSH_BUF_SIZE + 8];
+    int mi = 0;
+    ssh_put_u32(mac_input + mi, s->seq_recv);  mi += 4;
+    memcpy(mac_input + mi, dec_hdr, 4);        mi += 4;
+    memcpy(mac_input + mi, dec_body, pkt_len); mi += (int)pkt_len;
+
+    if (ssh_mac_verify_recv(mac_input, mi, mac_recv) < 0) {
+        printf("[sshd] MAC FAILED (seq %u)\n", (unsigned)s->seq_recv);
+        return -1;
+    }
+
+    /* 5. Extract payload from body */
+    uint8_t pad_len = dec_body[0];
+    int pload_len = (int)pkt_len - (int)pad_len - 1;
+    if (pload_len < 0 || pload_len > SSH_MAX_PAYLOAD) {
+        printf("[sshd] enc-read: bad payload len %d\n", pload_len);
+        return -1;
+    }
+
+    memcpy(payload, dec_body + 1, pload_len);
+    *payload_len = pload_len;
+
+    s->seq_recv++;
+    return 0;
+}
+
+/* ----------------------------------------------------------------
+ * Write one SSH binary packet (encrypted mode)
+ *
+ * 1. Build plaintext (16-byte aligned padding for AES)
+ * 2. Compute MAC over seq_num + plaintext
+ * 3. Encrypt plaintext with AES-256-CTR
+ * 4. Send encrypted + MAC
+ * ---------------------------------------------------------------- */
+
+static int ssh_write_encrypted(ssh_session_t *s,
+                                const uint8_t *payload, int payload_len)
+{
+    uint8_t pkt[SSH_BUF_SIZE + 64];
+
+    /* Padding: 16-byte block alignment for AES (RFC 4253 section 6) */
+    int block = 16;
+    int total_unpadded = 4 + 1 + payload_len;
+    int pad_len = block - (total_unpadded % block);
+    if (pad_len < 4) pad_len += block;
+
+    uint32_t pkt_len = (uint32_t)(1 + payload_len + pad_len);
+
+    /* Build plaintext */
+    int off = 0;
+    ssh_put_u32(pkt + off, pkt_len);          off += 4;
+    pkt[off++] = (uint8_t)pad_len;
+    memcpy(pkt + off, payload, payload_len);  off += payload_len;
+    ssh_random_bytes(pkt + off, pad_len);     off += pad_len;
+
+    /* Compute MAC: HMAC(key, seq(4) || plaintext(off)) */
+    uint8_t mac_input[SSH_BUF_SIZE + 68];
+    ssh_put_u32(mac_input, s->seq_send);
+    memcpy(mac_input + 4, pkt, off);
+
+    uint8_t mac[SSH_MAC_LEN];
+    ssh_mac_compute_send(mac_input, 4 + off, mac);
+
+    /* Encrypt plaintext */
+    uint8_t enc[SSH_BUF_SIZE + 64];
+    ssh_ctr_encrypt(pkt, enc, off);
+
+    /* Send: encrypted packet + MAC */
+    if (sock_write_all(s->sockfd, enc, off) < 0) {
+        printf("[sshd] enc-write: data failed\n");
+        return -1;
+    }
+    if (sock_write_all(s->sockfd, mac, SSH_MAC_LEN) < 0) {
+        printf("[sshd] enc-write: MAC failed\n");
+        return -1;
+    }
+
+    s->seq_send++;
+    return 0;
+}
+
+/* ----------------------------------------------------------------
  * Read one SSH binary packet (plaintext mode)
  *
  * Packet format (RFC 4253 section 6):
@@ -129,6 +266,9 @@ int ssh_version_exchange(ssh_session_t *s)
 
 int ssh_read_packet(ssh_session_t *s, uint8_t *payload, int *payload_len)
 {
+    if (s->encrypted)
+        return ssh_read_encrypted(s, payload, payload_len);
+
     uint8_t hdr[4];
 
     /* Read 4-byte packet length */
@@ -177,6 +317,9 @@ int ssh_read_packet(ssh_session_t *s, uint8_t *payload, int *payload_len)
 
 int ssh_write_packet(ssh_session_t *s, const uint8_t *payload, int payload_len)
 {
+    if (s->encrypted)
+        return ssh_write_encrypted(s, payload, payload_len);
+
     uint8_t pkt[SSH_BUF_SIZE];
 
     /* Calculate padding: total of (packet_length_field + padding_len_byte +
@@ -218,6 +361,101 @@ int ssh_write_packet(ssh_session_t *s, const uint8_t *payload, int payload_len)
     s->seq_send++;
     return 0;
 }
+
+
+/* ----------------------------------------------------------------
+ * Non-blocking packet read (buffer-based)
+ *
+ * Socket must be in O_NONBLOCK mode. Accumulates raw bytes in
+ * session inbuf. When a complete packet is available, decrypts
+ * and returns it. Never blocks.
+ *
+ * Returns: 0 = packet read, 1 = incomplete/no data, -1 = error
+ * ---------------------------------------------------------------- */
+
+int ssh_read_packet_nb(ssh_session_t *s, uint8_t *payload, int *payload_len)
+{
+    /* Accumulate bytes from socket into inbuf */
+    if (s->inbuf.len < SSH_BUF_SIZE) {
+        int space = SSH_BUF_SIZE - s->inbuf.len;
+        if (space > SOCK_CHUNK) space = SOCK_CHUNK;
+        int got = (int)read(s->sockfd, s->inbuf.buf + s->inbuf.len, space);
+        if (got > 0) s->inbuf.len += got;
+        else if (got == 0) return -1;  /* EOF */
+    }
+
+    if (!s->encrypted) {
+        /* Plaintext: 4-byte length header */
+        if (s->inbuf.len < 4) return 1;
+        uint32_t pkt_len = ssh_get_u32(s->inbuf.buf);
+        if (pkt_len < 2 || pkt_len > SSH_BUF_SIZE - 4) return -1;
+        int total = 4 + (int)pkt_len;
+        if (s->inbuf.len < total) return 1;
+        uint8_t pad_len = s->inbuf.buf[4];
+        int pload_len = (int)pkt_len - (int)pad_len - 1;
+        if (pload_len < 0 || pload_len > SSH_MAX_PAYLOAD) return -1;
+        memcpy(payload, s->inbuf.buf + 5, pload_len);
+        *payload_len = pload_len;
+        s->seq_recv++;
+        int remain = s->inbuf.len - total;
+        if (remain > 0)
+            __builtin_memmove(s->inbuf.buf, s->inbuf.buf + total, remain);
+        s->inbuf.len = remain;
+        return 0;
+    }
+
+    /* Encrypted: need 4-byte header first */
+    if (s->inbuf.len < 4) return 1;
+
+    /* Decrypt header once to learn packet length */
+    if (!s->nb_hdr_done) {
+        ssh_ctr_decrypt(s->inbuf.buf, s->nb_dec_hdr, 4);
+        s->nb_pkt_len = ssh_get_u32(s->nb_dec_hdr);
+        s->nb_hdr_done = 1;
+        if (s->nb_pkt_len < 2 || s->nb_pkt_len > SSH_BUF_SIZE - 4)
+            return -1;
+    }
+
+    /* Wait for full packet: header(4) + body(pkt_len) + MAC(32) */
+    int total = 4 + (int)s->nb_pkt_len + SSH_MAC_LEN;
+    if (s->inbuf.len < total) return 1;
+
+    /* Decrypt body */
+    uint8_t dec_body[SSH_BUF_SIZE];
+    ssh_ctr_decrypt(s->inbuf.buf + 4, dec_body, (int)s->nb_pkt_len);
+
+    /* Verify MAC: HMAC(key, seq(4) || dec_hdr(4) || dec_body(pkt_len)) */
+    uint8_t mac_in[SSH_BUF_SIZE + 8];
+    int mi = 0;
+    ssh_put_u32(mac_in + mi, s->seq_recv);              mi += 4;
+    __builtin_memcpy(mac_in + mi, s->nb_dec_hdr, 4);    mi += 4;
+    __builtin_memcpy(mac_in + mi, dec_body, s->nb_pkt_len);
+    mi += (int)s->nb_pkt_len;
+
+    uint8_t *mac_recv = s->inbuf.buf + 4 + (int)s->nb_pkt_len;
+    if (ssh_mac_verify_recv(mac_in, mi, mac_recv) < 0) {
+        printf("[sshd] MAC FAILED (nb, seq %u)\n", (unsigned)s->seq_recv);
+        return -1;
+    }
+
+    /* Extract payload */
+    uint8_t pad_len = dec_body[0];
+    int pload_len = (int)s->nb_pkt_len - (int)pad_len - 1;
+    if (pload_len < 0 || pload_len > SSH_MAX_PAYLOAD) return -1;
+    memcpy(payload, dec_body + 1, pload_len);
+    *payload_len = pload_len;
+    s->seq_recv++;
+
+    /* Shift remaining bytes in inbuf */
+    int remain = s->inbuf.len - total;
+    if (remain > 0)
+        __builtin_memmove(s->inbuf.buf, s->inbuf.buf + total, remain);
+    s->inbuf.len = remain;
+    s->nb_hdr_done = 0;
+
+    return 0;
+}
+
 
 /* ----------------------------------------------------------------
  * Send SSH_MSG_DISCONNECT

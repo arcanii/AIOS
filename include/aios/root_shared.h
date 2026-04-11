@@ -132,6 +132,7 @@ typedef struct {
     seL4_CPtr child_pipe_slot;
     seL4_CPtr child_thread_slot;
     int exit_status;
+    int ignore_next_fault;  /* v0.4.84: suppress TCB fault during exec */
     int fault_on_pipe_ep;
     int stdout_pipe_id;
     int stdin_pipe_id;

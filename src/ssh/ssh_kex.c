@@ -385,7 +385,11 @@ int ssh_do_kex_exchange(ssh_session_t *s)
         return -1;
     }
 
-    s->encrypted = 1;
+    /* Strict KEX: reset sequence numbers after NEWKEYS exchange */
+    s->seq_recv = 0;
+    s->seq_send = 0;
+    printf("[sshd] Strict KEX: post-NEWKEYS seq reset\n");
+
     ssh_ecdh_cleanup();
 
     printf("[sshd] === Key exchange complete, encryption ready ===\n");

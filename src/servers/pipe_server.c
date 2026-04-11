@@ -151,6 +151,12 @@ static void handle_child_fault(int child_idx) {
 
     if (!ch->active || !ch->fault_on_pipe_ep) return;
 
+    /* v0.4.84: suppress TCB destruction fault during exec */
+    if (ch->ignore_next_fault) {
+        ch->ignore_next_fault = 0;
+        return;
+    }
+
     /* Clear foreground tracking if this was the fg process */
     if (ch->pid == fg_pid) {
         fg_pid = -1;
@@ -640,6 +646,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 break;
             }
 
+            ap->ignore_next_fault = 1;
             sel4utils_destroy_process(&ap->proc, &vka);
 
             /* Free old fault ep -- minted cap vs allocated endpoint */
@@ -804,6 +811,14 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             ap->fault_on_pipe_ep = 1;
             ap->stdout_pipe_id = exec_stdout_pipe;
             ap->stdin_pipe_id = exec_stdin_pipe;
+            /* v0.4.84: increment pipe refs so child exit does not
+             * close the pipe while parent still uses it */
+            if (exec_stdout_pipe >= 0 && exec_stdout_pipe < MAX_PIPES
+                && pipes[exec_stdout_pipe].active)
+                pipes[exec_stdout_pipe].write_refs++;
+            if (exec_stdin_pipe >= 0 && exec_stdin_pipe < MAX_PIPES
+                && pipes[exec_stdin_pipe].active)
+                pipes[exec_stdin_pipe].read_refs++;
             ap->exit_status = 0;
             ap->num_threads = 0;
             for (int ti = 0; ti < MAX_THREADS_PER_PROC; ti++)

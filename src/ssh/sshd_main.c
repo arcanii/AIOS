@@ -94,14 +94,108 @@ int main(int argc, char **argv)
             continue;
         }
 
-        /* Phase 3 will continue here with encrypted transport:
-         *   SERVICE_REQUEST, user auth, channel open, shell
-         * For now, note that encryption is active but not implemented.
-         * The next client packet will be encrypted -- we cannot read it. */
-        printf("[sshd] Phase 2 complete. Encryption not yet implemented.\n");
+        /* Phase 3: Initialize encrypted transport */
+        if (ssh_encrypt_init(&sess) < 0) {
+            printf("[sshd] Encryption init failed\n");
+            close(cfd);
+            continue;
+        }
+
+        printf("[sshd] === Encrypted transport active ===\n");
+
+        /* Read packets until SERVICE_REQUEST */
+        {
+            int got_service = 0;
+            uint8_t spkt[SSH_BUF_SIZE];
+            int splen = 0;
+
+            while (!got_service) {
+                if (ssh_read_packet(&sess, spkt, &splen) < 0) {
+                    printf("[sshd] Encrypted read failed\n");
+                    break;
+                }
+                if (splen < 1) break;
+
+                uint8_t mtype = spkt[0];
+                printf("[sshd] Encrypted msg type %d (%d bytes)\n",
+                       mtype, splen);
+
+                if (mtype == SSH_MSG_EXT_INFO) {
+                    printf("[sshd] EXT_INFO received (skipping)\n");
+                } else if (mtype == SSH_MSG_IGNORE ||
+                           mtype == SSH_MSG_DEBUG) {
+                    /* skip */
+                } else if (mtype == SSH_MSG_DISCONNECT) {
+                    printf("[sshd] Client disconnected\n");
+                    break;
+                } else if (mtype == SSH_MSG_SERVICE_REQUEST) {
+                    int soff = 1;
+                    const uint8_t *svc;
+                    uint32_t svc_len;
+                    if (ssh_get_string(spkt, splen, &soff,
+                                       &svc, &svc_len) < 0) {
+                        printf("[sshd] Bad SERVICE_REQUEST\n");
+                        break;
+                    }
+
+                    printf("[sshd] SERVICE_REQUEST: %.*s\n",
+                           (int)svc_len, (const char *)svc);
+
+                    if (svc_len == 12 &&
+                        memcmp(svc, "ssh-userauth", 12) == 0) {
+                        /* Send SERVICE_ACCEPT */
+                        uint8_t resp[20];
+                        int roff = 0;
+                        resp[roff++] = SSH_MSG_SERVICE_ACCEPT;
+                        ssh_put_namelist(resp, "ssh-userauth", &roff);
+                        if (ssh_write_packet(&sess, resp, roff) < 0) {
+                            printf("[sshd] SERVICE_ACCEPT failed\n");
+                            break;
+                        }
+                        printf("[sshd] SERVICE_ACCEPT sent\n");
+                        got_service = 1;
+                    } else {
+                        printf("[sshd] Unknown service\n");
+                        break;
+                    }
+                } else {
+                    printf("[sshd] Unexpected msg %d\n", mtype);
+                }
+            }
+
+            if (!got_service) {
+                close(cfd);
+                printf("[sshd] Service negotiation failed\n\n");
+                continue;
+            }
+        }
+
+        /* Phase 4: User authentication */
+        printf("[sshd] Phase 3 complete -- starting authentication\n");
+
+        if (ssh_do_userauth(&sess) < 0) {
+            printf("[sshd] Authentication failed\n");
+            ssh_disconnect(&sess, SSH_DISCONNECT_BY_APPLICATION,
+                          "authentication failed");
+            close(cfd);
+            printf("[sshd] Connection closed, waiting for next\n\n");
+            continue;
+        }
+
+        printf("[sshd] User authenticated (uid=%u)\n",
+               (unsigned)sess.uid);
+
+        /* Phase 5: Session channel + shell */
+        printf("[sshd] Phase 4 complete -- starting channel\n");
+
+        if (ssh_do_channel(&sess) < 0) {
+            printf("[sshd] Channel session failed\n");
+        } else {
+            printf("[sshd] Channel session ended normally\n");
+        }
 
         ssh_disconnect(&sess, SSH_DISCONNECT_BY_APPLICATION,
-                      "key exchange complete, encryption pending");
+                      "session ended");
         close(cfd);
         printf("[sshd] Connection closed, waiting for next\n\n");
     }

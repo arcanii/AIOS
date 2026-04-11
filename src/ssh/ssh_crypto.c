@@ -349,7 +349,8 @@ int ssh_compute_exchange_hash(ssh_session_t *s,
  *
  * key = SHA-256(mpint_K || H || letter || session_id)
  *
- * For AES-256-GCM: 32-byte key, 12-byte IV per direction.
+ * AES-256-CTR: 32-byte key, 16-byte IV per direction.
+ * HMAC-SHA-256: 32-byte integrity key per direction.
  * ---------------------------------------------------------------- */
 
 int ssh_derive_keys(ssh_session_t *s,
@@ -397,9 +398,9 @@ int ssh_derive_keys(ssh_session_t *s,
         mbedtls_sha256_free(&sha);
     }
 
-    /* A = IV c2s (12 bytes), B = IV s2c (12 bytes) */
-    /* C = key c2s (32 bytes), D = key s2c (32 bytes) */
-    /* E = integrity c2s, F = integrity s2c (not needed for GCM) */
+    /* A = IV c2s (16 bytes), B = IV s2c (16 bytes) -- AES block size */
+    /* C = key c2s (32 bytes), D = key s2c (32 bytes) -- AES-256 */
+    /* E = MAC c2s (32 bytes), F = MAC s2c (32 bytes) -- HMAC-SHA-256 */
 
     printf("[sshd] Session keys derived:\n");
     printf("[sshd]   IV  c2s: %02x%02x%02x%02x...  IV  s2c: %02x%02x%02x%02x...\n",
@@ -408,12 +409,17 @@ int ssh_derive_keys(ssh_session_t *s,
     printf("[sshd]   Key c2s: %02x%02x%02x%02x...  Key s2c: %02x%02x%02x%02x...\n",
            keys[2][0], keys[2][1], keys[2][2], keys[2][3],
            keys[3][0], keys[3][1], keys[3][2], keys[3][3]);
+    printf("[sshd]   MAC c2s: %02x%02x%02x%02x...  MAC s2c: %02x%02x%02x%02x...\n",
+           keys[4][0], keys[4][1], keys[4][2], keys[4][3],
+           keys[5][0], keys[5][1], keys[5][2], keys[5][3]);
 
-    /* Store in session for Phase 3 encryption */
-    memcpy(s->iv_c2s,  keys[0], 12);
-    memcpy(s->iv_s2c,  keys[1], 12);
+    /* Store in session */
+    memcpy(s->iv_c2s,  keys[0], 16);
+    memcpy(s->iv_s2c,  keys[1], 16);
     memcpy(s->key_c2s, keys[2], 32);
     memcpy(s->key_s2c, keys[3], 32);
+    memcpy(s->mac_c2s, keys[4], 32);
+    memcpy(s->mac_s2c, keys[5], 32);
 
     return 0;
 }
