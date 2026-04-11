@@ -452,6 +452,39 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     sel4muslcsys_register_stdio_write_fn(aios_stdio_write);
 
     /* Override syscalls */
+
+    /* v0.4.78: Linux compat syscall numbers (AArch64) */
+    #ifndef __NR_ppoll
+    #define __NR_ppoll 73
+    #endif
+    #ifndef __NR_pselect6
+    #define __NR_pselect6 72
+    #endif
+    #ifndef __NR_getrandom
+    #define __NR_getrandom 278
+    #endif
+    #ifndef __NR_prlimit64
+    #define __NR_prlimit64 261
+    #endif
+    #ifndef __NR_prctl
+    #define __NR_prctl 167
+    #endif
+    #ifndef __NR_getrlimit
+    #define __NR_getrlimit 163
+    #endif
+    #ifndef __NR_setrlimit
+    #define __NR_setrlimit 164
+    #endif
+    #ifndef __NR_sysinfo
+    #define __NR_sysinfo 179
+    #endif
+    #ifndef __NR_getrusage
+    #define __NR_getrusage 165
+    #endif
+    #ifndef __NR_membarrier
+    #define __NR_membarrier 283
+    #endif
+
     muslcsys_install_syscall(__NR_write, aios_sys_write);
     muslcsys_install_syscall(__NR_read, aios_sys_read);
     muslcsys_install_syscall(__NR_close, aios_sys_close);
@@ -580,6 +613,19 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     muslcsys_install_syscall(__NR_recvfrom, aios_sys_recvfrom);
     muslcsys_install_syscall(__NR_setsockopt, aios_sys_setsockopt);
     muslcsys_install_syscall(__NR_shutdown_sock, aios_sys_shutdown_sock);
+
+    /* v0.4.78: Linux compatibility syscalls */
+    muslcsys_install_syscall(__NR_ppoll, aios_sys_ppoll);
+    muslcsys_install_syscall(__NR_pselect6, aios_sys_pselect6);
+    muslcsys_install_syscall(__NR_getrandom, aios_sys_getrandom);
+    muslcsys_install_syscall(__NR_prlimit64, aios_sys_prlimit64);
+    muslcsys_install_syscall(__NR_prctl, aios_sys_prctl);
+    muslcsys_install_syscall(__NR_getrlimit, aios_sys_getrlimit);
+    muslcsys_install_syscall(__NR_setrlimit, aios_sys_setrlimit);
+    muslcsys_install_syscall(__NR_sysinfo, aios_sys_sysinfo);
+    muslcsys_install_syscall(__NR_getrusage, aios_sys_getrusage);
+    muslcsys_install_syscall(__NR_membarrier, aios_sys_membarrier);
+
 
 #endif
 }

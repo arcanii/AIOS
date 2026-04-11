@@ -41,6 +41,29 @@ long aios_sys_open(va_list ap) {
         }
     }
 
+    /* v0.4.78: /dev/urandom, /dev/random, /dev/zero */
+    {
+        const char *devs[] = { "/dev/urandom", "/dev/random", "/dev/zero", 0 };
+        for (int di = 0; devs[di]; di++) {
+            const char *dp = devs[di];
+            int dm = 1, dl = 0;
+            while (dp[dl]) { if (pathname[dl] != dp[dl]) dm = 0; dl++; }
+            if (dm && pathname[dl] == 0) {
+                int idx = aios_fd_alloc();
+                if (idx < 0) return -EMFILE;
+                aios_fd_t *f = &aios_fds[idx];
+                f->active = 1;
+                f->is_dir = 0;
+                f->is_pipe = 0;
+                f->is_devnull = 1;
+                f->size = 0;
+                f->pos = 0;
+                str_copy(f->path, dp, sizeof(f->path));
+                return AIOS_FD_BASE + idx;
+            }
+        }
+    }
+
     if (!fs_ep_cap) return -ENOENT;
 
     int is_dir = (flags & 040000) != 0; /* O_DIRECTORY = 0200000 */
@@ -112,6 +135,29 @@ long aios_sys_openat(va_list ap) {
             f->pos = 0;
             f->path[0] = 0;
             return AIOS_FD_BASE + idx;
+        }
+    }
+
+    /* v0.4.78: /dev/urandom, /dev/random, /dev/zero */
+    {
+        const char *devs[] = { "/dev/urandom", "/dev/random", "/dev/zero", 0 };
+        for (int di = 0; devs[di]; di++) {
+            const char *dp = devs[di];
+            int dm = 1, dl = 0;
+            while (dp[dl]) { if (pathname[dl] != dp[dl]) dm = 0; dl++; }
+            if (dm && pathname[dl] == 0) {
+                int idx = aios_fd_alloc();
+                if (idx < 0) return -EMFILE;
+                aios_fd_t *f = &aios_fds[idx];
+                f->active = 1;
+                f->is_dir = 0;
+                f->is_pipe = 0;
+                f->is_devnull = 1;
+                f->size = 0;
+                f->pos = 0;
+                str_copy(f->path, dp, sizeof(f->path));
+                return AIOS_FD_BASE + idx;
+            }
         }
     }
 
@@ -321,6 +367,33 @@ long aios_sys_read(va_list ap) {
                 cbuf[i] = (char)((seL4_GetMR(mr) >> ((i % 8) * 8)) & 0xFF);
             }
             return (long)got;
+        }
+        /* v0.4.78: virtual device read (/dev/urandom, /dev/zero) */
+        if (f->is_devnull && f->path[0] == '/') {
+            char *dst = (char *)buf;
+            int n = (int)count;
+            if (n > 4096) n = 4096;
+            if (f->path[5] == 'u' || f->path[5] == 'r') {
+                /* /dev/urandom or /dev/random -- splitmix64 PRNG */
+                uint64_t state;
+                __asm__ volatile("mrs %0, CNTPCT_EL0" : "=r"(state));
+                state += (uint64_t)(uintptr_t)buf;
+                for (int i = 0; i < n; i++) {
+                    state += 0x9E3779B97F4A7C15ULL;
+                    uint64_t z = state;
+                    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+                    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+                    z = z ^ (z >> 31);
+                    dst[i] = (char)(z & 0xFF);
+                }
+                return (long)n;
+            }
+            if (f->path[5] == 'z') {
+                /* /dev/zero -- return zero bytes */
+                for (int i = 0; i < n; i++) dst[i] = 0;
+                return (long)n;
+            }
+            return 0;  /* /dev/null -- EOF */
         }
         int avail = f->size - f->pos;
         if (avail <= 0) return 0;

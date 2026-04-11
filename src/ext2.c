@@ -566,6 +566,78 @@ int ext2_write_block(ext2_ctx_t *ctx, uint32_t block, const void *buf) {
     return write_block(ctx, block, buf);
 }
 
+/* Free a previously allocated block -- clear bit in block bitmap */
+static int ext2_free_block(ext2_ctx_t *ctx, uint32_t block_num) {
+    uint8_t bgdt_buf[1024];
+    if (read_block(ctx, ctx->first_data_block + 1, bgdt_buf) != 0) return -1;
+
+    /* Determine which group this block belongs to */
+    uint32_t rel = block_num - ctx->first_data_block;
+    uint32_t group = rel / ctx->blocks_per_group;
+    uint32_t idx_in_group = rel % ctx->blocks_per_group;
+
+    if (group >= 32) return -2;
+
+    uint32_t bb_block = rd32(bgdt_buf + group * 32 + 0); /* bg_block_bitmap */
+    uint8_t bmp[1024];
+    if (read_block(ctx, bb_block, bmp) != 0) return -3;
+
+    int byte_off = idx_in_group / 8;
+    int bit_off  = idx_in_group % 8;
+
+    if (!(bmp[byte_off] & (1 << bit_off)))
+        return 0;  /* already free -- idempotent */
+
+    bmp[byte_off] &= ~(1 << bit_off);
+    write_block(ctx, bb_block, bmp);
+
+    /* Update BGDT free block count */
+    {
+        uint16_t fc = rd16(bgdt_buf + group * 32 + 12);
+        fc++;
+        bgdt_buf[group * 32 + 12] = fc & 0xFF;
+        bgdt_buf[group * 32 + 13] = (fc >> 8) & 0xFF;
+        write_block(ctx, ctx->first_data_block + 1, bgdt_buf);
+    }
+
+    cache_invalidate(ctx->dev_id, block_num);
+    return 0;
+}
+
+/* Free a previously allocated inode -- clear bit in inode bitmap */
+static int ext2_free_inode(ext2_ctx_t *ctx, uint32_t ino) {
+    if (ino < 11) return -1;  /* never free reserved inodes (1-10) */
+
+    uint8_t bgdt_buf[1024];
+    if (read_block(ctx, ctx->first_data_block + 1, bgdt_buf) != 0) return -2;
+
+    /* All inodes allocated from group 0 in this implementation */
+    uint32_t ib_block = rd32(bgdt_buf + 4); /* group 0 inode bitmap */
+    uint8_t bmp[1024];
+    if (read_block(ctx, ib_block, bmp) != 0) return -3;
+
+    uint32_t idx = ino - 1;
+    int byte_off = idx / 8;
+    int bit_off  = idx % 8;
+
+    if (!(bmp[byte_off] & (1 << bit_off)))
+        return 0;  /* already free -- idempotent */
+
+    bmp[byte_off] &= ~(1 << bit_off);
+    write_block(ctx, ib_block, bmp);
+
+    /* Update BGDT free inode count */
+    {
+        uint16_t fc = rd16(bgdt_buf + 14);
+        fc++;
+        bgdt_buf[14] = fc & 0xFF;
+        bgdt_buf[15] = (fc >> 8) & 0xFF;
+        write_block(ctx, ctx->first_data_block + 1, bgdt_buf);
+    }
+
+    return 0;
+}
+
 /* Allocate a free block — scan all block groups via BGDT */
 int ext2_alloc_block(ext2_ctx_t *ctx) {
     uint8_t bgdt_buf[1024];
@@ -592,6 +664,14 @@ int ext2_alloc_block(ext2_ctx_t *ctx) {
                 if (!(bmp[byte] & (1 << bit))) {
                     bmp[byte] |= (1 << bit);
                     write_block(ctx, bb_block, bmp);
+                    /* Update BGDT alloc block count */
+                    {
+                        uint16_t fc = rd16(bgdt_buf + g * 32 + 12);
+                        if (fc > 0) fc--;
+                        bgdt_buf[g * 32 + 12] = fc & 0xFF;
+                        bgdt_buf[g * 32 + 13] = (fc >> 8) & 0xFF;
+                        write_block(ctx, ctx->first_data_block + 1, bgdt_buf);
+                    }
                     return group_start + byte * 8 + bit;
                 }
             }
@@ -615,6 +695,14 @@ int ext2_alloc_inode(ext2_ctx_t *ctx) {
             if (!(bmp[byte] & (1 << bit))) {
                 bmp[byte] |= (1 << bit);
                 write_block(ctx, ib_block, bmp);
+                /* Update BGDT alloc inode count */
+                {
+                    uint16_t fc = rd16(bgdt_buf + 14);
+                    if (fc > 0) fc--;
+                    bgdt_buf[14] = fc & 0xFF;
+                    bgdt_buf[15] = (fc >> 8) & 0xFF;
+                    write_block(ctx, ctx->first_data_block + 1, bgdt_buf);
+                }
                 return (byte * 8 + bit) + 1;
             }
         }
@@ -814,7 +902,56 @@ int ext2_unlink(ext2_ctx_t *ctx, uint32_t parent_ino, const char *name) {
                         blk[off+2] = 0; blk[off+3] = 0;
                     }
                     write_block(ctx, dir_inode.i_block[bi], blk);
-                    /* TODO: free inode and data blocks */
+
+                    /* Free data blocks and inode for the unlinked file */
+                    {
+                        struct ext2_inode victim;
+                        if (ext2_read_inode(ctx, d_ino, &victim) == 0 &&
+                            !(victim.i_mode & EXT2_S_IFDIR)) {
+                            int ptrs_per = (int)(ctx->block_size / 4);
+                            /* Free direct blocks 0-11 */
+                            for (int db = 0; db < 12; db++) {
+                                if (victim.i_block[db])
+                                    ext2_free_block(ctx, victim.i_block[db]);
+                            }
+                            /* Free single-indirect block and its pointers */
+                            if (victim.i_block[12]) {
+                                uint8_t ind[1024];
+                                if (read_block(ctx, victim.i_block[12], ind) == 0) {
+                                    for (int ip = 0; ip < ptrs_per; ip++) {
+                                        uint32_t pb = rd32(ind + ip * 4);
+                                        if (pb) ext2_free_block(ctx, pb);
+                                    }
+                                }
+                                ext2_free_block(ctx, victim.i_block[12]);
+                            }
+                            /* Free double-indirect if present */
+                            if (victim.i_block[13]) {
+                                uint8_t dind[1024];
+                                if (read_block(ctx, victim.i_block[13], dind) == 0) {
+                                    for (int di = 0; di < ptrs_per; di++) {
+                                        uint32_t ib2 = rd32(dind + di * 4);
+                                        if (!ib2) continue;
+                                        uint8_t ind2[1024];
+                                        if (read_block(ctx, ib2, ind2) == 0) {
+                                            for (int ip2 = 0; ip2 < ptrs_per; ip2++) {
+                                                uint32_t pb2 = rd32(ind2 + ip2 * 4);
+                                                if (pb2) ext2_free_block(ctx, pb2);
+                                            }
+                                        }
+                                        ext2_free_block(ctx, ib2);
+                                    }
+                                }
+                                ext2_free_block(ctx, victim.i_block[13]);
+                            }
+                            /* Zero the inode on disk */
+                            uint8_t *vp = (uint8_t *)&victim;
+                            for (int z = 0; z < (int)sizeof(struct ext2_inode); z++)
+                                vp[z] = 0;
+                            write_inode(ctx, d_ino, &victim);
+                            ext2_free_inode(ctx, d_ino);
+                        }
+                    }
                     return 0;
                 }
             }

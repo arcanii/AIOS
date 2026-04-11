@@ -84,10 +84,10 @@
 #define MAX_THREADS_PER_PROC 8
 #define THREAD_STACK_PAGES   4
 #define MAX_ELF_SEGS         6
-#define MAX_PIPES            8
+#define MAX_PIPES            16
 #define PIPE_BUF_SIZE        4096
-#define MAX_WAIT_PENDING     4
-#define MAX_ZOMBIES          8
+#define MAX_WAIT_PENDING     8
+#define MAX_ZOMBIES          16
 #define MAX_EXEC_ARGS        12
 #define MAX_PIPE_READ_BLOCKED 4
 

@@ -13,6 +13,7 @@ add_library(aios_posix STATIC
     ${AIOS_ROOT}/src/lib/posix_misc.c
     ${AIOS_ROOT}/src/lib/posix_thread.c
     ${AIOS_ROOT}/src/lib/posix_net.c
+    ${AIOS_ROOT}/src/lib/posix_compat.c
     ${AIOS_ROOT}/src/lib/aios_entry.c
 )
 target_include_directories(aios_posix PUBLIC ${AIOS_ROOT}/src/lib ${AIOS_ROOT}/include ${AIOS_ROOT}/src/arch)

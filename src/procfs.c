@@ -66,8 +66,8 @@ static int procfs_list(void *ctx, uint32_t ino, char *buf, int bufsize) {
     (void)ctx; (void)ino;
     int w = 0;
     /* List virtual files */
-    const char *entries[] = { "d .\n", "d ..\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n" };
-    for (int i = 0; i < 8 && w < bufsize - 1; i++) {
+    const char *entries[] = { "d .\n", "d ..\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n" };
+    for (int i = 0; i < 11 && w < bufsize - 1; i++) {
     
         const char *e = entries[i];
         while (*e && w < bufsize - 1) buf[w++] = *e++;
@@ -112,7 +112,7 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         /* /proc/mounts */
         const char *mnt = "/dev/vda / ext2 ro 0 0\nproc /proc proc rw 0 0\n";
         while (*mnt && w < bufsize - 1) buf[w++] = *mnt++;
-    } else if (path[0] == 's') {
+    } else if (path[0] == 's' && path[4] == 'u') {
         /* /proc/status — process table */
         const char *hdr = "PID  PRI  NICE  STATE  UID   THR  NAME\n";
         while (*hdr && w < bufsize - 1) buf[w++] = *hdr++;
@@ -195,7 +195,7 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         ubuf[ui++] = '\n';
         ubuf[ui] = 0;
         for (int i = 0; i < ui && w < bufsize - 1; i++) buf[w++] = ubuf[i];
-    } else if (path[0] == 'l' && path[1] == 'o') {
+    } else if (path[0] == 'l' && path[1] == 'o' && path[2] == 'g') {
         /* /proc/log — kernel log ring buffer */
         w = aios_log_read(buf, bufsize);
     } else if (path[0] == 'm' && path[1] == 'e') {
@@ -212,6 +212,35 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         while (ti-- > 0 && w < bufsize - 1) buf[w++] = tmp[ti];
         const char *unit = " kB\n";
         while (*unit && w < bufsize - 1) buf[w++] = *unit++;
+    } else if (path[0] == 'c' && path[1] == 'p') {
+        /* /proc/cpuinfo */
+        for (int ci = 0; ci < hw_info.cpu_count && ci < 9; ci++) {
+            const char *l1 = "processor\t: ";
+            while (*l1 && w < bufsize - 1) buf[w++] = *l1++;
+            buf[w++] = '0' + ci;
+            buf[w++] = '\n';
+            const char *l2 = "model name\t: ";
+            while (*l2 && w < bufsize - 1) buf[w++] = *l2++;
+            const char *cp = hw_info.cpu_compat;
+            while (*cp && w < bufsize - 1) buf[w++] = *cp++;
+            buf[w++] = '\n';
+            buf[w++] = '\n';
+        }
+    } else if (path[0] == 'l' && path[1] == 'o' && path[2] == 'a') {
+        /* /proc/loadavg */
+        const char *la = "0.00 0.00 0.00 1/5 1\n";
+        while (*la && w < bufsize - 1) buf[w++] = *la++;
+    } else if (path[0] == 's' && path[4] == 0) {
+        /* /proc/stat -- minimal kernel stats */
+        const char *st = "cpu  0 0 0 0 0 0 0 0 0 0\n";
+        while (*st && w < bufsize - 1) buf[w++] = *st++;
+        for (int ci = 0; ci < hw_info.cpu_count && ci < 9; ci++) {
+            const char *c = "cpu";
+            while (*c && w < bufsize - 1) buf[w++] = *c++;
+            buf[w++] = '0' + ci;
+            const char *z = " 0 0 0 0 0 0 0 0 0 0\n";
+            while (*z && w < bufsize - 1) buf[w++] = *z++;
+        }
     } else if (path[0] >= '0' && path[0] <= '9') {
         /* /proc/[pid]/status */
         int pid = 0;

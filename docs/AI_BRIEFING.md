@@ -7,7 +7,7 @@
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: main
 * **Developer**: Bryan
-* **Current Version**: v0.4.76
+* **Current Version**: v0.4.78
 
 ## Development Environment
 
@@ -334,12 +334,12 @@ PIPE_SIGNAL=75, PIPE_SIG_FETCH=76, PIPE_SHUTDOWN=77
 PIPE_MAP_SHM=78, PIPE_WRITE_SHM=79, PIPE_READ_SHM=80, PIPE_SET_PIPES=81
 ```
 
-### Implemented Syscalls (70+)
+### Implemented Syscalls (80+)
 
 File I/O: open, openat (O_CREAT, O_APPEND), read, readv, write, writev, close, lseek, pread64, pwrite64, ftruncate (FS_APPEND for server-side append)
 Directories: getdents64, chdir, mkdirat, unlinkat
 Stat: fstat, fstatat, statx, fchmod, fchmodat, fchown, fchownat
-Links: linkat (ENOSYS), symlinkat (ENOSYS), readlinkat (EINVAL)
+Links: linkat (ENOSYS), symlinkat (ENOSYS), readlinkat (/proc/self/exe supported)
 Identity: getpid, getppid, getuid, geteuid, getgid, getegid, setuid, setgid
 Process groups: setsid, getpgid, setpgid
 System: uname (kernel IPC), getcwd, ioctl (TIOCGWINSZ, TIOCGPGRP, TIOCSPGRP), fcntl (F_DUPFD, F_DUPFD_CLOEXEC, F_GETFD/SETFD, F_GETFL/SETFL), dup, dup3
@@ -350,6 +350,7 @@ Pipes: pipe2
 Signals: rt_sigaction, rt_sigprocmask, rt_sigpending, rt_sigreturn, sigaltstack, kill, tgkill
 Memory: mmap, munmap, brk, madvise, mprotect (stub)
 Rename: renameat, renameat2
+Linux compat: ppoll, pselect6, getrandom (splitmix64), prlimit64, prctl, getrlimit, setrlimit, sysinfo, getrusage, membarrier
 
 ### fd Table
 
@@ -357,6 +358,8 @@ Rename: renameat, renameat2
 * aios_fd_t: active, is_dir, is_pipe, pipe_id, pipe_read, is_devnull, is_append, shm_vaddr, path[128], data[4096], size, pos
 * fds 0-2 handled specially (stdin/stdout/stderr via serial or pipe redirect)
 * /dev/null: is_devnull=1, write returns count, read returns 0
+* /dev/urandom, /dev/random: is_devnull=1, read returns splitmix64 PRNG bytes
+* /dev/zero: is_devnull=1, read returns zero bytes
 
 ### VKA Allocator Audit (v0.4.65)
 
@@ -408,7 +411,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 ### Programs on Disk
 
 * 99 sbase Unix tools in /bin/
-* 28 AIOS programs in /bin/aios/
+* 29 AIOS programs in /bin/aios/
 * dash in /bin/dash
 * tcc in /bin/tcc (compiler, tcc -c and tcc -o work, compile-and-run works)
 * hello_test in /bin/hello_test (aios-cc proof-of-concept)
@@ -455,7 +458,8 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 12. Allocator right-sizing: 4000 pages ~100x oversized, test with 500/250/100
 13. Dash improvements: tab completion, history, PS1, job control
 14. TTY improvements: process-aware echo, virtual terminals
-15. ext2 write improvements: free blocks on unlink, triple indirect
+15. ~~ext2 free blocks on unlink~~ DONE in v0.4.78: ext2_free_block/inode, BGDT count updates
+16. ext2 write improvements: triple indirect
 
 ## Version History (0.4.x)
 
@@ -507,6 +511,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 | v0.4.75 | Display server: ramfb framebuffer (1024x768), 8x8 bitmap font, splash images, display server IPC (5 commands), fbshow user program, disp_ep capability propagation, UART IRQ notification (seL4_Wait replaces polling). See docs/NEXT_20260411a.md |
 | v0.4.76 | TCC compilation verified (single/multi-file, libc.a linking). UART IRQ freeze fix (QEMU PL011 ICR race). Large file open fix (fetch_stat for real size). Stability: seL4 cap error checks, fs_ls_total race. Architecture isolation: src/arch/ layer with aarch64 + x86_64 barrier/page macros (34 inline asm replaced). See docs/NEXT_20260411b.md |
 | v0.4.77 | DTB hardware discovery (libfdt): UART, virtio, fw_cfg, CPU, memory from device tree. Hardcoded MMIO addresses replaced with DTB values. Dynamic /proc/version. Procfs zero-size open fix. ls /proc directory listing fix. See docs/NEXT_20260411c.md |
+| v0.4.78 | Linux compat layer (10 syscalls: getrandom, ppoll, prlimit64, sysinfo, etc.). ext2 block/inode freeing on unlink with BGDT count updates. /dev/urandom, /dev/random, /dev/zero virtual devices. /proc/cpuinfo, /proc/stat, /proc/loadavg. readlinkat /proc/self/exe. Bumped MAX_ZOMBIES=16, MAX_PIPES=16, MAX_WAIT_PENDING=8. See docs/NEXT_20260411d.md |
 
 ## Architecture After v0.4.76
 

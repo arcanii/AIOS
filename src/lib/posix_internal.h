@@ -325,4 +325,17 @@ long aios_sys_mprotect(va_list ap);
 /* v0.4.64: dash prerequisites */
 long aios_sys_setpgid(va_list ap);
 
+
+/* ---- Syscall handlers: posix_compat.c (v0.4.78 Linux compat) ---- */
+long aios_sys_ppoll(va_list ap);
+long aios_sys_pselect6(va_list ap);
+long aios_sys_getrandom(va_list ap);
+long aios_sys_prlimit64(va_list ap);
+long aios_sys_prctl(va_list ap);
+long aios_sys_getrlimit(va_list ap);
+long aios_sys_setrlimit(va_list ap);
+long aios_sys_sysinfo(va_list ap);
+long aios_sys_getrusage(va_list ap);
+long aios_sys_membarrier(va_list ap);
+
 #endif

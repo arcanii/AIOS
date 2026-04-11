@@ -8,10 +8,11 @@ Architectures / Hardware Supported
 - :white_medium_square: X86-64 
 
 ## Latest Achievements
+- Linux compatibility layer -- 10 compat syscalls (getrandom, poll, prlimit64, sysinfo, etc.)
+- ext2 block/inode freeing -- unlink now reclaims disk space (was leaking since v0.4.19)
+- Virtual devices -- /dev/urandom, /dev/random, /dev/zero
+- Expanded procfs -- /proc/cpuinfo, /proc/stat, /proc/loadavg, /proc/self/exe
 - DTB hardware discovery -- device tree parsing for dynamic UART, virtio, CPU config
-- TCC compiler compiles C programs on AIOS (single-file, multi-file, libc linking)
-- Architecture isolation layer (src/arch/) for future x86-64 support
-- Graphical display output via ramfb framebuffer (1024x768)
 - Networking: virtio-net driver, TCP/IP stack, HTTP server
 - Shell is using DASH (https://github.com/tklauser/dash)
 - C compiler is TinyCC (https://github.com/TinyCC/tinycc)
@@ -28,14 +29,14 @@ External AI (Claude) is used as a development tool for code generation
 and review. This project is also a study in AI-assisted systems programming.
 The long-term goal is self-hosted development within AIOS itself.
 
-**Current version:** v0.4.77
+**Current version:** v0.4.78
 
 ## What Works
 
 - **seL4 microkernel** on AArch64/QEMU (Cortex-A53, 4-core SMP)
-- **ext2 filesystem** with read/write, indirect blocks, multi-group allocation
+- **ext2 filesystem** with read/write, indirect blocks, multi-group allocation, block/inode freeing on unlink
 - **VFS layer** with ext2 root mount and procfs at /proc
-- **70+ POSIX syscalls** via musllibc shim (open, read, write, fork, exec, pipe, dup2, statx, ...)
+- **80+ POSIX syscalls** via musllibc shim (open, read, write, fork, exec, pipe, dup2, statx, getrandom, poll, ...)
 - **fork+exec+waitpid** process model with full ELF loading from disk
 - **POSIX signals** (sigaction, kill, sigprocmask) with cooperative handler dispatch
 - **Unix pipelines** (echo hello | cat | wc -c) with error recovery
@@ -55,6 +56,9 @@ The long-term goal is self-hosted development within AIOS itself.
 - **pthreads** (create, join, mutex) via manual TCB creation in child VSpaces
 - **Auth server** with SHA-3-512 (Keccak) passwords, login/logout, su/passwd
 - **Kernel log** ring buffer + serial echo + file log (/log/aios.log)
+- **Linux compat layer** -- getrandom, ppoll, pselect6, prlimit64, prctl, sysinfo, getrusage, membarrier
+- **Virtual devices** -- /dev/urandom (splitmix64 PRNG), /dev/random, /dev/zero
+- **Extended procfs** -- cpuinfo, stat, loadavg, /proc/self/exe via readlinkat
 - **POSIX core 55/55 (100%)** -- all core POSIX interfaces implemented
 - **PSCI shutdown** -- clean power-off via /bin/aios/shutdown
 - **getconf** -- sysconf, confstr, pathconf, limits (99/99 sbase tools)
@@ -68,7 +72,7 @@ capability-mediated access to servers.
 
     User programs (dash, sbase tools, test programs)
             |
-       aios_posix.c  (POSIX shim: 70+ syscalls, signals, pthreads, statx)
+       aios_posix.c  (POSIX shim: 80+ syscalls, signals, pthreads, statx)
             |
        +--------+--------+--------+--------+--------+---------+
        |        |        |        |        |        |         |
