@@ -6,6 +6,7 @@
  * Allocates notification objects for driver/server communication.
  */
 #include "aios/root_shared.h"
+#include <simple/simple.h>
 #include "aios/net.h"
 #include "aios/vka_audit.h"
 #include "virtio.h"
@@ -163,6 +164,29 @@ void boot_net_init(void) {
     }
     net_drv_ntfn_cap = drv_ntfn_obj.cptr;
     net_srv_ntfn_cap = srv_ntfn_obj.cptr;
+
+    /* Bind virtio-net IRQ to driver notification (proper interrupt delivery) */
+    {
+        uint32_t net_irq = 48 + (uint32_t)net_vio_slot;
+        cspacepath_t nirq_path;
+        int irq_err = vka_cspace_alloc_path(&vka, &nirq_path);
+        if (!irq_err) {
+            irq_err = simple_get_IRQ_handler(&simple, net_irq, nirq_path);
+            if (!irq_err) {
+                net_irq_handler_cap = nirq_path.capPtr;
+                irq_err = seL4_IRQHandler_SetNotification(
+                    net_irq_handler_cap, net_drv_ntfn_cap);
+                if (!irq_err) {
+                    seL4_IRQHandler_Ack(net_irq_handler_cap);
+                    printf("[boot] virtio-net IRQ %u bound to driver\n", net_irq);
+                } else {
+                    printf("[boot] net IRQ bind failed: %d\n", irq_err);
+                }
+            } else {
+                printf("[boot] net IRQ handler failed: %d (irq=%u)\n", irq_err, net_irq);
+            }
+        }
+    }
 
     printf("[boot] virtio-net ready, MAC=%02x:%02x:%02x:%02x:%02x:%02x\n",
            net_mac[0], net_mac[1], net_mac[2],

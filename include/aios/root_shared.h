@@ -220,6 +220,7 @@ extern int net_vio_slot;
 extern seL4_CPtr net_ep_cap;
 extern seL4_CPtr net_drv_ntfn_cap;
 extern seL4_CPtr net_srv_ntfn_cap;
+extern seL4_CPtr net_irq_handler_cap;
 
 struct net_rx_ring;
 extern struct net_rx_ring net_rx_ring;

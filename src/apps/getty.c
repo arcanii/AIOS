@@ -9,6 +9,7 @@
  */
 #include <stdint.h>
 #include <sel4/sel4.h>
+#include "aios/version.h"
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -207,7 +208,7 @@ int main(int argc, char *argv[]) {
     aios_init_caps(serial_ep, fs_ep, auth_ep, pipe_ep);
 
     ser_puts("\n============================================\n");
-    ser_puts("  AIOS 0.4.x\n");
+    ser_puts("  " AIOS_VERSION_FULL "\n");
     ser_puts("============================================\n");
 
     while (1) {

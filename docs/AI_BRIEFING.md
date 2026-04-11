@@ -7,7 +7,7 @@
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: main
 * **Developer**: Bryan
-* **Current Version**: v0.4.80
+* **Current Version**: v0.4.81
 
 ## Development Environment
 
@@ -334,7 +334,7 @@ PIPE_SIGNAL=75, PIPE_SIG_FETCH=76, PIPE_SHUTDOWN=77
 PIPE_MAP_SHM=78, PIPE_WRITE_SHM=79, PIPE_READ_SHM=80, PIPE_SET_PIPES=81
 ```
 
-### Implemented Syscalls (82+)
+### Implemented Syscalls (86+)
 
 File I/O: open, openat (O_CREAT, O_APPEND), read, readv, write, writev, close, lseek, pread64, pwrite64, ftruncate (FS_APPEND for server-side append)
 Directories: getdents64, chdir, mkdirat, unlinkat
@@ -351,6 +351,7 @@ Signals: rt_sigaction, rt_sigprocmask, rt_sigpending, rt_sigreturn, sigaltstack,
 Memory: mmap, munmap, brk, madvise, mprotect (stub)
 Rename: renameat, renameat2
 Linux compat: ppoll, pselect6, getrandom (splitmix64), prlimit64, prctl, getrlimit, setrlimit, sysinfo, getrusage, membarrier, futex (WAIT/WAKE stub)
+Network: socket, bind, listen, accept/accept4, sendto, recvfrom, connect (stub), setsockopt (stub), getsockopt (stub), getsockname (stub), getpeername (stub), shutdown (stub). Socket fds support read()/write() via NET_RECVFROM/NET_SENDTO routing.
 
 ### fd Table
 
@@ -439,6 +440,8 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * Disk image is gitignored: must rebuild after rm -rf build-04 (sbase binaries lost)
 * tty_echo: ON by default (v0.4.68). mini_shell/getty switch to RAW mode during line editing, COOKED for normal programs. Both buffers flushed on mode switch.
 * Dash rebuild: dash links against libaios_posix.a but is not rebuilt by ninja. Must manually rebuild via aios-cc after any POSIX shim change.
+* Virtio IRQ: Each virtio device needs its own seL4 IRQ handler (IRQ = 48 + slot). Never busy-poll with seL4_NBRecv in QEMU guest -- starves SLIRP event loop. Use blocking seL4_Recv with bound notification.
+* Socket fd read/write: routed through posix_file.c (is_socket check) to net_server via NET_RECVFROM/NET_SENDTO IPC. Max 900 bytes per MR-based transfer.
 
 ## Pending Items
 
@@ -468,6 +471,10 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 22. /proc/self/fd listing: external command opendir does not route through client intercept (syscall dispatch investigation)
 23. File redirects across exec: cmd > file lost after fork+exec (server-side fd table needed)
 24. reap_check: cannot use seL4_NBRecv on minted fault EPs (steals from shared pipe_ep). Need different orphan detection approach.
+25. ~~TCP stream sockets~~ DONE in v0.4.81: read()/write() on socket fds, 4KB circular RX buffer, dedicated virtio-net IRQ
+26. ~~Virtio-net IRQ~~ FIXED in v0.4.81: dedicated seL4 IRQ handler, was piggybacking on UART
+27. SSH server: cross-compile mbedTLS, Ed25519+AES-256-GCM, SSH transport over TCP, auth via auth_server IPC
+28. TCP improvements: retransmission, window advertisement, connect() implementation, SHM data path
 
 ## Version History (0.4.x)
 
@@ -522,6 +529,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 | v0.4.78 | Linux compat layer (10 syscalls: getrandom, ppoll, prlimit64, sysinfo, etc.). ext2 block/inode freeing on unlink with BGDT count updates. /dev/urandom, /dev/random, /dev/zero virtual devices. /proc/cpuinfo, /proc/stat, /proc/loadavg. readlinkat /proc/self/exe. Bumped MAX_ZOMBIES=16, MAX_PIPES=16, MAX_WAIT_PENDING=8. See docs/NEXT_20260411d.md |
 | v0.4.79 | O_NONBLOCK for pipes (pipe2 flags, fcntl F_GETFL/F_SETFL, server EAGAIN). futex stub (WAIT/WAKE). /proc/self/fd stat+readlinkat. close() EOF fix (last-write-ref PIPE_CLOSE_WRITE). Zombie overflow guard. Fork ReadRegisters cleanup. procfs /self directory. See docs/NEXT_20260411e.md |
 | v0.4.80 | Dynamic config: shared key=value parser (config.h, config_parser.c), boot_load_config reads /etc/hostname + /etc/network.conf + /etc/environment. Runtime network IP/gateway/mask (net_cfg_ip arrays replace NET_IP macros). Dynamic environment from disk. auth_server /bin/sh -> /bin/dash. uname fallback updated. /proc/mounts shows log drive. USER= from login uid. Test scripts at /bin/tests/. See docs/NEXT_20260411f.md |
+| v0.4.81 | TCP stream sockets: read()/write() on socket fds via NET_RECVFROM/NET_SENDTO IPC. 4KB circular TCP RX buffer (ring with rx_head/rx_tail/rx_eof). Dedicated virtio-net IRQ handler (was piggybacking on UART). Event-driven net_server (blocking seL4_Recv replaces busy-poll). Socket stubs: connect, getsockname, getpeername, getsockopt. echo_tcp test app. Getty version banner. See docs/NEXT_20260411g.md |
 
 ## Architecture After v0.4.76
 
@@ -555,8 +563,8 @@ src/servers/exec_server.c  ~388 lines
 src/servers/pipe_server.c  ~1105 lines (+ SHM client, cap cleanup, PIPE_SET_PIPES)
 src/servers/fs_server.c    ~343 lines (+ FS_APPEND)
 src/servers/thread_server.c ~227 lines
-src/servers/net_driver.c   ~85 lines
-src/servers/net_server.c   ~320 lines
+src/servers/net_driver.c   ~95 lines  (+ virtio ISR/IRQ ACK)
+src/servers/net_server.c   ~480 lines (+ TCP circular RX buffer, blocking Recv)
 src/net/net_stack.c        ~350 lines
 src/net/net_tcp.c          ~100 lines
 src/boot/boot_services.c   ~117 lines

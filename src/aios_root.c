@@ -97,6 +97,7 @@ int net_available = 0;
 int net_vio_slot = -1;
 seL4_CPtr net_ep_cap = 0;
 seL4_CPtr net_drv_ntfn_cap = 0;
+seL4_CPtr net_irq_handler_cap = 0;
 seL4_CPtr net_srv_ntfn_cap = 0;
 struct net_rx_ring net_rx_ring;
 
@@ -296,14 +297,8 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        /* Phase 1 polling: check virtio-net interrupt status */
-        if (net_available && net_vio) {
-            uint32_t isr = net_vio[VIRTIO_MMIO_INTERRUPT_STATUS / 4];
-            if (isr) {
-                net_vio[VIRTIO_MMIO_INTERRUPT_ACK / 4] = isr;
-                seL4_Signal(net_drv_ntfn_cap);
-            }
-        }
+        /* virtio-net IRQ now handled by dedicated seL4 IRQ handler
+         * (bound in boot_net_init.c, acked in net_driver.c) */
 
         /* ACK UART IRQ if active (re-arms for next delivery) */
         if (irq_uart_active && uart_irq_cap) {

@@ -6,10 +6,11 @@
  */
 #include "aios/root_shared.h"
 #include "aios/net.h"
+#include "aios/config.h"
 #include <stdio.h>
 
 #define MAX_NET_SOCKETS  8
-#define SOCK_RX_BUF_SZ   2048
+#define SOCK_RX_BUF_SZ   4096
 
 struct net_socket {
     int      in_use;
@@ -25,6 +26,9 @@ struct net_socket {
     /* RX buffer */
     uint8_t  rxbuf[SOCK_RX_BUF_SZ];
     uint16_t rxlen;
+    uint16_t rx_head;    /* TCP ring write pos */
+    uint16_t rx_tail;    /* TCP ring read pos */
+    uint8_t  rx_eof;     /* FIN received */
     uint8_t  rx_src_ip[4];
     uint16_t rx_src_port;
 
@@ -135,6 +139,9 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
         conn->snd_nxt = 1000;
         conn->rcv_nxt = seq + 1;
         conn->rxlen = 0;
+        conn->rx_head = 0;
+        conn->rx_tail = 0;
+        conn->rx_eof = 0;
         conn->has_blocked = 0;
         conn->has_accept_blocked = 0;
         conn->listen_parent = listen_idx;
@@ -208,9 +215,16 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
             seL4_CNode_Delete(seL4_CapInitThreadCNode,
                               s->blocked_cap, seL4_WordBits);
             s->has_blocked = 0;
-        } else if (s->rxlen == 0 && data_len <= SOCK_RX_BUF_SZ) {
-            for (int j = 0; j < data_len; j++) s->rxbuf[j] = data[j];
-            s->rxlen = (uint16_t)data_len;
+        } else {
+            /* Append to TCP circular buffer */
+            int mask = SOCK_RX_BUF_SZ - 1;
+            int free_sp = SOCK_RX_BUF_SZ - 1 - ((s->rx_head - s->rx_tail) & mask);
+            int n = data_len;
+            if (n > free_sp) n = free_sp;
+            for (int j = 0; j < n; j++) {
+                s->rxbuf[s->rx_head & mask] = data[j];
+                s->rx_head++;
+            }
         }
     }
 
@@ -229,6 +243,7 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
                               s->blocked_cap, seL4_WordBits);
             s->has_blocked = 0;
         }
+        s->rx_eof = 1;
         s->state = TCP_FIN_WAIT;
         printf("[net] TCP FIN (sock %d)\n", si);
     }
@@ -256,11 +271,11 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
     printf("[net-srv] Server thread ready (M4: TCP)\n");
 
     net_send_gratuitous_arp();
-    uint8_t gw[4] = { NET_GW_A, NET_GW_B, NET_GW_C, NET_GW_D };
+    uint8_t gw[4];
+    for (int _g = 0; _g < 4; _g++) gw[_g] = net_cfg_gw[_g];
     net_send_arp_request(gw);
 
     int selftest_done = 0;
-    uint32_t poll_count = 0;
 
     while (1) {
         /* Poll rx_ring */
@@ -277,13 +292,11 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             net_send_ping(gw);
             selftest_done = 1;
         }
-        poll_count++;
-        if (!selftest_done && (poll_count & 0xFFFFF) == 0)
-            net_send_arp_request(gw);
+
 
         /* IPC: socket API */
         seL4_Word badge = 0;
-        seL4_MessageInfo_t msg = seL4_NBRecv(ep, &badge);
+        seL4_MessageInfo_t msg = seL4_Recv(ep, &badge);
         seL4_Word label = seL4_MessageInfo_get_label(msg);
 
         if (label == NET_SOCKET) {
@@ -298,6 +311,9 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 sockets[slot].state = TCP_CLOSED;
                 sockets[slot].local_port = 0;
                 sockets[slot].rxlen = 0;
+                sockets[slot].rx_head = 0;
+                sockets[slot].rx_tail = 0;
+                sockets[slot].rx_eof = 0;
                 sockets[slot].has_blocked = 0;
                 sockets[slot].has_accept_blocked = 0;
                 sockets[slot].listen_parent = -1;
@@ -380,7 +396,38 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             if (sid < 0 || sid >= MAX_NET_SOCKETS || !sockets[sid].in_use) {
                 seL4_SetMR(0, (seL4_Word)-1);
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            } else if (sockets[sid].type == 1) {
+                /* TCP: read from circular buffer */
+                struct net_socket *sk = &sockets[sid];
+                int mask = SOCK_RX_BUF_SZ - 1;
+                int avail = (sk->rx_head - sk->rx_tail) & mask;
+                if (avail > 0) {
+                    int n = avail;
+                    if (n > max) n = max;
+                    if (n > 900) n = 900;
+                    seL4_SetMR(0, (seL4_Word)n);
+                    seL4_SetMR(1, 0);
+                    seL4_SetMR(2, 0);
+                    int mr2 = 3;
+                    seL4_Word w2 = 0;
+                    for (int j = 0; j < n; j++) {
+                        w2 |= ((seL4_Word)sk->rxbuf[sk->rx_tail & mask]) << ((j % 8) * 8);
+                        sk->rx_tail++;
+                        if (j % 8 == 7 || j == n - 1) { seL4_SetMR(mr2++, w2); w2 = 0; }
+                    }
+                    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, mr2));
+                } else if (sk->rx_eof) {
+                    seL4_SetMR(0, 0);
+                    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                } else {
+                    seL4_CNode_SaveCaller(seL4_CapInitThreadCNode,
+                        blocked_slots[sid], seL4_WordBits);
+                    sk->blocked_cap = blocked_slots[sid];
+                    sk->blocked_max = max;
+                    sk->has_blocked = 1;
+                }
             } else if (sockets[sid].rxlen > 0) {
+                /* UDP: single datagram */
                 struct net_socket *sk = &sockets[sid];
                 int n = sk->rxlen;
                 if (n > max) n = max;
@@ -431,6 +478,5 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
         }
 
-        seL4_Yield();
     }
 }

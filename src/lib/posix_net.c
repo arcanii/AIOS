@@ -198,3 +198,38 @@ long aios_sys_shutdown_sock(va_list ap) {
     (void)ap;
     return 0;
 }
+
+/* ---- connect(sockfd, addr, addrlen) -- stub for now ---- */
+long aios_sys_connect(va_list ap) {
+    (void)ap;
+    return -ENOSYS;  /* TODO: TCP client SYN + block */
+}
+
+/* ---- getsockname(sockfd, addr, addrlen) ---- */
+long aios_sys_getsockname(va_list ap) {
+    int fd = va_arg(ap, long);
+    uint8_t *sa = va_arg(ap, uint8_t *);
+    int *addrlen = va_arg(ap, int *);
+
+    if (fd < AIOS_FD_BASE) return -ENOTSOCK;
+    aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
+    if (!f->active || !f->is_socket) return -ENOTSOCK;
+    if (sa) {
+        sa[0] = 2; sa[1] = 0;  /* AF_INET */
+        for (int i = 2; i < 16; i++) sa[i] = 0;
+    }
+    if (addrlen) *addrlen = 16;
+    return 0;
+}
+
+/* ---- getpeername(sockfd, addr, addrlen) -- stub ---- */
+long aios_sys_getpeername(va_list ap) {
+    (void)ap;
+    return -ENOTCONN;
+}
+
+/* ---- getsockopt(sockfd, level, optname, optval, optlen) -- stub ---- */
+long aios_sys_getsockopt(va_list ap) {
+    (void)ap;
+    return 0;
+}

@@ -134,6 +134,18 @@
 #ifndef __NR_shutdown_sock
 #define __NR_shutdown_sock 210
 #endif
+#ifndef __NR_connect
+#define __NR_connect 203
+#endif
+#ifndef __NR_getsockname
+#define __NR_getsockname 204
+#endif
+#ifndef __NR_getpeername
+#define __NR_getpeername 205
+#endif
+#ifndef __NR_getsockopt
+#define __NR_getsockopt 209
+#endif
 
 /* Net IPC labels (client side) */
 #define NET_SOCKET_L      90
@@ -142,6 +154,7 @@
 #define NET_RECVFROM_L    96
 #define NET_LISTEN_L      92
 #define NET_ACCEPT_L      93
+#define NET_CONNECT_L     94
 #define NET_CLOSE_SOCK_L  97
 
 
@@ -263,6 +276,10 @@ long aios_sys_setsockopt(va_list ap);
 long aios_sys_listen(va_list ap);
 long aios_sys_accept4(va_list ap);
 long aios_sys_shutdown_sock(va_list ap);
+long aios_sys_connect(va_list ap);
+long aios_sys_getsockname(va_list ap);
+long aios_sys_getpeername(va_list ap);
+long aios_sys_getsockopt(va_list ap);
 
 /* ---- Syscall handlers: posix_proc.c ---- */
 long aios_sys_exit(va_list ap);

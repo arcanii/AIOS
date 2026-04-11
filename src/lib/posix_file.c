@@ -467,6 +467,25 @@ long aios_sys_read(va_list ap) {
             }
             return (long)got;
         }
+        /* v0.4.81: socket read via net_server RECVFROM */
+        if (f->is_socket && net_ep) {
+            char *cbuf = (char *)buf;
+            int want = (int)count;
+            if (want > 900) want = 900;
+            seL4_SetMR(0, (seL4_Word)f->socket_id);
+            seL4_SetMR(1, (seL4_Word)want);
+            seL4_Call(net_ep, seL4_MessageInfo_new(NET_RECVFROM_L, 0, 0, 2));
+            int got = (int)(long)seL4_GetMR(0);
+            if (got <= 0) return got;
+            int mr = 3;
+            seL4_Word w = 0;
+            for (int i = 0; i < got; i++) {
+                if (i % 8 == 0) w = seL4_GetMR(mr++);
+                cbuf[i] = (char)(w & 0xFF);
+                w >>= 8;
+            }
+            return (long)got;
+        }
         /* v0.4.78: virtual device read (/dev/urandom, /dev/zero) */
         if (f->is_devnull && f->path[0] == '/') {
             char *dst = (char *)buf;
@@ -580,6 +599,30 @@ long aios_sys_write(va_list ap) {
         aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
         if (!f->active) return -EBADF;
         if (f->is_devnull) return (long)count;
+        /* v0.4.81: socket write via net_server SENDTO */
+        if (f->is_socket && net_ep) {
+            const char *src = (const char *)buf;
+            size_t sent = 0;
+            while (sent < count) {
+                int chunk = (int)(count - sent);
+                if (chunk > 900) chunk = 900;
+                seL4_SetMR(0, (seL4_Word)f->socket_id);
+                seL4_SetMR(1, (seL4_Word)chunk);
+                seL4_SetMR(2, 0);
+                seL4_SetMR(3, 0);
+                int mr = 4;
+                seL4_Word w = 0;
+                for (int i = 0; i < chunk; i++) {
+                    w |= ((seL4_Word)(uint8_t)src[sent + i]) << ((i % 8) * 8);
+                    if (i % 8 == 7 || i == chunk - 1) { seL4_SetMR(mr++, w); w = 0; }
+                }
+                seL4_Call(net_ep, seL4_MessageInfo_new(NET_SENDTO_L, 0, 0, mr));
+                int rc = (int)(long)seL4_GetMR(0);
+                if (rc <= 0) { if (sent == 0) return -EIO; break; }
+                sent += rc;
+            }
+            return (long)sent;
+        }
         /* Regular file write -- use FS_APPEND (19) for O_APPEND fds,
          * FS_WRITE_FILE (15) otherwise. v0.4.66 */
         if (!f->is_pipe && !f->is_dir && f->path[0] && fs_ep_cap) {

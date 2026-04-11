@@ -81,5 +81,12 @@ void net_driver_fn(void *arg0, void *arg1, void *ipc_buf) {
             /* Wake server to process packets */
             seL4_Signal(net_srv_ntfn_cap);
         }
+
+        /* ACK virtio ISR (hardware) + seL4 IRQ (re-arm for next interrupt) */
+        uint32_t isr = net_vio[VIRTIO_MMIO_INTERRUPT_STATUS / 4];
+        if (isr)
+            net_vio[VIRTIO_MMIO_INTERRUPT_ACK / 4] = isr;
+        if (net_irq_handler_cap)
+            seL4_IRQHandler_Ack(net_irq_handler_cap);
     }
 }

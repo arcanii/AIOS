@@ -688,6 +688,10 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     muslcsys_install_syscall(__NR_recvfrom, aios_sys_recvfrom);
     muslcsys_install_syscall(__NR_setsockopt, aios_sys_setsockopt);
     muslcsys_install_syscall(__NR_shutdown_sock, aios_sys_shutdown_sock);
+    muslcsys_install_syscall(__NR_connect, aios_sys_connect);
+    muslcsys_install_syscall(__NR_getsockname, aios_sys_getsockname);
+    muslcsys_install_syscall(__NR_getpeername, aios_sys_getpeername);
+    muslcsys_install_syscall(__NR_getsockopt, aios_sys_getsockopt);
 
     /* v0.4.78: Linux compatibility syscalls */
     muslcsys_install_syscall(__NR_ppoll, aios_sys_ppoll);
