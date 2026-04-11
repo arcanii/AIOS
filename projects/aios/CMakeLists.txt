@@ -14,6 +14,7 @@ add_library(aios_posix STATIC
     ${AIOS_ROOT}/src/lib/posix_thread.c
     ${AIOS_ROOT}/src/lib/posix_net.c
     ${AIOS_ROOT}/src/lib/posix_compat.c
+    ${AIOS_ROOT}/src/lib/config_parser.c
     ${AIOS_ROOT}/src/lib/aios_entry.c
 )
 target_include_directories(aios_posix PUBLIC ${AIOS_ROOT}/src/lib ${AIOS_ROOT}/include ${AIOS_ROOT}/src/arch)
@@ -121,6 +122,8 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/boot/boot_net_init.c
     ${AIOS_ROOT}/src/boot/boot_display_init.c
     ${AIOS_ROOT}/src/boot/boot_dtb.c
+    ${AIOS_ROOT}/src/boot/boot_config.c
+    ${AIOS_ROOT}/src/lib/config_parser.c
     ${AIOS_ROOT}/src/servers/display_server.c
     ${AIOS_ROOT}/src/servers/net_driver.c
     ${AIOS_ROOT}/src/servers/net_server.c

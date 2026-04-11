@@ -79,7 +79,7 @@ long aios_sys_uname(va_list ap) {
         }
     }
     /* Fallback */
-    s = "0.4.37";
+    s = "0.4.80";
     for (int i = 0; s[i]; i++) buf->release[i] = s[i];
     s = "seL4 15.0.0 SMP";
     for (int i = 0; s[i]; i++) buf->version[i] = s[i];

@@ -289,6 +289,7 @@ void net_driver_fn(void *arg0, void *arg1, void *ipc_buf);
 void net_server_fn(void *arg0, void *arg1, void *ipc_buf);
 void display_server_fn(void *arg0, void *arg1, void *ipc_buf);
 
+void boot_load_config(void);
 void aios_system_shutdown(void);
 
 #endif /* AIOS_ROOT_SHARED_H */

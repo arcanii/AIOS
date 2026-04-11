@@ -1,0 +1,6 @@
+# AIOS default environment
+HOME=/
+PATH=/bin:/bin/aios
+USER=root
+SHELL=/bin/dash
+TERM=vt100

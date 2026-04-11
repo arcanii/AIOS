@@ -7,7 +7,7 @@
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: main
 * **Developer**: Bryan
-* **Current Version**: v0.4.79
+* **Current Version**: v0.4.80
 
 ## Development Environment
 
@@ -334,7 +334,7 @@ PIPE_SIGNAL=75, PIPE_SIG_FETCH=76, PIPE_SHUTDOWN=77
 PIPE_MAP_SHM=78, PIPE_WRITE_SHM=79, PIPE_READ_SHM=80, PIPE_SET_PIPES=81
 ```
 
-### Implemented Syscalls (81+)
+### Implemented Syscalls (82+)
 
 File I/O: open, openat (O_CREAT, O_APPEND), read, readv, write, writev, close, lseek, pread64, pwrite64, ftruncate (FS_APPEND for server-side append)
 Directories: getdents64, chdir, mkdirat, unlinkat
@@ -521,6 +521,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 | v0.4.77 | DTB hardware discovery (libfdt): UART, virtio, fw_cfg, CPU, memory from device tree. Hardcoded MMIO addresses replaced with DTB values. Dynamic /proc/version. Procfs zero-size open fix. ls /proc directory listing fix. See docs/NEXT_20260411c.md |
 | v0.4.78 | Linux compat layer (10 syscalls: getrandom, ppoll, prlimit64, sysinfo, etc.). ext2 block/inode freeing on unlink with BGDT count updates. /dev/urandom, /dev/random, /dev/zero virtual devices. /proc/cpuinfo, /proc/stat, /proc/loadavg. readlinkat /proc/self/exe. Bumped MAX_ZOMBIES=16, MAX_PIPES=16, MAX_WAIT_PENDING=8. See docs/NEXT_20260411d.md |
 | v0.4.79 | O_NONBLOCK for pipes (pipe2 flags, fcntl F_GETFL/F_SETFL, server EAGAIN). futex stub (WAIT/WAKE). /proc/self/fd stat+readlinkat. close() EOF fix (last-write-ref PIPE_CLOSE_WRITE). Zombie overflow guard. Fork ReadRegisters cleanup. procfs /self directory. See docs/NEXT_20260411e.md |
+| v0.4.80 | Dynamic config: shared key=value parser (config.h, config_parser.c), boot_load_config reads /etc/hostname + /etc/network.conf + /etc/environment. Runtime network IP/gateway/mask (net_cfg_ip arrays replace NET_IP macros). Dynamic environment from disk. auth_server /bin/sh -> /bin/dash. uname fallback updated. /proc/mounts shows log drive. USER= from login uid. Test scripts at /bin/tests/. See docs/NEXT_20260411f.md |
 
 ## Architecture After v0.4.76
 

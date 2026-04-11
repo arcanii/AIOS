@@ -8,6 +8,7 @@
  */
 #include "aios/root_shared.h"
 #include "aios/net.h"
+#include "aios/config.h"
 #include "virtio.h"
 #include <stdio.h>
 #include "arch.h"
@@ -25,7 +26,7 @@ uint16_t ip_checksum(const void *data, int len) {
 }
 
 /* -- Static state -- */
-static uint8_t my_ip[4] = { NET_IP_A, NET_IP_B, NET_IP_C, NET_IP_D };
+static uint8_t *my_ip = net_cfg_ip;  /* v0.4.80: runtime from /etc/network.conf */
 static uint8_t tx_frame[1518];
 static struct net_stats stats;
 
@@ -333,15 +334,15 @@ void net_send_gratuitous_arp(void) {
     arp->proto_len  = 4;
     arp->op         = be16(ARP_OP_REQUEST);
     for (int i = 0; i < 6; i++) arp->sender_mac[i] = net_mac[i];
-    arp->sender_ip[0] = NET_IP_A; arp->sender_ip[1] = NET_IP_B;
-    arp->sender_ip[2] = NET_IP_C; arp->sender_ip[3] = NET_IP_D;
+    arp->sender_ip[0] = net_cfg_ip[0]; arp->sender_ip[1] = net_cfg_ip[1];
+    arp->sender_ip[2] = net_cfg_ip[2]; arp->sender_ip[3] = net_cfg_ip[3];
     for (int i = 0; i < 6; i++) arp->target_mac[i] = 0x00;
-    arp->target_ip[0] = NET_IP_A; arp->target_ip[1] = NET_IP_B;
-    arp->target_ip[2] = NET_IP_C; arp->target_ip[3] = NET_IP_D;
+    arp->target_ip[0] = net_cfg_ip[0]; arp->target_ip[1] = net_cfg_ip[1];
+    arp->target_ip[2] = net_cfg_ip[2]; arp->target_ip[3] = net_cfg_ip[3];
 
     net_tx_send(tx_frame, sizeof(struct eth_hdr) + sizeof(struct arp_pkt));
     printf("[net] Gratuitous ARP sent for %d.%d.%d.%d\n",
-           NET_IP_A, NET_IP_B, NET_IP_C, NET_IP_D);
+           net_cfg_ip[0], net_cfg_ip[1], net_cfg_ip[2], net_cfg_ip[3]);
 }
 
 /* ============================================================
@@ -361,8 +362,8 @@ void net_send_arp_request(const uint8_t *target_ip) {
     arp->proto_len  = 4;
     arp->op         = be16(ARP_OP_REQUEST);
     for (int i = 0; i < 6; i++) arp->sender_mac[i] = net_mac[i];
-    arp->sender_ip[0] = NET_IP_A; arp->sender_ip[1] = NET_IP_B;
-    arp->sender_ip[2] = NET_IP_C; arp->sender_ip[3] = NET_IP_D;
+    arp->sender_ip[0] = net_cfg_ip[0]; arp->sender_ip[1] = net_cfg_ip[1];
+    arp->sender_ip[2] = net_cfg_ip[2]; arp->sender_ip[3] = net_cfg_ip[3];
     for (int i = 0; i < 6; i++) arp->target_mac[i] = 0x00;
     for (int i = 0; i < 4; i++) arp->target_ip[i] = target_ip[i];
 
@@ -396,8 +397,8 @@ void net_send_ping(const uint8_t *dst_ip) {
     ip->total_len = be16((uint16_t)ip_total);
     ip->id = be16(1); ip->flags_frag = 0;
     ip->ttl = 64; ip->protocol = IP_PROTO_ICMP; ip->checksum = 0;
-    ip->src[0] = NET_IP_A; ip->src[1] = NET_IP_B;
-    ip->src[2] = NET_IP_C; ip->src[3] = NET_IP_D;
+    ip->src[0] = net_cfg_ip[0]; ip->src[1] = net_cfg_ip[1];
+    ip->src[2] = net_cfg_ip[2]; ip->src[3] = net_cfg_ip[3];
     for (int i = 0; i < 4; i++) ip->dst[i] = dst_ip[i];
     ip->checksum = ip_checksum(ip, sizeof(struct ip_hdr));
 
@@ -428,7 +429,7 @@ int net_udp_send(int sock_id, uint16_t local_port,
 
     /* Resolve MAC (use gateway if not on local subnet) */
     uint8_t dst_mac[6];
-    uint8_t gw[4] = { NET_GW_A, NET_GW_B, NET_GW_C, NET_GW_D };
+    uint8_t gw[4] = { net_cfg_gw[0], net_cfg_gw[1], net_cfg_gw[2], net_cfg_gw[3] };
     const uint8_t *lookup_ip = dst_ip;
     /* Simple: always route through gateway for now */
     if (arp_cache_lookup(dst_ip, dst_mac) != 0) {
@@ -453,8 +454,8 @@ int net_udp_send(int sock_id, uint16_t local_port,
     ip->total_len = be16((uint16_t)ip_total);
     ip->id = 0; ip->flags_frag = 0;
     ip->ttl = 64; ip->protocol = IP_PROTO_UDP; ip->checksum = 0;
-    ip->src[0] = NET_IP_A; ip->src[1] = NET_IP_B;
-    ip->src[2] = NET_IP_C; ip->src[3] = NET_IP_D;
+    ip->src[0] = net_cfg_ip[0]; ip->src[1] = net_cfg_ip[1];
+    ip->src[2] = net_cfg_ip[2]; ip->src[3] = net_cfg_ip[3];
     for (int i = 0; i < 4; i++) ip->dst[i] = dst_ip[i];
     ip->checksum = ip_checksum(ip, sizeof(struct ip_hdr));
 

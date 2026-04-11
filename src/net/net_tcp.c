@@ -9,6 +9,7 @@
  */
 #include "aios/root_shared.h"
 #include "aios/net.h"
+#include "aios/config.h"
 #include "virtio.h"
 #include <stdio.h>
 
@@ -39,7 +40,7 @@ void net_tcp_send(const uint8_t *dst_ip, const uint8_t *dst_mac,
                   uint16_t src_port, uint16_t dst_port,
                   uint32_t seq, uint32_t ack_val, uint8_t flags,
                   const uint8_t *data, int data_len) {
-    uint8_t my_ip[4] = { NET_IP_A, NET_IP_B, NET_IP_C, NET_IP_D };
+    uint8_t my_ip[4] = { net_cfg_ip[0], net_cfg_ip[1], net_cfg_ip[2], net_cfg_ip[3] };
     int tcp_len = 20 + data_len;
     int ip_total = 20 + tcp_len;
     int frame_len = 14 + ip_total; /* ETH(14) + IP(20) + TCP(20) + data */

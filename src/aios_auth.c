@@ -178,7 +178,7 @@ static void init_default_users(void) {
     users[0].ngroups = 0;
     users[0].is_root = 1;
     str_cpy(users[0].home, "/");
-    str_cpy(users[0].shell, "/bin/sh");
+    str_cpy(users[0].shell, "/bin/dash");
     str_cpy(users[0].gecos, "System Administrator");
 
     /* user:user (SHA-3-512) */
@@ -192,7 +192,7 @@ static void init_default_users(void) {
     users[1].ngroups = 0;
     users[1].is_root = 0;
     str_cpy(users[1].home, "/home/user");
-    str_cpy(users[1].shell, "/bin/sh");
+    str_cpy(users[1].shell, "/bin/dash");
     str_cpy(users[1].gecos, "Regular User");
 
     num_users = 2;
@@ -446,7 +446,7 @@ static void handle_useradd(void) {
         for (int j = 0; u[j] && hi < 63; j++) nu->home[hi++] = u[j];
         nu->home[hi] = '\0';
     }
-    str_cpy(nu->shell, "/bin/sh");
+    str_cpy(nu->shell, "/bin/dash");
 
     AIOS_LOG_INFO("useradd OK");
     seL4_SetMR(0, AIOS_AUTH_OK);
@@ -749,7 +749,7 @@ int aios_auth_load_passwd(void) {
                 u->home[hi] = '\0';
             }
         }
-        if (u->shell[0] == '\0') str_cpy(u->shell, "/bin/sh");
+        if (u->shell[0] == '\0') str_cpy(u->shell, "/bin/dash");
 
         u->active = 1;
         u->is_root = (u->uid == 0) ? 1 : 0;

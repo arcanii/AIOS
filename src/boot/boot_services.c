@@ -8,6 +8,7 @@
 #include "aios/root_shared.h"
 #include "aios/vka_audit.h"
 #include "aios/vfs.h"
+#include "aios/config.h"
 #include "aios/procfs.h"
 #include <sel4utils/thread.h>
 #define LOG_MODULE "boot"
@@ -29,6 +30,9 @@ static int start_server_thread(sel4utils_thread_entry_fn fn,
 
 void boot_start_services(vka_object_t *fault_ep) {
     int error;
+
+    /* v0.4.80: load configuration from /etc/ before starting servers */
+    boot_load_config();
 
     /* Create IPC endpoints for internal servers */
     vka_object_t fs_ep_obj;

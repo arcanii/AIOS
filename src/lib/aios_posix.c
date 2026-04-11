@@ -390,16 +390,89 @@ int aios_get_pipe_id(int fd) {
 }
 
 /* ── Init ── */
-/* Environment variables */
-static char *aios_envp[] = {
-    "HOME=/",
-    "PATH=/bin:/bin/aios",
-    "USER=root",
-    "SHELL=/bin/sh",
-    "TERM=vt100",
-    "HOSTNAME=aios",
-    NULL
-};
+/* v0.4.80: dynamic environment from /etc/environment + /etc/hostname */
+#include "aios/config.h"
+
+#define AIOS_ENVP_MAX 16
+#define AIOS_ENVP_SZ  128
+static char env_storage[AIOS_ENVP_MAX][AIOS_ENVP_SZ];
+static char *aios_envp[AIOS_ENVP_MAX + 1];
+static int env_count = 0;
+
+static void env_add(const char *kv) {
+    if (env_count >= AIOS_ENVP_MAX) return;
+    int i = 0;
+    while (kv[i] && i < AIOS_ENVP_SZ - 1) { env_storage[env_count][i] = kv[i]; i++; }
+    env_storage[env_count][i] = 0;
+    aios_envp[env_count] = env_storage[env_count];
+    env_count++;
+    aios_envp[env_count] = 0;  /* NULL terminator */
+}
+
+/* Check if env var with given prefix exists */
+static int env_has(const char *prefix) {
+    int plen = 0;
+    while (prefix[plen]) plen++;
+    for (int i = 0; i < env_count; i++) {
+        int match = 1;
+        for (int j = 0; j < plen; j++)
+            if (env_storage[i][j] != prefix[j]) { match = 0; break; }
+        if (match) return 1;
+    }
+    return 0;
+}
+
+static void env_init_defaults(void) {
+    env_count = 0;
+    aios_envp[0] = 0;
+
+    /* Try to load from /etc/environment via IPC */
+    if (fs_ep_cap) {
+        char buf[1024];
+        int len = fetch_file("/etc/environment", buf, sizeof(buf) - 1);
+        if (len > 0) {
+            buf[len] = 0;
+            cfg_file_t cfg;
+            cfg_parse_kv(buf, len, &cfg);
+            for (int i = 0; i < cfg.count; i++) {
+                char tmp[AIOS_ENVP_SZ];
+                int ti = 0, ki = 0, vi = 0;
+                while (cfg.entries[i].key[ki] && ti < AIOS_ENVP_SZ - 2)
+                    tmp[ti++] = cfg.entries[i].key[ki++];
+                tmp[ti++] = '=';
+                while (cfg.entries[i].value[vi] && ti < AIOS_ENVP_SZ - 1)
+                    tmp[ti++] = cfg.entries[i].value[vi++];
+                tmp[ti] = 0;
+                env_add(tmp);
+            }
+        }
+    }
+
+    /* Try to load hostname from /etc/hostname */
+    if (fs_ep_cap && !env_has("HOSTNAME=")) {
+        char hbuf[64];
+        int hlen = fetch_file("/etc/hostname", hbuf, sizeof(hbuf) - 1);
+        if (hlen > 0) {
+            if (hbuf[hlen-1] == '\n') hbuf[--hlen] = 0;
+            hbuf[hlen] = 0;
+            char htmp[80];
+            int hi = 0;
+            const char *pfx = "HOSTNAME=";
+            while (*pfx) htmp[hi++] = *pfx++;
+            for (int i = 0; i < hlen && hi < 79; i++) htmp[hi++] = hbuf[i];
+            htmp[hi] = 0;
+            env_add(htmp);
+        }
+    }
+
+    /* Fill in any missing essentials with defaults */
+    if (!env_has("HOME="))     env_add("HOME=/");
+    if (!env_has("PATH="))     env_add("PATH=/bin:/bin/aios");
+    if (!env_has("USER="))     env_add("USER=root");
+    if (!env_has("SHELL="))    env_add("SHELL=/bin/dash");
+    if (!env_has("TERM="))     env_add("TERM=vt100");
+    if (!env_has("HOSTNAME=")) env_add("HOSTNAME=aios");
+}
 
 void aios_exit_cb(int code) {
     /* Flush musl stdio before dying — exit via VM fault
@@ -436,6 +509,7 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
 
     /* Set libc environ */
     extern char **environ;
+    env_init_defaults();
     environ = aios_envp;
 
     /* Set CWD from PWD env if available */
@@ -693,6 +767,22 @@ int __wrap_main(int argc, char **argv) {
             if (*s == ':') s++;
             aios_uid = uid;
             aios_gid = gid;
+            /* v0.4.80: update USER= env var from login uid */
+            if (uid == 0) {
+                env_add("USER=root");
+            } else {
+                char _ubuf[32];
+                int _ui = 0;
+                const char *_pfx = "USER=";
+                while (*_pfx) _ubuf[_ui++] = *_pfx++;
+                /* Convert uid to string */
+                if (uid >= 1000) _ubuf[_ui++] = '0' + (uid/1000)%10;
+                if (uid >= 100) _ubuf[_ui++] = '0' + (uid/100)%10;
+                if (uid >= 10) _ubuf[_ui++] = '0' + (uid/10)%10;
+                _ubuf[_ui++] = '0' + uid%10;
+                _ubuf[_ui] = 0;
+                env_add(_ubuf);
+            }
             /* Check for optional spipe:rpipe: before /path */
             if (*s >= '0' && *s <= '9') {
                 int sp = 0;

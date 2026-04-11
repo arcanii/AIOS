@@ -109,9 +109,25 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
             while (*p3 && w < bufsize - 1) buf[w++] = *p3++;
         }
     } else if (path[0] == 'm' && path[1] == 'o') {
-        /* /proc/mounts */
-        const char *mnt = "/dev/vda / ext2 ro 0 0\nproc /proc proc rw 0 0\n";
-        while (*mnt && w < bufsize - 1) buf[w++] = *mnt++;
+        /* /proc/mounts -- v0.4.80: list actual VFS mounts */
+        const char *lines[] = {
+            "/dev/vda / ext2 rw 0 0\n",
+            "proc /proc proc rw 0 0\n",
+            "/dev/vdb /log ext2 rw 0 0\n",
+            0
+        };
+        /* Check if log drive is mounted by testing vfs_read */
+        int has_log = 0;
+        {
+            uint32_t _m, _s;
+            extern int vfs_stat(const char *, uint32_t *, uint32_t *);
+            if (vfs_stat("/log", &_m, &_s) == 0) has_log = 1;
+        }
+        for (int mi = 0; lines[mi]; mi++) {
+            if (mi == 2 && !has_log) continue;  /* skip /log if not mounted */
+            const char *l = lines[mi];
+            while (*l && w < bufsize - 1) buf[w++] = *l++;
+        }
     } else if (path[0] == 's' && path[4] == 'u') {
         /* /proc/status — process table */
         const char *hdr = "PID  PRI  NICE  STATE  UID   THR  NAME\n";
