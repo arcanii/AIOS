@@ -8,18 +8,12 @@ Architectures / Hardware Supported
 - :white_medium_square: X86-64 
 
 ## Latest Achievements
-- O_NONBLOCK for pipes -- pipe2 flags, fcntl F_GETFL/F_SETFL, server-side EAGAIN
-- futex stub -- FUTEX_WAIT/WAKE for musl pthreads internals
-- /proc/self/fd support -- fstatat, readlinkat for open file descriptors
-- Pipe EOF fix -- close() signals EOF when last write reference drops (fixes builtin|external freezes)
-- Linux compatibility layer -- 11 compat syscalls (getrandom, futex, poll, prlimit64, sysinfo, etc.)
-- ext2 block/inode freeing -- unlink now reclaims disk space (was leaking since v0.4.19)
-- Virtual devices -- /dev/urandom, /dev/random, /dev/zero
-- Expanded procfs -- /proc/cpuinfo, /proc/stat, /proc/loadavg, /proc/self/exe, /proc/self/fd
-- DTB hardware discovery -- device tree parsing for dynamic UART, virtio, CPU config
-- Networking: virtio-net driver, TCP/IP stack, HTTP server
 - Shell is using DASH (https://github.com/tklauser/dash)
 - C compiler is TinyCC (https://github.com/TinyCC/tinycc)
+- Linux compatibility layer -- 11 compat syscalls (getrandom, futex, poll, prlimit64, sysinfo, etc.)
+- Networking: virtio-net driver, TCP/IP stack, HTTP server
+- Virtual devices -- /dev/urandom, /dev/random, /dev/zero
+- Display (Graphics) - and a cool logo splashscreen (need to use QEMU with "-device ramfb" : only ram frame buffer, no 3D yet. :unamused:
 
 ## Overview
 
