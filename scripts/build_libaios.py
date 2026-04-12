@@ -78,7 +78,7 @@ def build_stubs():
         print(f"  No stubs file, skipping")
         return
     aios_cc = os.path.join(AIOS, "scripts", "aios-cc")
-    cmd = [aios_cc, "-c", STUBS_SRC, "-o", STUBS_OUT]
+    cmd = [aios_cc, "-c", STUBS_SRC, "-I", os.path.join(AIOS, "src", "arch"), "-o", STUBS_OUT]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         print(f"FAIL -- compile aios_stubs.c:\n{r.stderr}")

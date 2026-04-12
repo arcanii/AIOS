@@ -8,12 +8,13 @@ Architectures / Hardware Supported
 - :white_medium_square: X86-64 
 
 ## Latest Achievements
-- Shell is using DASH (https://github.com/tklauser/dash)
-- C compiler is TinyCC (https://github.com/TinyCC/tinycc)
-- Linux compatibility layer -- 11 compat syscalls (getrandom, futex, poll, prlimit64, sysinfo, etc.)
+- Two shells: DASH (https://github.com/tklauser/dash) + ZSH (script mode)
+- C compiler: TinyCC (https://github.com/TinyCC/tinycc) -- compiles and runs C programs on AIOS
+- SSH server with encrypted transport (AES-256-CTR, HMAC-SHA-256, password auth)
 - Networking: virtio-net driver, TCP/IP stack, HTTP server
+- Linux compatibility layer -- 11 compat syscalls (getrandom, futex, poll, prlimit64, sysinfo, etc.)
 - Virtual devices -- /dev/urandom, /dev/random, /dev/zero
-- Display (Graphics) - and a cool logo splashscreen (need to use QEMU with "-device ramfb" : only ram frame buffer, no 3D yet. :unamused:
+- Display (Graphics) -- ramfb framebuffer with splash screen
 
 ## Overview
 
@@ -27,7 +28,7 @@ External AI (Claude) is used as a development tool for code generation
 and review. This project is also a study in AI-assisted systems programming.
 The long-term goal is self-hosted development within AIOS itself.
 
-**Current version:** v0.4.81
+**Current version:** v0.4.88
 
 ## What Works
 
@@ -40,11 +41,13 @@ The long-term goal is self-hosted development within AIOS itself.
 - **Unix pipelines** (echo hello | cat | wc -c) with error recovery
 - **Shell operators** (&&, ||, >, >>, <) and environment variables
 - **dash login shell** -- POSIX shell as primary login shell via /etc/passwd pw_shell
+- **zsh script mode** -- alternative shell with arrays, extended globbing, arithmetic (Phase 1)
+- **SSH server** -- interactive shell over SSH (AES-256-CTR, HMAC-SHA-256, password auth, Ctrl-C forwarding)
 - **Graphical display** -- ramfb framebuffer (1024x768), 8x8 bitmap font, splash images from disk
 - **Display server IPC** -- user programs draw to framebuffer via disp_ep (fbshow command)
 - **Networking** -- virtio-net driver, ARP/ICMP/UDP/TCP stack, HTTP server, POSIX sockets
 - **UART IRQ wakeup** -- PL011 interrupt-driven main loop (seL4_Wait replaces busy-polling)
-- **132+ programs** -- 99 sbase utilities, 29 AIOS programs, dash, tcc, hello_test, httpd
+- **135+ programs** -- 99 sbase utilities, 30 AIOS programs, dash, zsh, tcc, sshd, hello_test
 - **tcc compiler** -- TinyCC compiles C programs on AIOS (single-file, multi-file, libc.a linking)
 - **Architecture layer** -- src/arch/ with aarch64 + x86_64 stubs (barriers, page ops)
 - **Dual-drive support** -- system disk + log disk, identified by ext2 volume label
@@ -238,7 +241,7 @@ python3 scripts/mkdisk.py disk/disk_ext2.img \
     --aios-elfs build-04/projects/aios/
 ```
 
-Creates a 128MB ext2 image with all programs installed.
+Creates a 256MB ext2 image with all programs installed.
 
 ### 4b. Create log disk (optional, enables file logging)
 

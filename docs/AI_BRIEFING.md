@@ -7,7 +7,7 @@
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: main
 * **Developer**: Bryan
-* **Current Version**: v0.4.87
+* **Current Version**: v0.4.88
 
 ## Development Environment
 
@@ -400,6 +400,17 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * Cross-compiled with: aios-cc -I $DASH -include $DASH/config.h -DSHELL -DSMALL -DGLOB_BROKEN
 * IMPORTANT: dash must be rebuilt after libaios_posix.a changes (ninja does not rebuild dash)
 * Status: FULLY WORKING as primary login shell.
+
+### zsh (Z Shell) -- SCRIPT MODE WORKING (v0.4.88)
+
+* Source: ~/Desktop/github_repos/zsh (upstream zsh 5.9.0.3-test)
+* 1,189KB statically linked AArch64 ELF
+* Build: autoconf + configure (--disable-zle --disable-dynamic --disable-gdbm --disable-pcre --disable-cap --without-tcsetpgrp) -> make -> aios-cc re-link
+* Static modules: zsh/main, rlimits, sched, datetime, langinfo, parameter, random
+* Disabled: ZLE, completion, termcap, ksh93, hlgroup, zutil (ZLE dependency cascade)
+* Stubs: libfakecurses.a (termcap), Src/termcap.h (declarations), getrandom (reads /dev/urandom)
+* CFLAGS: -Wno-implicit-function-declaration -Wno-int-conversion (GCC 15 termcap compat)
+* Status: script mode working. echo, variables, for loops, arithmetic verified.
   - Interactive mode with echo and backspace (tty_echo=1, TTY_READ cooked input)
   - -c mode, script files, pipelines, semicolons
   - Variable expansion, for loops, arithmetic, if/then/fi
@@ -422,6 +433,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 
 * Source: src/ssh/ (sshd_main.c, ssh_transport.c, ssh_kex.c, ssh_crypto.c, ssh_session.h)
 * Built with: aios-cc + libmbedcrypto.a + -DMBEDTLS_ALLOW_PRIVATE_ACCESS
+* Source: src/ssh/ (sshd_main.c, ssh_transport.c, ssh_kex.c, ssh_crypto.c, ssh_encrypt.c, ssh_auth.c, ssh_channel.c, aios_entropy.c)
 * Port: 2222 (development), single-connection sequential model
 * Algorithms: curve25519-sha256 (kex), ecdsa-sha2-nistp256 (hostkey), aes256-ctr (cipher), hmac-sha2-256 (mac)
 * Strict KEX: kex-strict-s-v00@openssh.com (Terrapin countermeasure)
@@ -435,13 +447,14 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 
 ### Programs on Disk
 
-* 101 sbase Unix tools + sshd in /bin/
-* 32 AIOS programs in /bin/aios/ (includes test_mbedtls, test_crypto)
-* dash in /bin/dash
+* 99 sbase Unix tools + sshd in /bin/
+* 30 AIOS programs in /bin/aios/
+* dash in /bin/dash (primary login shell)
+* zsh in /bin/zsh (script mode, Phase 1 -- arrays, loops, arithmetic, extended globbing)
 * tcc in /bin/tcc (compiler, tcc -c and tcc -o work, compile-and-run works)
-* hello_test in /bin/hello_test (aios-cc proof-of-concept)
 * SDK in /usr/ (211 musl headers, augmented libc.a with AIOS runtime, libtcc1.a, custom CRT, tcc headers)
-* Total: 131 programs
+* Disk image: 256MB (was 128MB)
+* Total: 135 programs
 
 ## Known Issues / Gotchas
 
@@ -466,6 +479,8 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * sshd rebuild: sshd also links libaios_posix.a via aios-cc. Must rebuild after posix_*.c or aios_posix.c changes. Failing to rebuild causes stale close()/exit() behavior.
 * Virtio IRQ: Each virtio device needs its own seL4 IRQ handler (IRQ = 48 + slot). Never busy-poll with seL4_NBRecv in QEMU guest -- starves SLIRP event loop. Use blocking seL4_Recv with bound notification.
 * Socket fd read/write: routed through posix_file.c (is_socket check) to net_server via NET_RECVFROM/NET_SENDTO IPC. Max 900 bytes per MR-based transfer.
+* Morecore limit: 16MB exhausts VKA page frames (4096 BSS pages per process). 8MB is safe max with 8000-page pool. Increasing further requires demand paging or larger pool.
+* zsh rebuild: zsh uses configure + make for headers, then aios-cc re-link. Requires libfakecurses.a stub and getrandom stub.
 
 ## Pending Items
 
@@ -481,8 +496,9 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 10. ~~src/arch isolation~~ DONE in v0.4.76: arch.h dispatcher, aarch64 + x86_64 barrier/page headers
 11. ~~DTB hardware discovery~~ DONE in v0.4.77: libfdt parsing, dynamic UART/virtio/fw_cfg addresses
 12. ~~procfs reads broken~~ FIXED in v0.4.77: openat zero-size stat fallback, ls /proc directory mode
-13. zsh port: alternative shell with ZLE (see docs/DESIGN_ZSH.md)
-12. Allocator right-sizing: 4000 pages ~100x oversized, test with 500/250/100
+13. ~~zsh Phase 1~~ DONE in v0.4.88: script mode (1.19MB binary), echo/variables/loops/arithmetic verified
+38. zsh Phase 2: interactive mode with ZLE (requires ZLE enable + termios integration)
+12. Allocator right-sizing: 8000 pages (increased for 8MB morecore), monitor with debug command
 13. Dash improvements: tab completion, history, PS1, job control
 14. TTY improvements: process-aware echo, virtual terminals
 15. ~~ext2 free blocks on unlink~~ DONE in v0.4.78: ext2_free_block/inode, BGDT count updates
@@ -569,6 +585,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 | v0.4.85 | Pipe subsystem fixes: ignore_next_fault bug (v0.4.84), PIPE_READ_SHM -2, conditional read_closed, PIPE_DUP_REFS handler. Ctrl-C: root-side fg_sigint_sent, force-kill via PIPE_SIGNAL(SIGKILL), PIPE_WAIT signal interrupt. sshd SIGINT ignore. Net debug printfs removed, recvfrom O_NONBLOCK. See docs/NEXT_20260412b.md |
 | v0.4.86 | TCP connect() (3-way handshake, SYN_SENT state), dynamic window, seq validation, socket PID tracking + NET_CLEANUP_PID, deferred net cleanup (seL4 reply cap fix), fg parent promotion, sshd restart fix. See docs/NEXT_20260412c.md |
 | v0.4.87 | Signal delivery to blocked PIPE_READ (EINTR wakeup), SSH Ctrl-C via kill(0,2)+fg_pid, SSH exit (pipe EOF via server-side close), TCP retransmit tolerance (overlapping segment handling), exit path pipe close fixes. See docs/NEXT_20260412d.md |
+| v0.4.88 | ZSH Phase 1 (script mode, 1.19MB binary, 7 modules), morecore 4->8MB, allocator pool 4000->8000 pages, TCC + SDK rebuild with augmented libc, aios_entropy.c for mbedTLS, disk 128->256MB. See docs/NEXT_20260413a.md |
 
 ## Architecture After v0.4.76
 

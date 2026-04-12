@@ -28,3 +28,6 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fvisibility=default" CACHE STRING "" FORCE)
 set(KernelArmHypervisorSupport ON CACHE BOOL "" FORCE)
 set(KernelRootCNodeSizeBits 16 CACHE STRING "" FORCE)
 set(KernelArmExportPCNTUser ON CACHE BOOL "" FORCE)
+
+# Heap: 8MB morecore for zsh and large programs
+set(LibSel4MuslcSysMorecoreBytes 8388608 CACHE STRING "" FORCE)
