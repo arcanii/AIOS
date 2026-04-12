@@ -446,10 +446,8 @@ long aios_sys_read(va_list ap) {
                     seL4_MessageInfo_new(80 /* PIPE_READ_SHM */, 0, 0, 3));
                 int got = (int)(long)seL4_GetMR(0);
                 if (got == -1) return -EAGAIN;  /* v0.4.79: nonblocking */
-                /* v0.4.84: SHM returns 0 for both real EOF and xfer_valid
-                 * failure. On nonblock, verify via MR path before returning
-                 * EOF -- the MR path correctly distinguishes EAGAIN vs EOF. */
-                if (got == 0 && f->is_nonblock) {
+                /* v0.4.85: -2 means xfer_valid not ready, fall to MR path */
+                if (got == -2) {
                     /* fall through to MR-based PIPE_READ below */
                 } else {
                     for (int i = 0; i < got; i++)

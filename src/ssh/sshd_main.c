@@ -9,6 +9,7 @@
 
 #include "ssh_session.h"
 #include <stdio.h>
+#include <signal.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -18,6 +19,7 @@ int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
 
+    signal(SIGINT, SIG_IGN);  /* v0.4.85: ignore local Ctrl-C */
     printf("[sshd] AIOS SSH server starting\n");
 
     /* Initialize crypto (DRBG + host key) */

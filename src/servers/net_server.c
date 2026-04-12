@@ -152,8 +152,6 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
                      conn->snd_nxt, conn->rcv_nxt,
                      TCP_SYN | TCP_ACK, NULL, 0);
         conn->snd_nxt++;
-        printf("[net] TCP SYN-ACK -> %d.%d.%d.%d:%u\n",
-               src_ip[0], src_ip[1], src_ip[2], src_ip[3], src_port);
         return;
     }
 
@@ -174,7 +172,6 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
     /* SYN_RCVD + ACK -> ESTABLISHED */
     if (s->state == TCP_SYN_RCVD && (flags & TCP_ACK)) {
         s->state = TCP_ESTAB;
-        printf("[net] TCP ESTABLISHED (sock %d)\n", si);
 
         /* Wake blocked accept on parent listen socket */
         int pi = s->listen_parent;
@@ -202,7 +199,6 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
         if (s->has_blocked) {
             int n = data_len;
             if (n > s->blocked_max) n = s->blocked_max;
-            printf("[net-srv] TCP sock %d: wake blocked reader (%d/%d bytes)\n", si, n, data_len);
             seL4_SetMR(0, (seL4_Word)n);
             seL4_SetMR(1, 0);
             seL4_SetMR(2, 0);
@@ -260,7 +256,6 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
         }
         s->rx_eof = 1;
         s->state = TCP_FIN_WAIT;
-        printf("[net] TCP FIN (sock %d)\n", si);
     }
 
     /* FIN_WAIT + ACK -> closed */
@@ -283,7 +278,6 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
         accept_slots[i] = p2.capPtr;
     }
 
-    printf("[net-srv] Server thread ready (M4: TCP)\n");
 
     net_send_gratuitous_arp();
     uint8_t gw[4];
@@ -316,7 +310,6 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
 
         if (label == 0 && badge != 0) {
             /* Notification wake -- re-poll ring immediately */
-            printf("[net-srv] NTFN-WAKE badge=0x%lx\n", (unsigned long)badge);
             continue;
         }
 
@@ -452,7 +445,6 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                         sk->blocked_cap = blocked_slots[sid];
                         sk->blocked_max = max;
                         sk->has_blocked = 1;
-                        printf("[net-srv] TCP sock %d: reader blocked (max=%d)\n", sid, max);
                     }
                 }
             } else if (sockets[sid].rxlen > 0) {

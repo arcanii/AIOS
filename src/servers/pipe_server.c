@@ -161,6 +161,7 @@ static void handle_child_fault(int child_idx) {
     if (ch->pid == fg_pid) {
         fg_pid = -1;
         fg_fault_ep = 0;
+        fg_sigint_sent = 0;  /* v0.4.85: reset two-stage Ctrl-C */
     }
 
     /* Auto-close write end if child was writing to a pipe.
@@ -182,7 +183,9 @@ static void handle_child_fault(int child_idx) {
         && pipes[ch->stdin_pipe_id].active
         && !pipes[ch->stdin_pipe_id].read_closed) {
         pipes[ch->stdin_pipe_id].read_refs--;
-        pipes[ch->stdin_pipe_id].read_closed = 1;
+        /* v0.4.85: only mark closed when last reader gone */
+        if (pipes[ch->stdin_pipe_id].read_refs <= 0)
+            pipes[ch->stdin_pipe_id].read_closed = 1;
         pipe_maybe_free(ch->stdin_pipe_id);
     }
     reap_forked_child(child_idx);
@@ -315,6 +318,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
         case PIPE_READ: {
             int pi = (int)seL4_GetMR(0);
             int max_len = (int)seL4_GetMR(1);
+            if (pi >= 0 && pi < MAX_PIPES && pipes[pi].active)
             if (pi < 0 || pi >= MAX_PIPES || !pipes[pi].active) {
                 seL4_SetMR(0, 0);
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
@@ -414,7 +418,9 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             int pi = (int)seL4_GetMR(0);
             if (pi >= 0 && pi < MAX_PIPES && pipes[pi].active) {
                 pipes[pi].read_refs--;
-                pipes[pi].read_closed = 1;
+                /* v0.4.85: only mark closed when last reader gone */
+                if (pipes[pi].read_refs <= 0)
+                    pipes[pi].read_closed = 1;
                 pipe_maybe_free(pi);
             }
             seL4_SetMR(0, 0);
@@ -809,6 +815,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             ap->gid = old_gid;
             ap->fault_ep = new_fault_ep;
             ap->fault_on_pipe_ep = 1;
+            ap->ignore_next_fault = 0;  /* v0.4.85: clear flag for new process */
             ap->stdout_pipe_id = exec_stdout_pipe;
             ap->stdin_pipe_id = exec_stdin_pipe;
             /* v0.4.84: increment pipe refs so child exit does not
@@ -962,9 +969,15 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             /* v0.4.66: copy ring buffer to xfer page, reply with length */
             int pi = (int)seL4_GetMR(0);
             int max_len = (int)seL4_GetMR(1);
-            if (pi < 0 || pi >= MAX_PIPES || !pipes[pi].active
-                || !pipes[pi].xfer_valid) {
+            if (pi >= 0 && pi < MAX_PIPES)
+            if (pi < 0 || pi >= MAX_PIPES || !pipes[pi].active) {
                 seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            /* v0.4.85: return -2 for !xfer_valid (distinct from EOF=0) */
+            if (!pipes[pi].xfer_valid) {
+                seL4_SetMR(0, (seL4_Word)(-2));
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                 break;
             }
@@ -1013,6 +1026,21 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             p->head = (p->head + rlen) % PIPE_BUF_SIZE;
             p->count -= rlen;
             seL4_SetMR(0, (seL4_Word)rlen);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        case PIPE_DUP_REFS: {
+            /* v0.4.85: child increments refs for inherited pipe FDs
+             * MR0 = pipe_id, MR1 = flags (bit0=read, bit1=write) */
+            int pi = (int)seL4_GetMR(0);
+            int flags = (int)seL4_GetMR(1);
+            if (pi >= 0 && pi < MAX_PIPES && pipes[pi].active) {
+                if (flags & 1) pipes[pi].read_refs++;
+                if (flags & 2) pipes[pi].write_refs++;
+                seL4_SetMR(0, 0);
+            } else {
+                seL4_SetMR(0, (seL4_Word)(-1));
+            }
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }

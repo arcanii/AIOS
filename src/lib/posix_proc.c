@@ -139,7 +139,7 @@ long aios_sys_execve(va_list ap) {
 }
 
 long aios_sys_clone(va_list ap) {
-    /* On AArch64, clone(flags, stack, ...) — basic fork has flags=SIGCHLD, stack=0 */
+    /* On AArch64, clone(flags, stack, ...) -- basic fork has flags=SIGCHLD, stack=0 */
     (void)ap;
     if (!pipe_ep) return -38; /* -ENOSYS */
 
@@ -148,8 +148,12 @@ long aios_sys_clone(va_list ap) {
         seL4_MessageInfo_new(PIPE_FORK, 0, 0, 0));
     long result = (long)seL4_GetMR(0);
     if (result == 0) {
-        /* Child — reset cached PID so getpid() re-queries */
+        /* Child -- reset cached PID so getpid() re-queries */
         aios_pid = 0;
+        /* Note: pipe refs are NOT incremented here. PIPE_EXEC already
+         * increments refs for the specific pipes the child uses after
+         * exec. Auto-incrementing all inherited FDs would double-count
+         * because children do not close unused pipe ends before exec. */
     }
     return result;
 }

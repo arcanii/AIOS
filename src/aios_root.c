@@ -87,6 +87,7 @@ char elf_buf[8 * 1024 * 1024]; /* shared between exec_thread, fork, exec */
 volatile int fg_pid = -1;
 volatile seL4_CPtr fg_fault_ep = 0;
 volatile int fg_killed = 0;
+volatile int fg_sigint_sent = 0;  /* v0.4.85: root-side two-stage Ctrl-C */
 
 /* Network state (virtio-net) */
 volatile uint32_t *net_vio = NULL;
@@ -264,7 +265,9 @@ int main(int argc, char *argv[]) {
                 /* Ctrl-C: two-stage SIGINT delivery.
                  * First ^C: set SIGINT pending, process self-terminates
                  * via SIG_DFL at its next signal check point.
-                 * Second ^C: force-destroy (fallback for caught SIGINT). */
+                 * Second ^C: force-destroy (fallback for caught/ignored
+                 * SIGINT). Uses root-side flag so sig_check clearing
+                 * sig_pending does not defeat the two-stage mechanism. */
                 int ki;
                 for (ki = 0; ki < MAX_ACTIVE_PROCS; ki++) {
                     if (active_procs[ki].active &&
@@ -272,17 +275,19 @@ int main(int argc, char *argv[]) {
                         break;
                 }
                 if (ki < MAX_ACTIVE_PROCS) {
-                    if (active_procs[ki].sig_pending & (1U << 1)) {
-                        /* SIGINT already pending -- force kill -- mark inactive
-                         * before destroy so reap/exec do not double-free */
-                        fg_killed = 1;
-                        active_procs[ki].active = 0;
-                        sel4utils_destroy_process(
-                            &active_procs[ki].proc, &vka);
-                        fg_pid = -1;
-                        fg_fault_ep = 0;
+                    if (fg_sigint_sent) {
+                        /* Second ^C: send SIGKILL via pipe_server.
+                         * pipe_server handles SIGKILL properly: calls
+                         * handle_child_fault which reaps, wakes PIPE_WAIT,
+                         * and cleans up capabilities safely. */
+                        fg_sigint_sent = 0;
+                        seL4_SetMR(0, (seL4_Word)fg_pid);
+                        seL4_SetMR(1, (seL4_Word)9);  /* SIGKILL */
+                        seL4_Call(pipe_ep_cap,
+                            seL4_MessageInfo_new(75, 0, 0, 2));
                     } else {
-                        /* First ^C: send SIGINT (bit 1 = signal 2) */
+                        /* First ^C: send SIGINT */
+                        fg_sigint_sent = 1;
                         active_procs[ki].sig_pending |= (1U << 1);
                     }
                 }

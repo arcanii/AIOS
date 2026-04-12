@@ -114,10 +114,13 @@ long aios_sys_recvfrom(va_list ap) {
 
     seL4_SetMR(0, (seL4_Word)f->socket_id);
     seL4_SetMR(1, (seL4_Word)maxlen);
-    seL4_Call(net_ep, seL4_MessageInfo_new(NET_RECVFROM_L, 0, 0, 2));
+    /* v0.4.85: pass O_NONBLOCK flag so server returns EAGAIN */
+    seL4_SetMR(2, (seL4_Word)(f->is_nonblock ? 1 : 0));
+    seL4_Call(net_ep, seL4_MessageInfo_new(NET_RECVFROM_L, 0, 0, 3));
 
     int recv_len = (int)(long)seL4_GetMR(0);
-    if (recv_len <= 0) return recv_len;
+    if (recv_len < 0) return recv_len;  /* v0.4.85: -EAGAIN or error */
+    if (recv_len == 0) return 0;
 
     uint32_t src_ip = (uint32_t)seL4_GetMR(1);
     uint16_t src_port = (uint16_t)seL4_GetMR(2);

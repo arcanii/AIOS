@@ -7,7 +7,7 @@
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: main
 * **Developer**: Bryan
-* **Current Version**: v0.4.81
+* **Current Version**: v0.4.85
 
 ## Development Environment
 
@@ -418,16 +418,16 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * Entropy: /dev/urandom callback (splitmix64 + ARM CNTPCT_EL0)
 * Verified: AES-256-GCM, SHA-256, ECDSA-P256, x25519 ECDH, CTR-DRBG -- all 5/5 PASS on AIOS
 
-### SSH server (sshd) -- KEY EXCHANGE WORKING (v0.4.82)
+### SSH server (sshd) -- INTERACTIVE SHELL WORKING (v0.4.84)
 
 * Source: src/ssh/ (sshd_main.c, ssh_transport.c, ssh_kex.c, ssh_crypto.c, ssh_session.h)
 * Built with: aios-cc + libmbedcrypto.a + -DMBEDTLS_ALLOW_PRIVATE_ACCESS
 * Port: 2222 (development), single-connection sequential model
 * Algorithms: curve25519-sha256 (kex), ecdsa-sha2-nistp256 (hostkey), aes256-ctr (cipher), hmac-sha2-256 (mac)
 * Strict KEX: kex-strict-s-v00@openssh.com (Terrapin countermeasure)
-* Status: version exchange + KEXINIT + ECDH key exchange + NEWKEYS complete
-* Verified with: OpenSSH 10.3 (Homebrew/OpenSSL 3.6.1)
-* Next: encrypted transport (AES-256-CTR + HMAC-SHA-256), user auth, shell channel
+* Status: full SSH session working (version exchange, KEXINIT, ECDH, NEWKEYS, encrypted transport, password auth, session channel, interactive shell relay)
+* Verified with: OpenSSH 10.2 (Homebrew/OpenSSL 3.6.1)
+* sshd ignores SIGINT (survives first Ctrl-C, second Ctrl-C force-kills via SIGKILL)
 * Key learnings:
   - ECDSA signs SHA-256(H), not H directly (OpenSSH ssh_ecdsa_sign hashes before ECDSA_do_sign)
   - x25519 shared secret: use raw LE bytes as mpint data (OpenSSH sshbuf_put_bignum2_bytes convention)
@@ -453,9 +453,8 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * ELF buffer: Static 8MB (increased from 1MB in v0.4.69, dynamic for v0.5.x)
 * DMA: Must use single untyped Retype for contiguous pages
 * Priority: All processes at 200 (different = deadlock)
-* Ctrl-C (SIGINT): two-stage delivery (v0.4.73). First ^C sets SIGINT pending, process
-  self-terminates via SIG_DFL. Second ^C force-destroys (fallback). fg_pid tracked
-  via pipe_server PIPE_EXEC for fork+exec processes.
+* Ctrl-C (SIGINT): two-stage delivery (v0.4.73, improved v0.4.85). First ^C sets SIGINT pending via root-side `fg_sigint_sent` flag, process self-terminates via SIG_DFL. Second ^C force-kills via PIPE_SIGNAL(SIGKILL) through pipe_server. fg_pid tracked via PIPE_EXEC. sshd ignores SIGINT (survives first ^C).
+* Socket cleanup: force-killed processes do not free network sockets in net_server. Restarting sshd after force-kill may crash (stale socket state).
 * ext2: Never use packed structs on AArch64 (use rd16/rd32)
 * aios-cc: Uses tr "/" "_" for object names (avoids cp.c vs libutil/cp.c collision)
 * Process exit: Overridden to trigger VM fault (not seL4_DebugHalt)
@@ -499,9 +498,13 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 26. ~~Virtio-net IRQ~~ FIXED in v0.4.81: dedicated seL4 IRQ handler, was piggybacking on UART
 27. ~~SSH server (Phase 1-2)~~ DONE in v0.4.82: mbedTLS cross-compile, ECDSA-P256 host key, x25519 ECDH, KEXINIT, NEWKEYS verified with OpenSSH 10.3
 28. TCP improvements: retransmission, window advertisement, connect() implementation, SHM data path
-29. SSH Phase 3: AES-256-CTR + HMAC-SHA-256 encrypted transport
-30. SSH Phase 4: password auth via auth_server IPC
-31. SSH Phase 5: session channel, pty-req, shell spawning, data relay
+29. ~~SSH Phase 3~~ DONE in v0.4.83: AES-256-CTR + HMAC-SHA-256 encrypted transport
+30. ~~SSH Phase 4~~ DONE in v0.4.83: password auth via auth_server IPC
+31. ~~SSH Phase 5~~ DONE in v0.4.84: session channel, pty-req, shell spawning, data relay
+32. ~~Pipe subsystem~~ FIXED in v0.4.85: ignore_next_fault bug, PIPE_READ_SHM -2, conditional read_closed, PIPE_DUP_REFS
+33. ~~Ctrl-C regression~~ FIXED in v0.4.85: root-side fg_sigint_sent, force-kill via PIPE_SIGNAL, PIPE_WAIT signal interrupt
+34. Socket cleanup on process kill: net_server PID tracking needed
+35. SSH Ctrl-C to child commands: needs process group or fg_pid forwarding
 
 ## Version History (0.4.x)
 
@@ -557,6 +560,10 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 | v0.4.79 | O_NONBLOCK for pipes (pipe2 flags, fcntl F_GETFL/F_SETFL, server EAGAIN). futex stub (WAIT/WAKE). /proc/self/fd stat+readlinkat. close() EOF fix (last-write-ref PIPE_CLOSE_WRITE). Zombie overflow guard. Fork ReadRegisters cleanup. procfs /self directory. See docs/NEXT_20260411e.md |
 | v0.4.80 | Dynamic config: shared key=value parser (config.h, config_parser.c), boot_load_config reads /etc/hostname + /etc/network.conf + /etc/environment. Runtime network IP/gateway/mask (net_cfg_ip arrays replace NET_IP macros). Dynamic environment from disk. auth_server /bin/sh -> /bin/dash. uname fallback updated. /proc/mounts shows log drive. USER= from login uid. Test scripts at /bin/tests/. See docs/NEXT_20260411f.md |
 | v0.4.81 | TCP stream sockets: read()/write() on socket fds via NET_RECVFROM/NET_SENDTO IPC. 4KB circular TCP RX buffer (ring with rx_head/rx_tail/rx_eof). Dedicated virtio-net IRQ handler (was piggybacking on UART). Event-driven net_server (blocking seL4_Recv replaces busy-poll). Socket stubs: connect, getsockname, getpeername, getsockopt. echo_tcp test app. Getty version banner. See docs/NEXT_20260411g.md |
+| v0.4.82 | mbedTLS 3.6.3 cross-compile (81 objects, libmbedcrypto.a). SSH Phase 1-2: ECDSA-P256 host key, x25519 ECDH, KEXINIT, NEWKEYS. See docs/NEXT_20260412a.md |
+| v0.4.83 | SSH Phase 3: AES-256-CTR + HMAC-SHA-256 encrypted transport. Phase 4: password auth via auth_server IPC. TCP partial read fix. Strict KEX seq reset. See docs/NEXT_20260412a.md |
+| v0.4.84 | SSH Phase 5: session channel, shell spawn, interactive relay. O_NONBLOCK TCP sockets. PIPE_READ_SHM false-EOF fix. PIPE_EXEC ref counting + TCB fault suppression. See docs/NEXT_20260412a.md |
+| v0.4.85 | Pipe subsystem fixes: ignore_next_fault bug (v0.4.84), PIPE_READ_SHM -2, conditional read_closed, PIPE_DUP_REFS handler. Ctrl-C: root-side fg_sigint_sent, force-kill via PIPE_SIGNAL(SIGKILL), PIPE_WAIT signal interrupt. sshd SIGINT ignore. Net debug printfs removed, recvfrom O_NONBLOCK. See docs/NEXT_20260412b.md |
 
 ## Architecture After v0.4.76
 

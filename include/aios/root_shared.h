@@ -55,6 +55,7 @@
 #define PIPE_WRITE_SHM   79
 #define PIPE_READ_SHM    80
 #define PIPE_SET_PIPES   81
+#define PIPE_DUP_REFS   82
 
 /* ---- NET IPC labels (90-109) ---- */
 #define NET_SOCKET       90
@@ -241,6 +242,7 @@ extern seL4_CPtr disp_ep_cap;
 extern volatile int fg_pid;
 extern volatile seL4_CPtr fg_fault_ep;
 extern volatile int fg_killed;
+extern volatile int fg_sigint_sent;
 
 extern wait_pending_t wait_pending[MAX_WAIT_PENDING];
 extern vka_object_t wait_reply_objects[MAX_WAIT_PENDING];

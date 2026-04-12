@@ -169,6 +169,7 @@
 #define PIPE_SIGNAL       75
 #define PIPE_SIG_FETCH    76
 #define PIPE_SHUTDOWN     77
+#define PIPE_DUP_REFS    82
 
 /* fd table constants */
 #define AIOS_MAX_FDS 32

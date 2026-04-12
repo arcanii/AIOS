@@ -154,6 +154,10 @@ typedef struct {
     uint32_t     term_height;
     int          has_pty;
 
+    /* Peek byte for encrypted read (one-byte lookahead) */
+    int          has_peek;
+    uint8_t      peek_byte;
+
     /* Non-blocking packet reassembly state */
     uint8_t      nb_dec_hdr[4];   /* decrypted header cache */
     uint32_t     nb_pkt_len;      /* packet length from header */
