@@ -161,7 +161,11 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
         conn->rx_eof = 0;
         conn->has_blocked = 0;
         conn->has_accept_blocked = 0;
+        conn->has_connect_blocked = 0;
         conn->listen_parent = listen_idx;
+        /* v0.4.87: inherit owner PID from listen socket so
+         * NET_CLEANUP_PID frees connection on process death */
+        conn->owner_pid = sockets[listen_idx].owner_pid;
 
         /* Send SYN-ACK */
         net_tcp_send(conn->remote_ip, conn->remote_mac,
@@ -225,13 +229,29 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
 
     /* ESTABLISHED: receive data */
     if (s->state == TCP_ESTAB && data_len > 0) {
-        /* v0.4.86: reject retransmissions and out-of-order */
+        /* v0.4.87: retransmit tolerance -- accept retransmissions
+         * (seq < rcv_nxt) by re-ACKing without buffering duplicate data.
+         * Reject future/out-of-order (seq > rcv_nxt) with dup ACK. */
         if (seq != s->rcv_nxt) {
-            tcp_tx_window = 4096;
+            /* Re-ACK with current rcv_nxt so sender knows where we are */
             net_tcp_send(s->remote_ip, s->remote_mac,
                          s->local_port, s->remote_port,
                          s->snd_nxt, s->rcv_nxt, TCP_ACK, NULL, 0);
-            return;
+            if (seq < s->rcv_nxt) {
+                /* Retransmission: check if tail end has new data.
+                 * If segment overlaps rcv_nxt, deliver the new portion. */
+                uint32_t seg_end = seq + (uint32_t)data_len;
+                if (seg_end > s->rcv_nxt) {
+                    int skip = (int)(s->rcv_nxt - seq);
+                    data += skip;
+                    data_len -= skip;
+                    /* Fall through to deliver the new tail bytes */
+                } else {
+                    return;  /* Pure retransmission, already ACKed */
+                }
+            } else {
+                return;  /* Out-of-order (seq > rcv_nxt), drop */
+            }
         }
         s->rcv_nxt += data_len;
 

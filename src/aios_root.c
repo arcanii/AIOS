@@ -286,9 +286,13 @@ int main(int argc, char *argv[]) {
                         seL4_Call(pipe_ep_cap,
                             seL4_MessageInfo_new(75, 0, 0, 2));
                     } else {
-                        /* First ^C: send SIGINT */
+                        /* First ^C: send SIGINT via pipe_server so it
+                         * can wake blocked PIPE_READ readers (v0.4.87) */
                         fg_sigint_sent = 1;
-                        active_procs[ki].sig_pending |= (1U << 1);
+                        seL4_SetMR(0, (seL4_Word)fg_pid);
+                        seL4_SetMR(1, (seL4_Word)2);  /* SIGINT */
+                        seL4_Call(pipe_ep_cap,
+                            seL4_MessageInfo_new(75, 0, 0, 2));
                     }
                 }
                 /* Push ^C to serial (unblocks TTY_READ, shows ^C) */

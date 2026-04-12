@@ -139,6 +139,8 @@ typedef struct {
     int stdout_pipe_id;
     int stdin_pipe_id;
     uint32_t sig_pending;        /* pending signal bitmask */
+    int exit_cb_ran;             /* v0.4.87: aios_exit_cb already closed pipes */
+    int pipe_write_closed;       /* v0.4.87: PIPE_CLOSE_WRITE already called */
 } active_proc_t;
 
 typedef struct {
@@ -181,6 +183,7 @@ typedef struct {
     int pipe_id;
     int max_len;
     int is_shm;                   /* v0.4.66: 1 if reader wants SHM reply */
+    int caller_pid;               /* v0.4.87: PID of blocked reader (signal wakeup) */
     seL4_CPtr reply_cap;
 } pipe_read_blocked_t;
 

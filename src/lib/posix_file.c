@@ -395,6 +395,7 @@ long aios_sys_read(va_list ap) {
             seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
                 seL4_MessageInfo_new(62, 0, 0, 3));
             int got = (int)(long)seL4_GetMR(0);
+            if (got == -4) { aios_sig_check(); return -EINTR; }  /* v0.4.87: dispatch + EINTR */
             int mr = 1;
             for (int i = 0; i < got; i++) {
                 if (i % 8 == 0 && i > 0) mr++;
@@ -464,6 +465,7 @@ long aios_sys_read(va_list ap) {
             seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
                 seL4_MessageInfo_new(62, 0, 0, 3));
             int got = (int)(long)seL4_GetMR(0);
+            if (got == -4) { aios_sig_check(); return -EINTR; }  /* v0.4.87: dispatch + EINTR */
             if (got == -1) return -EAGAIN;  /* v0.4.79: nonblocking */
             int mr = 1;
             for (int i = 0; i < got; i++) {
@@ -693,26 +695,14 @@ long aios_sys_close(va_list ap) {
     int fd = va_arg(ap, int);
     if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
         aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
-        /* v0.4.79: send PIPE_CLOSE_WRITE only if this is the
-         * last write reference to the pipe. Prevents premature
-         * EOF in fork+dup2+exec (stdout still holds the pipe),
-         * but allows EOF when builtins close write end after use. */
+        /* v0.4.87: always notify pipe_server when closing a pipe
+         * write end. Server tracks write_refs authoritatively.
+         * Previous last_write_ref heuristic was unreliable (missed
+         * closes from sshd relay, leaving phantom write refs). */
         if (f->is_pipe && !f->pipe_read && pipe_ep) {
-            int pid = f->pipe_id;
-            int last_write_ref = 1;
-            if (stdout_pipe_id == pid) last_write_ref = 0;
-            for (int _ci = 0; _ci < AIOS_MAX_FDS && last_write_ref; _ci++) {
-                if (&aios_fds[_ci] == f) continue;
-                if (aios_fds[_ci].active && aios_fds[_ci].is_pipe
-                    && !aios_fds[_ci].pipe_read
-                    && aios_fds[_ci].pipe_id == pid)
-                    last_write_ref = 0;
-            }
-            if (last_write_ref) {
-                seL4_SetMR(0, (seL4_Word)pid);
-                seL4_Call(pipe_ep,
-                    seL4_MessageInfo_new(70 /* PIPE_CLOSE_WRITE */, 0, 0, 1));
-            }
+            seL4_SetMR(0, (seL4_Word)f->pipe_id);
+            seL4_Call(pipe_ep,
+                seL4_MessageInfo_new(70 /* PIPE_CLOSE_WRITE */, 0, 0, 1));
         }
         /* Socket close: notify server to free slot */
         if (f->is_socket && net_ep) {

@@ -291,12 +291,11 @@ static int process_input(ssh_session_t *s, int stdin_wr,
             }
 
         } else if (ch == 3) {
-            /* Ctrl-C: send SIGINT + write interrupt to stdin */
+            /* Ctrl-C: send SIGINT to foreground process.
+             * v0.4.87: kill(0,2) delivers SIGINT via pipe_server,
+             * which wakes blocked PIPE_READ with EINTR. No need
+             * to write raw 0x03 to stdin (stale bytes confuse dash). */
             kill(0, 2);  /* SIGINT to fg process via pipe_server */
-            uint8_t intr = 3;
-            write(stdin_wr, &intr, 1);
-            uint8_t lf = '\n';
-            write(stdin_wr, &lf, 1);
             uint8_t out[4] = { '^', 'C', '\r', '\n' };
             send_chan_data(s, out, 4);
             *lpos = 0;
@@ -360,6 +359,14 @@ static int channel_relay(ssh_session_t *s,
         if (n > 0) {
             ever_got_output = 1;
             activity = 1;
+            /* v0.4.87: close parent write end after first output.
+             * By now PIPE_EXEC has given dash its own write_ref.
+             * Cannot close earlier: races with fork+exec (parent
+             * close before PIPE_EXEC would set write_closed=1). */
+            if (stdout_wr_fd >= 0) {
+                close(stdout_wr_fd);
+                stdout_wr_fd = -1;
+            }
             /* Convert LF to CRLF for SSH terminal display */
             uint8_t crbuf[1800];
             int ci = 0;

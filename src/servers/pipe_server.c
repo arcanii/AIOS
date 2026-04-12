@@ -44,6 +44,22 @@ static struct {
 static vka_object_t exec_wait_reply_obj;
 static int exec_done[MAX_ACTIVE_PROCS];
 
+/* v0.4.87: Wake a blocked reader whose PID matches, return EINTR (-4).
+ * Called from PIPE_SIGNAL when a signal is delivered to a blocked process. */
+static void wake_blocked_reader_signal(int target_pid) {
+    for (int bi = 0; bi < MAX_PIPE_READ_BLOCKED; bi++) {
+        if (!pipe_read_blocked[bi].active) continue;
+        if (pipe_read_blocked[bi].caller_pid != target_pid) continue;
+        seL4_SetMR(0, (seL4_Word)(-4));  /* -4 = EINTR sentinel */
+        seL4_Send(pipe_read_blocked[bi].reply_cap,
+                  seL4_MessageInfo_new(0, 0, 0, 1));
+        seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                          pipe_read_blocked[bi].reply_cap, seL4_WordBits);
+        pipe_read_blocked[bi].active = 0;
+        return;  /* one reader per PID */
+    }
+}
+
 /* Wake all blocked readers on a pipe with EOF (0 bytes) */
 static void wake_blocked_readers_eof(int pipe_id) {
     for (int bi = 0; bi < MAX_PIPE_READ_BLOCKED; bi++) {
@@ -186,11 +202,10 @@ static void handle_child_fault(int child_idx) {
     if (net_ep_cap && ch->pid > 0)
         pending_net_cleanup_pid = ch->pid;
 
-    /* Auto-close write end if child was writing to a pipe.
-     * Guard: if exit_cb already sent PIPE_CLOSE_WRITE, write_closed
-     * is set and refs already decremented. Only act on crashes. */
+    /* Auto-close write end if child was writing to a pipe. */
     if (ch->stdout_pipe_id >= 0 && ch->stdout_pipe_id < MAX_PIPES
         && pipes[ch->stdout_pipe_id].active
+        && !ch->pipe_write_closed
         && !pipes[ch->stdout_pipe_id].write_closed) {
         pipes[ch->stdout_pipe_id].write_refs--;
         if (pipes[ch->stdout_pipe_id].write_refs <= 0) {
@@ -203,6 +218,7 @@ static void handle_child_fault(int child_idx) {
     /* Auto-close read end if child was reading from a pipe */
     if (ch->stdin_pipe_id >= 0 && ch->stdin_pipe_id < MAX_PIPES
         && pipes[ch->stdin_pipe_id].active
+        && pipes[ch->stdin_pipe_id].read_refs > 0
         && !pipes[ch->stdin_pipe_id].read_closed) {
         pipes[ch->stdin_pipe_id].read_refs--;
         /* v0.4.85: only mark closed when last reader gone */
@@ -431,6 +447,13 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
         }
         case PIPE_CLOSE_WRITE: {
             int pi = (int)seL4_GetMR(0);
+            /* v0.4.87: mark that this process already closed its write ref
+             * so handle_child_fault skips the redundant decrement */
+            {
+                int ci = (int)badge - 1;
+                if (ci >= 0 && ci < MAX_ACTIVE_PROCS && active_procs[ci].active)
+                    active_procs[ci].pipe_write_closed = 1;
+            }
             if (pi >= 0 && pi < MAX_PIPES && pipes[pi].active) {
                 pipes[pi].write_refs--;
                 if (pipes[pi].write_refs <= 0) {
@@ -504,11 +527,11 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             if (caller_idx >= 0 && caller_idx < MAX_ACTIVE_PROCS
                 && active_procs[caller_idx].active) {
                 active_procs[caller_idx].exit_status = exit_code;
-                /* Clear fg tracking so Ctrl-C state is clean */
-                if (active_procs[caller_idx].pid == fg_pid) {
-                    fg_pid = -1;
-                    fg_fault_ep = 0;
-                }
+                active_procs[caller_idx].exit_cb_ran = 1;  /* v0.4.87: pipes already closed */
+                                /* v0.4.87: do NOT clear fg_pid here. handle_child_fault
+                 * runs after the VM fault and promotes fg_pid to parent.
+                 * Clearing here prevents promotion, leaving fg_pid=-1
+                 * and making processes unkillable via Ctrl-C. */
             }
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
             break;
@@ -859,6 +882,10 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 && pipes[exec_stdin_pipe].active)
                 pipes[exec_stdin_pipe].read_refs++;
             ap->exit_status = 0;
+            ap->sig_pending = 0;  /* v0.4.87: clear stale signals from previous slot occupant */
+            ap->exit_cb_ran = 0;
+            ap->pipe_write_closed = 0;
+
             ap->num_threads = 0;
             for (int ti = 0; ti < MAX_THREADS_PER_PROC; ti++)
                 ap->threads[ti].active = 0;
@@ -1049,6 +1076,14 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 pipe_read_blocked[bi].max_len = max_len;
                 pipe_read_blocked[bi].is_shm = 1;
                 pipe_read_blocked[bi].reply_cap = read_reply_objs[bi].cptr;
+                /* v0.4.87: record caller PID for signal wakeup */
+                {
+                    int ci = (int)badge - 1;
+                    pipe_read_blocked[bi].caller_pid =
+                        (ci >= 0 && ci < MAX_ACTIVE_PROCS &&
+                         active_procs[ci].active) ?
+                        active_procs[ci].pid : -1;
+                }
                 break;
             }
             int rlen = p->count < max_len ? p->count : max_len;
@@ -1120,6 +1155,10 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             int target_pid = (int)seL4_GetMR(0);
             int signum     = (int)seL4_GetMR(1);
 
+            /* v0.4.87: POSIX kill(0, sig) targets foreground process */
+            if (target_pid == 0 && fg_pid > 0)
+                target_pid = fg_pid;
+
             /* Find target process */
             int ti = -1;
             for (int i = 0; i < MAX_ACTIVE_PROCS; i++) {
@@ -1157,6 +1196,9 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             /* Other signals: set pending bit */
             if (signum >= 1 && signum < 32) {
                 active_procs[ti].sig_pending |= (1U << (signum - 1));
+                /* v0.4.87: wake process if blocked in PIPE_READ,
+                 * so it can observe the signal and return EINTR */
+                wake_blocked_reader_signal(target_pid);
             }
             seL4_SetMR(0, 0);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));

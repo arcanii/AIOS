@@ -480,10 +480,11 @@ void aios_exit_cb(int code) {
     fflush(stdout);
     fflush(stderr);
     if (pipe_ep) {
-        /* Close pipe ends before exiting. This is the canonical path
-         * for ALL process types (exec_server and pipe_server children).
-         * handle_child_fault provides backup for crashes where exit_cb
-         * never runs, but checks write_closed to avoid double-decrement. */
+        /* v0.4.87: close pipe ends when stdout_pipe_id is known.
+         * Sets pipe_write_closed flag in pipe_server so
+         * handle_child_fault skips the redundant decrement.
+         * If stdout_pipe_id is -1 (unreliable client state),
+         * handle_child_fault handles it as the fallback closer. */
         if (stdout_pipe_id >= 0) {
             seL4_SetMR(0, (seL4_Word)stdout_pipe_id);
             seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_CLOSE_WRITE, 0, 0, 1));

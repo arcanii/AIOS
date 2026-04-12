@@ -7,7 +7,7 @@
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: main
 * **Developer**: Bryan
-* **Current Version**: v0.4.85
+* **Current Version**: v0.4.87
 
 ## Development Environment
 
@@ -453,8 +453,8 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * ELF buffer: Static 8MB (increased from 1MB in v0.4.69, dynamic for v0.5.x)
 * DMA: Must use single untyped Retype for contiguous pages
 * Priority: All processes at 200 (different = deadlock)
-* Ctrl-C (SIGINT): two-stage delivery (v0.4.73, improved v0.4.85). First ^C sets SIGINT pending via root-side `fg_sigint_sent` flag, process self-terminates via SIG_DFL. Second ^C force-kills via PIPE_SIGNAL(SIGKILL) through pipe_server. fg_pid tracked via PIPE_EXEC. sshd ignores SIGINT (survives first ^C).
-* Socket cleanup: force-killed processes do not free network sockets in net_server. Restarting sshd after force-kill may crash (stale socket state).
+* Ctrl-C (SIGINT): two-stage delivery (v0.4.73, improved v0.4.87). First ^C sends SIGINT via PIPE_SIGNAL (wakes blocked PIPE_READ with EINTR). Second ^C force-kills via PIPE_SIGNAL(SIGKILL). fg_pid tracked via PIPE_EXEC, promoted to parent on child death. sshd ignores SIGINT (survives first ^C). SSH Ctrl-C via kill(0,2) in sshd relay.
+* Socket cleanup: NET_CLEANUP_PID (v0.4.86) frees sockets by owner_pid on process death. Connection sockets inherit owner_pid from listen socket (v0.4.87).
 * ext2: Never use packed structs on AArch64 (use rd16/rd32)
 * aios-cc: Uses tr "/" "_" for object names (avoids cp.c vs libutil/cp.c collision)
 * Process exit: Overridden to trigger VM fault (not seL4_DebugHalt)
@@ -463,6 +463,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * Disk image is gitignored: must rebuild after rm -rf build-04 (sbase binaries lost)
 * tty_echo: ON by default (v0.4.68). mini_shell/getty switch to RAW mode during line editing, COOKED for normal programs. Both buffers flushed on mode switch.
 * Dash rebuild: dash links against libaios_posix.a but is not rebuilt by ninja. Must manually rebuild via aios-cc after any POSIX shim change.
+* sshd rebuild: sshd also links libaios_posix.a via aios-cc. Must rebuild after posix_*.c or aios_posix.c changes. Failing to rebuild causes stale close()/exit() behavior.
 * Virtio IRQ: Each virtio device needs its own seL4 IRQ handler (IRQ = 48 + slot). Never busy-poll with seL4_NBRecv in QEMU guest -- starves SLIRP event loop. Use blocking seL4_Recv with bound notification.
 * Socket fd read/write: routed through posix_file.c (is_socket check) to net_server via NET_RECVFROM/NET_SENDTO IPC. Max 900 bytes per MR-based transfer.
 
@@ -503,8 +504,10 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 31. ~~SSH Phase 5~~ DONE in v0.4.84: session channel, pty-req, shell spawning, data relay
 32. ~~Pipe subsystem~~ FIXED in v0.4.85: ignore_next_fault bug, PIPE_READ_SHM -2, conditional read_closed, PIPE_DUP_REFS
 33. ~~Ctrl-C regression~~ FIXED in v0.4.85: root-side fg_sigint_sent, force-kill via PIPE_SIGNAL, PIPE_WAIT signal interrupt
-34. Socket cleanup on process kill: net_server PID tracking needed
-35. SSH Ctrl-C to child commands: needs process group or fg_pid forwarding
+34. ~~Socket cleanup on process kill~~ DONE in v0.4.86: NET_CLEANUP_PID with owner_pid tracking
+35. ~~SSH Ctrl-C to child commands~~ DONE in v0.4.87: PIPE_SIGNAL wakes blocked PIPE_READ, kill(0,sig)->fg_pid, EINTR dispatch
+36. TCP improvements: retransmission timer, keepalive, SHM data path, TIME_WAIT
+37. SSH improvements: host key persistence, window size, concurrent sessions
 
 ## Version History (0.4.x)
 
@@ -564,6 +567,8 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 | v0.4.83 | SSH Phase 3: AES-256-CTR + HMAC-SHA-256 encrypted transport. Phase 4: password auth via auth_server IPC. TCP partial read fix. Strict KEX seq reset. See docs/NEXT_20260412a.md |
 | v0.4.84 | SSH Phase 5: session channel, shell spawn, interactive relay. O_NONBLOCK TCP sockets. PIPE_READ_SHM false-EOF fix. PIPE_EXEC ref counting + TCB fault suppression. See docs/NEXT_20260412a.md |
 | v0.4.85 | Pipe subsystem fixes: ignore_next_fault bug (v0.4.84), PIPE_READ_SHM -2, conditional read_closed, PIPE_DUP_REFS handler. Ctrl-C: root-side fg_sigint_sent, force-kill via PIPE_SIGNAL(SIGKILL), PIPE_WAIT signal interrupt. sshd SIGINT ignore. Net debug printfs removed, recvfrom O_NONBLOCK. See docs/NEXT_20260412b.md |
+| v0.4.86 | TCP connect() (3-way handshake, SYN_SENT state), dynamic window, seq validation, socket PID tracking + NET_CLEANUP_PID, deferred net cleanup (seL4 reply cap fix), fg parent promotion, sshd restart fix. See docs/NEXT_20260412c.md |
+| v0.4.87 | Signal delivery to blocked PIPE_READ (EINTR wakeup), SSH Ctrl-C via kill(0,2)+fg_pid, SSH exit (pipe EOF via server-side close), TCP retransmit tolerance (overlapping segment handling), exit path pipe close fixes. See docs/NEXT_20260412d.md |
 
 ## Architecture After v0.4.76
 

@@ -8,8 +8,12 @@
 
 long aios_sys_exit(va_list ap) {
     int status = va_arg(ap, int);
-    (void)status;
-    /* Trigger VM fault — exec_thread Recv's on fault ep */
+    /* v0.4.87: pipe close handled by handle_child_fault (server-side) */
+    if (pipe_ep) {
+        seL4_SetMR(0, (seL4_Word)status);
+        seL4_Call(pipe_ep,
+            seL4_MessageInfo_new(PIPE_EXIT, 0, 0, 1));
+    }
     volatile int *null = (volatile int *)0;
     *null = 0;
     __builtin_unreachable();
@@ -18,7 +22,7 @@ long aios_sys_exit(va_list ap) {
 
 long aios_sys_exit_group(va_list ap) {
     int status = va_arg(ap, int);
-    /* Send exit code to pipe_server before dying */
+    /* v0.4.87: pipe close handled by handle_child_fault (server-side) */
     if (pipe_ep) {
         seL4_SetMR(0, (seL4_Word)status);
         seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_EXIT, 0, 0, 1));
