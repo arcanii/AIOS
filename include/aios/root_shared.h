@@ -66,6 +66,7 @@
 #define NET_SENDTO       95
 #define NET_RECVFROM     96
 #define NET_CLOSE_SOCK   97
+#define NET_CLEANUP_PID  98
 #define NET_GETINFO      98
 #define NET_SETSOCKOPT   99
 #define NET_SENDTO_SHM   100

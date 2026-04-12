@@ -292,7 +292,7 @@ static int process_input(ssh_session_t *s, int stdin_wr,
 
         } else if (ch == 3) {
             /* Ctrl-C: send SIGINT + write interrupt to stdin */
-            kill(child, 2);  /* SIGINT */
+            kill(0, 2);  /* SIGINT to fg process via pipe_server */
             uint8_t intr = 3;
             write(stdin_wr, &intr, 1);
             uint8_t lf = '\n';

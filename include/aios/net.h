@@ -131,6 +131,7 @@ struct tcp_hdr {
 #define TCP_SYN_RCVD  2
 #define TCP_ESTAB     3
 #define TCP_FIN_WAIT  4
+#define TCP_SYN_SENT  5
 
 /* -- RX ring (driver -> server, lock-free SPSC) -- */
 #define NET_RX_RING_SIZE  32
@@ -203,6 +204,9 @@ void net_send_gratuitous_arp(void);
 /* TCP (src/net/net_tcp.c) */
 void handle_tcp(const uint8_t *pkt, uint32_t len,
                 const struct ip_hdr *ip, const struct eth_hdr *eth);
+/* v0.4.86: set before net_tcp_send for dynamic window */
+extern uint16_t tcp_tx_window;
+
 void net_tcp_send(const uint8_t *dst_ip, const uint8_t *dst_mac,
                   uint16_t src_port, uint16_t dst_port,
                   uint32_t seq, uint32_t ack_val, uint8_t flags,
@@ -216,6 +220,7 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
 void net_send_arp_request(const uint8_t *target_ip);
 void net_send_ping(const uint8_t *dst_ip);
 int  net_arp_resolved(const uint8_t *ip);
+int  arp_cache_lookup(const uint8_t *ip, uint8_t *mac_out);
 int  net_udp_send(int sock_id, uint16_t local_port,
                   uint32_t dst_ip, uint16_t dst_port,
                   const uint8_t *data, int len);

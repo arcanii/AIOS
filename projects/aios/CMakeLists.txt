@@ -82,6 +82,7 @@ AiosPosixApp(signal_test)
 AiosPosixApp(sbase_test)
 AiosPosixApp(shutdown)
 AiosPosixApp(fbshow)
+AiosPosixApp(tcp_connect)
 
 AiosPosixApp(posix_verify
     SRCS ${CMAKE_CURRENT_SOURCE_DIR}/../../src/apps/posix_verify.c

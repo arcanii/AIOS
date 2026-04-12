@@ -43,11 +43,19 @@ struct net_socket {
 
     /* Parent listen socket (for finding accept waiter) */
     int       listen_parent;
+
+    /* v0.4.86: owner PID for cleanup on process exit */
+    int       owner_pid;
+
+    /* v0.4.86: blocked connect (client-side TCP) */
+    int       has_connect_blocked;
+    seL4_CPtr connect_blocked_cap;
 };
 
 static struct net_socket sockets[MAX_NET_SOCKETS];
 static seL4_CPtr blocked_slots[MAX_NET_SOCKETS];
 static seL4_CPtr accept_slots[MAX_NET_SOCKETS];
+static seL4_CPtr connect_slots[MAX_NET_SOCKETS];
 
 /* ---- UDP delivery (unchanged from M3) ---- */
 void net_udp_deliver(uint16_t dst_port, uint16_t src_port,
@@ -101,6 +109,15 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
             struct net_socket *s = &sockets[i];
             if (s->in_use && s->type == 1 && s->local_port == dst_port &&
                 s->state >= TCP_SYN_RCVD) {
+                /* v0.4.86: wake blocked connect() on RST */
+                if (s->has_connect_blocked) {
+                    seL4_SetMR(0, (seL4_Word)(-111)); /* ECONNREFUSED */
+                    seL4_Send(s->connect_blocked_cap,
+                              seL4_MessageInfo_new(0, 0, 0, 1));
+                    seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                                      s->connect_blocked_cap, seL4_WordBits);
+                    s->has_connect_blocked = 0;
+                }
                 s->state = TCP_CLOSED;
                 s->in_use = 0;
             }
@@ -109,7 +126,7 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
     }
 
     /* SYN on a LISTEN socket: create new connection socket */
-    if (flags & TCP_SYN) {
+    if ((flags & TCP_SYN) && !(flags & TCP_ACK)) {
         int listen_idx = -1;
         for (int i = 0; i < MAX_NET_SOCKETS; i++) {
             if (sockets[i].in_use && sockets[i].type == 1 &&
@@ -169,6 +186,26 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
 
     struct net_socket *s = &sockets[si];
 
+    /* SYN_SENT + SYN-ACK -> ESTABLISHED (client-side connect) */
+    if (s->state == TCP_SYN_SENT && (flags & TCP_SYN) && (flags & TCP_ACK)) {
+        s->rcv_nxt = seq + 1;
+        s->state = TCP_ESTAB;
+        /* Send ACK to complete 3-way handshake */
+        tcp_tx_window = SOCK_RX_BUF_SZ - 1;
+        net_tcp_send(s->remote_ip, s->remote_mac,
+                     s->local_port, s->remote_port,
+                     s->snd_nxt, s->rcv_nxt, TCP_ACK, NULL, 0);
+        /* Wake blocked connect() caller */
+        if (s->has_connect_blocked) {
+            seL4_SetMR(0, 0);
+            seL4_Send(s->connect_blocked_cap,
+                      seL4_MessageInfo_new(0, 0, 0, 1));
+            seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                              s->connect_blocked_cap, seL4_WordBits);
+            s->has_connect_blocked = 0;
+        }
+    }
+
     /* SYN_RCVD + ACK -> ESTABLISHED */
     if (s->state == TCP_SYN_RCVD && (flags & TCP_ACK)) {
         s->state = TCP_ESTAB;
@@ -188,9 +225,24 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
 
     /* ESTABLISHED: receive data */
     if (s->state == TCP_ESTAB && data_len > 0) {
+        /* v0.4.86: reject retransmissions and out-of-order */
+        if (seq != s->rcv_nxt) {
+            tcp_tx_window = 4096;
+            net_tcp_send(s->remote_ip, s->remote_mac,
+                         s->local_port, s->remote_port,
+                         s->snd_nxt, s->rcv_nxt, TCP_ACK, NULL, 0);
+            return;
+        }
         s->rcv_nxt += data_len;
 
-        /* ACK the data */
+        /* ACK the data with dynamic window */
+        {
+            int mask = SOCK_RX_BUF_SZ - 1;
+            int used = (s->rx_head - s->rx_tail) & mask;
+            int free_win = SOCK_RX_BUF_SZ - 1 - used - data_len;
+            if (free_win < 0) free_win = 0;
+            tcp_tx_window = (uint16_t)free_win;
+        }
         net_tcp_send(s->remote_ip, s->remote_mac,
                      s->local_port, s->remote_port,
                      s->snd_nxt, s->rcv_nxt, TCP_ACK, NULL, 0);
@@ -276,6 +328,9 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
         blocked_slots[i] = p1.capPtr;
         vka_cspace_alloc_path(&vka, &p2);
         accept_slots[i] = p2.capPtr;
+        cspacepath_t p3;
+        vka_cspace_alloc_path(&vka, &p3);
+        connect_slots[i] = p3.capPtr;
     }
 
 
@@ -331,6 +386,8 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 sockets[slot].has_blocked = 0;
                 sockets[slot].has_accept_blocked = 0;
                 sockets[slot].listen_parent = -1;
+                sockets[slot].owner_pid = (int)seL4_GetMR(3);
+                sockets[slot].has_connect_blocked = 0;
             }
             seL4_SetMR(0, (seL4_Word)slot);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
@@ -498,6 +555,102 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
             seL4_SetMR(0, 0);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+
+        } else if (label == 98) {
+            /* v0.4.86: NET_CLEANUP_PID -- free sockets owned by exiting process */
+            int dead_pid = (int)seL4_GetMR(0);
+            int freed = 0;
+            for (int i = 0; i < MAX_NET_SOCKETS; i++) {
+                if (sockets[i].in_use && sockets[i].owner_pid == dead_pid) {
+                    struct net_socket *sk = &sockets[i];
+                    if (sk->type == 1 && sk->state == TCP_ESTAB) {
+                        net_tcp_send(sk->remote_ip, sk->remote_mac,
+                                     sk->local_port, sk->remote_port,
+                                     sk->snd_nxt, sk->rcv_nxt,
+                                     TCP_ACK | TCP_FIN, NULL, 0);
+                        sk->snd_nxt++;
+                    }
+                    if (sk->has_blocked) {
+                        seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                                          sk->blocked_cap, seL4_WordBits);
+                        sk->has_blocked = 0;
+                    }
+                    if (sk->has_accept_blocked) {
+                        seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                                          sk->accept_blocked_cap, seL4_WordBits);
+                        sk->has_accept_blocked = 0;
+                    }
+                    if (sk->has_connect_blocked) {
+                        seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                                          sk->connect_blocked_cap, seL4_WordBits);
+                        sk->has_connect_blocked = 0;
+                    }
+                    sk->in_use = 0;
+                    sk->state = TCP_CLOSED;
+                    freed++;
+                }
+            }
+            seL4_SetMR(0, (seL4_Word)freed);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+
+        } else if (label == NET_CONNECT) {
+            /* v0.4.86: TCP connect() -- client-side 3-way handshake */
+            int sid = (int)seL4_GetMR(0);
+            uint32_t dst_ip_word = (uint32_t)seL4_GetMR(1);
+            uint16_t dst_port = (uint16_t)seL4_GetMR(2);
+            int caller_pid = (int)seL4_GetMR(3);
+            if (sid < 0 || sid >= MAX_NET_SOCKETS || !sockets[sid].in_use ||
+                sockets[sid].type != 1) {
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            } else {
+                struct net_socket *sk = &sockets[sid];
+                /* Resolve destination MAC via ARP (use gateway for off-subnet) */
+                uint8_t dst_ip[4];
+                dst_ip[0] = (dst_ip_word >> 24) & 0xFF;
+                dst_ip[1] = (dst_ip_word >> 16) & 0xFF;
+                dst_ip[2] = (dst_ip_word >> 8) & 0xFF;
+                dst_ip[3] = dst_ip_word & 0xFF;
+                uint8_t dst_mac[6];
+                if (arp_cache_lookup(dst_ip, dst_mac) != 0) {
+                    uint8_t gw[4];
+                    for (int g = 0; g < 4; g++) gw[g] = net_cfg_gw[g];
+                    if (arp_cache_lookup(gw, dst_mac) != 0) {
+                        seL4_SetMR(0, (seL4_Word)(-101)); /* ENETUNREACH */
+                        seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                        goto connect_done;
+                    }
+                }
+                /* Assign ephemeral port if not bound */
+                if (sk->local_port == 0) {
+                    static uint16_t ephemeral = 49152;
+                    sk->local_port = ephemeral++;
+                    if (ephemeral == 0) ephemeral = 49152;
+                }
+                /* Set up connection state */
+                for (int j = 0; j < 4; j++) sk->remote_ip[j] = dst_ip[j];
+                for (int j = 0; j < 6; j++) sk->remote_mac[j] = dst_mac[j];
+                sk->remote_port = dst_port;
+                sk->snd_nxt = 1000 + (uint32_t)(uintptr_t)sk; /* simple ISN */
+                sk->rcv_nxt = 0;
+                sk->rx_head = 0;
+                sk->rx_tail = 0;
+                sk->rx_eof = 0;
+                sk->owner_pid = caller_pid;
+                sk->state = TCP_SYN_SENT;
+                /* Send SYN */
+                tcp_tx_window = SOCK_RX_BUF_SZ - 1;
+                net_tcp_send(sk->remote_ip, sk->remote_mac,
+                             sk->local_port, sk->remote_port,
+                             sk->snd_nxt, 0, TCP_SYN, NULL, 0);
+                sk->snd_nxt++;
+                /* Block until SYN-ACK received */
+                seL4_CNode_SaveCaller(seL4_CapInitThreadCNode,
+                    connect_slots[sid], seL4_WordBits);
+                sk->connect_blocked_cap = connect_slots[sid];
+                sk->has_connect_blocked = 1;
+            }
+            connect_done: ;
 
         } else if (label != 0) {
             seL4_SetMR(0, (seL4_Word)-1);

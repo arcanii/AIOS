@@ -146,6 +146,10 @@ static void pipe_maybe_free(int pi) {
 }
 
 /* Handle child fault arriving on pipe_ep */
+/* v0.4.86: deferred net socket cleanup (avoids nested seL4_Call
+ * which destroys the reply cap in non-MCS seL4) */
+static int pending_net_cleanup_pid = -1;
+
 static void handle_child_fault(int child_idx) {
     active_proc_t *ch = &active_procs[child_idx];
 
@@ -157,12 +161,30 @@ static void handle_child_fault(int child_idx) {
         return;
     }
 
-    /* Clear foreground tracking if this was the fg process */
+    /* Clear foreground tracking if this was the fg process.
+     * v0.4.86: promote parent to fg so Ctrl-C can kill it
+     * (e.g., sshd after its child shell is killed). */
     if (ch->pid == fg_pid) {
-        fg_pid = -1;
+        int promoted = 0;
+        if (ch->ppid > 0) {
+            for (int pi = 0; pi < MAX_ACTIVE_PROCS; pi++) {
+                if (active_procs[pi].active &&
+                    active_procs[pi].pid == ch->ppid) {
+                    fg_pid = ch->ppid;
+                    promoted = 1;
+                    break;
+                }
+            }
+        }
+        if (!promoted) fg_pid = -1;
         fg_fault_ep = 0;
         fg_sigint_sent = 0;  /* v0.4.85: reset two-stage Ctrl-C */
     }
+
+    /* v0.4.86: defer net cleanup (cannot seL4_Call here -- would
+     * destroy the reply cap needed for PIPE_SIGNAL reply) */
+    if (net_ep_cap && ch->pid > 0)
+        pending_net_cleanup_pid = ch->pid;
 
     /* Auto-close write end if child was writing to a pipe.
      * Guard: if exit_cb already sent PIPE_CLOSE_WRITE, write_closed
@@ -235,6 +257,13 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
     for (int i = 0; i < MAX_ACTIVE_PROCS; i++) exec_done[i] = 0;
 
     while (1) {
+        /* v0.4.86: process deferred net cleanup (safe: no pending reply cap) */
+        if (pending_net_cleanup_pid >= 0) {
+            seL4_SetMR(0, (seL4_Word)pending_net_cleanup_pid);
+            seL4_Call(net_ep_cap, seL4_MessageInfo_new(98, 0, 0, 1));
+            pending_net_cleanup_pid = -1;
+        }
+
         seL4_Word badge;
         seL4_MessageInfo_t msg = seL4_Recv(ep, &badge);
         seL4_Word label = seL4_MessageInfo_get_label(msg);
@@ -487,6 +516,9 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
         case PIPE_WAIT: {
             int caller_idx = (int)badge - 1;
             int target_pid = (int)seL4_GetMR(0);
+            /* kill(0, sig): resolve to fg_pid */
+            if (target_pid == 0 && fg_pid > 0)
+                target_pid = fg_pid;
 
             if (caller_idx < 0 || caller_idx >= MAX_ACTIVE_PROCS
                 || !active_procs[caller_idx].active) {

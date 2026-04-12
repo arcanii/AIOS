@@ -17,7 +17,14 @@ long aios_sys_socket(va_list ap) {
     seL4_SetMR(0, (seL4_Word)domain);
     seL4_SetMR(1, (seL4_Word)type);
     seL4_SetMR(2, (seL4_Word)protocol);
-    seL4_Call(net_ep, seL4_MessageInfo_new(NET_SOCKET_L, 0, 0, 3));
+    /* Ensure PID resolved before sending to net_server */
+    if (aios_pid <= 1 && pipe_ep) {
+        seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_GETPID, 0, 0, 0));
+        int rpid = (int)(long)seL4_GetMR(0);
+        if (rpid > 0) aios_pid = rpid;
+    }
+    seL4_SetMR(3, (seL4_Word)aios_pid);
+    seL4_Call(net_ep, seL4_MessageInfo_new(NET_SOCKET_L, 0, 0, 4));
     int sock_id = (int)(long)seL4_GetMR(0);
     if (sock_id < 0) return -ENOMEM;
 
@@ -202,10 +209,27 @@ long aios_sys_shutdown_sock(va_list ap) {
     return 0;
 }
 
-/* ---- connect(sockfd, addr, addrlen) -- stub for now ---- */
+/* ---- connect(sockfd, addr, addrlen) -- TCP 3-way handshake ---- */
 long aios_sys_connect(va_list ap) {
-    (void)ap;
-    return -ENOSYS;  /* TODO: TCP client SYN + block */
+    int fd = va_arg(ap, long);
+    const uint8_t *sa = va_arg(ap, const uint8_t *);
+    va_arg(ap, long); /* addrlen */
+
+    if (fd < AIOS_FD_BASE) return -ENOTSOCK;
+    aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
+    if (!f->active || !f->is_socket || !net_ep) return -ENOTSOCK;
+
+    /* Extract destination IP and port from sockaddr_in */
+    uint16_t port = ((uint16_t)sa[2] << 8) | sa[3];
+    uint32_t ip = ((uint32_t)sa[4] << 24) | ((uint32_t)sa[5] << 16) |
+                  ((uint32_t)sa[6] << 8) | sa[7];
+
+    seL4_SetMR(0, (seL4_Word)f->socket_id);
+    seL4_SetMR(1, (seL4_Word)ip);
+    seL4_SetMR(2, (seL4_Word)port);
+    seL4_SetMR(3, (seL4_Word)aios_pid);
+    seL4_Call(net_ep, seL4_MessageInfo_new(NET_CONNECT_L, 0, 0, 4));
+    return (long)seL4_GetMR(0);
 }
 
 /* ---- getsockname(sockfd, addr, addrlen) ---- */

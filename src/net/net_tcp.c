@@ -36,6 +36,9 @@ uint16_t tcp_checksum(const uint8_t *src_ip, const uint8_t *dst_ip,
 /* -- Build and send a TCP segment -- */
 static uint8_t tcp_tx_frame[1518];
 
+/* v0.4.86: caller sets this before net_tcp_send() for dynamic window */
+uint16_t tcp_tx_window = 4096;
+
 void net_tcp_send(const uint8_t *dst_ip, const uint8_t *dst_mac,
                   uint16_t src_port, uint16_t dst_port,
                   uint32_t seq, uint32_t ack_val, uint8_t flags,
@@ -74,7 +77,7 @@ void net_tcp_send(const uint8_t *dst_ip, const uint8_t *dst_mac,
     tcp->ack      = be32(ack_val);
     tcp->off_rsvd = (5 << 4); /* 20 bytes header, no options */
     tcp->flags    = flags;
-    tcp->window   = be16(2048);
+    tcp->window   = be16(tcp_tx_window);
     tcp->cksum    = 0;
     tcp->urgent   = 0;
     if (data_len > 0) {

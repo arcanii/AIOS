@@ -64,7 +64,7 @@ int net_arp_resolved(const uint8_t *ip) {
     return 0;
 }
 
-static int arp_cache_lookup(const uint8_t *ip, uint8_t *mac_out) {
+int arp_cache_lookup(const uint8_t *ip, uint8_t *mac_out) {
     for (int i = 0; i < ARP_CACHE_SIZE; i++) {
         if (arp_cache[i].valid &&
             arp_cache[i].ip[0] == ip[0] && arp_cache[i].ip[1] == ip[1] &&
