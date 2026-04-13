@@ -162,22 +162,86 @@ ninja
 python3 scripts/mksdcard.py [--mem 4096] [--output disk/sdcard-rpi4.img]
 ```
 
-### RPi4 Hardware Boot (HDMI diagnostic stub)
+### RPi4 Hardware Boot (no serial adapter)
 
-The RPi4 requires a diagnostic stub prepended to the seL4 binary for HDMI debug
-output (no serial adapter available). The stub initializes the VideoCore mailbox
-framebuffer and displays progress bars during boot.
+No USB-to-serial adapter available. All debugging via HDMI framebuffer.
 
-Key learnings (v0.4.91):
+**HDMI diagnostic stub**: A 4KB C program prepended to the seL4 binary at
+kernel_address - 0x1000. It runs before seL4, sets up VideoCore mailbox
+framebuffer (1024x768), displays a CRC32 build ID + EL level + DTB address,
+then jumps to seL4 at offset +0x1000. The seL4 elfloader has been patched
+to write colored progress bars to the same framebuffer at known address 0x1000.
+
+**SD card flashing -- two methods**:
+
+Method 1: `mksdcard.py` (full image with MBR + FAT32 boot + ext2 system):
+```
+python3 scripts/mksdcard.py
+diskutil unmountDisk /dev/diskN
+sudo dd if=disk/sdcard-rpi4.img of=/dev/rdiskN bs=1m
+diskutil eject /dev/diskN
+```
+Used for final SD card images with ext2 system partition. Slower (193MB).
+
+Method 2: Manual FAT32 (debug iteration, no ext2):
+```
+diskutil eraseDisk FAT32 AIOSBOOT MBRFormat /dev/diskN
+cp disk/rpi4-firmware/start4.elf /Volumes/AIOSBOOT/start_cd.elf
+cp disk/rpi4-firmware/fixup4.dat /Volumes/AIOSBOOT/fixup_cd.dat
+cp disk/rpi4-firmware/start4.elf /Volumes/AIOSBOOT/start4.elf
+cp disk/rpi4-firmware/fixup4.dat /Volumes/AIOSBOOT/fixup4.dat
+cp disk/rpi4-firmware/bcm2711-rpi-4-b.dtb /Volumes/AIOSBOOT/
+cp /tmp/config.txt /Volumes/AIOSBOOT/
+cp /tmp/kernel8.img /Volumes/AIOSBOOT/
+diskutil eject /dev/diskN
+```
+Used for all boot debugging. Fast (copies ~7MB). Single FAT32 partition,
+whole card. No ext2 (not needed until SD card driver works).
+
+**Build and flash cycle (during debug)**:
+```
+# 1. Rebuild RPi4 target
+cd build-rpi4 && ninja && cd ..
+
+# 2. Combine stub + seL4 binary (python writes CRC32 build ID at 0xFFC)
+python3 <combiner script>   # prints build ID to verify on HDMI
+
+# 3. Flash with Method 2 above
+
+# 4. Boot RPi4, verify build ID on HDMI matches terminal output
+```
+
+**What the HDMI shows**:
+* Line 1: CRC32 build ID (green, must match terminal output)
+* Line 2: EL level + DTB address
+* Colored bars = elfloader progress (blue=sys_boot, cyan=load_images,
+  magenta=DTB, white=load_elf). More bars = further progress.
+* Bar colors appear BGR-swapped (0xFF8800 orange renders as blue)
+
+**Key learnings (v0.4.91)**:
 * EEPROM updated to 2026-02-23 (boots with D-cache enabled)
-* Mini UART (0xFE215040) may hang CPU bus -- elfloader UART registration skipped
-* printf in elfloader crashes on RPi4 (MMU/cache state issue) -- disabled via macro
-* Bare-metal code needs: stack setup, secondary core parking, D-cache disable
-* Entry point from ELF header (0x350f000), not LOAD segment PhysAddr (0x3500000)
-* kernel_address in config.txt = entry - stub_size
-* U-Boot available: `gmake CROSS_COMPILE=aarch64-linux-gnu- rpi_4_defconfig && gmake`
-* U-Boot needs OpenSSL: `HOSTCFLAGS="-I$(brew --prefix openssl)/include"`
-* Build ID: CRC32 of seL4 binary written at stub offset 0xFFC, displayed on HDMI
+* Mini UART (0xFE215040) hangs CPU bus -- elfloader UART registration skipped
+* printf in elfloader crashes on RPi4 -- disabled via `#define printf(...) ((void)0)`
+* Bare-metal entry needs: stack setup, secondary core parking, D-cache disable
+* Entry point from `readelf -h` (0x350f000), not LOAD PhysAddr (0x3500000)
+* `kernel_address` in config.txt = entry_point - 0x1000 (stub size)
+* Elfloader reaches load_images but crashes in memset to low phys addr
+* **Likely fix**: disable MMU in stub (not just D-cache)
+
+**U-Boot alternative** (interactive debugging):
+* Build: `cd ~/Desktop/github_repos/u-boot && gmake CROSS_COMPILE=aarch64-linux-gnu- rpi_4_defconfig && gmake HOSTCFLAGS="-I$(brew --prefix openssl)/include" HOSTLDFLAGS="-L$(brew --prefix openssl)/lib" -j$(sysctl -n hw.ncpu)`
+* config.txt: `kernel=u-boot.bin`
+* USB keyboard works at U-Boot prompt on HDMI
+* Commands: `fatload mmc 0 0x350f000 aios.bin` then `go 0x350f000`
+* No `dcache`/`icache` commands in default config
+* `md` command works for memory inspection
+* EL check: `fatload mmc 0 0x3000 el_check.bin && go 0x3000 && md 0x2000 1`
+
+**Elfloader deps/ debug patches** (temporary, must clean up):
+* `elfloader-tool/src/arch-arm/sys_boot.c` -- diag_bar calls, diag_fb_debug.h
+* `elfloader-tool/src/drivers/uart/bcm-uart.c` -- skip uart_set_out
+* `elfloader-tool/src/common.c` -- printf disabled, DTB memmove skip, diag_bars
+* `elfloader-tool/include/diag_fb_debug.h` -- new: shared inline bar renderer
 
 ### Cross-Compile External Programs
 
