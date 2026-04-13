@@ -9,6 +9,7 @@
 #include "aios/gpu.h"
 #include "aios/vfs.h"
 #include "aios/version.h"
+#include "aios/fb_console.h"
 #define LOG_MODULE "gpu"
 #define LOG_LEVEL LOG_LEVEL_DEBUG
 #include "aios/aios_log.h"
@@ -243,4 +244,8 @@ void boot_display_init(void) {
 
     printf("[boot] Display: %ux%u\n", gpu_width, gpu_height);
     LOG_INFO("display initialized");
+
+    /* Initialize framebuffer text console for boot messages.
+     * This replaces the splash with a scrolling text display. */
+    fb_console_init();
 }

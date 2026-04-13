@@ -162,6 +162,23 @@ ninja
 python3 scripts/mksdcard.py [--mem 4096] [--output disk/sdcard-rpi4.img]
 ```
 
+### RPi4 Hardware Boot (HDMI diagnostic stub)
+
+The RPi4 requires a diagnostic stub prepended to the seL4 binary for HDMI debug
+output (no serial adapter available). The stub initializes the VideoCore mailbox
+framebuffer and displays progress bars during boot.
+
+Key learnings (v0.4.91):
+* EEPROM updated to 2026-02-23 (boots with D-cache enabled)
+* Mini UART (0xFE215040) may hang CPU bus -- elfloader UART registration skipped
+* printf in elfloader crashes on RPi4 (MMU/cache state issue) -- disabled via macro
+* Bare-metal code needs: stack setup, secondary core parking, D-cache disable
+* Entry point from ELF header (0x350f000), not LOAD segment PhysAddr (0x3500000)
+* kernel_address in config.txt = entry - stub_size
+* U-Boot available: `gmake CROSS_COMPILE=aarch64-linux-gnu- rpi_4_defconfig && gmake`
+* U-Boot needs OpenSSL: `HOSTCFLAGS="-I$(brew --prefix openssl)/include"`
+* Build ID: CRC32 of seL4 binary written at stub offset 0xFFC, displayed on HDMI
+
 ### Cross-Compile External Programs
 
 ```

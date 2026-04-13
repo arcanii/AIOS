@@ -66,16 +66,20 @@ def download_firmware(fw_dir):
     print(f"  Firmware cached in {fw_dir}")
 
 
-def get_elf_load_address(elf_path):
-    """Read the physical load address from the ELF LOAD segment."""
-    out = run(f'aarch64-linux-gnu-readelf -l "{elf_path}"')
+def get_elf_entry_point(elf_path):
+    """Read the entry point address from the ELF header.
+
+    For seL4 images, the entry point is the .start section address.
+    objcopy -O binary places .start at binary offset 0, so the RPi
+    firmware must load kernel8.img at this address and jump to it.
+    """
+    out = run(f'aarch64-linux-gnu-readelf -h "{elf_path}"')
     for line in out.split("\n"):
-        if "LOAD" in line:
-            # Next line has the addresses
-            continue
-        parts = line.split()
-        if len(parts) >= 3 and parts[0].startswith("0x"):
-            return int(parts[2], 16)  # PhysAddr
+        if "Entry point" in line:
+            parts = line.split()
+            for p in parts:
+                if p.startswith("0x"):
+                    return int(p, 16)
     return None
 
 
@@ -208,12 +212,15 @@ def main():
     kernel_bin = os.path.join(tmp_dir, "kernel8.img")
     convert_elf_to_bin(args.kernel, kernel_bin)
 
-    # Step 3: Create config.txt (with kernel load address from ELF)
+    # Step 3: Create config.txt (with entry point from ELF)
     print("\n[3/5] Config")
-    load_addr = get_elf_load_address(args.kernel)
+    entry_addr = get_elf_entry_point(args.kernel)
+    if entry_addr is None:
+        print("FAIL: cannot read ELF entry point")
+        sys.exit(1)
     config_path = os.path.join(tmp_dir, "config.txt")
-    create_config_txt(config_path, args.mem, load_addr)
-    print(f"  config.txt (mem={args.mem}MB, kernel_address=0x{load_addr:x})")
+    create_config_txt(config_path, args.mem, entry_addr)
+    print(f"  config.txt (mem={args.mem}MB, kernel_address=0x{entry_addr:x})")
 
     # Step 4: Create FAT32 boot partition
     print("\n[4/5] Boot partition (FAT32, %dMB)" % BOOT_SIZE_MB)
@@ -224,6 +231,8 @@ def main():
         (os.path.join(fw_dir, "fixup4.dat"), "fixup4.dat"),
         (os.path.join(fw_dir, "start.elf"), "start.elf"),
         (os.path.join(fw_dir, "fixup.dat"), "fixup.dat"),
+        # Old EEPROM may request start_cd.elf instead of start4.elf
+        (os.path.join(fw_dir, "start4.elf"), "start_cd.elf"),
         (os.path.join(fw_dir, "bcm2711-rpi-4-b.dtb"), "bcm2711-rpi-4-b.dtb"),
         (config_path, "config.txt"),
         (kernel_bin, "kernel8.img"),

@@ -28,6 +28,7 @@
 #include "aios/root_shared.h"
 #include "aios/hw_info.h"
 #include "aios/vka_audit.h"
+#include "aios/fb_console.h"
 #include "aios/net.h"
 #include "aios/gpu.h"
 #include <elf/elf.h>
@@ -150,6 +151,33 @@ int main(int argc, char *argv[]) {
 
     aios_log_init();
 
+#ifdef PLAT_RPI4
+    /* RPi4 LED diagnostic: 3 fast blinks = root task reached.
+     * Visible on ACT LED (GPIO 42) without serial adapter. */
+    {
+        vka_object_t gpio_frame;
+        int gerr = sel4platsupport_alloc_frame_at(&vka, 0xFE200000,
+                                                   seL4_PageBits, &gpio_frame);
+        if (!gerr) {
+            volatile uint32_t *gpio = vspace_map_pages(&vspace,
+                &gpio_frame.cptr, NULL, seL4_AllRights, 1, seL4_PageBits, 0);
+            if (gpio) {
+                uint32_t val = gpio[0x10/4];
+                val &= ~(7U << 6);
+                val |= (1U << 6);
+                gpio[0x10/4] = val;
+                for (int blink = 0; blink < 3; blink++) {
+                    gpio[0x20/4] = (1U << 10);
+                    for (volatile int d = 0; d < 500000; d++) {}
+                    gpio[0x2C/4] = (1U << 10);
+                    for (volatile int d = 0; d < 500000; d++) {}
+                }
+                gpio[0x20/4] = (1U << 10);
+            }
+        }
+    }
+#endif
+
     /* Parse device tree for hardware discovery */
     boot_dtb_init();
     boot_hw_report();
@@ -202,11 +230,40 @@ int main(int argc, char *argv[]) {
     /* Phase 2b: Network (optional virtio-net) */
     boot_net_init();
 
-    /* Phase 2c: Display (optional virtio-gpu) */
+    /* Phase 2c: Display (optional framebuffer) */
     boot_display_init();
+
+    /* Boot status on HDMI console (for RPi4 without serial adapter) */
+    fb_console_printf("AIOS %s\n", AIOS_VERSION_STR);
+    fb_console_printf("[boot] RAM: %lu MB, CPU: %s\n",
+                      (unsigned long)(aios_total_mem / (1024 * 1024)),
+                      hw_info.cpu_compat);
+    fb_console_printf("[boot] UART: %s (0x%lx IRQ %u)\n",
+                      uart ? "OK" : "no",
+                      (unsigned long)hw_info.uart_paddr,
+                      hw_info.uart_irq);
+    if (hw_info.has_emmc)
+        fb_console_printf("[dtb]  eMMC: 0x%lx IRQ %u\n",
+                          (unsigned long)hw_info.emmc_paddr,
+                          hw_info.emmc_irq);
+    if (hw_info.has_genet)
+        fb_console_printf("[dtb]  GENET: 0x%lx IRQ %u\n",
+                          (unsigned long)hw_info.genet_paddr,
+                          hw_info.genet_irq);
+    if (hw_info.has_vc_mbox)
+        fb_console_printf("[dtb]  VC mbox: 0x%lx\n",
+                          (unsigned long)hw_info.vc_mbox_paddr);
+    fb_console_printf("[fs]   %s\n",
+                      ext2.read_sector ? "ext2 mounted" : "no filesystem");
+    fb_console_printf("[net]  %s\n",
+                      net_available ? "OK" : "not available");
+    fb_console_printf("[gpu]  %s\n",
+                      gpu_available ? "OK" : "not available");
+    fb_console_printf("\n");
 
     /* Phase 3: Server threads + process spawning */
     boot_start_services(&fault_ep);
+    fb_console_printf("[boot] Services started\n");
 
     /* --- UART IRQ + notification setup --- */
     {

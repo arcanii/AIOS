@@ -138,6 +138,7 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/boot/boot_services.c
     ${AIOS_ROOT}/src/boot/boot_net_init.c
     ${AIOS_ROOT}/src/boot/boot_display_init.c
+    ${AIOS_ROOT}/src/boot/fb_console.c
     ${AIOS_ROOT}/src/boot/boot_dtb.c
     ${AIOS_ROOT}/src/boot/boot_config.c
     ${AIOS_ROOT}/src/lib/config_parser.c
