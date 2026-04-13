@@ -4,12 +4,9 @@
  * PAL implementation for PLAT_QEMU_VIRT block devices.
  * Provides plat_blk_init/read/write matching blk_hal.h.
  *
- * Also discovers virtio-net and virtio-gpu slots during probe
- * (same MMIO bus). Those globals remain extern until net/display
- * move behind their own HAL interfaces.
- *
- * Extracted from boot_fs_init.c + boot_log_init.c + blk_io.c
- * during v0.4.89 PAL refactor.
+ * Device discovery delegated to plat_virtio_probe.c (Step 7).
+ * This file handles DMA allocation, drive probing (volume labels),
+ * and sector I/O only.
  */
 #include "aios/root_shared.h"
 #include "aios/vka_audit.h"
@@ -20,14 +17,12 @@
 #include "arch.h"
 #include "aios/hw_info.h"
 #include "plat/blk_hal.h"
-
-#define VIRTIO_SLOT_SIZE 0x200
-#define VIRTIO_NUM_SLOTS 32
+#include "plat_virtio_probe.h"
 
 #define VIO_R(base, off)       ((base)[(off)/4])
 #define VIO_W(base, off, val)  ((base)[(off)/4] = (val))
 
-/* ---- Private state (was extern in root_shared.h) ---- */
+/* ---- Private state ---- */
 
 static volatile uint32_t *blk_vio;
 static uint8_t  *blk_dma;
@@ -37,62 +32,22 @@ static volatile uint32_t *blk_vio_log;
 static uint8_t  *blk_dma_log;
 static uint64_t  blk_dma_pa_log;
 
-/* Shared MMIO mapping (reused for log init and net/gpu discovery) */
-static void *vio_vaddr;
-static int   log_slot_found = -1;
+static int log_slot_found = -1;
 
 /* ============================================================
- * plat_blk_init -- probe virtio MMIO, init system disk
+ * plat_blk_init -- probe drives, init system disk
  * ============================================================ */
 int plat_blk_init(void) {
     int error;
 
-    /* Map 4 pages of virtio MMIO region */
-    vka_object_t vio_frames[4];
-    seL4_CPtr vio_caps[4];
-    int vio_ok = 1;
-    for (int p = 0; p < 4; p++) {
-        error = sel4platsupport_alloc_frame_at(&vka,
-            hw_info.virtio_base + p * 0x1000, seL4_PageBits, &vio_frames[p]);
-        if (error) { vio_ok = 0; break; }
-        vio_caps[p] = vio_frames[p].cptr;
-    }
-    if (!vio_ok) {
-        printf("[fs] Failed to alloc virtio frames\n");
-        return -1;
-    }
-    vio_vaddr = vspace_map_pages(&vspace, vio_caps, NULL,
-        seL4_AllRights, 4, seL4_PageBits, 0);
-    if (!vio_vaddr) {
-        printf("[fs] Failed to map virtio\n");
-        return -1;
-    }
-
-    /* Discover all device slots */
-    int blk_slots[4];
-    int num_blk_devs = 0;
-    int net_slot_found = -1;
-    int gpu_slot_found = -1;
-    for (int i = 0; i < VIRTIO_NUM_SLOTS; i++) {
-        volatile uint32_t *sl = (volatile uint32_t *)
-            ((uintptr_t)vio_vaddr + i * VIRTIO_SLOT_SIZE);
-        if (sl[0] != VIRTIO_MAGIC) continue;
-        uint32_t devid = sl[VIRTIO_MMIO_DEVICE_ID/4];
-        if (devid == VIRTIO_BLK_DEVICE_ID && num_blk_devs < 4) {
-            blk_slots[num_blk_devs++] = i;
-        }
-        if (devid == VIRTIO_NET_DEVICE_ID && net_slot_found < 0) {
-            net_slot_found = i;
-        }
-        if (devid == VIRTIO_GPU_DEVICE_ID && gpu_slot_found < 0) {
-            gpu_slot_found = i;
-        }
-    }
-    if (num_blk_devs == 0) {
+    /* Shared virtio probe (maps MMIO, scans slots) */
+    if (plat_virtio_probe() != 0) return -1;
+    const plat_virtio_info_t *info = plat_virtio_get_info();
+    if (!info || info->num_blk == 0) {
         printf("[fs] No block device (add -drive to QEMU)\n");
         return -1;
     }
-    printf("[fs] Found %d block device(s)\n", num_blk_devs);
+    printf("[fs] Found %d block device(s)\n", info->num_blk);
 
     /* Allocate 16K contiguous DMA */
     vka_object_t dma_ut;
@@ -126,9 +81,8 @@ int plat_blk_init(void) {
     log_slot_found = -1;
     volatile uint32_t *vio = NULL;
 
-    for (int d = 0; d < num_blk_devs; d++) {
-        vio = (volatile uint32_t *)
-            ((uintptr_t)vio_vaddr + blk_slots[d] * VIRTIO_SLOT_SIZE);
+    for (int d = 0; d < info->num_blk; d++) {
+        vio = plat_virtio_slot_base(info->blk_slots[d]);
 
         uint8_t *dma = (uint8_t *)dma_vaddr;
         for (int z = 0; z < 16384; z++) dma[z] = 0;
@@ -174,17 +128,17 @@ int plat_blk_init(void) {
         VIO_W(vio, VIRTIO_MMIO_QUEUE_NOTIFY, 0);
 
         uint16_t last_used = 0;
-        int probe_done = 0;
+        int probe_ok = 0;
         for (int t = 0; t < 10000000; t++) {
             arch_dmb();
-            if (used->idx != last_used) { probe_done = 1; break; }
+            if (used->idx != last_used) { probe_ok = 1; break; }
         }
         arch_dmb();
         VIO_R(vio, VIRTIO_MMIO_INTERRUPT_STATUS);
         VIO_W(vio, VIRTIO_MMIO_INTERRUPT_ACK, 1);
 
-        if (!probe_done || req->status != 0) {
-            printf("[fs] Slot %d: read failed\n", blk_slots[d]);
+        if (!probe_ok || req->status != 0) {
+            printf("[fs] Slot %d: read failed\n", info->blk_slots[d]);
             VIO_W(vio, VIRTIO_MMIO_STATUS, 0);
             continue;
         }
@@ -193,7 +147,7 @@ int plat_blk_init(void) {
         uint16_t ext2_magic = req->data[0x38] | (req->data[0x39] << 8);
         if (ext2_magic != 0xEF53) {
             printf("[fs] Slot %d: not ext2 (0x%04x)\n",
-                   blk_slots[d], ext2_magic);
+                   info->blk_slots[d], ext2_magic);
             VIO_W(vio, VIRTIO_MMIO_STATUS, 0);
             continue;
         }
@@ -204,13 +158,13 @@ int plat_blk_init(void) {
                       req->data[0x7c] == '-' && req->data[0x7d] == 'l' &&
                       req->data[0x7e] == 'o' && req->data[0x7f] == 'g');
         if (is_log) {
-            printf("[fs] Slot %d: log drive (aios-log)\n", blk_slots[d]);
-            log_slot_found = blk_slots[d];
+            printf("[fs] Slot %d: log drive (aios-log)\n", info->blk_slots[d]);
+            log_slot_found = info->blk_slots[d];
             VIO_W(vio, VIRTIO_MMIO_STATUS, 0);
             continue;
         }
 
-        blk_slot = blk_slots[d];
+        blk_slot = info->blk_slots[d];
         printf("[fs] Slot %d: system disk\n", blk_slot);
         break;
     }
@@ -225,19 +179,9 @@ int plat_blk_init(void) {
     blk_dma = (uint8_t *)dma_vaddr;
     blk_dma_pa = dma_pa;
 
-    /* Record net device (still extern, privatized in Step 5) */
-    if (net_slot_found >= 0) {
-        net_vio_slot = net_slot_found;
-        net_available = 1;
-        net_vio = (volatile uint32_t *)
-            ((uintptr_t)vio_vaddr + net_slot_found * VIRTIO_SLOT_SIZE);
-        printf("[fs] Slot %d: virtio-net\n", net_slot_found);
-    } else {
-        net_available = 0;
+    if (info->net_slot >= 0) {
+        printf("[fs] Slot %d: virtio-net\n", info->net_slot);
     }
-
-    /* GPU: display uses fw_cfg/ramfb, not virtio-gpu */
-    gpu_available = 0;
 
     return 0;
 }
@@ -249,8 +193,8 @@ int plat_blk_init_log(void) {
     if (log_slot_found < 0) return -1;
     int error;
 
-    volatile uint32_t *vio = (volatile uint32_t *)
-        ((uintptr_t)vio_vaddr + log_slot_found * VIRTIO_SLOT_SIZE);
+    volatile uint32_t *vio = plat_virtio_slot_base(log_slot_found);
+    if (!vio) return -1;
 
     /* Allocate 16K contiguous DMA */
     vka_object_t dma_ut;

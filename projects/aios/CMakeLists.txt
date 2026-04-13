@@ -102,6 +102,24 @@ MakeCPIO(apps_cpio.o "${CPIO_FILES}")
 
 # All other programs built but loaded from disk via /bin
 
+# Platform-specific driver sources
+if(AIOS_PLATFORM STREQUAL "PLAT_QEMU_VIRT")
+    set(PLAT_SOURCES
+        ${AIOS_ROOT}/src/plat/qemu-virt/plat_virtio_probe.c
+        ${AIOS_ROOT}/src/plat/qemu-virt/blk_virtio.c
+        ${AIOS_ROOT}/src/plat/qemu-virt/net_virtio.c
+        ${AIOS_ROOT}/src/plat/qemu-virt/display_ramfb.c
+    )
+elseif(AIOS_PLATFORM STREQUAL "PLAT_RPI4")
+    set(PLAT_SOURCES
+        ${AIOS_ROOT}/src/plat/rpi4/blk_emmc.c
+        ${AIOS_ROOT}/src/plat/rpi4/net_genet.c
+        ${AIOS_ROOT}/src/plat/rpi4/display_vc.c
+    )
+else()
+    message(FATAL_ERROR "Unknown AIOS_PLATFORM: ${AIOS_PLATFORM}")
+endif()
+
 add_executable(aios_root
     ${AIOS_ROOT}/src/aios_root.c
     ${AIOS_ROOT}/src/ext2.c
@@ -114,7 +132,6 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/servers/fs_server.c
     ${AIOS_ROOT}/src/servers/exec_server.c
     ${AIOS_ROOT}/src/servers/pipe_server.c
-    ${AIOS_ROOT}/src/plat/qemu-virt/blk_virtio.c
     ${AIOS_ROOT}/src/boot/spawn_util.c
     ${AIOS_ROOT}/src/boot/boot_fs_init.c
     ${AIOS_ROOT}/src/lib/vka_audit.c
@@ -125,11 +142,10 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/boot/boot_config.c
     ${AIOS_ROOT}/src/lib/config_parser.c
     ${AIOS_ROOT}/src/servers/display_server.c
-    ${AIOS_ROOT}/src/plat/qemu-virt/net_virtio.c
-    ${AIOS_ROOT}/src/plat/qemu-virt/display_ramfb.c
     ${AIOS_ROOT}/src/servers/net_server.c
     ${AIOS_ROOT}/src/net/net_stack.c
     ${AIOS_ROOT}/src/net/net_tcp.c
+    ${PLAT_SOURCES}
     apps_cpio.o
 )
 target_link_libraries(aios_root sel4runtime sel4
@@ -138,7 +154,7 @@ target_link_libraries(aios_root sel4runtime sel4
     sel4platsupport sel4muslcsys muslc
     cpio elf fdt)
 target_include_directories(aios_root PRIVATE ${AIOS_ROOT}/include ${AIOS_ROOT}/src/arch ${AIOS_ROOT}/src)
-target_compile_definitions(aios_root PRIVATE PLAT_QEMU_VIRT)
+target_compile_definitions(aios_root PRIVATE ${AIOS_PLATFORM})
 target_link_options(aios_root PRIVATE -Wl,--no-copy-dt-needed-entries)
 
 DeclareRootserver(aios_root)

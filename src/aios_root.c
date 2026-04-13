@@ -90,15 +90,10 @@ volatile int fg_killed = 0;
 volatile int fg_sigint_sent = 0;  /* v0.4.85: root-side two-stage Ctrl-C */
 
 /* Network state (virtio-net) */
-volatile uint32_t *net_vio = NULL;
-uint8_t *net_dma = NULL;
-uint64_t net_dma_pa = 0;
 uint8_t net_mac[6] = {0};
 int net_available = 0;
-int net_vio_slot = -1;
 seL4_CPtr net_ep_cap = 0;
 seL4_CPtr net_drv_ntfn_cap = 0;
-seL4_CPtr net_irq_handler_cap = 0;
 seL4_CPtr net_srv_ntfn_cap = 0;
 struct net_rx_ring net_rx_ring;
 

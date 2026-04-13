@@ -7,7 +7,7 @@
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: main
 * **Developer**: Bryan
-* **Current Version**: v0.4.89
+* **Current Version**: v0.4.90
 
 ## Development Environment
 
@@ -146,6 +146,22 @@ The second drive (log_ext2.img) is optional. If absent, boot prints
 code identifies drives by ext2 volume label -- "aios-log" is the log
 drive, any unlabeled ext2 is the system disk. Drive order does not matter.
 
+### Build RPi4 Target
+
+```
+mkdir build-rpi4 && cd build-rpi4
+cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=../deps/kernel/gcc.cmake \
+    -DCROSS_COMPILER_PREFIX=aarch64-linux-gnu- \
+    -DAIOS_SETTINGS=settings-rpi4.cmake ..
+ninja
+```
+
+### Create RPi4 SD Card Image
+
+```
+python3 scripts/mksdcard.py [--mem 4096] [--output disk/sdcard-rpi4.img]
+```
+
 ### Cross-Compile External Programs
 
 ```
@@ -228,9 +244,16 @@ AIOS/
 |   |   +-- net_hal.h           # Network device HAL interface
 |   |   +-- display_hal.h       # Display device HAL interface
 |   |   +-- qemu-virt/
+|   |   |   +-- plat_virtio_probe.c # Shared MMIO mapping + device scan
+|   |   |   +-- plat_virtio_probe.h # Probe interface (info struct + getters)
 |   |   |   +-- blk_virtio.c    # Virtio-blk init + sector I/O (HAL impl)
 |   |   |   +-- net_virtio.c    # Virtio-net init + TX + RX driver (HAL impl)
 |   |   |   +-- display_ramfb.c # fw_cfg + ramfb framebuffer (HAL impl)
+|   |   +-- rpi4/
+|   |   |   +-- blk_emmc.c      # BCM2835 SDHCI stub (Phase 2)
+|   |   |   +-- net_genet.c     # BCM54213 GENET stub (Phase 3)
+|   |   |   +-- display_vc.c    # VideoCore mailbox stub (Phase 4)
+|   |   |   +-- fb_test.c       # Bare-metal framebuffer test
 +-- include/aios/
 |   +-- version.h, build_number.h, ext2.h, vfs.h, procfs.h
 |   +-- aios_auth.h          # Auth protocol: IPC labels, user/session types
@@ -260,7 +283,8 @@ AIOS/
 +-- build-04/                # gitignored: build output
 |   +-- sbase/               # Cross-compiled sbase tools + dash
 |   +-- projects/aios/       # AIOS programs
-+-- settings.cmake           # seL4 kernel config
++-- settings.cmake           # seL4 kernel config (QEMU, default)
++-- settings-rpi4.cmake      # seL4 kernel config (RPi4 BCM2711)
 ```
 
 ## Architecture
@@ -535,8 +559,11 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 36. TCP improvements: retransmission timer, keepalive, SHM data path, TIME_WAIT
 37. SSH improvements: host key persistence, window size, concurrent sessions
 38. ~~PAL Phase 0~~ DONE in v0.4.89: 3 HAL interfaces, 3 platform drivers (blk+net+display), 14 globals privatized
-39. PAL cleanup (Step 7): plat_virtio_probe, privatize bridge globals, remove dead files
-40. RPi4 port: settings-rpi4.cmake, SDHCI driver, GENET Ethernet, VC mailbox
+39. ~~PAL cleanup (Step 7)~~ DONE in v0.4.90: shared plat_virtio_probe, bridge globals removed, 3 dead files deleted
+40. ~~RPi4 Phase 1~~ DONE in v0.4.90: multi-target build, stub drivers, DTB parsers, mksdcard.py, hardware verified (HDMI framebuffer)
+41. RPi4 Phase 2: BCM2835 SDHCI SD card driver (ext2 from disk, login on RPi4)
+42. RPi4 Phase 3: BCM54213 GENET Ethernet driver (SSH into RPi4)
+43. RPi4 Phase 4: VideoCore mailbox framebuffer (integrated display server)
 
 ## Version History (0.4.x)
 
@@ -600,6 +627,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 | v0.4.87 | Signal delivery to blocked PIPE_READ (EINTR wakeup), SSH Ctrl-C via kill(0,2)+fg_pid, SSH exit (pipe EOF via server-side close), TCP retransmit tolerance (overlapping segment handling), exit path pipe close fixes. See docs/NEXT_20260412d.md |
 | v0.4.88 | ZSH Phase 1 (script mode, 1.19MB binary, 7 modules), morecore 4->8MB, allocator pool 4000->8000 pages, TCC + SDK rebuild with augmented libc, aios_entropy.c for mbedTLS, disk 128->256MB. See docs/NEXT_20260413a.md |
 | v0.4.89 | Platform Abstraction Layer Phase 0 complete: DESIGN_RPI.md, src/plat/ (3 HAL interfaces), blk_virtio.c + net_virtio.c + display_ramfb.c (all drivers behind HAL), 14 globals privatized, boot files reduced 894->316 lines, PLAT_QEMU_VIRT build define, cortex-a72 verified. See docs/NEXT_20260413a.md |
+| v0.4.90 | PAL Step 7 cleanup: shared plat_virtio_probe (MMIO scan), 5 bridge globals removed, 3 dead files deleted (-321 net). RPi4 Phase 1: multi-target build (AIOS_SETTINGS, PLAT_RPI4), stub drivers (blk/net/display), DTB parsers (emmc/genet/vc_mbox), mksdcard.py SD card builder, RPi4 hardware verified (boots AArch64, HDMI framebuffer via VideoCore mailbox). See docs/NEXT_20260413a.md |
 
 ## Architecture After v0.4.76
 

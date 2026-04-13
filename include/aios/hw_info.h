@@ -22,6 +22,20 @@ typedef struct {
     uint64_t fwcfg_paddr;       /* QEMU: 0x09020000 */
     int      has_fwcfg;
 
+    /* eMMC/SDHCI (RPi) */
+    uint64_t emmc_paddr;        /* BCM2835 SDHCI base */
+    uint32_t emmc_irq;
+    int      has_emmc;
+
+    /* GENET Ethernet (RPi4) */
+    uint64_t genet_paddr;       /* BCM54213 GENET base */
+    uint32_t genet_irq;
+    int      has_genet;
+
+    /* VideoCore mailbox (RPi) */
+    uint64_t vc_mbox_paddr;     /* ARM-to-VC mailbox base */
+    int      has_vc_mbox;
+
     /* CPU */
     int      cpu_count;
     char     cpu_compat[32];    /* e.g. "arm,cortex-a53" */

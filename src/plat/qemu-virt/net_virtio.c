@@ -4,8 +4,8 @@
  * PAL implementation for PLAT_QEMU_VIRT networking.
  * Provides plat_net_init/tx/driver_fn/get_mac matching net_hal.h.
  *
- * Extracted from boot_net_init.c + net_driver.c + net_stack.c
- * during v0.4.89 PAL refactor.
+ * v0.4.90: reads device slot from plat_virtio_probe instead of
+ * extern bridge globals (net_vio, net_vio_slot removed).
  */
 #include "aios/root_shared.h"
 #include <simple/simple.h>
@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include "arch.h"
 #include "plat/net_hal.h"
+#include "plat_virtio_probe.h"
 
 /* ---- Private state (was extern in root_shared.h) ---- */
 
@@ -34,9 +35,15 @@ int plat_net_init(void) {
     if (!net_available) return -1;
     int error;
 
-    /* Use net_vio from blk_virtio.c probe (still extern) */
-    net_vio_priv = net_vio;
-    net_vio_slot_priv = net_vio_slot;
+    /* Get device slot from shared virtio probe */
+    const plat_virtio_info_t *vinfo = plat_virtio_get_info();
+    if (!vinfo || vinfo->net_slot < 0) {
+        printf("[net] No virtio-net in probe results\n");
+        net_available = 0;
+        return -1;
+    }
+    net_vio_priv = plat_virtio_slot_base(vinfo->net_slot);
+    net_vio_slot_priv = vinfo->net_slot;
 
     /* Verify device identity */
     if (net_vio_priv[VIRTIO_MMIO_MAGIC / 4] != VIRTIO_MAGIC ||

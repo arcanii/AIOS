@@ -43,6 +43,8 @@ code*.bin
 
 # Disk images (built, not tracked)
 disk/*.img
+disk/rpi4-firmware/
+disk/.sdcard-tmp/
 
 # Dependencies (cloned, not tracked)
 deps/

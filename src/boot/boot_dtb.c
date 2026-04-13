@@ -141,6 +141,59 @@ static void parse_cpus(const void *fdt) {
     if (count > 0) hw_info.cpu_count = count;
 }
 
+static void parse_emmc(const void *fdt) {
+    /* BCM2711 eMMC2 or BCM2835 SDHCI */
+    int node = fdt_node_offset_by_compatible(fdt, -1, "brcm,bcm2711-emmc2");
+    if (node < 0)
+        node = fdt_node_offset_by_compatible(fdt, -1, "brcm,bcm2835-sdhci");
+    if (node < 0) return;
+
+    int len;
+    const void *reg = fdt_getprop(fdt, node, "reg", &len);
+    if (reg && len >= 8) {
+        hw_info.emmc_paddr = fdt_read_reg64(reg);
+        hw_info.has_emmc = 1;
+    }
+    const void *irq = fdt_getprop(fdt, node, "interrupts", &len);
+    if (irq && len >= 12) {
+        const fdt32_t *ic = (const fdt32_t *)irq;
+        uint32_t irq_type = fdt32_ld(&ic[0]);
+        uint32_t irq_num  = fdt32_ld(&ic[1]);
+        hw_info.emmc_irq = (irq_type == 0) ? irq_num + 32 : irq_num;
+    }
+}
+
+static void parse_genet(const void *fdt) {
+    int node = fdt_node_offset_by_compatible(fdt, -1, "brcm,bcm2711-genet-v5");
+    if (node < 0) return;
+
+    int len;
+    const void *reg = fdt_getprop(fdt, node, "reg", &len);
+    if (reg && len >= 8) {
+        hw_info.genet_paddr = fdt_read_reg64(reg);
+        hw_info.has_genet = 1;
+    }
+    const void *irq = fdt_getprop(fdt, node, "interrupts", &len);
+    if (irq && len >= 12) {
+        const fdt32_t *ic = (const fdt32_t *)irq;
+        uint32_t irq_type = fdt32_ld(&ic[0]);
+        uint32_t irq_num  = fdt32_ld(&ic[1]);
+        hw_info.genet_irq = (irq_type == 0) ? irq_num + 32 : irq_num;
+    }
+}
+
+static void parse_vc_mbox(const void *fdt) {
+    int node = fdt_node_offset_by_compatible(fdt, -1, "brcm,bcm2835-mbox");
+    if (node < 0) return;
+
+    int len;
+    const void *reg = fdt_getprop(fdt, node, "reg", &len);
+    if (reg && len >= 8) {
+        hw_info.vc_mbox_paddr = fdt_read_reg64(reg);
+        hw_info.has_vc_mbox = 1;
+    }
+}
+
 static void parse_memory(const void *fdt) {
     int node = fdt_path_offset(fdt, "/memory");
     if (node < 0) {
@@ -199,6 +252,9 @@ void boot_dtb_init(void) {
     parse_uart(fdt);
     parse_virtio(fdt);
     parse_fwcfg(fdt);
+    parse_emmc(fdt);
+    parse_genet(fdt);
+    parse_vc_mbox(fdt);
     parse_cpus(fdt);
     parse_memory(fdt);
 }
@@ -218,4 +274,13 @@ void boot_hw_report(void) {
                hw_info.virtio_count, (unsigned long)hw_info.virtio_base);
     if (hw_info.has_fwcfg)
         printf("[hw] fw_cfg: 0x%lx\n", (unsigned long)hw_info.fwcfg_paddr);
+    if (hw_info.has_emmc)
+        printf("[hw] eMMC: 0x%lx IRQ %u\n",
+               (unsigned long)hw_info.emmc_paddr, hw_info.emmc_irq);
+    if (hw_info.has_genet)
+        printf("[hw] GENET: 0x%lx IRQ %u\n",
+               (unsigned long)hw_info.genet_paddr, hw_info.genet_irq);
+    if (hw_info.has_vc_mbox)
+        printf("[hw] VC mbox: 0x%lx\n",
+               (unsigned long)hw_info.vc_mbox_paddr);
 }

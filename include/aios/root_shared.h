@@ -213,12 +213,9 @@ extern volatile uint32_t *uart;
 /* Network state */
 extern uint8_t net_mac[6];
 extern int net_available;
-extern volatile uint32_t *net_vio;   /* QEMU platform bridge: set by blk_virtio, read by net_virtio */
-extern int net_vio_slot;             /* QEMU platform bridge: set by blk_virtio, read by net_virtio */
 extern seL4_CPtr net_ep_cap;
 extern seL4_CPtr net_drv_ntfn_cap;
 extern seL4_CPtr net_srv_ntfn_cap;
-extern seL4_CPtr net_irq_handler_cap;
 
 struct net_rx_ring;
 extern struct net_rx_ring net_rx_ring;
