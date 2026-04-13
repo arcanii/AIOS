@@ -15,6 +15,7 @@
 #include <sel4platsupport/device.h>
 #include <stdio.h>
 #include "arch.h"
+#include "plat/blk_hal.h"
 
 #define VIRTIO_SLOT_SIZE 0x200
 
@@ -83,9 +84,9 @@ void boot_log_drive_init(void *vio_vaddr, int log_slot) {
     blk_dma_pa_log = dma_pa;
 
     /* Init ext2 on log drive (dev_id=1 for separate cache namespace) */
-    int err = ext2_init(&ext2_log, blk_read_sector_log, 1);
+    int err = ext2_init(&ext2_log, plat_blk_read_log, 1);
     if (err == 0) {
-        ext2_init_write(&ext2_log, blk_write_sector_log);
+        ext2_init_write(&ext2_log, plat_blk_write_log);
         vfs_mount("/log", &ext2_fs_ops, &ext2_log);
         LOG_INFO("log drive mounted at /log");
         printf("[boot] Log drive mounted at /log\n");

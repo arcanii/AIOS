@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include "arch.h"
 #include "aios/hw_info.h"
+#include "plat/blk_hal.h"
 
 #define VIRTIO_BASE_ADDR 0xa000000UL
 #define VIRTIO_SLOT_SIZE 0x200
@@ -215,9 +216,9 @@ void boot_fs_init(void) {
     /* Init ext2 + VFS */
     vfs_init();
     proc_init();
-    int fs_err = ext2_init(&ext2, blk_read_sector, 0);
+    int fs_err = ext2_init(&ext2, plat_blk_read, 0);
     if (fs_err == 0) {
-        ext2_init_write(&ext2, blk_write_sector);
+        ext2_init_write(&ext2, plat_blk_write);
         vfs_mount("/", &ext2_fs_ops, &ext2);
         vfs_mount("/proc", &procfs_ops, NULL);
         proc_add("fs_thread", 200);

@@ -7,7 +7,7 @@
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: main
 * **Developer**: Bryan
-* **Current Version**: v0.4.88
+* **Current Version**: v0.4.89
 
 ## Development Environment
 
@@ -222,6 +222,13 @@ AIOS/
 |   |   +-- fork.c           # do_fork() implementation
 |   |   +-- reap.c           # reap_forked_child, zombie management
 |   +-- apps/                # AIOS programs + test_threads
+|   +-- plat/
+|   |   +-- plat.h              # Platform dispatcher (like arch.h)
+|   |   +-- blk_hal.h           # Block device HAL interface
+|   |   +-- net_hal.h           # Network device HAL interface
+|   |   +-- display_hal.h       # Display device HAL interface
+|   |   +-- qemu-virt/
+|   |   |   +-- blk_virtio.c    # Virtio-blk sector I/O (HAL impl)
 +-- include/aios/
 |   +-- version.h, build_number.h, ext2.h, vfs.h, procfs.h
 |   +-- aios_auth.h          # Auth protocol: IPC labels, user/session types
@@ -244,6 +251,7 @@ AIOS/
 |   +-- AI_BRIEFING.md       # This file
 |   +-- ARCHITECTURE.md, DESIGN_0.4.md, LEARNINGS.md
 |   +-- DASH_PORT.md         # dash porting guide and syscall audit
+|   +-- DESIGN_RPI.md        # Raspberry Pi port design (PAL, RPi4/RPi5)
 |   +-- patches/             # Documented dep patches (musl-gcc15, platsupport)
 +-- projects/aios/CMakeLists.txt  # Build config
 +-- deps/                    # gitignored: seL4, musllibc, etc.
@@ -524,6 +532,9 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 35. ~~SSH Ctrl-C to child commands~~ DONE in v0.4.87: PIPE_SIGNAL wakes blocked PIPE_READ, kill(0,sig)->fg_pid, EINTR dispatch
 36. TCP improvements: retransmission timer, keepalive, SHM data path, TIME_WAIT
 37. SSH improvements: host key persistence, window size, concurrent sessions
+38. ~~PAL Phase 0 foundation~~ DONE in v0.4.89: DESIGN_RPI.md, blk_hal.h, blk_virtio.c
+39. PAL Phase 0 continued: net_hal extraction (Steps 3-7), privatize virtio globals
+40. RPi4 port: settings-rpi4.cmake, SDHCI driver, GENET Ethernet
 
 ## Version History (0.4.x)
 
@@ -586,6 +597,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 | v0.4.86 | TCP connect() (3-way handshake, SYN_SENT state), dynamic window, seq validation, socket PID tracking + NET_CLEANUP_PID, deferred net cleanup (seL4 reply cap fix), fg parent promotion, sshd restart fix. See docs/NEXT_20260412c.md |
 | v0.4.87 | Signal delivery to blocked PIPE_READ (EINTR wakeup), SSH Ctrl-C via kill(0,2)+fg_pid, SSH exit (pipe EOF via server-side close), TCP retransmit tolerance (overlapping segment handling), exit path pipe close fixes. See docs/NEXT_20260412d.md |
 | v0.4.88 | ZSH Phase 1 (script mode, 1.19MB binary, 7 modules), morecore 4->8MB, allocator pool 4000->8000 pages, TCC + SDK rebuild with augmented libc, aios_entropy.c for mbedTLS, disk 128->256MB. See docs/NEXT_20260413a.md |
+| v0.4.89 | Platform Abstraction Layer Phase 0: DESIGN_RPI.md, src/plat/ directory, blk_hal.h/net_hal.h/display_hal.h, blk_virtio.c (block I/O behind HAL), PLAT_QEMU_VIRT build define, cortex-a72 verified. See docs/NEXT_20260413a.md |
 
 ## Architecture After v0.4.76
 

@@ -114,7 +114,7 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/servers/fs_server.c
     ${AIOS_ROOT}/src/servers/exec_server.c
     ${AIOS_ROOT}/src/servers/pipe_server.c
-    ${AIOS_ROOT}/src/boot/blk_io.c
+    ${AIOS_ROOT}/src/plat/qemu-virt/blk_virtio.c
     ${AIOS_ROOT}/src/boot/spawn_util.c
     ${AIOS_ROOT}/src/boot/boot_fs_init.c
     ${AIOS_ROOT}/src/boot/boot_log_init.c
@@ -137,7 +137,8 @@ target_link_libraries(aios_root sel4runtime sel4
     sel4simple sel4simple-default
     sel4platsupport sel4muslcsys muslc
     cpio elf fdt)
-target_include_directories(aios_root PRIVATE ${AIOS_ROOT}/include ${AIOS_ROOT}/src/arch)
+target_include_directories(aios_root PRIVATE ${AIOS_ROOT}/include ${AIOS_ROOT}/src/arch ${AIOS_ROOT}/src)
+target_compile_definitions(aios_root PRIVATE PLAT_QEMU_VIRT)
 target_link_options(aios_root PRIVATE -Wl,--no-copy-dt-needed-entries)
 
 DeclareRootserver(aios_root)
