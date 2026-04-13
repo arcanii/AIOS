@@ -10,7 +10,7 @@
 #include "aios/root_shared.h"
 #include "aios/net.h"
 #include "aios/config.h"
-#include "virtio.h"
+/* virtio.h removed -- TX via plat_net_tx in net_stack.c */
 #include <stdio.h>
 
 /* -- TCP pseudo-header checksum -- */

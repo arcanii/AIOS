@@ -9,6 +9,7 @@
 #include "aios/vka_audit.h"
 #include "aios/vfs.h"
 #include "aios/config.h"
+#include "plat/net_hal.h"
 #include "aios/procfs.h"
 #include <sel4utils/thread.h>
 #define LOG_MODULE "boot"
@@ -76,7 +77,7 @@ void boot_start_services(vka_object_t *fault_ep) {
         net_ep_cap = net_ep_obj.cptr;
 
         /* Driver thread: receives notification cap as arg0 */
-        start_server_thread((sel4utils_thread_entry_fn)net_driver_fn,
+        start_server_thread((sel4utils_thread_entry_fn)plat_net_driver_fn,
                             net_drv_ntfn_cap);
 
         /* Server thread: receives IPC endpoint as arg0,

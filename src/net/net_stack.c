@@ -9,7 +9,7 @@
 #include "aios/root_shared.h"
 #include "aios/net.h"
 #include "aios/config.h"
-#include "virtio.h"
+#include "plat/net_hal.h"
 #include <stdio.h>
 #include "arch.h"
 
@@ -80,36 +80,12 @@ int arp_cache_lookup(const uint8_t *ip, uint8_t *mac_out) {
  * TX: send an Ethernet frame via virtio-net TX queue
  * ============================================================ */
 int net_tx_send(const uint8_t *frame, uint32_t len) {
-    if (len + VIRTIO_NET_HDR_SIZE > NET_PKT_BUF_SIZE) return -1;
-
-    struct virtq_desc  *tx_desc  =
-        (struct virtq_desc  *)(net_dma + NET_TX_DESC_OFF);
-    struct virtq_avail *tx_avail =
-        (struct virtq_avail *)(net_dma + NET_TX_AVAIL_OFF);
-
-    uint16_t idx = tx_avail->idx % NET_QUEUE_SIZE;
-    uint8_t *buf = net_dma + NET_TX_BUF_OFF + idx * NET_PKT_BUF_SIZE;
-    uint64_t buf_pa = net_dma_pa + NET_TX_BUF_OFF
-        + (uint64_t)idx * NET_PKT_BUF_SIZE;
-
-    for (int i = 0; i < VIRTIO_NET_HDR_SIZE; i++) buf[i] = 0;
-    for (uint32_t i = 0; i < len; i++)
-        buf[VIRTIO_NET_HDR_SIZE + i] = frame[i];
-
-    tx_desc[idx].addr  = buf_pa;
-    tx_desc[idx].len   = VIRTIO_NET_HDR_SIZE + len;
-    tx_desc[idx].flags = 0;
-    tx_desc[idx].next  = 0;
-
-    tx_avail->ring[idx] = idx;
-    arch_dmb();
-    tx_avail->idx++;
-    arch_dmb();
-
-    net_vio[VIRTIO_MMIO_QUEUE_NOTIFY / 4] = 1;
-    stats.tx_packets++;
-    stats.tx_bytes += len;
-    return 0;
+    int ret = plat_net_tx(frame, len);
+    if (ret == 0) {
+        stats.tx_packets++;
+        stats.tx_bytes += len;
+    }
+    return ret;
 }
 
 /* ============================================================

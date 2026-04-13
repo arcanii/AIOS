@@ -117,7 +117,6 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/plat/qemu-virt/blk_virtio.c
     ${AIOS_ROOT}/src/boot/spawn_util.c
     ${AIOS_ROOT}/src/boot/boot_fs_init.c
-    ${AIOS_ROOT}/src/boot/boot_log_init.c
     ${AIOS_ROOT}/src/lib/vka_audit.c
     ${AIOS_ROOT}/src/boot/boot_services.c
     ${AIOS_ROOT}/src/boot/boot_net_init.c
@@ -126,7 +125,8 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/boot/boot_config.c
     ${AIOS_ROOT}/src/lib/config_parser.c
     ${AIOS_ROOT}/src/servers/display_server.c
-    ${AIOS_ROOT}/src/servers/net_driver.c
+    ${AIOS_ROOT}/src/plat/qemu-virt/net_virtio.c
+    ${AIOS_ROOT}/src/plat/qemu-virt/display_ramfb.c
     ${AIOS_ROOT}/src/servers/net_server.c
     ${AIOS_ROOT}/src/net/net_stack.c
     ${AIOS_ROOT}/src/net/net_tcp.c

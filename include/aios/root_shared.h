@@ -204,25 +204,17 @@ extern pipe_t pipes[MAX_PIPES];
 extern char elf_buf[8 * 1024 * 1024];
 
 extern ext2_ctx_t ext2;
-extern volatile uint32_t *blk_vio;
-extern uint8_t *blk_dma;
-extern uint64_t blk_dma_pa;
 
-/* Log drive (second virtio-blk) */
+/* Log drive */
 extern ext2_ctx_t ext2_log;
-extern volatile uint32_t *blk_vio_log;
-extern uint8_t *blk_dma_log;
-extern uint64_t blk_dma_pa_log;
 
 extern volatile uint32_t *uart;
 
-/* Network state (virtio-net) */
-extern volatile uint32_t *net_vio;
-extern uint8_t *net_dma;
-extern uint64_t net_dma_pa;
+/* Network state */
 extern uint8_t net_mac[6];
 extern int net_available;
-extern int net_vio_slot;
+extern volatile uint32_t *net_vio;   /* QEMU platform bridge: set by blk_virtio, read by net_virtio */
+extern int net_vio_slot;             /* QEMU platform bridge: set by blk_virtio, read by net_virtio */
 extern seL4_CPtr net_ep_cap;
 extern seL4_CPtr net_drv_ntfn_cap;
 extern seL4_CPtr net_srv_ntfn_cap;
@@ -231,14 +223,10 @@ extern seL4_CPtr net_irq_handler_cap;
 struct net_rx_ring;
 extern struct net_rx_ring net_rx_ring;
 
-/* Display state (virtio-gpu) */
-extern volatile uint32_t *gpu_vio;
-extern uint8_t *gpu_dma;
-extern uint64_t gpu_dma_pa;
+/* Display state */
 extern uint32_t *gpu_fb;
 extern uint64_t gpu_fb_pa;
 extern int gpu_available;
-extern int gpu_vio_slot;
 extern uint32_t gpu_width;
 extern uint32_t gpu_height;
 extern seL4_CPtr disp_ep_cap;
@@ -260,16 +248,7 @@ extern int wait_pending_init;
 void boot_fs_init(void);
 void boot_start_services(vka_object_t *fault_ep);
 
-/* Block I/O (src/boot/blk_io.c) */
-int blk_read_sector(uint64_t sector, void *buf);
-int blk_write_sector(uint64_t sector, const void *buf);
-
-/* Log drive I/O (src/boot/blk_io.c) */
-int blk_read_sector_log(uint64_t sector, void *buf);
-int blk_write_sector_log(uint64_t sector, const void *buf);
-
-/* Log drive init (src/boot/boot_log_init.c) */
-void boot_log_drive_init(void *vio_vaddr, int log_slot);
+/* Block I/O via platform HAL (src/plat/blk_hal.h) */
 
 /* Spawn utilities (src/boot/spawn_util.c) */
 int spawn_with_args(const char *name, uint8_t prio,
@@ -293,7 +272,7 @@ int process_kill(int pid);
 void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf);
 void boot_net_init(void);
 void boot_display_init(void);
-void net_driver_fn(void *arg0, void *arg1, void *ipc_buf);
+/* net_driver_fn moved to plat/qemu-virt/net_virtio.c as plat_net_driver_fn */
 void net_server_fn(void *arg0, void *arg1, void *ipc_buf);
 void display_server_fn(void *arg0, void *arg1, void *ipc_buf);
 
