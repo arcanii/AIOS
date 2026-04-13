@@ -4,6 +4,7 @@ A research microkernel operating system built on seL4
 
 Architectures / Hardware Supported
 - :white_check_mark: AArch64 (QEMU)
+- :white_medium_square: AArch64 (Raspberry Pi 4 Model B)
 - :white_medium_square: AArch64 (Raspberry Pi 5)
 - :white_medium_square: X86-64 
 
