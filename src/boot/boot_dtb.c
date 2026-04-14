@@ -41,8 +41,43 @@ static void set_defaults(void) {
     strncpy(hw_info.cpu_compat, "unknown", sizeof(hw_info.cpu_compat) - 1);
 }
 
-/* Read a 64-bit value from two consecutive 32-bit BE cells.
- * fdt32_ld() is provided by libfdt. */
+/* Read address from DTB reg property, respecting parent address-cells.
+ * RPi4 soc nodes use #address-cells=1 (32-bit), emmc2bus uses 2 (64-bit).
+ * fdt and node must be valid; fdt_address_cells / fdt_parent_offset from libfdt. */
+static uint64_t fdt_read_reg_node(const void *fdt, int node) {
+    int len;
+    const void *reg = fdt_getprop(fdt, node, "reg", &len);
+    if (!reg || len < 4) return 0;
+
+    const fdt32_t *c = (const fdt32_t *)reg;
+
+    /* Check parent #address-cells to determine read width */
+    int parent = fdt_parent_offset(fdt, node);
+    int addr_cells = 2;  /* default 64-bit */
+    if (parent >= 0) {
+        int ac = fdt_address_cells(fdt, parent);
+        if (ac > 0) addr_cells = ac;
+    }
+
+    uint64_t addr;
+    if (addr_cells == 1) {
+        addr = (uint64_t)fdt32_ld(&c[0]);
+    } else if (len >= 8) {
+        addr = ((uint64_t)fdt32_ld(&c[0]) << 32) | fdt32_ld(&c[1]);
+    } else {
+        addr = (uint64_t)fdt32_ld(&c[0]);
+    }
+
+    /* BCM2711: translate VC bus address to ARM physical.
+     * VC peripherals at 0x7Exxxxxx map to ARM 0xFExxxxxx (+0x80000000).
+     * QEMU addresses pass through unchanged. */
+    if (addr >= 0x7C000000UL && addr <= 0x7FFFFFFFUL)
+        addr += 0x80000000UL;
+
+    return addr;
+}
+
+/* Legacy wrapper for code that passes raw reg pointer */
 static uint64_t fdt_read_reg64(const void *p) {
     const fdt32_t *c = (const fdt32_t *)p;
     return ((uint64_t)fdt32_ld(&c[0]) << 32) | fdt32_ld(&c[1]);
@@ -52,13 +87,10 @@ static void parse_uart(const void *fdt) {
     int node = fdt_node_offset_by_compatible(fdt, -1, "arm,pl011");
     if (node < 0) return;
 
-    int len;
-    const void *reg = fdt_getprop(fdt, node, "reg", &len);
-    if (reg && len >= 8) {
-        hw_info.uart_paddr = fdt_read_reg64(reg);
-        hw_info.has_uart = 1;
-    }
+    hw_info.uart_paddr = fdt_read_reg_node(fdt, node);
+    if (hw_info.uart_paddr) hw_info.has_uart = 1;
 
+    int len;
     const void *irq = fdt_getprop(fdt, node, "interrupts", &len);
     if (irq && len >= 12) {
         /* GIC format: <type irq_num flags>
@@ -148,12 +180,10 @@ static void parse_emmc(const void *fdt) {
         node = fdt_node_offset_by_compatible(fdt, -1, "brcm,bcm2835-sdhci");
     if (node < 0) return;
 
+    hw_info.emmc_paddr = fdt_read_reg_node(fdt, node);
+    if (hw_info.emmc_paddr) hw_info.has_emmc = 1;
+
     int len;
-    const void *reg = fdt_getprop(fdt, node, "reg", &len);
-    if (reg && len >= 8) {
-        hw_info.emmc_paddr = fdt_read_reg64(reg);
-        hw_info.has_emmc = 1;
-    }
     const void *irq = fdt_getprop(fdt, node, "interrupts", &len);
     if (irq && len >= 12) {
         const fdt32_t *ic = (const fdt32_t *)irq;
@@ -167,12 +197,10 @@ static void parse_genet(const void *fdt) {
     int node = fdt_node_offset_by_compatible(fdt, -1, "brcm,bcm2711-genet-v5");
     if (node < 0) return;
 
+    hw_info.genet_paddr = fdt_read_reg_node(fdt, node);
+    if (hw_info.genet_paddr) hw_info.has_genet = 1;
+
     int len;
-    const void *reg = fdt_getprop(fdt, node, "reg", &len);
-    if (reg && len >= 8) {
-        hw_info.genet_paddr = fdt_read_reg64(reg);
-        hw_info.has_genet = 1;
-    }
     const void *irq = fdt_getprop(fdt, node, "interrupts", &len);
     if (irq && len >= 12) {
         const fdt32_t *ic = (const fdt32_t *)irq;
@@ -186,12 +214,8 @@ static void parse_vc_mbox(const void *fdt) {
     int node = fdt_node_offset_by_compatible(fdt, -1, "brcm,bcm2835-mbox");
     if (node < 0) return;
 
-    int len;
-    const void *reg = fdt_getprop(fdt, node, "reg", &len);
-    if (reg && len >= 8) {
-        hw_info.vc_mbox_paddr = fdt_read_reg64(reg);
-        hw_info.has_vc_mbox = 1;
-    }
+    hw_info.vc_mbox_paddr = fdt_read_reg_node(fdt, node);
+    if (hw_info.vc_mbox_paddr) hw_info.has_vc_mbox = 1;
 }
 
 static void parse_memory(const void *fdt) {
@@ -203,13 +227,37 @@ static void parse_memory(const void *fdt) {
     }
     if (node < 0) return;
 
+    int parent = fdt_parent_offset(fdt, node);
+    int ac = 2, sc = 1;
+    if (parent >= 0) {
+        int a = fdt_address_cells(fdt, parent);
+        int s = fdt_size_cells(fdt, parent);
+        if (a > 0) ac = a;
+        if (s > 0) sc = s;
+    }
+
     int len;
     const void *reg = fdt_getprop(fdt, node, "reg", &len);
-    if (reg && len >= 16) {
-        const fdt32_t *mc = (const fdt32_t *)reg;
-        hw_info.mem_base = fdt_read_reg64(&mc[0]);
-        hw_info.mem_size = fdt_read_reg64(&mc[2]);
+    if (!reg) return;
+
+    const fdt32_t *mc = (const fdt32_t *)reg;
+    int stride = ac + sc;  /* cells per memory region entry */
+    int entries = (len / 4) / stride;
+
+    /* Sum all memory region sizes */
+    uint64_t total = 0;
+    for (int i = 0; i < entries; i++) {
+        const fdt32_t *e = &mc[i * stride];
+        uint64_t base = (ac == 2)
+            ? ((uint64_t)fdt32_ld(&e[0]) << 32) | fdt32_ld(&e[1])
+            : (uint64_t)fdt32_ld(&e[0]);
+        uint64_t size = (sc == 2)
+            ? ((uint64_t)fdt32_ld(&e[ac]) << 32) | fdt32_ld(&e[ac + 1])
+            : (uint64_t)fdt32_ld(&e[ac]);
+        if (i == 0) hw_info.mem_base = base;
+        total += size;
     }
+    hw_info.mem_size = total;
 }
 
 void boot_dtb_init(void) {

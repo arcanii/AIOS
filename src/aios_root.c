@@ -44,14 +44,31 @@ vka_t vka;
 vspace_t vspace;
 allocman_t *allocman;
 
-#define UART0_PADDR 0x9000000UL
+/* PL011 UART registers (QEMU virt) */
 #define UART_DR   0x000
 #define UART_FR   0x018
 #define FR_RXFE   (1 << 4)
 #define UART_IMSC 0x038   /* interrupt mask set/clear */
 #define UART_ICR  0x044   /* interrupt clear */
-#define UART0_IRQ 33      /* PL011 UART0 SPI 1 on QEMU virt */
 #define IMSC_RXIM (1<<4)  /* RX interrupt mask bit */
+
+#ifdef PLAT_RPI4
+/* BCM2835 mini UART (auxiliary UART) registers.
+ * On RPi4 without overlays/disable-bt.dtbo, GPIO 14/15 are
+ * connected to mini UART (ALT5), NOT PL011. The seL4 kernel
+ * also uses mini UART for debug output (bcm2835-aux-uart).
+ * AUX block at 0xFE215000, mini UART regs at offset 0x40. */
+#define MU_BASE   0x040   /* mini UART offset within AUX page */
+#define MU_IO     (MU_BASE + 0x00)  /* data register */
+#define MU_IER    (MU_BASE + 0x04)  /* interrupt enable */
+#define MU_LSR    (MU_BASE + 0x14)  /* line status */
+#define MU_CNTL   (MU_BASE + 0x20)  /* control: bit0=RX_EN, bit1=TX_EN */
+#define MU_STAT   (MU_BASE + 0x24)  /* extra status */
+#define LSR_DATA_READY (1 << 0)     /* RX data available */
+#define LSR_TX_EMPTY   (1 << 5)     /* TX FIFO can accept data */
+/* Mini UART MMIO address (AUX block base, kernel marks userAvailable) */
+#define RPI4_AUX_PADDR 0xFE215000UL
+#endif
 volatile uint32_t *uart;
 
 /* ── Thread management ── */
@@ -182,17 +199,38 @@ int main(int argc, char *argv[]) {
     boot_dtb_init();
     boot_hw_report();
 
-    /* Map UART (address from DTB) */
+    /* Map UART */
     uart = NULL;
     {
         vka_object_t frame;
-        error = sel4platsupport_alloc_frame_at(&vka, hw_info.uart_paddr,
+#ifdef PLAT_RPI4
+        /* RPi4: use mini UART (AUX block at 0xFE215000).
+         * Without overlays/disable-bt.dtbo on SD card, GPIO 14/15
+         * are ALT5 = mini UART. PL011 is not connected to GPIO.
+         * The seL4 kernel also uses mini UART (userAvailable=true). */
+        uint64_t uart_paddr = RPI4_AUX_PADDR;
+#else
+        uint64_t uart_paddr = hw_info.uart_paddr;
+#endif
+        error = sel4platsupport_alloc_frame_at(&vka, uart_paddr,
                                                 seL4_PageBits, &frame);
         if (!error) {
             void *v = vspace_map_pages(&vspace, &frame.cptr, NULL,
                 seL4_AllRights, 1, seL4_PageBits, 0);
-            if (v) uart = (volatile uint32_t *)v;
+            if (v) {
+                uart = (volatile uint32_t *)v;
+#ifdef PLAT_RPI4
+                /* Enable mini UART RX + TX */
+                uart[MU_CNTL / 4] = 0x03;  /* RX_EN | TX_EN */
+                /* Drain stale data */
+                while (uart[MU_LSR / 4] & LSR_DATA_READY)
+                    (void)uart[MU_IO / 4];
+                printf("[boot] Mini UART mapped at 0x%lx\n",
+                       (unsigned long)uart_paddr);
+#endif
+            }
         }
+        if (!uart) printf("[boot] UART map failed\n");
     }
 
     vka_object_t fault_ep;
@@ -277,18 +315,22 @@ int main(int argc, char *argv[]) {
              * seL4_Wait on an unbound notification works fine. */
         }
         if (main_ntfn_cap && uart) {
-            /* Get IRQ handler cap for UART0 */
+#ifdef PLAT_RPI4
+            /* RPi4 mini UART: use polling mode.
+             * Mini UART IRQ is shared with AUX SPI and requires
+             * different setup. Polling works fine for interactive use. */
+            printf("[boot] UART: mini UART polling mode\n");
+#else
+            /* QEMU PL011: IRQ-driven input */
             cspacepath_t irq_path;
             ierr = vka_cspace_alloc_path(&vka, &irq_path);
             if (!ierr) {
                 ierr = simple_get_IRQ_handler(&simple, hw_info.uart_irq, irq_path);
                 if (!ierr) {
                     uart_irq_cap = irq_path.capPtr;
-                    /* Bind IRQ to our notification */
                     ierr = seL4_IRQHandler_SetNotification(
                         uart_irq_cap, main_ntfn_cap);
                     if (!ierr) {
-                        /* Enable PL011 RX interrupt */
                         uart[UART_IMSC / 4] |= IMSC_RXIM;
                         seL4_IRQHandler_Ack(uart_irq_cap);
                         irq_uart_active = 1;
@@ -301,6 +343,7 @@ int main(int argc, char *argv[]) {
                     printf("[boot] UART IRQ handler failed: %d\n", ierr);
                 }
             }
+#endif
         }
         if (!irq_uart_active)
             printf("[boot] UART: polling mode (IRQ unavailable)\n");
@@ -310,9 +353,15 @@ int main(int argc, char *argv[]) {
     while (1) {
         /* Poll UART for keyboard -- drain FIFO in burst for paste */
         int uart_batch = 0;
+#ifdef PLAT_RPI4
+        while (uart && (uart[MU_LSR / 4] & LSR_DATA_READY) && uart_batch < 64) {
+            uart_batch++;
+            char c = (char)(uart[MU_IO / 4] & 0xFF);
+#else
         while (uart && !(uart[UART_FR / 4] & FR_RXFE) && uart_batch < 64) {
             uart_batch++;
             char c = (char)(uart[UART_DR / 4] & 0xFF);
+#endif
             if (c == 0x03 && fg_pid > 0) {
                 /* Ctrl-C: two-stage SIGINT delivery.
                  * First ^C: set SIGINT pending, process self-terminates
@@ -374,7 +423,11 @@ int main(int argc, char *argv[]) {
          * ICR write (unnecessary for level-triggered RX) and
          * check RXFE before sleeping. */
         if (irq_uart_active && main_ntfn_cap) {
+#ifdef PLAT_RPI4
+            if (uart && (uart[MU_LSR / 4] & LSR_DATA_READY)) {
+#else
             if (uart && !(uart[UART_FR / 4] & FR_RXFE)) {
+#endif
                 seL4_Yield();  /* FIFO has data -- drain next iter */
             } else {
                 seL4_Wait(main_ntfn_cap, NULL);  /* FIFO empty -- sleep */

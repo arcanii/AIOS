@@ -2,12 +2,12 @@
 
 ## Project Overview
 
-**AIOS (Open Aries)** is a microkernel operating system built on seL4, targeting AArch64/QEMU.
+**AIOS (Open Aries)** is a microkernel operating system built on seL4, targeting AArch64 (QEMU and Raspberry Pi 4).
 
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: main
 * **Developer**: Bryan
-* **Current Version**: v0.4.90
+* **Current Version**: v0.4.93
 
 ## Development Environment
 
@@ -596,6 +596,11 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * Socket fd read/write: routed through posix_file.c (is_socket check) to net_server via NET_RECVFROM/NET_SENDTO IPC. Max 900 bytes per MR-based transfer.
 * Morecore limit: 16MB exhausts VKA page frames (4096 BSS pages per process). 8MB is safe max with 8000-page pool. Increasing further requires demand paging or larger pool.
 * zsh rebuild: zsh uses configure + make for headers, then aios-cc re-link. Requires libfakecurses.a stub and getrandom stub.
+* RPi4 UART: Without overlays/disable-bt.dtbo on SD card, GPIO 14/15 = mini UART (ALT5), NOT PL011. Root task uses mini UART (AUX 0xFE215000, regs at +0x40). Kernel also uses mini UART (bcm2835-aux-uart). PL011 goes to Bluetooth module.
+* RPi4 DTB addresses: DTB has VC bus addresses (0x7Exxxxxx). ARM physical = VC + 0x80000000. DTB parser translates in fdt_read_reg_node(). overlay-rpi4-address-mapping.dts only translates a few devices (has TODO).
+* RPi4 display: Diagnostic stub writes fb_info at phys 0x3A000000 (device untyped, not zeroed). DTS reserves 0x3A000000-0x40000000 for this. display_vc.c Phase A reads fb_info and maps existing framebuffer.
+* RPi4 SD card: blk_emmc.c reads ext2 from partition 2 (MBR type 0x83). Partition offset added to all sector reads. Phase 1 is read-only PIO (no writes, no DMA).
+* RPi4 elfloader: printf disabled (#define printf(...) ((void)0)) for CONFIG_PLAT_BCM2711. Mini UART in elfloader hangs CPU bus. Elfloader serial1 = mini UART.
 
 ## Pending Items
 

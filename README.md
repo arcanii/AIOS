@@ -3,19 +3,23 @@
 A research microkernel operating system built on seL4
 
 Architectures / Hardware Supported
-- :white_check_mark: AArch64 (QEMU)
-- :white_medium_square: AArch64 (Raspberry Pi 4 Model B)
+- :white_check_mark: AArch64 (QEMU virt)
+- :white_check_mark: AArch64 (Raspberry Pi 4 Model B) -- boots to interactive login
 - :white_medium_square: AArch64 (Raspberry Pi 5)
 - :white_medium_square: X86-64 
 
 ## Latest Achievements
+- **RPi4 hardware boot** -- seL4 boots on Raspberry Pi 4, interactive login over serial
+- RPi4 HDMI display via VideoCore mailbox framebuffer (diagnostic stub + root task)
+- RPi4 SD card driver: BCM2711 EMMC2 SDHCI, PIO read, MBR partition parsing, ext2 mount
+- RPi4 serial I/O: BCM2835 mini UART for interactive shell over USB-to-serial adapter
 - Two shells: DASH (https://github.com/tklauser/dash) + ZSH (script mode)
 - C compiler: TinyCC (https://github.com/TinyCC/tinycc) -- compiles and runs C programs on AIOS
 - SSH server with encrypted transport (AES-256-CTR, HMAC-SHA-256, password auth)
 - Networking: virtio-net driver, TCP/IP stack, HTTP server
 - Linux compatibility layer -- 11 compat syscalls (getrandom, futex, poll, prlimit64, sysinfo, etc.)
 - Virtual devices -- /dev/urandom, /dev/random, /dev/zero
-- Display (Graphics) -- ramfb framebuffer with splash screen
+- Display (Graphics) -- ramfb (QEMU) + VideoCore mailbox (RPi4) framebuffer with splash screen
 
 ## Overview
 
@@ -29,11 +33,11 @@ External AI (Claude) is used as a development tool for code generation
 and review. This project is also a study in AI-assisted systems programming.
 The long-term goal is self-hosted development within AIOS itself.
 
-**Current version:** v0.4.88
+**Current version:** v0.4.93
 
 ## What Works
 
-- **seL4 microkernel** on AArch64/QEMU (Cortex-A53, 4-core SMP)
+- **seL4 microkernel** on AArch64/QEMU (Cortex-A53) and Raspberry Pi 4 (Cortex-A72)
 - **ext2 filesystem** with read/write, indirect blocks, multi-group allocation, block/inode freeing on unlink
 - **VFS layer** with ext2 root mount and procfs at /proc
 - **81+ POSIX syscalls** via musllibc shim (open, read, write, fork, exec, pipe, dup2, statx, getrandom, futex, poll, ...)
@@ -44,7 +48,8 @@ The long-term goal is self-hosted development within AIOS itself.
 - **dash login shell** -- POSIX shell as primary login shell via /etc/passwd pw_shell
 - **zsh script mode** -- alternative shell with arrays, extended globbing, arithmetic (Phase 1)
 - **SSH server** -- interactive shell over SSH (AES-256-CTR, HMAC-SHA-256, password auth, Ctrl-C forwarding)
-- **Graphical display** -- ramfb framebuffer (1024x768), 8x8 bitmap font, splash images from disk
+- **Graphical display** -- ramfb (QEMU) + VideoCore mailbox (RPi4) framebuffer, 1024x768, fb_console
+- **RPi4 SD card** -- BCM2711 EMMC2 SDHCI driver, PIO read, 25MHz 4-bit bus, MBR partition parsing
 - **Display server IPC** -- user programs draw to framebuffer via disp_ep (fbshow command)
 - **Networking** -- virtio-net driver, ARP/ICMP/UDP/TCP stack, HTTP server, POSIX sockets
 - **UART IRQ wakeup** -- PL011 interrupt-driven main loop (seL4_Wait replaces busy-polling)
@@ -89,11 +94,12 @@ capability-mediated access to servers.
        |          |          |
      ext2.c    procfs.c    vfs.c
        |
-    virtio-blk + virtio-net + ramfb drivers
+    virtio-blk + virtio-net + ramfb (QEMU)
+    BCM2711 EMMC2 + VideoCore mailbox (RPi4)
        |
     seL4 microkernel (AArch64, 4-core SMP)
        |
-    QEMU virt / Raspberry Pi
+    QEMU virt / Raspberry Pi 4
 
 ## Prerequisites
 
