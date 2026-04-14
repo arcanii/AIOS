@@ -245,7 +245,12 @@ void boot_display_init(void) {
     printf("[boot] Display: %ux%u\n", gpu_width, gpu_height);
     LOG_INFO("display initialized");
 
+    /* Hold splash on screen briefly before console clears it */
+    for (volatile int splash_delay = 0; splash_delay < 20000000; splash_delay++) {
+        asm volatile("" ::: "memory");
+    }
+
     /* Initialize framebuffer text console for boot messages.
-     * This replaces the splash with a scrolling text display. */
+     * Console starts below the header area, preserving the top banner. */
     fb_console_init();
 }

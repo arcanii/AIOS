@@ -1,7 +1,7 @@
 /*
  * blk_emmc.c -- BCM2711 EMMC2 SDHCI block driver (RPi4)
  *
- * Phase 1: Read-only PIO mode. Single-block CMD17 reads.
+ * Phase 2: Read/write PIO mode. CMD17 reads, CMD24 writes.
  * Parses MBR to find ext2 partition, adds sector offset.
  *
  * BCM2711 EMMC2 is an Arasan SDHCI controller at ARM phys 0xFE340000.
@@ -575,11 +575,82 @@ int plat_blk_read(uint64_t sector, void *buf) {
 }
 
 /* ----------------------------------------------------------------
- * HAL: plat_blk_write -- Phase 1 stub (read-only)
+ * emmc_write_raw_sector -- write one 512-byte sector via PIO
+ *
+ * lba:  physical sector number on SD card
+ * buf:  source buffer (512 bytes)
+ * Returns 0 on success, -1 on error
+ * ---------------------------------------------------------------- */
+static int emmc_write_raw_sector(uint64_t lba, const void *buf) {
+    if (emmc_wait_dat() != 0) return -1;
+
+    /* Clear interrupts */
+    EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
+
+    /* Block size = 512, block count = 1 */
+    EMMC_W(REG_BLKSIZECNT, (1u << 16) | 0x200);
+
+    /* CMD24: WRITE_SINGLE_BLOCK */
+    uint32_t arg = card_is_sdhc ? (uint32_t)lba : (uint32_t)(lba * 512);
+    EMMC_W(REG_ARGUMENT, arg);
+    EMMC_W(REG_XFER_CMD,
+        CMD_INDEX(24) | CMD_RESP_48 | CMD_CRC_EN | CMD_IDX_EN |
+        CMD_DATA | XFER_BLKCNT_EN);
+
+    /* Wait for command complete */
+    for (int t = 0; t < 10000000; t++) {
+        arch_dmb();
+        uint32_t st = EMMC_R(REG_INT_STATUS);
+        if (st & INT_ERROR) {
+            printf("[blk] Write LBA %u cmd err: 0x%x\n", (uint32_t)lba, st);
+            EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
+            return -1;
+        }
+        if (st & INT_CMD_DONE) break;
+    }
+    EMMC_W(REG_INT_STATUS, INT_CMD_DONE);
+
+    /* Wait for buffer write ready */
+    for (int t = 0; t < 10000000; t++) {
+        arch_dmb();
+        uint32_t st = EMMC_R(REG_INT_STATUS);
+        if (st & INT_ERROR) {
+            printf("[blk] Write LBA %u buf err: 0x%x\n", (uint32_t)lba, st);
+            EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
+            return -1;
+        }
+        if (st & INT_BUF_WR) break;
+    }
+    EMMC_W(REG_INT_STATUS, INT_BUF_WR);
+
+    /* Copy caller data into aligned buffer then write 128 words */
+    memcpy(sector_buf, buf, 512);
+    for (int i = 0; i < 128; i++) {
+        EMMC_W(REG_BUFFER, sector_buf[i]);
+    }
+
+    /* Wait for transfer complete */
+    for (int t = 0; t < 10000000; t++) {
+        arch_dmb();
+        uint32_t st = EMMC_R(REG_INT_STATUS);
+        if (st & INT_ERROR) {
+            printf("[blk] Write LBA %u xfer err: 0x%x\n", (uint32_t)lba, st);
+            EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
+            return -1;
+        }
+        if (st & INT_XFER_DONE) break;
+    }
+    EMMC_W(REG_INT_STATUS, INT_XFER_DONE);
+
+    return 0;
+}
+
+/* ----------------------------------------------------------------
+ * HAL: plat_blk_write -- write sector relative to ext2 partition
  * ---------------------------------------------------------------- */
 int plat_blk_write(uint64_t sector, const void *buf) {
-    (void)sector; (void)buf;
-    return -1;
+    if (!emmc_initialized) return -1;
+    return emmc_write_raw_sector(part_offset + sector, buf);
 }
 
 /* ----------------------------------------------------------------

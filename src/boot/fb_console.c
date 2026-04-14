@@ -19,6 +19,9 @@
 
 #define FB_CELL_W   8       /* pixels per character width */
 #define FB_CELL_H   10      /* pixels per character height (8 glyph + 2 spacing) */
+
+/* Text rows reserved for splash/boot header */
+#define CON_HEADER_ROWS  8
 #define FB_MAX_COLS 128     /* 1024 / 8 */
 #define FB_MAX_ROWS 76      /* 768 / 10 */
 
@@ -106,12 +109,13 @@ void fb_console_init(void) {
     if (con_rows > FB_MAX_ROWS) con_rows = FB_MAX_ROWS;
 
     con_col = 0;
-    con_row = 0;
+    con_row = CON_HEADER_ROWS;
 
-    /* Fill framebuffer with background color */
-    uint32_t total = gpu_width * gpu_height;
-    for (uint32_t i = 0; i < total; i++)
-        gpu_fb[i] = CON_BG;
+    /* Clear framebuffer below the header area (preserve splash top) */
+    uint32_t start_y = (uint32_t)CON_HEADER_ROWS * FB_CELL_H;
+    for (uint32_t y = start_y; y < gpu_height; y++)
+        for (uint32_t x = 0; x < gpu_width; x++)
+            gpu_fb[y * gpu_width + x] = CON_BG;
 
     fb_con_active = 1;
 }
