@@ -283,7 +283,7 @@ void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             for (int i = 0; s[i] && i < 15; i++) info[32 + i] = s[i];
             
             /* version — seL4 + build info */
-            const char *ver = "seL4 15.0.0 SMP #" _AIOS_XSTR(AIOS_BUILD_NUMBER);
+            const char *ver = AIOS_BUILD_DATE;
             for (int i = 0; ver[i] && i < 15; i++) info[48 + i] = ver[i];
             
             /* machine */

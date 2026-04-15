@@ -84,10 +84,107 @@ def get_elf_entry_point(elf_path):
 
 
 def convert_elf_to_bin(elf_path, bin_path):
-    """Convert ELF to flat binary for RPi firmware loader."""
-    run(f'aarch64-linux-gnu-objcopy -O binary "{elf_path}" "{bin_path}"')
-    sz = os.path.getsize(bin_path)
-    print(f"  Converted ELF to binary: {sz} bytes")
+    """Convert ELF to flat binary with ARM64 relocator stub.
+
+    RPi4 firmware requires ARM64 Image header (magic ARMd at 0x30)
+    and always relocates to 0x80000. The 4KB relocator stub copies
+    the seL4 payload to its correct link address and jumps to it.
+    """
+    import struct, subprocess as sp
+
+    # Step 1: flat binary
+    raw_path = bin_path + ".raw"
+    run(f'aarch64-linux-gnu-objcopy -O binary "{elf_path}" "{raw_path}"')
+
+    # Step 2: read entry point
+    entry = get_elf_entry_point(elf_path)
+    if entry is None:
+        print("  FAIL: cannot read entry point")
+        return
+
+    # Step 3: read payload, pad to 16-byte alignment
+    with open(raw_path, "rb") as f:
+        payload = f.read()
+    pad = (16 - (len(payload) % 16)) % 16
+    payload += b'\x00' * pad
+    ps = len(payload)
+    stub_size = 4096
+
+    # Step 4: generate relocator assembly
+    dl, dh = entry & 0xFFFF, (entry >> 16) & 0xFFFF
+    sl, sh = ps & 0xFFFF, (ps >> 16) & 0xFFFF
+    asm_src = f""".section .text
+.global _start
+_start:
+    b relocate
+    .word 0
+    .quad 0
+    .quad {stub_size + ps}
+    .quad 0
+    .quad 0
+    .quad 0
+    .word 0x644d5241
+    .word 0
+    .quad 0
+relocate:
+    mov x20, x0
+    msr daifset, #0xf
+    adr x5, _start
+    mov x0, x5
+    add x0, x0, #{stub_size}
+    movz x1, #0x{dl:x}
+    movk x1, #0x{dh:x}, lsl #16
+    movz x2, #0x{sl:x}
+    movk x2, #0x{sh:x}, lsl #16
+    mov x10, x1
+1:  ldp x3, x4, [x0], #16
+    stp x3, x4, [x1], #16
+    subs x2, x2, #16
+    b.gt 1b
+    dsb sy
+    isb
+    ic iallu
+    dsb sy
+    isb
+    mov x0, x20
+    br x10
+.balign {stub_size}
+"""
+    asm_path = bin_path + ".S"
+    with open(asm_path, "w") as f:
+        f.write(asm_src)
+
+    # Step 5: assemble + link + objcopy
+    obj_path = bin_path + ".o"
+    elf_stub = bin_path + ".stub.elf"
+    stub_bin = bin_path + ".stub.bin"
+    for cmd in [
+        ["aarch64-linux-gnu-as", "-o", obj_path, asm_path],
+        ["aarch64-linux-gnu-ld", "-Ttext=0", "-o", elf_stub, obj_path],
+        ["aarch64-linux-gnu-objcopy", "-O", "binary", elf_stub, stub_bin],
+    ]:
+        r = sp.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"  FAIL: {cmd[0]}: {r.stderr}")
+            return
+
+    with open(stub_bin, "rb") as f:
+        stub = f.read()
+    stub += b'\x00' * (stub_size - len(stub))
+
+    # Step 6: combine stub + payload
+    with open(bin_path, "wb") as f:
+        f.write(stub + payload)
+
+    total = stub_size + ps
+    print(f"  Relocator stub: {stub_size} bytes (entry 0x{entry:x})")
+    print(f"  Payload: {ps} bytes")
+    print(f"  Total kernel8.img: {total} bytes")
+
+    # Cleanup temp files
+    for p in [raw_path, asm_path, obj_path, elf_stub, stub_bin]:
+        if os.path.exists(p):
+            os.remove(p)
 
 
 def create_config_txt(path, mem_mb, kernel_addr=None):
@@ -95,11 +192,11 @@ def create_config_txt(path, mem_mb, kernel_addr=None):
     config = "# AIOS RPi4 boot config\n"
     config += "arm_64bit=1\n"
     config += "kernel=kernel8.img\n"
-    if kernel_addr is not None:
-        config += f"kernel_address=0x{kernel_addr:x}\n"
+    # kernel_address removed: firmware ignores it for ARM64 images
+    # Relocator stub handles placement
     config += "enable_uart=1\n"
     config += "uart_2ndstage=1\n"
-    config += "dtoverlay=disable-bt\n"
+    # dtoverlay=disable-bt removed: GPIO 14/15 must be mini UART
     config += "core_freq=250\n"
     config += "core_freq_min=250\n"
     config += "disable_overscan=1\n"
@@ -219,7 +316,7 @@ def main():
         print("FAIL: cannot read ELF entry point")
         sys.exit(1)
     config_path = os.path.join(tmp_dir, "config.txt")
-    create_config_txt(config_path, args.mem, entry_addr)
+    create_config_txt(config_path, args.mem)
     print(f"  config.txt (mem={args.mem}MB, kernel_address=0x{entry_addr:x})")
 
     # Step 4: Create FAT32 boot partition
@@ -279,7 +376,10 @@ def main():
     print(f"\nCreated {args.output} ({total_mb} MB)")
     print(f"  Partition 1: FAT32 boot ({BOOT_SIZE_MB}MB)")
     print(f"  Partition 2: ext2 system ({ext2_size // (1024*1024)}MB)")
-    print(f"\nFlash to SD card:")
+    print("\nWARNING: mtools FAT32 may not work with RPi firmware.")
+    print("  Use Method 2 (diskutil + cp) if boot fails.")
+    print("  See hw/rpi4/BOOT_NOTES.md")
+    print("\nFlash to SD card:")
     print(f"  diskutil list                    # find SD card (e.g. /dev/disk4)")
     print(f"  diskutil unmountDisk /dev/diskN")
     print(f"  sudo dd if={args.output} of=/dev/rdiskN bs=1m")

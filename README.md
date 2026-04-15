@@ -9,10 +9,11 @@ Architectures / Hardware Supported
 - :white_medium_square: X86-64 
 
 ## Latest Achievements
+- **RPi4 serial console** -- interactive login on real Raspberry Pi 4 hardware via USB-serial (GPIO 14/15)
+- **Dynamic hardware detection** -- /proc/hw serves CPU, block device, RAM info from DTB at runtime
 - **TCC self-hosting** -- all 12 TCC source files compile natively on AIOS (link step WIP)
 - **Unix pipes working** -- `echo hello | cat`, `ls /tmp | head`, double pipes (`a | b | c`)
 - **Crypto server** -- ChaCha20 CSPRNG, /dev/urandom and getrandom() via dedicated IPC server
-- **RPi4 hardware boot** -- seL4 boots on Raspberry Pi 4, interactive login over serial and HDMI
 - Two shells: DASH (https://github.com/tklauser/dash) + ZSH (script mode)
 - C compiler: TinyCC (https://github.com/TinyCC/tinycc) -- compiles and runs C programs on AIOS
 - SSH server with encrypted transport (AES-256-CTR, HMAC-SHA-256, password auth)
@@ -32,7 +33,7 @@ External AI (Claude) is used as a development tool for code generation
 and review. This project is also a study in AI-assisted systems programming.
 The long-term goal is self-hosted development within AIOS itself.
 
-**Current version:** v0.4.96
+**Current version:** v0.4.98
 
 ## What Works
 

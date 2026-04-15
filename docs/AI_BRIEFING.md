@@ -7,7 +7,7 @@
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: main
 * **Developer**: Bryan
-* **Current Version**: v0.4.95
+* **Current Version**: v0.4.98
 
 ## Development Environment
 
@@ -597,6 +597,8 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * Socket fd read/write: routed through posix_file.c (is_socket check) to net_server via NET_RECVFROM/NET_SENDTO IPC. Max 900 bytes per MR-based transfer.
 * Morecore limit: 16MB exhausts VKA page frames (4096 BSS pages per process). 8MB is safe max with 8000-page pool. Increasing further requires demand paging or larger pool.
 * zsh rebuild: zsh uses configure + make for headers, then aios-cc re-link. Requires libfakecurses.a stub and getrandom stub.
+* RPi4 boot: Firmware requires ARM64 Image header (ARMd magic at 0x30) and always relocates to 0x80000. 4KB relocator stub copies seL4 to link address. mtools FAT32 breaks firmware -- use diskutil Method 2. See hw/rpi4/BOOT_NOTES.md.
+* RPi4 disabled drivers: GENET (MMIO mapping crash), VideoCore display (VKA allocator assert). Both return -1 in plat_*_init().
 * RPi4 UART: Without overlays/disable-bt.dtbo on SD card, GPIO 14/15 = mini UART (ALT5), NOT PL011. Root task uses mini UART (AUX 0xFE215000, regs at +0x40). Kernel also uses mini UART (bcm2835-aux-uart). PL011 goes to Bluetooth module.
 * RPi4 DTB addresses: DTB has VC bus addresses (0x7Exxxxxx). ARM physical = VC + 0x80000000. DTB parser translates in fdt_read_reg_node(). overlay-rpi4-address-mapping.dts only translates a few devices (has TODO).
 * RPi4 display: Diagnostic stub writes fb_info at phys 0x3A000000 (device untyped, not zeroed). DTS reserves 0x3A000000-0x40000000 for this. display_vc.c Phase A reads fb_info and maps existing framebuffer.
@@ -648,7 +650,7 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 38. ~~PAL Phase 0~~ DONE in v0.4.89: 3 HAL interfaces, 3 platform drivers (blk+net+display), 14 globals privatized
 39. ~~PAL cleanup (Step 7)~~ DONE in v0.4.90: shared plat_virtio_probe, bridge globals removed, 3 dead files deleted
 40. ~~RPi4 Phase 1~~ DONE in v0.4.90: multi-target build, stub drivers, DTB parsers, mksdcard.py, hardware verified (HDMI framebuffer)
-41. RPi4 Phase 2: BCM2835 SDHCI SD card driver (ext2 from disk, login on RPi4)
+41. ~~RPi4 Phase 2~~ DONE in v0.4.98: SDHCI read-only PIO, ext2 from SD card, serial login on RPi4
 42. RPi4 Phase 3: BCM54213 GENET Ethernet driver (SSH into RPi4)
 43. RPi4 Phase 4: VideoCore mailbox framebuffer (integrated display server)
 44. ~~TCC self-hosting compilation~~ PROVEN in v0.4.95: all 12 .c files compile natively, tcc2 runs
@@ -695,6 +697,8 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 | v0.4.63 | sbase integration test, utimensat fix |
 | v0.4.64 | Allocator 4000pg, /dev/null, dup2 fix, ioctl TIOCGWINSZ, fcntl F_DUPFD, setpgid, pip_dest leak fix, dash port (compiled + linked, first boot) |
 | v0.4.65 | Shared-memory pipes, VKA allocator audit, O_APPEND (>> redirect), pipe cleanup fix |
+| v0.4.97 | Development protocol, session docs, rpi4 branch merge |
+| v0.4.98 | RPi4 serial boot, ARM64 relocator, /proc/hw, dynamic banner, RAM fix |
 | v0.4.66 | Dash stdout working, FS_APPEND IPC op, shell >> via FS_APPEND, SHM pipe phase 2 server-side, PIPE_BUF_SIZE fix, aios-cc EXTRA flags fix, split_args_qa |
 | v0.4.67 | SHM pipes client enabled, dash pipelines + semicolons + interactive, PIPE_SET_PIPES, stdin blocking, quote-aware pipe detection, cap copy cleanup |
 | v0.4.68 | Dash as primary login shell, tty_echo=1, TTY_READ cooked stdin, RAW/COOKED mode switching, getty reads pw_shell from /etc/passwd, buffer isolation on mode switch, macOS sed fix |

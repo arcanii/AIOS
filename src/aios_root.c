@@ -241,14 +241,14 @@ int main(int argc, char *argv[]) {
     vka_alloc_endpoint(&vka, &serial_ep);
 
     /* Memory accounting */
-    int total_mem = 0;
+    uint64_t total_mem = 0;
     for (seL4_Word i = info->untyped.start; i < info->untyped.end; i++) {
         seL4_UntypedDesc *ut = &info->untypedList[i - info->untyped.start];
         if (!ut->isDevice) total_mem += BIT(ut->sizeBits);
     }
-    aios_total_mem = (uint32_t)total_mem;
-    printf("[boot] RAM: %d MB, UART: %s\n",
-           total_mem / (1024 * 1024), uart ? "OK" : "no");
+    aios_total_mem = (uint32_t)(total_mem / (1024 * 1024));
+    printf("[boot] RAM: %lu MB, UART: %s\n",
+           (unsigned long)(total_mem / (1024 * 1024)), uart ? "OK" : "no");
     AIOS_LOG_INFO_V("RAM available: ", total_mem / (1024 * 1024));
     AIOS_LOG_INFO("All subsystems OK");
     printf("[boot] All subsystems OK\n\n");
@@ -275,7 +275,7 @@ int main(int argc, char *argv[]) {
     /* Boot status on HDMI console (for RPi4 without serial adapter) */
     fb_console_printf("AIOS %s\n", AIOS_VERSION_STR);
     fb_console_printf("[boot] RAM: %lu MB, CPU: %s\n",
-                      (unsigned long)(aios_total_mem / (1024 * 1024)),
+                      (unsigned long)aios_total_mem,
                       hw_info.cpu_compat);
     fb_console_printf("[boot] UART: %s (0x%lx IRQ %u)\n",
                       uart ? "OK" : "no",

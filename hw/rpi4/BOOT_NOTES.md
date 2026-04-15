@@ -1,6 +1,6 @@
 # RPi4 Boot Notes
 
-Verified working: v0.4.98, build 1531, 2026-04-15
+Verified working: v0.4.98, build 1541, 2026-04-15
 
 ## Hardware
 - Board: Raspberry Pi 4 Model B (BCM2711, 4x Cortex-A72)
@@ -76,7 +76,7 @@ Verified working: v0.4.98, build 1531, 2026-04-15
 - RPi4 morecore: 8MB (settings-rpi4.cmake, separate from QEMU 6MB)
 - gpu_mem=64 in config.txt (minimum for firmware operation)
 - total_mem=4096
-- RAM display bug: shows -217 MB (unsigned overflow in DTB memory parsing)
+- RAM display: fixed (uint64_t). Shows 3878 MB on RPi4.
 
 ## config.txt (working, saved as hw/rpi4/config.txt)
 
@@ -156,7 +156,15 @@ No dtoverlay=disable-bt (need mini UART on GPIO 14/15).
 - "No compatible kernel found": missing ARM64 header or corrupt FAT32
 - "Kernel relocated to 0x80000": normal (relocator handles this)
 
-## Known Bugs (v0.4.98)
-- RAM display: -217 MB (unsigned overflow in DTB memory parsing)
-- Banner: shows v0.4.96/build 1528 (stale ext2 binaries, need disk rebuild)
-- Arch string: says Cortex-A53 and virtio-blk (hardcoded, not runtime)
+## Fixed in This Session
+- RAM display: was -217 MB (int overflow). Fixed: uint64_t total_mem.
+- Banner: was hardcoded QEMU strings. Fixed: /proc/hw dynamic hardware query.
+- Arch string: now reads DTB cpu_compat + has_emmc at runtime via /proc/hw.
+- ext2 disk: rebuilt with RPi4-compiled apps (PLAT_RPI4 define via CMake).
+- uname: shows build date via AIOS_BUILD_DATE macro.
+
+## Remaining Issues
+- GENET Ethernet disabled (MMIO mapping crash)
+- VideoCore display disabled (VKA allocator assertion)
+- SMP disabled (secondary core parking not implemented)
+- mksdcard.py FAT32 not readable by RPi firmware (use Method 2 overlay)

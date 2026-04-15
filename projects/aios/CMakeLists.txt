@@ -33,6 +33,7 @@ endmacro()
 macro(AiosPosixApp name)
     AiosChildApp(${name})
     target_link_libraries(${name} aios_posix)
+    target_compile_definitions(${name} PRIVATE ${AIOS_PLATFORM})
     target_link_options(${name} PRIVATE
         -Wl,--wrap=main
         -Wl,--wrap=pthread_create

@@ -168,6 +168,60 @@ static int do_login(uint32_t *uid, uint32_t *gid,
 
 /* ---- MOTD display via FS_CAT IPC ---- */
 
+static void display_hw_banner(void) {
+    /* Read /proc/hw: line1=cpu, line2=blk, line3=net, line4=ram */
+    if (!fs_ep) {
+        ser_puts("  Kernel:  seL4 15.0.0\n");
+        return;
+    }
+    char hw[128];
+    int hw_len = 0;
+    /* Read /proc/hw via FS_CAT IPC */
+    char hpath[] = "/proc/hw";
+    int hpl = 8;
+    seL4_SetMR(0, (seL4_Word)hpl);
+    int hmr = 1;
+    seL4_Word hw2 = 0;
+    for (int i = 0; i < hpl; i++) {
+        hw2 |= ((seL4_Word)(uint8_t)hpath[i]) << ((i % 8) * 8);
+        if (i % 8 == 7 || i == hpl - 1) { seL4_SetMR(hmr++, hw2); hw2 = 0; }
+    }
+    seL4_MessageInfo_t hreply = seL4_Call(fs_ep,
+        seL4_MessageInfo_new(11, 0, 0, hmr));
+    seL4_Word htotal = seL4_GetMR(0);
+    if (htotal > 0 && htotal < 128) {
+        int hrmrs = (int)seL4_MessageInfo_get_length(hreply) - 1;
+        for (int i = 0; i < hrmrs && hw_len < (int)htotal; i++) {
+            seL4_Word rw = seL4_GetMR(i + 1);
+            for (int j = 0; j < 8 && hw_len < (int)htotal; j++)
+                hw[hw_len++] = (char)((rw >> (j * 8)) & 0xFF);
+        }
+    }
+    hw[hw_len] = 0;
+    /* Parse lines: cpu_compat count\nblk\nnet\nram\n */
+    char cpu[32] = {0}, blk[16] = {0}, net[16] = {0}, ram[16] = {0};
+    int line = 0, pos = 0;
+    char *dests[] = { cpu, blk, net, ram };
+    int maxes[] = { 31, 15, 15, 15 };
+    for (int i = 0; i < hw_len && line < 4; i++) {
+        if (hw[i] == 10) { line++; pos = 0; }
+        else if (pos < maxes[line]) { dests[line][pos++] = hw[i]; }
+    }
+    ser_puts("  Kernel:  seL4 15.0.0\n");
+    ser_puts("  Arch:    AArch64 (");
+    if (cpu[0]) ser_puts(cpu); else ser_puts("unknown");
+    ser_puts(")\n");
+    ser_puts("  FS:      ext2 (");
+    if (blk[0] == 'e') ser_puts("eMMC SDHCI");
+    else ser_puts("virtio-blk");
+    ser_puts(")\n");
+    if (ram[0]) {
+        ser_puts("  RAM:     ");
+        ser_puts(ram);
+        ser_puts(" MB\n");
+    }
+}
+
 static void display_motd(void) {
     if (!fs_ep) return;
     char mpath[] = "/etc/motd";
@@ -231,6 +285,9 @@ int main(int argc, char *argv[]) {
         }
 
         display_motd();
+        /* Read /proc/hw for dynamic hardware info */
+        display_hw_banner();
+        ser_puts("  Built:   " AIOS_BUILD_DATE "\n");
         ser_puts("Welcome, "); ser_puts(username); ser_puts("\n\n");
 
         /* Determine login shell from /etc/passwd */

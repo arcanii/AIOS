@@ -67,7 +67,7 @@ static int procfs_list(void *ctx, uint32_t ino, char *buf, int bufsize) {
     (void)ctx; (void)ino;
     int w = 0;
     /* List virtual files */
-    const char *entries[] = { "d .\n", "d ..\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "d self\n" };
+    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "d self\n" };
     for (int i = 0; i < 13 && w < bufsize - 1; i++) {
     
         const char *e = entries[i];
@@ -94,7 +94,37 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
     if (path[0] == '/') path++;
 
     int w = 0;
-    if (path[0] == 'v' && path[1] == 'e') {
+    if (path[0] == 'h' && path[1] == 'w') {
+        /* /proc/hw -- hardware summary for login banner etc.
+         * Line 1: cpu_compat cpu_count
+         * Line 2: blk_type (emmc or virtio)
+         * Line 3: net_type (genet, virtio, or none)
+         * Line 4: ram_mb */
+        {
+            const char *cpu = hw_info.cpu_compat;
+            while (*cpu && w < bufsize - 1) buf[w++] = *cpu++;
+            buf[w++] = ' ';
+            int nc = hw_info.cpu_count;
+            if (nc >= 10) buf[w++] = '0' + nc / 10;
+            buf[w++] = '0' + nc % 10;
+            buf[w++] = '\n';
+            const char *blk = hw_info.has_emmc ? "emmc" : "virtio";
+            while (*blk && w < bufsize - 1) buf[w++] = *blk++;
+            buf[w++] = '\n';
+            const char *net = hw_info.has_genet ? "genet" :
+                              hw_info.has_virtio ? "virtio" : "none";
+            while (*net && w < bufsize - 1) buf[w++] = *net++;
+            buf[w++] = '\n';
+            /* RAM in MB */
+            extern uint32_t aios_total_mem;
+            uint32_t ram = aios_total_mem;
+            char tmp[12]; int ti = 0;
+            if (ram == 0) tmp[ti++] = '0';
+            else while (ram) { tmp[ti++] = '0' + ram % 10; ram /= 10; }
+            while (ti > 0) buf[w++] = tmp[--ti];
+            buf[w++] = '\n';
+        }
+    } else if (path[0] == 'v' && path[1] == 'e') {
         /* /proc/version -- dynamic CPU info from DTB */
         {
             const char *p1 = "AIOS 0.4.x (seL4 15.0.0, ";

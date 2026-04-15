@@ -8,6 +8,9 @@
 /* Build number — auto-generated, do NOT edit by hand */
 #include "build_number.h"
 
+/* Build date -- set at compile time */
+#define AIOS_BUILD_DATE __DATE__
+
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)
 
