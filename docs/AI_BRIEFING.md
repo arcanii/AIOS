@@ -7,7 +7,7 @@
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: main
 * **Developer**: Bryan
-* **Current Version**: v0.4.93
+* **Current Version**: v0.4.95
 
 ## Development Environment
 
@@ -566,10 +566,11 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 * 30 AIOS programs in /bin/aios/
 * dash in /bin/dash (primary login shell)
 * zsh in /bin/zsh (script mode, Phase 1 -- arrays, loops, arithmetic, extended globbing)
-* tcc in /bin/tcc (compiler, tcc -c and tcc -o work, compile-and-run works)
+* tcc in /bin/tcc (compiler, tcc -c and tcc -o work, compile-and-run works, all 12 source files compile natively)
+* tcc2 in /tmp/tcc2 (host-linked from cross-compiled .o, proves TCC self-hosting concept)
 * SDK in /usr/ (211 musl headers, augmented libc.a with AIOS runtime, libtcc1.a, custom CRT, tcc headers)
 * Disk image: 256MB (was 128MB)
-* Total: 135 programs
+* Total: 136 programs
 
 ## Known Issues / Gotchas
 
@@ -650,6 +651,11 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 41. RPi4 Phase 2: BCM2835 SDHCI SD card driver (ext2 from disk, login on RPi4)
 42. RPi4 Phase 3: BCM54213 GENET Ethernet driver (SSH into RPi4)
 43. RPi4 Phase 4: VideoCore mailbox framebuffer (integrated display server)
+44. ~~TCC self-hosting compilation~~ PROVEN in v0.4.95: all 12 .c files compile natively, tcc2 runs
+45. VKA resource reclamation: fork+exec leaks ~3072 pages, not freed on exit. Blocks multi-step builds. Track per-process allocations, free in reap/exit path.
+46. Real mmap MAP_ANONYMOUS: current morecore is fixed 12MB BSS mapped eagerly. Need demand-paged anonymous mmap for dynamic memory growth (TCC linker needs 15-20MB).
+47. SHM file read path: 3.9MB libc.a via IPC (900 bytes/call) causes freeze. Need SHM bulk read for large files.
+48. TCC self-hosting link step: blocked by items 45-47. Native link needs VKA reclamation + mmap + faster I/O.
 
 ## Version History (0.4.x)
 
@@ -714,6 +720,11 @@ allocation (capability duplication for VSpace pages), not frame allocation.
 | v0.4.88 | ZSH Phase 1 (script mode, 1.19MB binary, 7 modules), morecore 4->8MB, allocator pool 4000->8000 pages, TCC + SDK rebuild with augmented libc, aios_entropy.c for mbedTLS, disk 128->256MB. See docs/NEXT_20260413a.md |
 | v0.4.89 | Platform Abstraction Layer Phase 0 complete: DESIGN_RPI.md, src/plat/ (3 HAL interfaces), blk_virtio.c + net_virtio.c + display_ramfb.c (all drivers behind HAL), 14 globals privatized, boot files reduced 894->316 lines, PLAT_QEMU_VIRT build define, cortex-a72 verified. See docs/NEXT_20260413a.md |
 | v0.4.90 | PAL Step 7 cleanup: shared plat_virtio_probe (MMIO scan), 5 bridge globals removed, 3 dead files deleted (-321 net). RPi4 Phase 1: multi-target build (AIOS_SETTINGS, PLAT_RPI4), stub drivers (blk/net/display), DTB parsers (emmc/genet/vc_mbox), mksdcard.py SD card builder, RPi4 hardware verified (boots AArch64, HDMI framebuffer via VideoCore mailbox). See docs/NEXT_20260413a.md |
+| v0.4.91 | RPi4 VideoCore mailbox framebuffer driver, fb_console, USB HID design, seL4 elfloader patches for BCM2711. See docs/NEXT_20260413b.md |
+| v0.4.92 | seL4 boots on RPi4 hardware: elfloader complete, root task runs, HDMI text TBD. See docs/NEXT_20260414a.md |
+| v0.4.93 | RPi4 interactive boot: HDMI display, SD card driver, mini UART serial, interactive login on RPi4. See docs/NEXT_20260414b.md |
+| v0.4.94 | Crypto server (ChaCha20 CSPRNG, /dev/urandom, getrandom via IPC), aios-cc -c detection fix, TCC cross-compilation, TCC SDK, first native compilation (hello from tcc), multi-file self-hosting partial (4/12 files). See docs/NEXT_20260415.md |
+| v0.4.95 | TCC self-hosting proven: all 12 source files compile natively, sym_test 7/7, ONE_SOURCE=0 + _Thread_local= flags, archive dedup analysis, tcc2 binary (host-linked) compiles hello.c on AIOS. Infrastructure blockers: VKA resource leak, eager morecore BSS, slow archive I/O. See docs/NEXT_20260415b.md |
 
 ## Architecture After v0.4.76
 

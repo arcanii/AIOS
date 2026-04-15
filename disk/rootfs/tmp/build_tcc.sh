@@ -4,7 +4,7 @@
 
 S=/usr/src/tcc
 O=/tmp
-CF="-D_Thread_local= -DTCC_TARGET_ARM64 -DCONFIG_TCC_STATIC -I $S -I $S/include -nostdinc -I /usr/include"
+CF="-DONE_SOURCE=0 -D_Thread_local= -DTCC_TARGET_ARM64 -DCONFIG_TCC_STATIC -I $S -I $S/include -nostdinc -I /usr/include"
 
 echo "=== TCC self-host build ==="
 
