@@ -1,4 +1,5 @@
 #include "aios/procfs.h"
+#include "aios/vka_audit.h"
 #include "aios/hw_info.h"
 #include "aios/aios_log.h"
 #include <stdio.h>
@@ -66,8 +67,8 @@ static int procfs_list(void *ctx, uint32_t ino, char *buf, int bufsize) {
     (void)ctx; (void)ino;
     int w = 0;
     /* List virtual files */
-    const char *entries[] = { "d .\n", "d ..\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "d self\n" };
-    for (int i = 0; i < 12 && w < bufsize - 1; i++) {
+    const char *entries[] = { "d .\n", "d ..\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "d self\n" };
+    for (int i = 0; i < 13 && w < bufsize - 1; i++) {
     
         const char *e = entries[i];
         while (*e && w < bufsize - 1) buf[w++] = *e++;
@@ -315,6 +316,23 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
                 break;
             }
         }
+    } else if (path[0] == 'v' && path[1] == 'k' && path[2] == 'a') {
+        /* /proc/vka -- VKA allocator audit */
+        extern int vka_live_frames;
+        extern int vka_peak_frames;
+        w += snprintf(buf + w, bufsize - w, "pool: 8000 pages\n");
+        uint32_t total = 0;
+        for (int i = 0; i < VKA_SUB_COUNT; i++) {
+            vka_audit_entry_t *e = &vka_audit[i];
+            if (e->total_pages)
+                w += snprintf(buf + w, bufsize - w,
+                    "%s: fr=%u cs=%u pg=%u\n",
+                    vka_sub_names[i], e->frames, e->cslots, e->total_pages);
+            total += e->total_pages;
+        }
+        w += snprintf(buf + w, bufsize - w,
+            "alloc_total: %u\nlive: %d\npeak: %d\n",
+            total, vka_live_frames, vka_peak_frames);
     } else {
         return -1;
     }

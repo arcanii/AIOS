@@ -37,4 +37,10 @@ void vka_audit_cslot(vka_subsystem_t sub);
 void vka_audit_untyped(vka_subsystem_t sub, int size_bits);
 void vka_audit_dump(void);
 
+/* Live frame counter: incremented on alloc, decremented on free */
+extern int vka_live_frames;
+extern int vka_peak_frames;
+void vka_audit_frame_alloc(void);
+void vka_audit_frame_free(void);
+
 #endif

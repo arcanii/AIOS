@@ -55,5 +55,19 @@ void vka_audit_dump(void) {
     }
     printf("  %-8s %6s %5s %4s %6s %6s %8u\n",
            "TOTAL", "", "", "", "", "", grand);
-    printf("  pool = 4000 pages, remaining ~ %u pages\n", 4000 - grand);
+    printf("  pool = 8000 pages, remaining ~ %u pages\n", 8000 - grand);
+    printf("  vka_live_frames = %d (peak %d)\n", vka_live_frames, vka_peak_frames);
+}
+
+int vka_live_frames = 0;
+int vka_peak_frames = 0;
+
+void vka_audit_frame_alloc(void) {
+    vka_live_frames++;
+    if (vka_live_frames > vka_peak_frames)
+        vka_peak_frames = vka_live_frames;
+}
+
+void vka_audit_frame_free(void) {
+    vka_live_frames--;
 }

@@ -30,5 +30,7 @@ set(KernelArmHypervisorSupport ON CACHE BOOL "" FORCE)
 set(KernelRootCNodeSizeBits 16 CACHE STRING "" FORCE)
 set(KernelArmExportPCNTUser ON CACHE BOOL "" FORCE)
 
-# Heap: 12MB morecore for tcc self-hosting and large programs
-set(LibSel4MuslcSysMorecoreBytes 12582912 CACHE STRING "" FORCE)
+# Heap: 6MB morecore (pipes + TCC compilation within 8000-page pool)
+# 6MB = ~1536 pages/process. 3 procs (pipe) = ~4900 < 8000. TCC -c works.
+# TCC link step still needs demand paging for large archives.
+set(LibSel4MuslcSysMorecoreBytes 6291456 CACHE STRING "" FORCE)

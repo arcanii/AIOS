@@ -9,17 +9,16 @@ Architectures / Hardware Supported
 - :white_medium_square: X86-64 
 
 ## Latest Achievements
-- **RPi4 hardware boot** -- seL4 boots on Raspberry Pi 4, interactive login over serial
-- RPi4 HDMI display via VideoCore mailbox framebuffer (diagnostic stub + root task)
-- RPi4 SD card driver: BCM2711 EMMC2 SDHCI, PIO read, MBR partition parsing, ext2 mount
-- RPi4 serial I/O: BCM2835 mini UART for interactive shell over USB-to-serial adapter
+- **TCC self-hosting** -- all 12 TCC source files compile natively on AIOS (link step WIP)
+- **Unix pipes working** -- `echo hello | cat`, `ls /tmp | head`, double pipes (`a | b | c`)
+- **Crypto server** -- ChaCha20 CSPRNG, /dev/urandom and getrandom() via dedicated IPC server
+- **RPi4 hardware boot** -- seL4 boots on Raspberry Pi 4, interactive login over serial and HDMI
 - Two shells: DASH (https://github.com/tklauser/dash) + ZSH (script mode)
 - C compiler: TinyCC (https://github.com/TinyCC/tinycc) -- compiles and runs C programs on AIOS
 - SSH server with encrypted transport (AES-256-CTR, HMAC-SHA-256, password auth)
 - Networking: virtio-net driver, TCP/IP stack, HTTP server
-- Linux compatibility layer -- 11 compat syscalls (getrandom, futex, poll, prlimit64, sysinfo, etc.)
-- Virtual devices -- /dev/urandom, /dev/random, /dev/zero
-- Display (Graphics) -- ramfb (QEMU) + VideoCore mailbox (RPi4) framebuffer with splash screen
+- Display -- ramfb (QEMU) + VideoCore mailbox (RPi4) framebuffer with splash screen
+- 86+ POSIX syscalls, Linux compat layer, /dev/urandom, /dev/random, /dev/zero
 
 ## Overview
 
@@ -33,28 +32,28 @@ External AI (Claude) is used as a development tool for code generation
 and review. This project is also a study in AI-assisted systems programming.
 The long-term goal is self-hosted development within AIOS itself.
 
-**Current version:** v0.4.93
+**Current version:** v0.4.96
 
 ## What Works
 
 - **seL4 microkernel** on AArch64/QEMU (Cortex-A53) and Raspberry Pi 4 (Cortex-A72)
 - **ext2 filesystem** with read/write, indirect blocks, multi-group allocation, block/inode freeing on unlink
 - **VFS layer** with ext2 root mount and procfs at /proc
-- **81+ POSIX syscalls** via musllibc shim (open, read, write, fork, exec, pipe, dup2, statx, getrandom, futex, poll, ...)
+- **86+ POSIX syscalls** via musllibc shim (open, read, write, fork, exec, pipe, dup2, statx, getrandom, futex, poll, ...)
 - **fork+exec+waitpid** process model with full ELF loading from disk
 - **POSIX signals** (sigaction, kill, sigprocmask) with cooperative handler dispatch
-- **Unix pipelines** (echo hello | cat | wc -c) with error recovery
+- **Unix pipelines** (echo hello | cat | wc -c, ls /tmp | head) with error recovery
 - **Shell operators** (&&, ||, >, >>, <) and environment variables
 - **dash login shell** -- POSIX shell as primary login shell via /etc/passwd pw_shell
 - **zsh script mode** -- alternative shell with arrays, extended globbing, arithmetic (Phase 1)
 - **SSH server** -- interactive shell over SSH (AES-256-CTR, HMAC-SHA-256, password auth, Ctrl-C forwarding)
 - **Graphical display** -- ramfb (QEMU) + VideoCore mailbox (RPi4) framebuffer, 1024x768, fb_console
-- **RPi4 SD card** -- BCM2711 EMMC2 SDHCI driver, PIO read, 25MHz 4-bit bus, MBR partition parsing
 - **Display server IPC** -- user programs draw to framebuffer via disp_ep (fbshow command)
 - **Networking** -- virtio-net driver, ARP/ICMP/UDP/TCP stack, HTTP server, POSIX sockets
 - **UART IRQ wakeup** -- PL011 interrupt-driven main loop (seL4_Wait replaces busy-polling)
-- **135+ programs** -- 99 sbase utilities, 30 AIOS programs, dash, zsh, tcc, sshd, hello_test
-- **tcc compiler** -- TinyCC compiles C programs on AIOS (single-file, multi-file, libc.a linking)
+- **136+ programs** -- 99 sbase utilities, 30 AIOS programs, dash, zsh, tcc, sshd
+- **TCC self-hosting** -- all 12 TCC source files compile natively on AIOS; tcc2 binary runs
+- **Crypto server** -- ChaCha20 CSPRNG, /dev/urandom + getrandom() via IPC endpoint
 - **Architecture layer** -- src/arch/ with aarch64 + x86_64 stubs (barriers, page ops)
 - **Dual-drive support** -- system disk + log disk, identified by ext2 volume label
 - **File-based logging** -- boot entries with timestamps persisted to /log/aios.log
@@ -70,7 +69,8 @@ The long-term goal is self-hosted development within AIOS itself.
 - **POSIX core 55/55 (100%)** -- all core POSIX interfaces implemented
 - **PSCI shutdown** -- clean power-off via /bin/aios/shutdown
 - **getconf** -- sysconf, confstr, pathconf, limits (99/99 sbase tools)
-- **VKA allocator audit** -- per-subsystem resource tracking via debug command
+- **VKA allocator audit** -- per-subsystem resource tracking via /proc/vka and debug command
+- **RPi4 SD card** -- BCM2711 EMMC2 SDHCI driver, PIO read, 25MHz 4-bit bus, MBR partition
 
 ## Architecture
 
@@ -82,12 +82,12 @@ capability-mediated access to servers.
             |
        aios_posix.c  (POSIX shim: 81+ syscalls, signals, pthreads, statx)
             |
-       +--------+--------+--------+--------+--------+---------+
-       |        |        |        |        |        |         |
-    pipe_srv exec_srv fs_srv  thread  auth_srv net_srv disp_srv
-    (pipes,  (ELF,    (VFS,   (pthr)  (SHA-3,  (TCP/  (frame-
-     fork,   process  ext2          users,  IP,    buffer,
-     exec,   life-    I/O)          sess)   HTTP)  fbshow)
+       +--------+--------+--------+--------+--------+---------+---------+
+       |        |        |        |        |        |         |         |
+    pipe_srv exec_srv fs_srv  thread  auth_srv net_srv disp_srv crypto
+    (pipes,  (ELF,    (VFS,   (pthr)  (SHA-3,  (TCP/  (frame-  (CSPRNG
+     fork,   process  ext2          users,  IP,    buffer,  /dev/
+     exec,   life-    I/O)          sess)   HTTP)  fbshow)  urandom)
      wait)   cycle)
             |
        +----------+----------+
