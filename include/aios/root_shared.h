@@ -228,6 +228,9 @@ extern uint32_t gpu_width;
 extern uint32_t gpu_height;
 extern seL4_CPtr disp_ep_cap;
 
+/* Crypto server endpoint (crypto_server thread) */
+extern seL4_CPtr crypto_ep_cap;
+
 extern volatile int fg_pid;
 extern volatile seL4_CPtr fg_fault_ep;
 extern volatile int fg_killed;
@@ -272,6 +275,7 @@ void boot_display_init(void);
 /* net_driver_fn moved to plat/qemu-virt/net_virtio.c as plat_net_driver_fn */
 void net_server_fn(void *arg0, void *arg1, void *ipc_buf);
 void display_server_fn(void *arg0, void *arg1, void *ipc_buf);
+void crypto_server_main(void *arg0, void *arg1, void *ipc_buf);
 
 void boot_load_config(void);
 void aios_system_shutdown(void);

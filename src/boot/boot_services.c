@@ -114,7 +114,20 @@ void boot_start_services(vka_object_t *fault_ep) {
         proc_add("display_server", 200);
     }
 
-        /* Spawn tty_server (CPIO, isolated process) */
+    /* Start crypto server (CSPRNG, ChaCha20-based /dev/urandom) */
+    {
+        vka_object_t crypto_ep_obj;
+        vka_audit_endpoint(VKA_SUB_BOOT);
+        vka_alloc_endpoint(&vka, &crypto_ep_obj);
+        crypto_ep_cap = crypto_ep_obj.cptr;
+        start_server_thread(
+            (sel4utils_thread_entry_fn)crypto_server_main,
+            crypto_ep_cap);
+        proc_add("crypto_server", 200);
+        printf("[boot] Crypto server started\n");
+    }
+
+    /* Spawn tty_server (CPIO, isolated process) */
     sel4utils_process_t serial_proc;
     seL4_CPtr caps[1], slots[1];
     caps[0] = serial_ep.cptr;

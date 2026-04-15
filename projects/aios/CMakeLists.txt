@@ -146,6 +146,9 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/servers/net_server.c
     ${AIOS_ROOT}/src/net/net_stack.c
     ${AIOS_ROOT}/src/net/net_tcp.c
+    ${AIOS_ROOT}/src/crypto/crypto_chacha20.c
+    ${AIOS_ROOT}/src/crypto/entropy_collect.c
+    ${AIOS_ROOT}/src/crypto/crypto_server.c
     ${PLAT_SOURCES}
     apps_cpio.o
 )
@@ -154,7 +157,7 @@ target_link_libraries(aios_root sel4runtime sel4
     sel4simple sel4simple-default
     sel4platsupport sel4muslcsys muslc
     cpio elf fdt)
-target_include_directories(aios_root PRIVATE ${AIOS_ROOT}/include ${AIOS_ROOT}/src/arch ${AIOS_ROOT}/src)
+target_include_directories(aios_root PRIVATE ${AIOS_ROOT}/include ${AIOS_ROOT}/src/arch ${AIOS_ROOT}/src ${AIOS_ROOT}/src/crypto)
 target_compile_definitions(aios_root PRIVATE ${AIOS_PLATFORM})
 target_link_options(aios_root PRIVATE -Wl,--no-copy-dt-needed-entries)
 

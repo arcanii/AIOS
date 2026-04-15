@@ -237,8 +237,14 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             child_disp = sel4utils_copy_cap_to_process(
                 proc, &vka, disp_ep_cap);
 
+        /* Copy crypto_ep to child (0 if no crypto server) */
+        seL4_CPtr child_crypto = 0;
+        if (crypto_ep_cap)
+            child_crypto = sel4utils_copy_cap_to_process(
+                proc, &vka, crypto_ep_cap);
+
         char s_ser[16], s_fs[16], s_thread[16], s_auth[16], s_pipe[16];
-        char s_net[16], s_disp[16];
+        char s_net[16], s_disp[16], s_crypto[16];
         snprintf(s_ser, 16, "%lu", (unsigned long)child_ser);
         snprintf(s_fs, 16, "%lu", (unsigned long)child_fs);
         snprintf(s_thread, 16, "%lu", (unsigned long)child_thread);
@@ -246,6 +252,7 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         snprintf(s_pipe, 16, "%lu", (unsigned long)child_pipe);
         snprintf(s_net, 16, "%lu", (unsigned long)child_net);
         snprintf(s_disp, 16, "%lu", (unsigned long)child_disp);
+        snprintf(s_crypto, 16, "%lu", (unsigned long)child_crypto);
 
         /* Build argv array */
         char *child_argv[MAX_EXEC_ARGS];
@@ -257,6 +264,7 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         child_argv[child_argc++] = s_pipe;
         child_argv[child_argc++] = s_net;
         child_argv[child_argc++] = s_disp;
+        child_argv[child_argc++] = s_crypto;
         /* Pass CWD from shell (encoded in exec_args after \x01 separator) */
         static char cwd_buf[256];
         cwd_buf[0] = '/'; cwd_buf[1] = 0;

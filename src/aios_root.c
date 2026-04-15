@@ -124,6 +124,7 @@ uint64_t gpu_fb_pa = 0;
 int gpu_available = 0;
 int gpu_vio_slot = -1;
 seL4_CPtr disp_ep_cap = 0;
+seL4_CPtr crypto_ep_cap = 0;
 static seL4_CPtr uart_irq_cap = 0;
 static seL4_CPtr main_ntfn_cap = 0;
 static int irq_uart_active = 0;

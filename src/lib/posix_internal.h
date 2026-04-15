@@ -202,6 +202,7 @@ extern seL4_CPtr auth_ep;
 extern seL4_CPtr pipe_ep;
 extern seL4_CPtr net_ep;
 extern seL4_CPtr disp_ep;
+extern seL4_CPtr crypto_ep;
 
 extern char aios_cwd[256];
 extern char aios_progpath[128];
@@ -354,6 +355,7 @@ long aios_sys_setpgid(va_list ap);
 long aios_sys_ppoll(va_list ap);
 long aios_sys_pselect6(va_list ap);
 long aios_sys_getrandom(va_list ap);
+long aios_sys_mremap(va_list ap);
 long aios_sys_prlimit64(va_list ap);
 long aios_sys_prctl(va_list ap);
 long aios_sys_getrlimit(va_list ap);

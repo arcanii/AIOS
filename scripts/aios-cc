@@ -147,7 +147,7 @@ LIBS=(
 )
 
 # Detect mode: compile-only (-c) or full link
-if echo "$@" | grep -q "\-c"; then
+if echo " $* " | grep -q " -c "; then
     # Compile only
     exec ${CC} ${SYSROOT} "${INCLUDES[@]}" "${CFLAGS[@]}" "$@"
 else

@@ -500,7 +500,30 @@ long aios_sys_read(va_list ap) {
             int n = (int)count;
             if (n > 4096) n = 4096;
             if (f->path[5] == 'u' || f->path[5] == 'r') {
-                /* /dev/urandom or /dev/random -- splitmix64 PRNG */
+                /* /dev/urandom or /dev/random -- crypto_server CSPRNG */
+                if (crypto_ep) {
+                    int got = 0;
+                    while (got < n) {
+                        int want = n - got;
+                        if (want > (int)(seL4_MsgMaxLength * sizeof(seL4_Word)))
+                            want = (int)(seL4_MsgMaxLength * sizeof(seL4_Word));
+                        seL4_SetMR(0, 1);  /* CRYPTO_OP_RANDOM */
+                        seL4_SetMR(1, (seL4_Word)want);
+                        seL4_MessageInfo_t reply = seL4_Call(crypto_ep,
+                            seL4_MessageInfo_new(0, 0, 0, 2));
+                        int nw = (int)seL4_MessageInfo_get_length(reply);
+                        for (int wi = 0; wi < nw && got < n; wi++) {
+                            seL4_Word w = seL4_GetMR(wi);
+                            int rem = n - got;
+                            int chunk = (int)sizeof(seL4_Word);
+                            if (chunk > rem) chunk = rem;
+                            __builtin_memcpy(dst + got, &w, chunk);
+                            got += chunk;
+                        }
+                    }
+                    return (long)n;
+                }
+                /* Fallback: splitmix64 if crypto_server not available */
                 uint64_t state;
                 __asm__ volatile("mrs %0, CNTPCT_EL0" : "=r"(state));
                 state += (uint64_t)(uintptr_t)buf;

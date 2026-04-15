@@ -72,10 +72,32 @@ long aios_sys_getrandom(va_list ap) {
     if (!buf) return -14;  /* EFAULT */
     if (count > 256) count = 256;
 
-    /* Use AArch64 CNTPCT as entropy source, mixed with XOR */
+    /* Use crypto_server CSPRNG if available */
+    if (crypto_ep) {
+        size_t got = 0;
+        while (got < count) {
+            size_t want = count - got;
+            if (want > seL4_MsgMaxLength * sizeof(seL4_Word))
+                want = seL4_MsgMaxLength * sizeof(seL4_Word);
+            seL4_SetMR(0, 1);  /* CRYPTO_OP_RANDOM */
+            seL4_SetMR(1, (seL4_Word)want);
+            seL4_MessageInfo_t reply = seL4_Call(crypto_ep,
+                seL4_MessageInfo_new(0, 0, 0, 2));
+            size_t nw = seL4_MessageInfo_get_length(reply);
+            for (size_t wi = 0; wi < nw && got < count; wi++) {
+                seL4_Word w = seL4_GetMR(wi);
+                size_t rem = count - got;
+                size_t chunk = sizeof(seL4_Word);
+                if (chunk > rem) chunk = rem;
+                __builtin_memcpy(buf + got, &w, chunk);
+                got += chunk;
+            }
+        }
+        return (long)count;
+    }
+    /* Fallback: splitmix64 if crypto_server not available */
     uint64_t state;
     __asm__ volatile("mrs %0, CNTPCT_EL0" : "=r"(state));
-    /* Simple splitmix64 PRNG seeded from counter */
     for (size_t i = 0; i < count; i++) {
         state += 0x9E3779B97F4A7C15ULL;
         uint64_t z = state;
@@ -85,6 +107,12 @@ long aios_sys_getrandom(va_list ap) {
         buf[i] = (char)(z & 0xFF);
     }
     return (long)count;
+}
+
+/* ---- mremap: return ENOMEM so musl falls back to mmap+copy ---- */
+long aios_sys_mremap(va_list ap) {
+    (void)ap;
+    return -12;  /* -ENOMEM: force musl realloc fallback */
 }
 
 /* ---- prlimit64: resource limits ----

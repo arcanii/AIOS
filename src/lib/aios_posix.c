@@ -16,6 +16,7 @@ seL4_CPtr auth_ep = 0;
 seL4_CPtr pipe_ep = 0;
 seL4_CPtr net_ep = 0;
 seL4_CPtr disp_ep = 0;
+seL4_CPtr crypto_ep = 0;
 
 char aios_cwd[256] = "/";
 char aios_progpath[128];  /* v0.4.78: stored for /proc/self/exe */
@@ -536,7 +537,10 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     #ifndef __NR_pselect6
     #define __NR_pselect6 72
     #endif
-    #ifndef __NR_getrandom
+    #ifndef __NR_mremap
+#define __NR_mremap 216
+#endif
+#ifndef __NR_getrandom
     #define __NR_getrandom 278
     #endif
     #ifndef __NR_prlimit64
@@ -698,6 +702,7 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     muslcsys_install_syscall(__NR_ppoll, aios_sys_ppoll);
     muslcsys_install_syscall(__NR_pselect6, aios_sys_pselect6);
     muslcsys_install_syscall(__NR_getrandom, aios_sys_getrandom);
+    muslcsys_install_syscall(__NR_mremap, aios_sys_mremap);
     muslcsys_install_syscall(__NR_prlimit64, aios_sys_prlimit64);
     muslcsys_install_syscall(__NR_prctl, aios_sys_prctl);
     muslcsys_install_syscall(__NR_getrlimit, aios_sys_getrlimit);
@@ -757,11 +762,14 @@ int __wrap_main(int argc, char **argv) {
     seL4_CPtr dsp = 0;
     if (argc > 6 && argv[6]) dsp = (seL4_CPtr)_auto_parse(argv[6]);
     disp_ep = dsp;
+    seL4_CPtr cry = 0;
+    if (argc > 7 && argv[7]) cry = (seL4_CPtr)_auto_parse(argv[7]);
+    crypto_ep = cry;
     aios_init(serial, fs);
 
-    /* Parse uid:gid:/path from argv[7] (shifted by net_ep at [5]) */
-    if (argc > 7 && argv[7]) {
-        const char *s = argv[7];
+    /* Parse uid:gid:/path from argv[8] (shifted by crypto_ep at [7]) */
+    if (argc > 8 && argv[8]) {
+        const char *s = argv[8];
         if (s[0] >= '0' && s[0] <= '9') {
             /* Format: uid:gid:[spipe:rpipe:]/path */
             uint32_t uid = 0;
@@ -811,12 +819,12 @@ int __wrap_main(int argc, char **argv) {
     setvbuf(stderr, NULL, _IONBF, 0);
 
     /* v0.4.78: store program path for /proc/self/exe */
-    if (argc > 8 && argv[8]) {
+    if (argc > 9 && argv[9]) {
         int pi = 0;
-        while (argv[8][pi] && pi < 127) { aios_progpath[pi] = argv[8][pi]; pi++; }
+        while (argv[9][pi] && pi < 127) { aios_progpath[pi] = argv[9][pi]; pi++; }
         aios_progpath[pi] = 0;
     }
 
-    /* Strip 8 args (ser, fs, thread, auth, pipe, net, disp, cwd) */
-    return __real_main(argc - 8, argv + 8);
+    /* Strip 9 args (ser, fs, thread, auth, pipe, net, disp, crypto, cwd) */
+    return __real_main(argc - 9, argv + 9);
 }
