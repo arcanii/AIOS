@@ -16,7 +16,7 @@ set(AIOS_PLATFORM "PLAT_RPI4" CACHE STRING "" FORCE)
 set(RPI4_MEMORY "4096" CACHE STRING "" FORCE)
 
 # SMP: RPi4 has 4 Cortex-A72 cores
-set(KernelMaxNumNodes 1 CACHE STRING "" FORCE)
+set(KernelMaxNumNodes 4 CACHE STRING "" FORCE)
 
 # Debug
 set(KernelVerificationBuild OFF CACHE BOOL "" FORCE)
