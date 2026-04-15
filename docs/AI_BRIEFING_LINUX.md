@@ -7,7 +7,7 @@
 * **Repository**: https://github.com/arcanii/AIOS
 * **Branch**: rpi4 (RPi4 hardware feature branch, branched from main)
 * **Developer**: Bryan
-* **Current Version**: v0.4.95
+* **Current Version**: v0.4.96
 
 ## Development Environment
 
