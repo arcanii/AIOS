@@ -450,6 +450,9 @@ static void ring_init(void) {
  * plat_net_init -- initialize BCM54213 GENET on RPi4
  * ================================================================ */
 int plat_net_init(void) {
+    /* GENET disabled until driver is stable on RPi4 */
+    printf("[net] GENET disabled (Phase 2 WIP)\n");
+    return -1;
     int error;
 
     if (!hw_info.has_genet) {

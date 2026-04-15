@@ -140,6 +140,9 @@ static int mbox_call(uint64_t buf_pa, volatile uint32_t *buf) {
  * Phase B: Fallback to full VC mailbox protocol.
  * ============================================================ */
 int plat_display_init(uint32_t width, uint32_t height) {
+    /* Display disabled until serial boot is stable */
+    printf("[gpu] Display disabled (serial mode)\n");
+    return -1;
 
     /* === Phase A: Map diagnostic stub framebuffer === */
 
