@@ -365,4 +365,12 @@ long aios_sys_getrusage(va_list ap);
 long aios_sys_membarrier(va_list ap);
 long aios_sys_futex(va_list ap);
 
+/* v0.4.99: rt_sigsuspend for ZLE pselect */
+long aios_sys_rt_sigsuspend(va_list ap);
+long aios_sys_setitimer(va_list ap);
+long aios_sys_getitimer(va_list ap);
+
+/* v0.4.99: direct nanosleep for ppoll timeout */
+long __aios_nanosleep(const struct timespec *req, struct timespec *rem);
+
 #endif

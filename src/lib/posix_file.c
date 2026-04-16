@@ -495,7 +495,31 @@ long aios_sys_read(va_list ap) {
             return (long)got;
         }
         /* v0.4.78: virtual device read (/dev/urandom, /dev/zero) */
-        if (f->is_devnull && f->path[0] == '/') {
+        /* v0.4.99: is_tty blocking read from serial (zsh SHTTY) */
+        if (f->is_tty) {
+            if (!ser_ep) return -EIO;
+            int want = (int)count;
+            if (want > 200) want = 200;
+            /* Block until at least 1 byte available (like real tty) */
+            while (1) {
+                seL4_SetMR(0, (seL4_Word)want);
+                seL4_MessageInfo_t reply = seL4_Call(ser_ep,
+                    seL4_MessageInfo_new(71 /* TTY_READ */, 0, 0, 1));
+                int got = (int)seL4_GetMR(0);
+                if (got > 0) {
+                    char *dst = (char *)buf;
+                    int mr = 1;
+                    for (int i = 0; i < got; i++) {
+                        if (i > 0 && i % 8 == 0) mr++;
+                        dst[i] = (char)((seL4_GetMR(mr) >> ((i % 8) * 8)) & 0xFF);
+                    }
+                    return (long)got;
+                }
+                /* No data yet -- yield and retry */
+                seL4_Yield();
+            }
+        }
+                if (f->is_devnull && f->path[0] == '/') {
             char *dst = (char *)buf;
             int n = (int)count;
             if (n > 4096) n = 4096;
@@ -630,6 +654,10 @@ long aios_sys_write(va_list ap) {
         aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
         if (!f->active) return -EBADF;
         if (f->is_devnull) return (long)count;
+        /* v0.4.99: is_tty route to serial (duped tty fds from zsh SHTTY) */
+        if (f->is_tty) {
+            return (long)aios_stdio_write((void *)buf, count);
+        }
         /* v0.4.81: socket write via net_server SENDTO */
         if (f->is_socket && net_ep) {
             const char *src = (const char *)buf;
@@ -782,10 +810,18 @@ long aios_sys_writev(va_list ap) {
         return total;
     }
 
-    /* writev: pipe fd and regular aios fd support */
+    /* writev: pipe fd, tty fd, and regular aios fd support */
     if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
         aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
         if (!f->active) return -EBADF;
+        /* v0.4.99: is_tty writev routes to serial (zsh shout FILE*) */
+        if (f->is_tty) {
+            long total = 0;
+            for (int i = 0; i < iovcnt; i++) {
+                total += (long)aios_stdio_write(iov[i].iov_base, iov[i].iov_len);
+            }
+            return total;
+        }
         if (f->is_devnull) {
             long total = 0;
             for (int i = 0; i < iovcnt; i++) total += (long)iov[i].iov_len;

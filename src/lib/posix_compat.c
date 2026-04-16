@@ -8,6 +8,7 @@
  */
 #include "posix_internal.h"
 #include <string.h>
+#include <poll.h>
 
 /* AArch64 syscall numbers for compat layer */
 #ifndef __NR_ppoll
@@ -44,20 +45,165 @@
 #define __NR_futex 98
 #endif
 
-/* ---- ppoll: stub that returns immediately with 0 ready fds ----
- * Many programs use poll() to check if stdin is readable.
- * Returning 0 (timeout, nothing ready) is safe -- caller retries or
- * falls back to blocking read.
+/* ---- ppoll: real implementation for stdin + pipe fds (v0.4.99) ----
+ * ZLE and other interactive programs use poll() to check stdin.
+ * We query tty_server (TTY_POLL) for stdin and pipe_server for pipes.
  */
 long aios_sys_ppoll(va_list ap) {
-    (void)ap;
-    return 0;  /* no fds ready -- timeout */
+    struct pollfd *fds = va_arg(ap, struct pollfd *);
+    unsigned int nfds = va_arg(ap, unsigned int);
+    const struct timespec *tmo = va_arg(ap, const struct timespec *);
+    /* sigmask arg ignored */
+
+    if (!fds || nfds == 0) return 0;
+
+    int ready = 0;
+    for (unsigned int i = 0; i < nfds; i++) {
+        fds[i].revents = 0;
+        int fd = fds[i].fd;
+        short events = fds[i].events;
+
+        if (fd < 0) continue;
+
+        /* stdin (fd 0): ask tty_server via TTY_POLL */
+        if (fd == 0 && (events & POLLIN)) {
+            if (ser_ep) {
+                seL4_MessageInfo_t reply = seL4_Call(ser_ep,
+                    seL4_MessageInfo_new(76 /* TTY_POLL */, 0, 0, 0));
+                int avail = (int)seL4_GetMR(0);
+                if (avail > 0) {
+                    fds[i].revents |= POLLIN;
+                    ready++;
+                }
+            }
+            continue;
+        }
+
+        /* stdout/stderr (fd 1,2): always writable */
+        if ((fd == 1 || fd == 2) && (events & POLLOUT)) {
+            fds[i].revents |= POLLOUT;
+            ready++;
+            continue;
+        }
+
+        /* AIOS fd: check tty, pipe readability */
+        if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
+            aios_fd_t *af = &aios_fds[fd - AIOS_FD_BASE];
+            if (!af->active) {
+                fds[i].revents |= POLLNVAL;
+                ready++;
+                continue;
+            }
+            /* v0.4.99: is_tty fd (zsh SHTTY): poll tty_server */
+            if (af->is_tty && (events & POLLIN) && ser_ep) {
+                seL4_MessageInfo_t reply = seL4_Call(ser_ep,
+                    seL4_MessageInfo_new(76 /* TTY_POLL */, 0, 0, 0));
+                int avail = (int)seL4_GetMR(0);
+                if (avail > 0) {
+                    fds[i].revents |= POLLIN;
+                    ready++;
+                }
+                continue;
+            }
+            /* Pipe read end: non-blocking PIPE_READ with 0 bytes to probe */
+            if (af->is_pipe && af->pipe_read && (events & POLLIN) && pipe_ep) {
+                seL4_SetMR(0, (seL4_Word)af->pipe_id);
+                seL4_SetMR(1, 0);  /* 0 bytes = probe */
+                seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
+                    seL4_MessageInfo_new(62 /* PIPE_READ */, 0, 0, 2));
+                int result = (int)(long)seL4_GetMR(0);
+                /* result >= 0 means data available or EOF; -11 = EAGAIN (empty) */
+                if (result != -11) {
+                    fds[i].revents |= POLLIN;
+                    ready++;
+                }
+                continue;
+            }
+            /* Pipe write end or file: assume writable */
+            if (events & POLLOUT) {
+                fds[i].revents |= POLLOUT;
+                ready++;
+            }
+            continue;
+        }
+    }
+
+    /* If nothing ready and timeout is non-zero, sleep briefly and retry once */
+    if (ready == 0 && tmo) {
+        long ms = tmo->tv_sec * 1000 + tmo->tv_nsec / 1000000;
+        if (ms > 0) {
+            /* Sleep for min(ms, 50) then re-check stdin */
+            long sleep_ms = ms < 50 ? ms : 50;
+            struct timespec ts = { .tv_sec = 0, .tv_nsec = sleep_ms * 1000000 };
+            /* Use nanosleep syscall directly */
+            long __aios_nanosleep(const struct timespec *, struct timespec *);
+            __aios_nanosleep(&ts, (void *)0);
+            /* Re-check stdin only */
+            for (unsigned int i = 0; i < nfds; i++) {
+                if (fds[i].fd == 0 && (fds[i].events & POLLIN) && ser_ep) {
+                    seL4_MessageInfo_t reply = seL4_Call(ser_ep,
+                        seL4_MessageInfo_new(76 /* TTY_POLL */, 0, 0, 0));
+                    int avail = (int)seL4_GetMR(0);
+                    if (avail > 0) {
+                        fds[i].revents |= POLLIN;
+                        ready++;
+                    }
+                }
+            }
+        }
+    }
+
+    return ready;
 }
 
-/* ---- pselect6: same approach as ppoll ---- */
+/* ---- pselect6: translate to ppoll semantics (v0.4.99) ---- */
 long aios_sys_pselect6(va_list ap) {
-    (void)ap;
-    return 0;  /* no fds ready */
+    int nfds_max = va_arg(ap, int);
+    void *readfds  = va_arg(ap, void *);
+    void *writefds = va_arg(ap, void *);
+    void *exceptfds = va_arg(ap, void *);
+    const struct timespec *tmo = va_arg(ap, const struct timespec *);
+    (void)exceptfds;
+
+    /* v0.4.99: scan fd set for tty fds (fd 0 or is_tty AIOS fds) */
+    int ready = 0;
+    unsigned long *rfds = (unsigned long *)readfds;
+    unsigned long *wfds = (unsigned long *)writefds;
+
+    if (rfds && nfds_max > 0) {
+        for (int fd = 0; fd < nfds_max && fd < 64; fd++) {
+            int word = fd / (8 * (int)sizeof(unsigned long));
+            unsigned long bit = 1UL << (fd % (8 * sizeof(unsigned long)));
+            if (!(rfds[word] & bit)) continue;
+
+            int is_tty = 0;
+            if (fd == 0) is_tty = 1;
+            else if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
+                aios_fd_t *af = &aios_fds[fd - AIOS_FD_BASE];
+                if (af->active && af->is_tty) is_tty = 1;
+            }
+
+            if (is_tty && ser_ep) {
+                seL4_MessageInfo_t reply = seL4_Call(ser_ep,
+                    seL4_MessageInfo_new(76 /* TTY_POLL */, 0, 0, 0));
+                int avail = (int)seL4_GetMR(0);
+                if (avail > 0) {
+                    ready++;
+                } else {
+                    rfds[word] &= ~bit;
+                }
+            } else if (!is_tty) {
+                rfds[word] &= ~bit;
+            }
+        }
+    }
+
+    if (wfds && nfds_max > 1) {
+        if (*wfds & 2) ready++;
+        if (*wfds & 4) ready++;
+    }
+
+    return ready;
 }
 
 /* ---- getrandom: fill buffer from ARM counter-based PRNG ----
@@ -254,4 +400,43 @@ long aios_sys_futex(va_list ap) {
     }
     return -ENOSYS;
 }
+
+/* v0.4.99: rt_sigsuspend -- suspend until signal delivery
+ * ZLE uses pselect which internally calls sigsuspend.
+ * Return -EINTR after a brief yield to simulate signal delivery. */
+long aios_sys_rt_sigsuspend(va_list ap) {
+    (void)ap;
+    /* Yield to let other threads run (simulates waiting for signal) */
+    seL4_Yield();
+    return -4;  /* EINTR -- pretend a signal arrived */
+}
+
+/* v0.4.99: setitimer -- ZLE uses for input timeouts
+ * Return success, store nothing. ZLE falls back gracefully. */
+long aios_sys_setitimer(va_list ap) {
+    int which = va_arg(ap, int);
+    void *new_val = va_arg(ap, void *);
+    void *old_val = va_arg(ap, void *);
+    (void)which; (void)new_val;
+    /* If old_val requested, zero it out */
+    if (old_val) {
+        long *p = (long *)old_val;
+        for (int i = 0; i < 4; i++) p[i] = 0;
+    }
+    return 0;
+}
+
+/* v0.4.99: getitimer -- return zeroed timer */
+long aios_sys_getitimer(va_list ap) {
+    int which = va_arg(ap, int);
+    void *val = va_arg(ap, void *);
+    (void)which;
+    if (val) {
+        long *p = (long *)val;
+        for (int i = 0; i < 4; i++) p[i] = 0;
+    }
+    return 0;
+}
+
+
 

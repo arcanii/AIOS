@@ -26,16 +26,42 @@ static struct termios aios_termios = {
     },
 };
 
-static void termios_apply(void) {
-    /* Sync tty_server state from termios flags */
-    int want_canon = (aios_termios.c_lflag & ICANON) != 0;
-    int want_echo  = (aios_termios.c_lflag & ECHO) != 0;
+/* v0.4.99: Send full termios to tty_server via TCSETS IPC */
+static void termios_send(void) {
+    seL4_SetMR(0, (seL4_Word)TTY_IOCTL_TCSETS);
+    seL4_SetMR(1, (seL4_Word)aios_termios.c_iflag);
+    seL4_SetMR(2, (seL4_Word)aios_termios.c_oflag);
+    seL4_SetMR(3, (seL4_Word)aios_termios.c_cflag);
+    seL4_SetMR(4, (seL4_Word)aios_termios.c_lflag);
+    /* Pack c_cc[0..19] into 3 MRs (8 bytes per MR) */
+    for (int m = 0; m < 3; m++) {
+        seL4_Word w = 0;
+        for (int b = 0; b < 8 && (m * 8 + b) < 20; b++) {
+            w |= ((seL4_Word)aios_termios.c_cc[m * 8 + b]) << (b * 8);
+        }
+        seL4_SetMR(5 + m, w);
+    }
+    seL4_Call(ser_ep, seL4_MessageInfo_new(TTY_IOCTL, 0, 0, 8));
+}
 
-    seL4_SetMR(0, (seL4_Word)(want_canon ? TTY_IOCTL_SET_COOKED : TTY_IOCTL_SET_RAW));
-    seL4_Call(ser_ep, seL4_MessageInfo_new(TTY_IOCTL, 0, 0, 1));
-
-    seL4_SetMR(0, (seL4_Word)(want_echo ? TTY_IOCTL_ECHO_ON : TTY_IOCTL_ECHO_OFF));
-    seL4_Call(ser_ep, seL4_MessageInfo_new(TTY_IOCTL, 0, 0, 1));
+/* v0.4.99: Fetch full termios from tty_server via TCGETS IPC */
+static void termios_fetch(void) {
+    seL4_SetMR(0, (seL4_Word)TTY_IOCTL_TCGETS);
+    seL4_MessageInfo_t reply = seL4_Call(ser_ep,
+        seL4_MessageInfo_new(TTY_IOCTL, 0, 0, 1));
+    int nlen = (int)seL4_MessageInfo_get_length(reply);
+    if (nlen >= 7) {
+        aios_termios.c_iflag = (tcflag_t)seL4_GetMR(0);
+        aios_termios.c_oflag = (tcflag_t)seL4_GetMR(1);
+        aios_termios.c_cflag = (tcflag_t)seL4_GetMR(2);
+        aios_termios.c_lflag = (tcflag_t)seL4_GetMR(3);
+        for (int m = 0; m < 3; m++) {
+            seL4_Word w = seL4_GetMR(4 + m);
+            for (int b = 0; b < 8 && (m * 8 + b) < 20; b++) {
+                aios_termios.c_cc[m * 8 + b] = (cc_t)((w >> (b * 8)) & 0xFF);
+            }
+        }
+    }
 }
 
 long aios_sys_utimensat(va_list ap) {
@@ -92,8 +118,16 @@ long aios_sys_ioctl(va_list ap) {
     int fd = va_arg(ap, int);
     int req = va_arg(ap, int);
     void *argp = va_arg(ap, void *);
-    if (fd <= 2) {
-        /* v0.4.64: TIOCGWINSZ -- terminal size for isatty + dash */
+
+    /* v0.4.99: Check if this fd is a tty (fd 0-2 or duped tty fd) */
+    int is_tty_fd = (fd <= 2);
+    if (!is_tty_fd && fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
+        aios_fd_t *af = &aios_fds[fd - AIOS_FD_BASE];
+        if (af->active && af->is_tty) is_tty_fd = 1;
+    }
+
+    if (is_tty_fd) {
+        /* TIOCGWINSZ -- terminal size for isatty + dash */
         if (req == 0x5413 && argp) {
             unsigned short *ws = (unsigned short *)argp;
             ws[0] = 24; ws[1] = 80; ws[2] = 0; ws[3] = 0;
@@ -106,8 +140,9 @@ long aios_sys_ioctl(va_list ap) {
         }
         /* TIOCSPGRP -- set fg pgrp (stub) */
         if (req == 0x5410) return 0;
-        /* TCGETS -- get terminal attributes */
+        /* TCGETS -- get terminal attributes from server */
         if (req == 0x5401 && argp) {
+            termios_fetch();
             struct termios *t = (struct termios *)argp;
             *t = aios_termios;
             return 0;
@@ -116,10 +151,31 @@ long aios_sys_ioctl(va_list ap) {
         if ((req == 0x5402 || req == 0x5403 || req == 0x5404) && argp) {
             struct termios *t = (struct termios *)argp;
             aios_termios = *t;
-            termios_apply();
+            int op = TTY_IOCTL_TCSETS;
+            if (req == 0x5403) op = TTY_IOCTL_TCSETSW;
+            if (req == 0x5404) op = TTY_IOCTL_TCSETSF;
+            seL4_SetMR(0, (seL4_Word)op);
+            seL4_SetMR(1, (seL4_Word)aios_termios.c_iflag);
+            seL4_SetMR(2, (seL4_Word)aios_termios.c_oflag);
+            seL4_SetMR(3, (seL4_Word)aios_termios.c_cflag);
+            seL4_SetMR(4, (seL4_Word)aios_termios.c_lflag);
+            for (int m = 0; m < 3; m++) {
+                seL4_Word w = 0;
+                for (int b = 0; b < 8 && (m * 8 + b) < 20; b++) {
+                    w |= ((seL4_Word)aios_termios.c_cc[m * 8 + b]) << (b * 8);
+                }
+                seL4_SetMR(5 + m, w);
+            }
+            seL4_Call(ser_ep, seL4_MessageInfo_new(TTY_IOCTL, 0, 0, 8));
             return 0;
         }
         return 0;
+    }
+    /* Pipe fds: FIONREAD for poll support */
+    if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
+        aios_fd_t *af = &aios_fds[fd - AIOS_FD_BASE];
+        if (af->active && !af->is_pipe) return -ENOTTY;
+        return -ENOTTY;
     }
     return -ENOTTY;
 }

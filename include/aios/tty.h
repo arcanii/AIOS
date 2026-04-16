@@ -17,7 +17,8 @@
 #define TTY_OPEN        73
 #define TTY_CLOSE       74
 #define TTY_INPUT       75   /* MR0=char (from root UART poll) */
-#define TTY_SWITCH      76   /* MR0=vt_id */
+#define TTY_POLL        76   /* v0.4.99: MR0=avail_count reply */
+#define TTY_SWITCH      79   /* MR0=vt_id */
 #define TTY_GETATTR     77
 #define TTY_SETFG       78   /* MR0=pid */
 

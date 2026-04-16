@@ -119,3 +119,22 @@ long aios_sys_clock_nanosleep(va_list ap) {
     if (rem) { rem->tv_sec = 0; rem->tv_nsec = 0; }
     return 0;
 }
+
+/* v0.4.99: Direct nanosleep callable from ppoll (not via va_list) */
+long __aios_nanosleep(const struct timespec *req, struct timespec *rem) {
+    if (!req) return -22;  /* EINVAL */
+    uint64_t ns = (uint64_t)req->tv_sec * 1000000000ULL + (uint64_t)req->tv_nsec;
+    uint64_t ms = ns / 1000000;
+    if (ms == 0 && ns > 0) ms = 1;
+    /* seL4 timer not available in userspace -- busy-wait using ARM counter */
+    uint64_t start, now, freq;
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(start));
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+    uint64_t target = start + (freq * ms) / 1000;
+    do {
+        seL4_Yield();
+        __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
+    } while (now < target);
+    if (rem) { rem->tv_sec = 0; rem->tv_nsec = 0; }
+    return 0;
+}
