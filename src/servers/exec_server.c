@@ -1,9 +1,6 @@
-/* AIOS servers/exec_server.c -- ELF loader and exec server
- *
- * Handles EXEC_RUN, EXEC_RUN_BG, EXEC_NICE IPC requests.
- * Reads ELF from disk via VFS, loads into new VSpace, spawns process.
- * Also contains process_kill for PIPE_KILL.
- */
+#define LOG_MODULE "exec"
+#define LOG_LEVEL  LOG_LEVEL_INFO
+#include "aios/aios_log.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <sel4/sel4.h>
@@ -48,7 +45,7 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
     vka_audit_cslot(VKA_SUB_EXEC);
     int err = vka_cspace_alloc_path(&vka, &reply_path);
     if (err) {
-        printf("[exec] FATAL: cannot alloc reply cslot\n");
+        AIOS_LOG_ERROR("FATAL: cannot alloc reply cslot");
         return;
     }
     /* Free the endpoint object but keep the slot for SaveCaller */
@@ -126,6 +123,7 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
 
         int elf_size = vfs_read(elf_path, elf_buf, sizeof(elf_buf));
         printf("[exec] %s: elf_size=%d\n", elf_path, elf_size);
+        AIOS_LOG_INFO_V("loaded elf bytes=", (unsigned long)elf_size);
         if (elf_size <= 0) {
             seL4_SetMR(0, (seL4_Word)-1);
             seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
@@ -137,6 +135,7 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         elf_t elf;
         if (elf_newFile(elf_buf, elf_size, &elf) != 0) {
             printf("[exec] Invalid ELF: %s\n", elf_path);
+            AIOS_LOG_ERROR("invalid ELF");
             seL4_SetMR(0, (seL4_Word)-1);
             seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
             vka_free_object(&vka, &child_fault_ep);
@@ -179,6 +178,7 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             &proc->vspace, &vspace, &vka, &vka, &elf);
         if (proc->entry_point == NULL) {
             printf("[exec] ELF load failed: %s\n", elf_path);
+            AIOS_LOG_ERROR("ELF load failed");
             sel4utils_destroy_process(proc, &vka);
             seL4_SetMR(0, (seL4_Word)-1);
             seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));

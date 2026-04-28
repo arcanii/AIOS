@@ -1,13 +1,6 @@
-/* AIOS servers/pipe_server.c -- Pipe, fork, exec, wait, exit server
- *
- * Handles PIPE_CREATE/WRITE/READ/CLOSE/CLOSE_WRITE, PIPE_KILL,
- * PIPE_FORK, PIPE_GETPID, PIPE_WAIT, PIPE_EXIT, PIPE_EXEC.
- * Central IPC hub for process lifecycle on seL4.
- *
- * v0.4.51: Fault delivery on pipe_ep -- child faults arrive as IPC
- * messages with label < PIPE_CREATE (60). No spin loops or NBRecv.
- * Blocking PIPE_READ via SaveCaller when pipe empty + writer alive.
- */
+#define LOG_MODULE "pipe"
+#define LOG_LEVEL  LOG_LEVEL_INFO
+#include "aios/aios_log.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -775,7 +768,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 int merr = seL4_CNode_Mint(fs_d.root, fs_d.capPtr, fs_d.capDepth,
                     fs_s.root, fs_s.capPtr, fs_s.capDepth,
                     seL4_AllRights, (seL4_Word)(ci + 1));
-                if (merr) printf("[pipe] WARN: fs_ep Mint failed: %d\n", merr);
+                if (merr) AIOS_LOG_WARN_V("fs_ep Mint failed: ", (unsigned long)merr);
             }
             seL4_CPtr cf = sel4utils_copy_cap_to_process(proc, &vka, fs_d.capPtr);
             ap->child_fs_slot = cf;
@@ -787,7 +780,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 int merr = seL4_CNode_Mint(te_d.root, te_d.capPtr, te_d.capDepth,
                     te_s.root, te_s.capPtr, te_s.capDepth,
                     seL4_AllRights, (seL4_Word)(ci + 1));
-                if (merr) printf("[pipe] WARN: thread_ep Mint failed: %d\n", merr);
+                if (merr) AIOS_LOG_WARN_V("thread_ep Mint failed: ", (unsigned long)merr);
             }
             seL4_CPtr ct = sel4utils_copy_cap_to_process(proc, &vka, te_d.capPtr);
             ap->child_thread_slot = ct;
@@ -802,7 +795,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 int merr = seL4_CNode_Mint(pi_d.root, pi_d.capPtr, pi_d.capDepth,
                     pi_s.root, pi_s.capPtr, pi_s.capDepth,
                     seL4_AllRights, (seL4_Word)(ci + 1));
-                if (merr) printf("[pipe] WARN: pipe_ep Mint failed: %d\n", merr);
+                if (merr) AIOS_LOG_WARN_V("pipe_ep Mint failed: ", (unsigned long)merr);
             }
             seL4_CPtr cp2 = sel4utils_copy_cap_to_process(proc, &vka, pi_d.capPtr);
             ap->child_pipe_slot = cp2;

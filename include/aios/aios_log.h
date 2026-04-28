@@ -38,7 +38,7 @@ void aios_log_write_v(int level, const char *module, const char *msg,
                    unsigned long val);
 int  aios_log_read(char *buf, int bufsize);  /* returns bytes copied */
 int  aios_log_len(void);
-void aios_log_file_init(void);   /* call after /log mounted */                     /* current ring content length */
+void aios_log_file_init(void);   /* call after /var/log mounted */                     /* current ring content length */
 
 /* Convenience macros — compile-time level filtering */
 #define _AIOS_LOG(lvl, tag, msg) do { \

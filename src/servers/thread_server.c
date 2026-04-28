@@ -1,8 +1,6 @@
-/* AIOS servers/thread_server.c -- Thread creation and management
- *
- * Handles THREAD_CREATE and THREAD_JOIN IPC requests.
- * Creates TCBs in child VSpaces with allocated stack and IPC buffer.
- */
+#define LOG_MODULE "thread"
+#define LOG_LEVEL  LOG_LEVEL_INFO
+#include "aios/aios_log.h"
 #include <stdio.h>
 #include <sel4/sel4.h>
 #include <sel4utils/process.h>
@@ -73,7 +71,7 @@ int create_child_thread(int proc_idx, seL4_Word entry, seL4_Word arg,
     seL4_CPtr child_fault_cap = sel4utils_copy_cap_to_process(
         &ap->proc, &vka, t->fault_ep.cptr);
     if (child_fault_cap == 0) {
-        printf("[thread] Failed to copy fault ep to child\n");
+        AIOS_LOG_ERROR("Failed to copy fault ep to child");
         goto fail_stack;
     }
     seL4_Word cspace_data = api_make_guard_skip_word(seL4_WordBits - 12);
@@ -86,7 +84,7 @@ int create_child_thread(int proc_idx, seL4_Word entry, seL4_Word arg,
         (seL4_Word)ipc_addr,                  /* IPC buf vaddr in child */
         t->ipc_frame.cptr);                   /* IPC buf frame (kernel resolves from caller) */
     if (err) {
-        printf("[thread] TCB_Configure failed: %d\n", err);
+        AIOS_LOG_ERROR_V("TCB_Configure failed: ", (unsigned long)err);
         goto fail_stack;
     }
 
@@ -104,7 +102,7 @@ int create_child_thread(int proc_idx, seL4_Word entry, seL4_Word arg,
     err = seL4_TCB_WriteRegisters(t->tcb.cptr, 1 /* resume */,
                                    0, nregs, &regs);
     if (err) {
-        printf("[thread] WriteRegisters failed: %d\n", err);
+        AIOS_LOG_ERROR_V("WriteRegisters failed: ", (unsigned long)err);
         goto fail_stack;
     }
 
@@ -135,7 +133,7 @@ void thread_server_fn(void *arg0, void *arg1, void *ipc_buf) {
 
     cspacepath_t reply_path;
     int err = vka_cspace_alloc_path(&vka, &reply_path);
-    if (err) { printf("[thread_srv] FATAL: no reply slot\n"); return; }
+    if (err) { AIOS_LOG_ERROR("FATAL: no reply slot"); return; }
     seL4_CPtr reply_slot = reply_path.capPtr;
 
     while (1) {
@@ -191,7 +189,7 @@ void thread_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             {
                 int rr = seL4_TCB_ReadRegisters(t->tcb.cptr, 0, 0,
                                        join_nregs, &join_regs);
-                if (rr) printf("[thread] WARN: ReadRegisters failed: %d\n", rr);
+                if (rr) AIOS_LOG_WARN_V("ReadRegisters failed: ", (unsigned long)rr);
             }
             seL4_Word thread_retval = join_regs.x0;
 

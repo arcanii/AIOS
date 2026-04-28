@@ -38,14 +38,24 @@ void boot_fs_init(void) {
         printf("[fs] ext2 init failed: %d\n", fs_err);
     }
 
-    /* Mount log drive if platform found one */
+    /* Mount log drive if platform found one.
+     *
+     * v0.4.100: After plat_blk_init_log, the system disk's virtio state
+     * needs a "warmup" read or subsequent reads silently fail.
+     * Root cause unconfirmed (suspected stale IRQ state or descriptor race
+     * between two virtio-blk devices on QEMU). The warmup read at sector 2
+     * (system disk superblock) reliably clears the bad state. */
     if (plat_blk_init_log() == 0) {
+        uint8_t warmup_buf[512];
+        (void)plat_blk_read(2, warmup_buf);  /* warmup: system disk */
+
         int err = ext2_init(&ext2_log, plat_blk_read_log, 1);
+
         if (err == 0) {
             ext2_init_write(&ext2_log, plat_blk_write_log);
-            vfs_mount("/log", &ext2_fs_ops, &ext2_log);
-            LOG_INFO("log drive mounted at /log");
-            printf("[boot] Log drive mounted at /log\n");
+            vfs_mount("/var/log", &ext2_fs_ops, &ext2_log);
+            LOG_INFO("log drive mounted at /var/log");
+            printf("[boot] Log drive mounted at /var/log\n");
         } else {
             printf("[boot] Log ext2 failed: %d (not formatted?)\n", err);
         }

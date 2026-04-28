@@ -41,7 +41,7 @@ void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
     static char fs_buf[4096];
     (void)ep; /* used below in Recv */
 
-    /* Init file logging on /log drive */
+    /* Init file logging on /var/log drive */
     aios_log_file_init();
 
     /* quiet */

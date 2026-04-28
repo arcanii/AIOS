@@ -3,8 +3,8 @@
  *
  * Root-side threads share the ring buffer (same VSpace).
  * /proc/log reads the ring; serial gets real-time echo.
- * When a log drive is mounted at /log, entries are also
- * appended to /log/aios.log via direct ext2 writes.
+ * When a log drive is mounted at /var/log, entries are also
+ * appended to /var/log/aios.log via direct ext2 writes.
  */
 #include "aios/aios_log.h"
 #include "aios/ext2.h"
@@ -71,7 +71,7 @@ void aios_log_file_init(void) {
             log_file_ino = ino;
             log_file_pos = (int)inode.i_size;
             log_file_ready = 1;
-            printf("[log] Opened /log/aios.log (pos=%d)\n", log_file_pos);
+            printf("[log] Opened /var/log/aios.log (pos=%d)\n", log_file_pos);
             log_file_flush_ring();
             return;
         }
@@ -85,7 +85,7 @@ void aios_log_file_init(void) {
         log_file_ino = (uint32_t)ret;
         log_file_pos = hlen;
         log_file_ready = 1;
-        printf("[log] Created /log/aios.log\n");
+        printf("[log] Created /var/log/aios.log\n");
         log_file_flush_ring();
     } else {
         printf("[log] Failed to create aios.log: %d\n", ret);
