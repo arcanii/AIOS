@@ -381,3 +381,52 @@ long aios_sys_mprotect(va_list ap) {
     (void)addr; (void)len; (void)prot;
     return 0;
 }
+
+/* v0.4.104: mmap MAP_ANONYMOUS with on-demand allocation via IPC
+ *
+ * For MAP_ANONYMOUS, request fresh pages from pipe_server (root) which
+ * allocates frames and maps them in our VSpace. This avoids stealing
+ * from the static morecore_area (which is eagerly mapped at ELF load).
+ *
+ * For non-anonymous mmap (file-backed), return -ENOTSUP -- not supported
+ * yet.
+ *
+ * Returns vaddr on success, -ENOMEM on failure. */
+#ifndef MAP_ANONYMOUS
+#define MAP_ANONYMOUS 0x20
+#endif
+long aios_sys_mmap(va_list ap) {
+    void *addr = va_arg(ap, void *);
+    size_t length = va_arg(ap, size_t);
+    int prot = va_arg(ap, int);
+    int flags = va_arg(ap, int);
+    int fd = va_arg(ap, int);
+    long offset = va_arg(ap, long);
+    (void)addr; (void)prot; (void)fd; (void)offset;
+
+    if (length == 0) return -EINVAL;
+    if (!(flags & MAP_ANONYMOUS)) {
+        /* file-backed mmap not implemented */
+        return -ENOSYS;
+    }
+    if (!pipe_ep) {
+        /* No pipe_ep yet (very early init) -- caller can fall back to morecore */
+        return -ENOMEM;
+    }
+
+    /* Round length up to whole pages */
+    size_t pages = (length + 4095) / 4096;
+    if (pages == 0) pages = 1;
+    if (pages > 1024) {
+        /* Server caps at 1024 pages = 4 MB; caller must split */
+        return -ENOMEM;
+    }
+
+    seL4_SetMR(0, (seL4_Word)pages);
+    seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
+        seL4_MessageInfo_new(83 /* PIPE_MMAP_ANON */, 0, 0, 1));
+    (void)reply;
+    long vaddr = (long)seL4_GetMR(0);
+    if (vaddr == 0) return -ENOMEM;
+    return vaddr;
+}

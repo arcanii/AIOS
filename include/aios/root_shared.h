@@ -56,6 +56,8 @@
 #define PIPE_READ_SHM    80
 #define PIPE_SET_PIPES   81
 #define PIPE_DUP_REFS   82
+#define PIPE_MMAP_ANON  83  /* v0.4.104: alloc anonymous pages, map in caller vspace */
+#define PIPE_MUNMAP_ANON 84 /* v0.4.104: unmap pages allocated via PIPE_MMAP_ANON */
 
 /* ---- NET IPC labels (90-109) ---- */
 #define NET_SOCKET       90
@@ -244,8 +246,20 @@ extern int wait_pending_init;
 /* ── Cross-module function declarations ── */
 /* Add declarations here as functions are extracted from aios_root.c */
 
-/* Boot phases (src/boot/) */
-void boot_fs_init(void);
+/* Boot phases (src/boot/)
+ *
+ * v0.4.102: boot_fs_init returns status for graceful degradation:
+ *   BOOT_FS_OK       -- normal boot, / mounted from disk
+ *   BOOT_FS_DEGRADED -- only /proc available (no disk fs); recovery mode
+ *   BOOT_FS_FATAL    -- block device init failed entirely
+ */
+#define BOOT_FS_OK        0
+#define BOOT_FS_DEGRADED  1
+#define BOOT_FS_FATAL     2
+
+extern int aios_boot_status;
+
+int  boot_fs_init(void);
 void boot_start_services(vka_object_t *fault_ep);
 
 /* Block I/O via platform HAL (src/plat/blk_hal.h) */

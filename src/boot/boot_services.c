@@ -164,7 +164,27 @@ void boot_start_services(vka_object_t *fault_ep) {
     }
     AIOS_LOG_INFO("Auth: isolated process");
 
-    /* Spawn getty via exec_thread (fork+exec capable VSpace) */
+    /* Spawn getty via exec_thread (fork+exec capable VSpace).
+     *
+     * v0.4.102: In DEGRADED mode (no disk fs), getty cannot be loaded
+     * because it lives on disk. Print a recovery message instead and
+     * leave boot_services in idle. The user should reboot with a
+     * working disk image. */
+    if (aios_boot_status != BOOT_FS_OK) {
+        AIOS_LOG_ERROR("Cannot spawn getty: filesystem unavailable");
+        printf("\n");
+        printf("============================================\n");
+        printf("  AIOS RECOVERY MODE\n");
+        printf("============================================\n");
+        printf("  Boot status: %s\n",
+               aios_boot_status == BOOT_FS_DEGRADED ? "DEGRADED" : "FATAL");
+        printf("  No disk filesystem available.\n");
+        printf("  Check /proc/log via dmesg-equivalent below.\n");
+        printf("  Reboot with a valid disk image to recover.\n");
+        printf("============================================\n");
+        return;
+    }
+
     {
         const char *sh_cmd = "/bin/aios/getty CWD=0:0:/";
         int sh_pl = 0;

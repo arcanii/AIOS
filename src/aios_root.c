@@ -226,12 +226,11 @@ int main(int argc, char *argv[]) {
                 /* Drain stale data */
                 while (uart[MU_LSR / 4] & LSR_DATA_READY)
                     (void)uart[MU_IO / 4];
-                printf("[boot] Mini UART mapped at 0x%lx\n",
-                       (unsigned long)uart_paddr);
+                AIOS_LOG_INFO_V("Mini UART mapped at 0x", (unsigned long)uart_paddr);
 #endif
             }
         }
-        if (!uart) printf("[boot] UART map failed\n");
+        if (!uart) AIOS_LOG_ERROR("UART map failed");
     }
 
     vka_object_t fault_ep;
@@ -263,8 +262,16 @@ int main(int argc, char *argv[]) {
     seL4_TCB_SetPriority(seL4_CapInitThreadTCB,
                          seL4_CapInitThreadTCB, 200);
 
-    /* Phase 2: Filesystem (virtio-blk + ext2 + VFS) */
-    boot_fs_init();
+    /* Phase 2: Filesystem (virtio-blk + ext2 + VFS)
+     * v0.4.102: returns status -- if disk fs mount fails, system enters
+     * DEGRADED mode and boot_services skips getty/auth, going straight
+     * to a recovery shell. */
+    int fs_status = boot_fs_init();
+    if (fs_status == BOOT_FS_DEGRADED) {
+        AIOS_LOG_WARN("Boot DEGRADED: no disk filesystem (recovery mode)");
+    } else if (fs_status == BOOT_FS_FATAL) {
+        AIOS_LOG_ERROR("Boot FATAL: cannot continue without block device");
+    }
 
     /* Phase 2b: Network (optional virtio-net) */
     boot_net_init();
@@ -320,7 +327,7 @@ int main(int argc, char *argv[]) {
             /* RPi4 mini UART: use polling mode.
              * Mini UART IRQ is shared with AUX SPI and requires
              * different setup. Polling works fine for interactive use. */
-            printf("[boot] UART: mini UART polling mode\n");
+            AIOS_LOG_INFO("UART: mini UART polling mode");
 #else
             /* QEMU PL011: IRQ-driven input */
             cspacepath_t irq_path;
@@ -335,19 +342,19 @@ int main(int argc, char *argv[]) {
                         uart[UART_IMSC / 4] |= IMSC_RXIM;
                         seL4_IRQHandler_Ack(uart_irq_cap);
                         irq_uart_active = 1;
-                        printf("[boot] UART IRQ %u bound (notification)\n",
-                               hw_info.uart_irq);
+                        AIOS_LOG_INFO_V("UART IRQ bound (notification) irq=",
+                                        (unsigned long)hw_info.uart_irq);
                     } else {
-                        printf("[boot] IRQ SetNotification failed: %d\n", ierr);
+                        AIOS_LOG_ERROR_V("IRQ SetNotification failed err=", ierr);
                     }
                 } else {
-                    printf("[boot] UART IRQ handler failed: %d\n", ierr);
+                    AIOS_LOG_ERROR_V("UART IRQ handler failed err=", ierr);
                 }
             }
 #endif
         }
         if (!irq_uart_active)
-            printf("[boot] UART: polling mode (IRQ unavailable)\n");
+            AIOS_LOG_WARN("UART: polling mode (IRQ unavailable)");
     }
 
     /* Main loop: event-driven or polling fallback */
@@ -439,7 +446,7 @@ int main(int argc, char *argv[]) {
     }
 
 idle:
-    printf("[root] Idle\n");
+    AIOS_LOG_INFO("root idle");
     while (1) { seL4_Yield(); }
     return 0;
 }

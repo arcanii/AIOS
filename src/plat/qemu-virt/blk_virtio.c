@@ -18,6 +18,9 @@
 #include "aios/hw_info.h"
 #include "plat/blk_hal.h"
 #include "plat_virtio_probe.h"
+#define LOG_MODULE "blk"
+#define LOG_LEVEL LOG_LEVEL_INFO
+#include "aios/aios_log.h"
 
 #define VIO_R(base, off)       ((base)[(off)/4])
 #define VIO_W(base, off, val)  ((base)[(off)/4] = (val))
@@ -44,9 +47,10 @@ int plat_blk_init(void) {
     if (plat_virtio_probe() != 0) return -1;
     const plat_virtio_info_t *info = plat_virtio_get_info();
     if (!info || info->num_blk == 0) {
-        printf("[fs] No block device (add -drive to QEMU)\n");
+        AIOS_LOG_ERROR("No block device (add -drive to QEMU)");
         return -1;
     }
+    AIOS_LOG_INFO_V("Found block device count=", (unsigned long)info->num_blk);
     printf("[fs] Found %d block device(s)\n", info->num_blk);
 
     /* Allocate 16K contiguous DMA */
@@ -54,26 +58,26 @@ int plat_blk_init(void) {
     vka_audit_untyped(VKA_SUB_BOOT, 14);
     error = vka_alloc_untyped(&vka, 14, &dma_ut);
     if (error) {
-        printf("[fs] DMA untyped alloc failed: %d\n", error);
+        AIOS_LOG_ERROR_V("DMA untyped alloc failed err=", error);
         return -1;
     }
     seL4_CPtr dma_caps[4];
     for (int i = 0; i < 4; i++) {
         seL4_CPtr slot;
         error = vka_cspace_alloc(&vka, &slot);
-        if (error) { printf("[fs] DMA cslot alloc failed\n"); return -1; }
+        if (error) { AIOS_LOG_ERROR("DMA cslot alloc failed"); return -1; }
         error = seL4_Untyped_Retype(dma_ut.cptr,
             ARCH_PAGE_OBJECT, seL4_PageBits,
             seL4_CapInitThreadCNode, 0, 0, slot, 1);
-        if (error) { printf("[fs] DMA retype %d failed: %d\n", i, error); return -1; }
+        if (error) { AIOS_LOG_ERROR_V("DMA retype failed err=", error); return -1; }
         dma_caps[i] = slot;
     }
     void *dma_vaddr = vspace_map_pages(&vspace, dma_caps, NULL,
         seL4_AllRights, 4, seL4_PageBits, 0);
-    if (!dma_vaddr) { printf("[fs] DMA map failed\n"); return -1; }
+    if (!dma_vaddr) { AIOS_LOG_ERROR("DMA map failed"); return -1; }
 
     seL4_ARM_Page_GetAddress_t ga = seL4_ARM_Page_GetAddress(dma_caps[0]);
-    if (ga.error) { printf("[fs] DMA GetAddress failed\n"); return -1; }
+    if (ga.error) { AIOS_LOG_ERROR("DMA GetAddress failed"); return -1; }
     uint64_t dma_pa = ga.paddr;
 
     /* Probe each block device: read superblock, check volume label */
@@ -138,7 +142,7 @@ int plat_blk_init(void) {
         VIO_W(vio, VIRTIO_MMIO_INTERRUPT_ACK, 1);
 
         if (!probe_ok || req->status != 0) {
-            printf("[fs] Slot %d: read failed\n", info->blk_slots[d]);
+            AIOS_LOG_ERROR_V("Slot read failed slot=", (unsigned long)info->blk_slots[d]);
             VIO_W(vio, VIRTIO_MMIO_STATUS, 0);
             continue;
         }
@@ -170,7 +174,7 @@ int plat_blk_init(void) {
     }
 
     if (blk_slot < 0) {
-        printf("[fs] No system disk found\n");
+        AIOS_LOG_ERROR("No system disk found");
         return -1;
     }
 
@@ -201,26 +205,26 @@ int plat_blk_init_log(void) {
     vka_audit_untyped(VKA_SUB_BOOT, 14);
     error = vka_alloc_untyped(&vka, 14, &dma_ut);
     if (error) {
-        printf("[boot] Log DMA alloc failed: %d\n", error);
+        AIOS_LOG_ERROR_V("Log DMA alloc failed err=", error);
         return -1;
     }
     seL4_CPtr dma_caps[4];
     for (int i = 0; i < 4; i++) {
         seL4_CPtr slot;
         error = vka_cspace_alloc(&vka, &slot);
-        if (error) { printf("[boot] Log cslot failed\n"); return -1; }
+        if (error) { AIOS_LOG_ERROR("Log cslot failed"); return -1; }
         error = seL4_Untyped_Retype(dma_ut.cptr,
             ARCH_PAGE_OBJECT, seL4_PageBits,
             seL4_CapInitThreadCNode, 0, 0, slot, 1);
-        if (error) { printf("[boot] Log retype %d failed\n", i); return -1; }
+        if (error) { AIOS_LOG_ERROR_V("Log retype failed idx=", (unsigned long)i); return -1; }
         dma_caps[i] = slot;
     }
     void *dma_vaddr = vspace_map_pages(&vspace, dma_caps, NULL,
         seL4_AllRights, 4, seL4_PageBits, 0);
-    if (!dma_vaddr) { printf("[boot] Log DMA map failed\n"); return -1; }
+    if (!dma_vaddr) { AIOS_LOG_ERROR("Log DMA map failed"); return -1; }
 
     seL4_ARM_Page_GetAddress_t ga = seL4_ARM_Page_GetAddress(dma_caps[0]);
-    if (ga.error) { printf("[boot] Log GetAddress failed\n"); return -1; }
+    if (ga.error) { AIOS_LOG_ERROR("Log GetAddress failed"); return -1; }
     uint64_t dma_pa = ga.paddr;
 
     uint8_t *dma = (uint8_t *)dma_vaddr;

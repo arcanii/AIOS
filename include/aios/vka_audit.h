@@ -43,4 +43,11 @@ extern int vka_peak_frames;
 void vka_audit_frame_alloc(void);
 void vka_audit_frame_free(void);
 
+/* v0.4.103: pool pressure helpers
+ *   vka_audit_frame_release(N): decrement live count by N (used in reap)
+ *   vka_audit_check_headroom(N): returns -1 if < N free pages, else 0
+ */
+void vka_audit_frame_release(int pages);
+int  vka_audit_check_headroom(int needed_pages);
+
 #endif

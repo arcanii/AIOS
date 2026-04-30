@@ -1091,6 +1091,48 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }
+        case PIPE_MMAP_ANON: {
+            /* v0.4.104: Allocate anonymous pages on demand and map them
+             * into caller's VSpace. Returns vaddr in MR0 (or 0 on fail).
+             * MR0 = page count requested (max 1024 = 4MB at a time)
+             * Used as a fallback when a process's static morecore is
+             * exhausted. Cap freed via sel4utils_destroy_process on exit. */
+            int ci = (int)badge - 1;
+            int pages = (int)seL4_GetMR(0);
+            if (ci < 0 || ci >= MAX_ACTIVE_PROCS
+                || !active_procs[ci].active
+                || pages <= 0 || pages > 1024) {
+                AIOS_LOG_WARN_V("MMAP_ANON: invalid request pages=", (unsigned long)pages);
+                seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            /* Headroom check */
+            extern int vka_audit_check_headroom(int needed_pages);
+            if (vka_audit_check_headroom(pages) < 0) {
+                AIOS_LOG_ERROR_V("MMAP_ANON: pool too low; need=",
+                                 (unsigned long)pages);
+                seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            /* Allocate N pages and map them contiguously in caller VSpace */
+            void *child_vaddr = vspace_new_pages(
+                &active_procs[ci].proc.vspace,
+                seL4_AllRights, pages, seL4_PageBits);
+            if (!child_vaddr) {
+                AIOS_LOG_ERROR_V("MMAP_ANON: vspace_new_pages failed pages=",
+                                 (unsigned long)pages);
+                seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            vka_audit_frame(VKA_SUB_OTHER, pages);
+            AIOS_LOG_DEBUG_V("MMAP_ANON: allocated pages=", (unsigned long)pages);
+            seL4_SetMR(0, (seL4_Word)child_vaddr);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
         case PIPE_DUP_REFS: {
             /* v0.4.85: child increments refs for inherited pipe FDs
              * MR0 = pipe_id, MR1 = flags (bit0=read, bit1=write) */

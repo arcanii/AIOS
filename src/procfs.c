@@ -246,19 +246,34 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         /* /proc/log — kernel log ring buffer */
         w = aios_log_read(buf, bufsize);
     } else if (path[0] == 'm' && path[1] == 'e') {
-        /* /proc/meminfo */
-        uint32_t total_kb = aios_total_mem / 1024;
-        /* Format: MemTotal: NNNN kB */
-        const char *hdr = "MemTotal:    ";
-        while (*hdr && w < bufsize - 1) buf[w++] = *hdr++;
-        /* uint to string */
-        char tmp[12]; int ti = 0;
-        uint32_t v = total_kb;
-        if (v == 0) tmp[ti++] = '0';
-        else { while (v) { tmp[ti++] = '0' + v % 10; v /= 10; } }
-        while (ti-- > 0 && w < bufsize - 1) buf[w++] = tmp[ti];
-        const char *unit = " kB\n";
-        while (*unit && w < bufsize - 1) buf[w++] = *unit++;
+        /* /proc/meminfo (v0.4.103: real numbers + VKA pool info)
+         * aios_total_mem is in MB, so multiply by 1024 for kB. */
+        extern int vka_live_frames;
+        extern int vka_peak_frames;
+        uint32_t total_kb = aios_total_mem * 1024;
+        uint32_t pool_kb  = 8000 * 4;       /* 4 KB per page */
+        uint32_t used_kb  = (uint32_t)(vka_live_frames < 0 ? 0 : vka_live_frames) * 4;
+        uint32_t peak_kb  = (uint32_t)(vka_peak_frames < 0 ? 0 : vka_peak_frames) * 4;
+        uint32_t free_kb  = pool_kb > used_kb ? pool_kb - used_kb : 0;
+
+        /* Helper: append "Label: value unit\n" */
+        #define APPEND_KV(label_str, val) do { \
+            const char *L = (label_str); \
+            while (*L && w < bufsize - 1) buf[w++] = *L++; \
+            char _tmp[12]; int _ti = 0; uint32_t _v = (uint32_t)(val); \
+            if (_v == 0) _tmp[_ti++] = '0'; \
+            else { while (_v) { _tmp[_ti++] = '0' + _v % 10; _v /= 10; } } \
+            while (_ti-- > 0 && w < bufsize - 1) buf[w++] = _tmp[_ti]; \
+            const char *_u = " kB\n"; \
+            while (*_u && w < bufsize - 1) buf[w++] = *_u++; \
+        } while (0)
+
+        APPEND_KV("MemTotal:       ", total_kb);
+        APPEND_KV("PoolTotal:      ", pool_kb);
+        APPEND_KV("PoolUsed:       ", used_kb);
+        APPEND_KV("PoolFree:       ", free_kb);
+        APPEND_KV("PoolPeak:       ", peak_kb);
+        #undef APPEND_KV
     } else if (path[0] == 'c' && path[1] == 'p') {
         /* /proc/cpuinfo */
         for (int ci = 0; ci < hw_info.cpu_count && ci < 9; ci++) {

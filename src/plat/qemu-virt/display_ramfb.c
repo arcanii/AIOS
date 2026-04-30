@@ -14,6 +14,9 @@
 #include "arch.h"
 #include "aios/hw_info.h"
 #include "plat/display_hal.h"
+#define LOG_MODULE "gpu"
+#define LOG_LEVEL LOG_LEVEL_INFO
+#include "aios/aios_log.h"
 
 #define FWCFG_PADDR     hw_info.fwcfg_paddr
 #define FWCFG_FILE_DIR  0x0019
@@ -60,7 +63,7 @@ int plat_display_init(uint32_t width, uint32_t height) {
     int error;
 
     if (!hw_info.has_fwcfg) {
-        printf("[gpu] No fw_cfg (not QEMU?)\n");
+        AIOS_LOG_WARN("No fw_cfg (not QEMU?)");
         return -1;
     }
 
@@ -194,7 +197,7 @@ int plat_display_init(uint32_t width, uint32_t height) {
     }
 
     if (da->control != 0) {
-        printf("[gpu] DMA timeout\n");
+        AIOS_LOG_ERROR("DMA timeout");
         return -1;
     }
 

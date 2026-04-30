@@ -13,6 +13,9 @@
 #include <sel4platsupport/device.h>
 #include <stdio.h>
 #include "aios/hw_info.h"
+#define LOG_MODULE "plat"
+#define LOG_LEVEL LOG_LEVEL_INFO
+#include "aios/aios_log.h"
 
 static plat_virtio_info_t probe_info;
 static int probe_done = 0;
@@ -31,14 +34,14 @@ int plat_virtio_probe(void) {
         vio_caps[p] = vio_frames[p].cptr;
     }
     if (!vio_ok) {
-        printf("[plat] Failed to alloc virtio MMIO frames\n");
+        AIOS_LOG_ERROR("Failed to alloc virtio MMIO frames");
         return -1;
     }
 
     void *vaddr = vspace_map_pages(&vspace, vio_caps, NULL,
         seL4_AllRights, 4, seL4_PageBits, 0);
     if (!vaddr) {
-        printf("[plat] Failed to map virtio MMIO\n");
+        AIOS_LOG_ERROR("Failed to map virtio MMIO");
         return -1;
     }
 

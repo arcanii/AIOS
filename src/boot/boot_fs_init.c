@@ -14,11 +14,19 @@
 #include <stdio.h>
 #include "plat/blk_hal.h"
 
-void boot_fs_init(void) {
+/* v0.4.102: boot status, set by boot_fs_init, read by boot_services */
+int aios_boot_status = BOOT_FS_OK;
+
+int boot_fs_init(void) {
     /* Platform HAL: probe hardware, init block device */
     if (plat_blk_init() != 0) {
-        AIOS_LOG_ERROR("Block device init failed");
-        return;
+        AIOS_LOG_ERROR("Block device init failed -- entering DEGRADED mode");
+        /* Still init VFS + /proc so recovery can read /proc/log etc. */
+        vfs_init();
+        proc_init();
+        vfs_mount("/proc", &procfs_ops, NULL);
+        aios_boot_status = BOOT_FS_FATAL;
+        return BOOT_FS_FATAL;
     }
 
     /* Mount root filesystem */
@@ -35,7 +43,10 @@ void boot_fs_init(void) {
         LOG_INFO("ext2 + procfs mounted");
         AIOS_LOG_INFO("Filesystems mounted");
     } else {
-        AIOS_LOG_ERROR_V("ext2 init failed err=", fs_err);
+        AIOS_LOG_ERROR_V("ext2 init failed -- DEGRADED, no disk; err=", fs_err);
+        /* /proc still works; user may try to recover */
+        vfs_mount("/proc", &procfs_ops, NULL);
+        aios_boot_status = BOOT_FS_DEGRADED;
     }
 
     /* Mount log drive if platform found one.
@@ -62,4 +73,5 @@ void boot_fs_init(void) {
     } else {
         AIOS_LOG_INFO("No log drive (optional)");
     }
+    return aios_boot_status;
 }

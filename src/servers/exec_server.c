@@ -121,6 +121,17 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         while (*pn && epi < 158) elf_path[epi++] = *pn++;
         elf_path[epi] = '\0';
 
+        /* v0.4.103: Check memory headroom before expensive ELF load.
+         * A typical process needs ~1500-3000 pages (morecore + ELF segments
+         * + stack + cnode). Refuse early if pool is too low. */
+        if (vka_audit_check_headroom(2000) < 0) {
+            AIOS_LOG_ERROR("Cannot spawn -- insufficient memory");
+            seL4_SetMR(0, (seL4_Word)-1);
+            seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
+            vka_free_object(&vka, &child_fault_ep);
+            continue;
+        }
+
         int elf_size = vfs_read(elf_path, elf_buf, sizeof(elf_buf));
         printf("[exec] %s: elf_size=%d\n", elf_path, elf_size);
         AIOS_LOG_INFO_V("loaded elf bytes=", (unsigned long)elf_size);

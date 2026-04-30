@@ -11,6 +11,8 @@
 #include "aios/vfs.h"
 #include "aios/ext2.h"
 #include "aios/procfs.h"
+#define LOG_MODULE "fs"
+#define LOG_LEVEL LOG_LEVEL_INFO
 #include "aios/aios_log.h"
 
 int fs_check_write_perm(int badge) {
@@ -399,6 +401,7 @@ void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             break;
         }
         default:
+            AIOS_LOG_WARN_V("fs_server unhandled IPC label=", (unsigned long)label);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
             break;
         }

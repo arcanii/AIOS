@@ -38,7 +38,7 @@ int plat_net_init(void) {
     /* Get device slot from shared virtio probe */
     const plat_virtio_info_t *vinfo = plat_virtio_get_info();
     if (!vinfo || vinfo->net_slot < 0) {
-        printf("[net] No virtio-net in probe results\n");
+        AIOS_LOG_WARN("No virtio-net in probe results");
         net_available = 0;
         return -1;
     }
@@ -58,7 +58,7 @@ int plat_net_init(void) {
     vka_audit_untyped(VKA_SUB_NET, 17);
     error = vka_alloc_untyped(&vka, 17, &dma_ut);
     if (error) {
-        printf("[net] DMA untyped alloc failed: %d\n", error);
+        AIOS_LOG_ERROR_V("DMA untyped alloc failed err=", error);
         net_available = 0;
         return -1;
     }
@@ -86,14 +86,14 @@ int plat_net_init(void) {
     void *dma_vaddr = vspace_map_pages(&vspace, dma_caps, NULL,
         seL4_AllRights, NET_DMA_FRAMES, seL4_PageBits, 0);
     if (!dma_vaddr) {
-        printf("[net] DMA map failed\n");
+        AIOS_LOG_ERROR("DMA map failed");
         net_available = 0;
         return -1;
     }
 
     seL4_ARM_Page_GetAddress_t ga = seL4_ARM_Page_GetAddress(dma_caps[0]);
     if (ga.error) {
-        printf("[net] DMA GetAddress failed\n");
+        AIOS_LOG_ERROR("DMA GetAddress failed");
         net_available = 0;
         return -1;
     }
@@ -174,13 +174,13 @@ int plat_net_init(void) {
     vka_object_t drv_ntfn_obj, srv_ntfn_obj;
     error = vka_alloc_notification(&vka, &drv_ntfn_obj);
     if (error) {
-        printf("[net] drv notification alloc failed\n");
+        AIOS_LOG_ERROR("drv notification alloc failed");
         net_available = 0;
         return -1;
     }
     error = vka_alloc_notification(&vka, &srv_ntfn_obj);
     if (error) {
-        printf("[net] srv notification alloc failed\n");
+        AIOS_LOG_ERROR("srv notification alloc failed");
         net_available = 0;
         return -1;
     }

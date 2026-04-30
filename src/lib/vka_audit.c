@@ -1,9 +1,18 @@
 /*
  * vka_audit.c -- VKA allocation counter implementation
  * v0.4.65: tracks per-subsystem resource consumption
+ * v0.4.103: vka_audit_frame now also updates live count for /proc/vka
+ *
+ * Note: this only tracks frames we EXPLICITLY allocate from pipe/fork/exec
+ * subsystems. ELF segments, BSS (morecore eager mapping), and stacks are
+ * allocated implicitly by sel4utils_elf_load and not reflected here.
+ * For total page accounting, use the seL4 untyped tracking.
  */
 #include <stdio.h>
 #include "aios/vka_audit.h"
+#define LOG_MODULE "vka"
+#define LOG_LEVEL LOG_LEVEL_INFO
+#include "aios/aios_log.h"
 
 vka_audit_entry_t vka_audit[VKA_SUB_COUNT];
 
@@ -11,10 +20,31 @@ const char *vka_sub_names[VKA_SUB_COUNT] = {
     "boot", "fork", "exec", "thread", "pipe", "net", "gpu", "other"
 };
 
+/* v0.4.103: pool capacity for pressure warnings */
+#define VKA_POOL_PAGES         8000
+#define VKA_POOL_WARN_BELOW    1500
+#define VKA_POOL_CRIT_BELOW    500
+
+static int last_warned_at = 0;
+
 void vka_audit_frame(vka_subsystem_t sub, int pages) {
     if (sub >= VKA_SUB_COUNT) sub = VKA_SUB_OTHER;
     vka_audit[sub].frames += (uint32_t)pages;
     vka_audit[sub].total_pages += (uint32_t)pages;
+    /* v0.4.103: bump live count + check memory pressure */
+    for (int i = 0; i < pages; i++) vka_audit_frame_alloc();
+    /* Periodic warning when pool is low (every 100 allocations) */
+    if (vka_live_frames - last_warned_at >= 100) {
+        last_warned_at = vka_live_frames;
+        int free_est = VKA_POOL_PAGES - vka_live_frames;
+        if (free_est < VKA_POOL_CRIT_BELOW) {
+            AIOS_LOG_ERROR_V("CRITICAL: pool nearly exhausted free_pages=",
+                             (unsigned long)(free_est < 0 ? 0 : free_est));
+        } else if (free_est < VKA_POOL_WARN_BELOW) {
+            AIOS_LOG_WARN_V("Pool pressure: free_pages=",
+                            (unsigned long)free_est);
+        }
+    }
 }
 
 void vka_audit_endpoint(vka_subsystem_t sub) {
@@ -35,7 +65,32 @@ void vka_audit_cslot(vka_subsystem_t sub) {
 void vka_audit_untyped(vka_subsystem_t sub, int size_bits) {
     if (sub >= VKA_SUB_COUNT) sub = VKA_SUB_OTHER;
     vka_audit[sub].untypeds++;
-    vka_audit[sub].total_pages += (uint32_t)(1 << (size_bits - 12));
+    int pages = (1 << (size_bits - 12));
+    vka_audit[sub].total_pages += (uint32_t)pages;
+    /* v0.4.103: untyped also consumes pool pages */
+    for (int i = 0; i < pages; i++) vka_audit_frame_alloc();
+}
+
+/* v0.4.103: called by reap/destroy paths to release frame counts.
+ * Called per-page; subsystem counts are not decremented (informational
+ * only) but vka_live_frames decreases for /proc/vka observability. */
+void vka_audit_frame_release(int pages) {
+    for (int i = 0; i < pages; i++) vka_audit_frame_free();
+    if (vka_live_frames < 0) vka_live_frames = 0;
+}
+
+/* v0.4.103: Check if we have headroom before spawning a new process.
+ * Returns 0 if OK, -1 if pool too low. Caller should refuse to fork/exec
+ * with a clear error rather than letting the allocation silently fail. */
+int vka_audit_check_headroom(int needed_pages) {
+    int free_est = VKA_POOL_PAGES - vka_live_frames;
+    if (free_est < needed_pages) {
+        AIOS_LOG_ERROR_V("Insufficient memory: free_pages=",
+                         (unsigned long)(free_est < 0 ? 0 : free_est));
+        AIOS_LOG_ERROR_V("Spawn requires pages=", (unsigned long)needed_pages);
+        return -1;
+    }
+    return 0;
 }
 
 void vka_audit_dump(void) {
