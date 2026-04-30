@@ -297,6 +297,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                                 (void *)page_va, 1, seL4_PageBits, res);
                             if (!merr) {
                                 vka_audit_frame(VKA_SUB_OTHER, 1);
+                                active_procs[ci].audit_pages_allocated++;
                                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
                                 continue;
                             }
@@ -726,6 +727,8 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
 
             ap->ignore_next_fault = 1;
+            /* v0.4.109: release old process's audit pages before destroy */
+            vka_audit_release_proc_pages(&ap->audit_pages_allocated);
             sel4utils_destroy_process(&ap->proc, &vka);
 
             /* Free old fault ep -- minted cap vs allocated endpoint */

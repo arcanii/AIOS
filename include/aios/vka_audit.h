@@ -50,4 +50,11 @@ void vka_audit_frame_free(void);
 void vka_audit_frame_release(int pages);
 int  vka_audit_check_headroom(int needed_pages);
 
+/* v0.4.109: per-process page release helper. Pass an active_proc_t*
+ * (forward-declared as void here to avoid including root_shared.h).
+ * Decrements vka_live_frames by the per-process audit count and zeros
+ * it. Called immediately before sel4utils_destroy_process. */
+struct active_proc;
+void vka_audit_release_proc_pages(int *audit_pages_allocated);
+
 #endif

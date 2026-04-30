@@ -93,6 +93,15 @@ int vka_audit_check_headroom(int needed_pages) {
     return 0;
 }
 
+/* v0.4.109: Release per-process audit pages. Called before destroy.
+ * Takes a pointer so it can also zero the count. */
+void vka_audit_release_proc_pages(int *audit_pages_allocated) {
+    if (!audit_pages_allocated) return;
+    int n = *audit_pages_allocated;
+    if (n > 0) vka_audit_frame_release(n);
+    *audit_pages_allocated = 0;
+}
+
 void vka_audit_dump(void) {
     printf("[VKA-AUDIT] Per-subsystem allocation summary:\n");
     printf("  %-8s %6s %5s %4s %6s %6s %8s\n",

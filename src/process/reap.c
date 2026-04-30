@@ -10,6 +10,7 @@
 #include <vka/object.h>
 #include "aios/root_shared.h"
 #include "aios/procfs.h"
+#include "aios/vka_audit.h"
 
 /* Variable definitions (extern in root_shared.h) */
 wait_pending_t wait_pending[MAX_WAIT_PENDING];
@@ -38,6 +39,8 @@ void reap_forked_child(int child_idx) {
     int parent_pid = child->ppid;
     int estatus = child->exit_status;
 
+    /* v0.4.109: release per-process VKA audit pages before destroy */
+    vka_audit_release_proc_pages(&child->audit_pages_allocated);
     /* Destroy the process */
     sel4utils_destroy_process(&child->proc, &vka);
     /* Free fault endpoint: minted cap vs allocated endpoint */

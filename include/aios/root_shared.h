@@ -149,6 +149,10 @@ typedef struct {
     uintptr_t bss_lazy_start;    /* page-aligned, inclusive */
     uintptr_t bss_lazy_end;      /* page-aligned, exclusive */
     void *bss_reservation;       /* opaque reservation_t.res for fault map */
+    /* v0.4.109: count of pages allocated to this process via fault handler
+     * (and any other vka_audit_frame calls per-process). Used to decrement
+     * vka_live_frames in cleanup paths so /proc/vka shows accurate counts. */
+    int audit_pages_allocated;
 } active_proc_t;
 
 typedef struct {

@@ -92,9 +92,42 @@ void aios_log_file_init(void) {
     }
 }
 
+/* v0.4.109: Log rotation threshold. When file grows past this, we
+ * truncate (unlink + recreate). Old log entries are lost; that is
+ * acceptable for a research OS. Keeps the log drive bounded.
+ *
+ * Future: proper rotation with aios.log -> aios.log.1 backup. */
+#define LOG_FILE_MAX_BYTES (1024 * 1024)
+
+static void log_file_rotate(void) {
+    /* Unlink + recreate. log_file_busy is the caller's lock so we
+     * can do ext2 ops inline. */
+    if (ext2_unlink(&ext2_log, 2 /* root */, "aios.log") != 0) {
+        /* If unlink fails, we just keep growing -- not fatal */
+        return;
+    }
+    log_file_ready = 0;
+    log_file_ino = 0;
+    log_file_pos = 0;
+
+    const char *hdr = "=== AIOS log (rotated) ===\n";
+    int hlen = 0;
+    while (hdr[hlen]) hlen++;
+    int ret = ext2_create_file(&ext2_log, 2, "aios.log", hdr, hlen);
+    if (ret > 0) {
+        log_file_ino = (uint32_t)ret;
+        log_file_pos = hlen;
+        log_file_ready = 1;
+    }
+}
+
 static void log_file_append(const char *buf, int len) {
     if (!log_file_ready || log_file_busy) return;
     log_file_busy = 1;
+    /* v0.4.109: rotate if past threshold */
+    if (log_file_pos >= LOG_FILE_MAX_BYTES) {
+        log_file_rotate();
+    }
     int wrote = ext2_pwrite_file(&ext2_log, log_file_ino, log_file_pos,
                                  (const uint8_t *)buf, len);
     if (wrote > 0) log_file_pos += wrote;
