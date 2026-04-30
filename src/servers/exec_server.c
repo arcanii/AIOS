@@ -89,17 +89,8 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
         }
 
-        /* Create a local fault ep */
-        vka_object_t child_fault_ep;
-        err = vka_alloc_endpoint(&vka, &child_fault_ep);
-        if (err) {
-            /* alloc failed silently */
-            seL4_SetMR(0, (seL4_Word)-1);
-            seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
-            continue;
-        }
-
-        /* Allocate active_procs slot */
+        /* Allocate active_procs slot first so we know the badge for
+         * any minted fault EP */
         int ap_idx = -1;
         for (int i = 0; i < MAX_ACTIVE_PROCS; i++) {
             if (!active_procs[i].active) { ap_idx = i; break; }
@@ -107,8 +98,43 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         if (ap_idx < 0) {
             seL4_SetMR(0, (seL4_Word)-1);
             seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
-            vka_free_object(&vka, &child_fault_ep);
             continue;
+        }
+
+        /* Create fault endpoint:
+         *   v0.4.107: For EXEC_RUN_BG (getty), mint a badged pipe_ep
+         *   so pipe_server's central fault dispatcher handles BSS
+         *   faults. For EXEC_RUN (foreground), keep a dedicated
+         *   endpoint -- exec_thread polls it directly below. */
+        vka_object_t child_fault_ep;
+        int fault_on_pipe_ep = 0;
+        if (label == EXEC_RUN_BG) {
+            cspacepath_t src, dest;
+            vka_cspace_make_path(&vka, pipe_ep_cap, &src);
+            if (vka_cspace_alloc_path(&vka, &dest)) {
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
+                continue;
+            }
+            int merr = seL4_CNode_Mint(dest.root, dest.capPtr, dest.capDepth,
+                src.root, src.capPtr, src.capDepth,
+                seL4_AllRights, (seL4_Word)(ap_idx + 1));
+            if (merr) {
+                vka_cspace_free(&vka, dest.capPtr);
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
+                continue;
+            }
+            memset(&child_fault_ep, 0, sizeof(child_fault_ep));
+            child_fault_ep.cptr = dest.capPtr;
+            fault_on_pipe_ep = 1;
+        } else {
+            err = vka_alloc_endpoint(&vka, &child_fault_ep);
+            if (err) {
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
+                continue;
+            }
         }
         active_proc_t *ap = &active_procs[ap_idx];
         sel4utils_process_t *proc = &ap->proc;
@@ -205,18 +231,15 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
          * sel4utils_elf_load -- and create our own reservation so the
          * fault handler below can vspace_new_pages_at_vaddr on demand.
          *
-         * Only applied to EXEC_RUN (foreground): exec_thread polls the
-         * child's fault EP and handles BSS faults. EXEC_RUN_BG (getty)
-         * has its fault EP unpolled until the process exits, so demand
-         * paging would deadlock the child on first BSS access.
+         * v0.4.106: applies to EXEC_RUN/EXEC_NICE -- exec_thread polls
+         * fault EP directly below.
          *
-         * Result: per-process page count drops by ~1500 for foreground
-         * programs (most commands). getty stays eager. Forked children
-         * via pipe_server need separate BSS fault handler -- TODO. */
+         * v0.4.107: also applies to EXEC_RUN_BG -- the BG fault EP is
+         * minted into pipe_ep so pipe_server handles BSS faults. */
         ap->bss_lazy_start = 0;
         ap->bss_lazy_end = 0;
         ap->bss_reservation = NULL;
-        if (label == EXEC_RUN || label == EXEC_NICE) {
+        if (label == EXEC_RUN || label == EXEC_NICE || label == EXEC_RUN_BG) {
             int nph2 = elf_getNumProgramHeaders(&elf);
             uintptr_t bs = 0, be = 0;
             for (int i = 0; i < nph2; i++) {
@@ -408,13 +431,16 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             /* Nice value was stored in last MR by shell */
         }
 
-        /* Background exec: reply immediately, don't wait */
+        /* Background exec: reply immediately, don't wait
+         * v0.4.107: BG processes use minted pipe_ep as fault EP --
+         * pipe_server's fault dispatcher handles their BSS faults
+         * via the same path as forked-then-execed children. */
         if (label == EXEC_RUN_BG) {
             ap->pid = child_pid;
             seL4_SetMR(0, (seL4_Word)child_pid);
             seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
-            /* Store fault_ep in active_procs for later reaping */
             ap->fault_ep = child_fault_ep;
+            ap->fault_on_pipe_ep = fault_on_pipe_ep;
             continue;
         }
 
