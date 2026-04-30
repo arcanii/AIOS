@@ -283,6 +283,31 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             if (ci >= 0 && ci < MAX_ACTIVE_PROCS
                 && active_procs[ci].active
                 && active_procs[ci].fault_on_pipe_ep) {
+                /* v0.4.106: BSS fault? allocate + map + reply (resumes child) */
+                if (label == seL4_Fault_VMFault
+                    && active_procs[ci].bss_reservation != NULL) {
+                    seL4_Word fault_addr = seL4_GetMR(seL4_VMFault_Addr);
+                    if (fault_addr >= active_procs[ci].bss_lazy_start
+                        && fault_addr <  active_procs[ci].bss_lazy_end) {
+                        if (vka_audit_check_headroom(1) >= 0) {
+                            uintptr_t page_va = fault_addr & ~(uintptr_t)0xFFF;
+                            reservation_t res = { .res = active_procs[ci].bss_reservation };
+                            int merr = vspace_new_pages_at_vaddr(
+                                &active_procs[ci].proc.vspace,
+                                (void *)page_va, 1, seL4_PageBits, res);
+                            if (!merr) {
+                                vka_audit_frame(VKA_SUB_OTHER, 1);
+                                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
+                                continue;
+                            }
+                            AIOS_LOG_ERROR_V("BSS fault: map failed err=",
+                                             (unsigned long)merr);
+                        } else {
+                            AIOS_LOG_ERROR("BSS fault: out of memory");
+                        }
+                        /* Fall through to handle_child_fault on failure */
+                    }
+                }
                 handle_child_fault(ci);
                 continue;  /* No reply for faults */
             }
@@ -757,6 +782,43 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 break;
             }
             proc->sysinfo = sel4utils_elf_get_vsyscall(&elf);
+
+            /* v0.4.106: Demand-paged BSS for forked-then-execed children.
+             * Unmap the BSS portion of LOAD segments and create a
+             * reservation so the fault handler (above, in this server's
+             * dispatch loop) can map pages on demand. */
+            ap->bss_lazy_start = 0;
+            ap->bss_lazy_end = 0;
+            ap->bss_reservation = NULL;
+            {
+                int nph2 = elf_getNumProgramHeaders(&elf);
+                uintptr_t bs = 0, be = 0;
+                for (int i = 0; i < nph2; i++) {
+                    if (elf_getProgramHeaderType(&elf, i) != 1) continue;
+                    uintptr_t v   = (uintptr_t)elf_getProgramHeaderVaddr(&elf, i);
+                    size_t fz     = (size_t)elf_getProgramHeaderFileSize(&elf, i);
+                    size_t mz     = (size_t)elf_getProgramHeaderMemorySize(&elf, i);
+                    if (mz <= fz) continue;
+                    uintptr_t s = (v + fz + 0xFFF) & ~((uintptr_t)0xFFF);
+                    uintptr_t e = (v + mz + 0xFFF) & ~((uintptr_t)0xFFF);
+                    if (e <= s) continue;
+                    if ((e - s) > (be - bs)) { bs = s; be = e; }
+                }
+                if (bs && be > bs) {
+                    size_t pages = (be - bs) / 4096;
+                    vspace_unmap_pages(&proc->vspace, (void *)bs,
+                                       pages, seL4_PageBits, &vka);
+                    reservation_t r = vspace_reserve_range_at(
+                        &proc->vspace, (void *)bs, pages * 4096,
+                        seL4_AllRights, 1);
+                    if (r.res) {
+                        ap->bss_lazy_start = bs;
+                        ap->bss_lazy_end   = be;
+                        ap->bss_reservation = r.res;
+                        AIOS_LOG_INFO_V("BSS lazy pages=", (unsigned long)pages);
+                    }
+                }
+            }
 
             seL4_CPtr cs = sel4utils_copy_cap_to_process(proc, &vka, serial_ep.cptr);
             ap->child_ser_slot = cs;

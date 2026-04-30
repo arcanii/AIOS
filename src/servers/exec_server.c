@@ -198,6 +198,59 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         }
         proc->sysinfo = sel4utils_elf_get_vsyscall(&elf);
 
+        /* v0.4.106: Demand-paged BSS.
+         *
+         * Find the largest BSS region (where memsz > filesz) in the LOAD
+         * segments. Unmap those pages -- they were just allocated by
+         * sel4utils_elf_load -- and create our own reservation so the
+         * fault handler below can vspace_new_pages_at_vaddr on demand.
+         *
+         * Only applied to EXEC_RUN (foreground): exec_thread polls the
+         * child's fault EP and handles BSS faults. EXEC_RUN_BG (getty)
+         * has its fault EP unpolled until the process exits, so demand
+         * paging would deadlock the child on first BSS access.
+         *
+         * Result: per-process page count drops by ~1500 for foreground
+         * programs (most commands). getty stays eager. Forked children
+         * via pipe_server need separate BSS fault handler -- TODO. */
+        ap->bss_lazy_start = 0;
+        ap->bss_lazy_end = 0;
+        ap->bss_reservation = NULL;
+        if (label == EXEC_RUN || label == EXEC_NICE) {
+            int nph2 = elf_getNumProgramHeaders(&elf);
+            uintptr_t bs = 0, be = 0;
+            for (int i = 0; i < nph2; i++) {
+                if (elf_getProgramHeaderType(&elf, i) != 1 /* PT_LOAD */) continue;
+                uintptr_t v   = (uintptr_t)elf_getProgramHeaderVaddr(&elf, i);
+                size_t fz     = (size_t)elf_getProgramHeaderFileSize(&elf, i);
+                size_t mz     = (size_t)elf_getProgramHeaderMemorySize(&elf, i);
+                if (mz <= fz) continue;
+                /* BSS portion: from end of file data to end of memory size */
+                uintptr_t s = (v + fz + 0xFFF) & ~((uintptr_t)0xFFF);
+                uintptr_t e = (v + mz + 0xFFF) & ~((uintptr_t)0xFFF);
+                if (e <= s) continue;
+                if ((e - s) > (be - bs)) { bs = s; be = e; }
+            }
+            if (bs && be > bs) {
+                size_t pages = (be - bs) / 4096;
+                /* Unmap + free the eagerly-allocated BSS frames */
+                vspace_unmap_pages(&proc->vspace, (void *)bs,
+                                   pages, seL4_PageBits, &vka);
+                /* Establish our own reservation for fault-time mapping */
+                reservation_t bss_res = vspace_reserve_range_at(
+                    &proc->vspace, (void *)bs, pages * 4096,
+                    seL4_AllRights, 1);
+                if (bss_res.res) {
+                    ap->bss_lazy_start = bs;
+                    ap->bss_lazy_end   = be;
+                    ap->bss_reservation = bss_res.res;
+                    AIOS_LOG_INFO_V("BSS lazy pages=", (unsigned long)pages);
+                } else {
+                    AIOS_LOG_WARN("BSS reservation failed, BSS will fault-fail");
+                }
+            }
+        }
+
         seL4_CPtr child_ser = sel4utils_copy_cap_to_process(proc, &vka, serial_ep.cptr);
         ap->child_ser_slot = child_ser;
         /* Mint badged fs_ep (badge = ap_idx + 1) for permission checks */
@@ -369,9 +422,49 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         fg_pid = child_pid;
         fg_fault_ep = child_fault_ep.cptr;
 
-        /* Wait for child to exit */
+        /* v0.4.106: Wait for child to exit OR fault.
+         *
+         * Loop on Recv -- handle BSS faults by allocating a page and
+         * replying (resumes the child). Only break out for non-BSS
+         * faults or non-fault messages (treated as exit).
+         */
         seL4_Word child_badge;
-        seL4_Recv(child_fault_ep.cptr, &child_badge);
+        while (1) {
+            seL4_MessageInfo_t fmsg = seL4_Recv(child_fault_ep.cptr, &child_badge);
+            seL4_Word flabel = seL4_MessageInfo_get_label(fmsg);
+
+            if (flabel == seL4_Fault_VMFault
+                && ap->bss_reservation != NULL) {
+                seL4_Word fault_addr = seL4_GetMR(seL4_VMFault_Addr);
+                if (fault_addr >= ap->bss_lazy_start
+                    && fault_addr <  ap->bss_lazy_end) {
+                    /* BSS demand-page: map a fresh page at the faulting page */
+                    uintptr_t page_va = fault_addr & ~(uintptr_t)0xFFF;
+                    if (vka_audit_check_headroom(1) < 0) {
+                        AIOS_LOG_ERROR("BSS fault: out of memory");
+                        break;  /* Treat as exit */
+                    }
+                    reservation_t res = { .res = ap->bss_reservation };
+                    int merr = vspace_new_pages_at_vaddr(
+                        &proc->vspace, (void *)page_va,
+                        1, seL4_PageBits, res);
+                    if (merr) {
+                        AIOS_LOG_ERROR_V("BSS fault: map failed err=",
+                                         (unsigned long)merr);
+                        break;
+                    }
+                    vka_audit_frame(VKA_SUB_OTHER, 1);
+                    /* Reply to the fault EP -- child resumes from faulting insn */
+                    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
+                    continue;  /* loop for more faults */
+                }
+                /* VM fault outside BSS -- log + treat as exit */
+                AIOS_LOG_ERROR_V("VM fault outside BSS addr=",
+                                 (unsigned long)fault_addr);
+            }
+            /* Non-fault message OR fault we cannot handle: treat as exit */
+            break;
+        }
 
         /* Clear foreground tracking */
         fg_pid = -1;

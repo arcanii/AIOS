@@ -143,6 +143,12 @@ typedef struct {
     uint32_t sig_pending;        /* pending signal bitmask */
     int exit_cb_ran;             /* v0.4.87: aios_exit_cb already closed pipes */
     int pipe_write_closed;       /* v0.4.87: PIPE_CLOSE_WRITE already called */
+    /* v0.4.106: demand-paged BSS range. Pages in [start, end) are reserved
+     * but unmapped at process load. On VM fault inside the range, the
+     * fault handler in exec_thread allocates a frame and maps it. */
+    uintptr_t bss_lazy_start;    /* page-aligned, inclusive */
+    uintptr_t bss_lazy_end;      /* page-aligned, exclusive */
+    void *bss_reservation;       /* opaque reservation_t.res for fault map */
 } active_proc_t;
 
 typedef struct {
