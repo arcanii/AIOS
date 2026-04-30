@@ -5,6 +5,9 @@
  * Runs in root task context after VFS mount, before server threads start.
  * Uses vfs_read() directly (no IPC to fs_server needed).
  */
+#define LOG_MODULE "boot"
+#define LOG_LEVEL LOG_LEVEL_INFO
+#include "aios/aios_log.h"
 #include "aios/config.h"
 #include "aios/vfs.h"
 #include <stdio.h>
@@ -86,7 +89,8 @@ void cfg_load_environment(cfg_env_t *e) {
 /* ---- Master boot config loader ---- */
 void boot_load_config(void) {
     cfg_load_hostname(&sys_hostname);
-    printf("[boot] hostname: %s\n", sys_hostname.name);
+    printf("[boot] hostname: %s\n", sys_hostname.name);  /* keep stdout for visibility */
+    AIOS_LOG_INFO(sys_hostname.name);
 
     cfg_load_network(&sys_net);
     if (sys_net.loaded) {
@@ -97,7 +101,7 @@ void boot_load_config(void) {
                sys_net.mask[0], sys_net.mask[1],
                sys_net.mask[2], sys_net.mask[3]);
     } else {
-        printf("[boot] net: using defaults (no /etc/network.conf)\n");
+        AIOS_LOG_WARN("net: using defaults (no /etc/network.conf)");
     }
 
     cfg_load_environment(&sys_env);

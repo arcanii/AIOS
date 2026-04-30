@@ -91,8 +91,7 @@ void boot_start_services(vka_object_t *fault_ep) {
                     simple_get_tcb(&simple), 200);
                 int bind_err = seL4_TCB_BindNotification(
                     net_srv.tcb.cptr, net_srv_ntfn_cap);
-                printf("[boot] net srv ntfn bind: err=%d cap=%lu\n",
-                       bind_err, (unsigned long)net_srv_ntfn_cap);
+                AIOS_LOG_INFO_V("net srv ntfn bind err=", bind_err);
                 sel4utils_start_thread(&net_srv,
                     (sel4utils_thread_entry_fn)net_server_fn,
                     (void *)(uintptr_t)net_ep_cap, NULL, 1);
@@ -100,7 +99,7 @@ void boot_start_services(vka_object_t *fault_ep) {
         }
         proc_add("net_driver", 200);
         proc_add("net_server", 200);
-        printf("[boot] Network threads started\n");
+        AIOS_LOG_INFO("Network threads started");
     }
 
     /* Start display server */
@@ -124,7 +123,7 @@ void boot_start_services(vka_object_t *fault_ep) {
             (sel4utils_thread_entry_fn)crypto_server_main,
             crypto_ep_cap);
         proc_add("crypto_server", 200);
-        printf("[boot] Crypto server started\n");
+        AIOS_LOG_INFO("Crypto server started");
     }
 
     /* Spawn tty_server (CPIO, isolated process) */
@@ -133,7 +132,7 @@ void boot_start_services(vka_object_t *fault_ep) {
     caps[0] = serial_ep.cptr;
     error = spawn_with_args("tty_server", 200, &serial_proc,
                             fault_ep, 1, caps, slots);
-    if (error) { printf("[proc] tty FAILED\n"); return; }
+    if (error) { AIOS_LOG_ERROR_V("tty_server spawn FAILED err=", error); return; }
     proc_add("tty_server", 200);
 
     /* Spawn auth_server (CPIO, isolated process) */
@@ -142,7 +141,7 @@ void boot_start_services(vka_object_t *fault_ep) {
     seL4_CPtr auth_slots[2];
     error = spawn_with_args("auth_server", 200, &auth_proc,
                             fault_ep, 2, auth_caps, auth_slots);
-    if (error) { printf("[proc] auth FAILED\n"); return; }
+    if (error) { AIOS_LOG_ERROR_V("auth_server spawn FAILED err=", error); return; }
     proc_add("auth_server", 200);
 
     /* Send /etc/passwd to auth_server via IPC */
@@ -160,10 +159,10 @@ void boot_start_services(vka_object_t *fault_ep) {
             }
             seL4_Call(auth_ep_cap, seL4_MessageInfo_new(52, 0, 0, mr));
         } else {
-            printf("[boot] /etc/passwd not found, using defaults\n");
+            AIOS_LOG_WARN("/etc/passwd not found, using defaults");
         }
     }
-    printf("[boot] Auth: isolated process\n");
+    AIOS_LOG_INFO("Auth: isolated process");
 
     /* Spawn getty via exec_thread (fork+exec capable VSpace) */
     {

@@ -5,6 +5,9 @@
  * the DTB provided by seL4 via bootinfo extras.  Falls back to
  * QEMU virt defaults if DTB is unavailable or unparseable.
  */
+#define LOG_MODULE "hw"
+#define LOG_LEVEL LOG_LEVEL_INFO
+#include "aios/aios_log.h"
 #include <stdio.h>
 #include <string.h>
 #include <sel4/sel4.h>

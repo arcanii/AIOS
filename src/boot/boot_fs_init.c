@@ -17,7 +17,7 @@
 void boot_fs_init(void) {
     /* Platform HAL: probe hardware, init block device */
     if (plat_blk_init() != 0) {
-        printf("[fs] Block device init failed\n");
+        AIOS_LOG_ERROR("Block device init failed");
         return;
     }
 
@@ -33,9 +33,9 @@ void boot_fs_init(void) {
         proc_add("exec_thread", 200);
         proc_add("thread_server", 200);
         LOG_INFO("ext2 + procfs mounted");
-        printf("[boot] Filesystems mounted\n");
+        AIOS_LOG_INFO("Filesystems mounted");
     } else {
-        printf("[fs] ext2 init failed: %d\n", fs_err);
+        AIOS_LOG_ERROR_V("ext2 init failed err=", fs_err);
     }
 
     /* Mount log drive if platform found one.
@@ -55,11 +55,11 @@ void boot_fs_init(void) {
             ext2_init_write(&ext2_log, plat_blk_write_log);
             vfs_mount("/var/log", &ext2_fs_ops, &ext2_log);
             LOG_INFO("log drive mounted at /var/log");
-            printf("[boot] Log drive mounted at /var/log\n");
+            AIOS_LOG_INFO("Log drive mounted at /var/log");
         } else {
-            printf("[boot] Log ext2 failed: %d (not formatted?)\n", err);
+            AIOS_LOG_WARN_V("Log ext2 failed (not formatted?) err=", err);
         }
     } else {
-        printf("[boot] No log drive (optional)\n");
+        AIOS_LOG_INFO("No log drive (optional)");
     }
 }
