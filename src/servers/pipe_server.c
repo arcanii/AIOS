@@ -694,6 +694,10 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             int exec_argc = 0;
             char child_cwd[128];
             child_cwd[0] = '/'; child_cwd[1] = 0;
+            char child_redir_out[96];
+            char child_redir_err[96];
+            child_redir_out[0] = 0;
+            child_redir_err[0] = 0;
             {
                 int pos = 0;
                 /* Skip path */
@@ -714,6 +718,26 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                         child_cwd[ci++] = exec_buf[pos++];
                     }
                     child_cwd[ci] = 0;
+                }
+                /* v0.4.115: skip past CWD's null, then extract optional
+                 * stdout/stderr file-redirect paths (empty string = none) */
+                if (pos < ebi) pos++;
+                child_redir_out[0] = 0;
+                child_redir_err[0] = 0;
+                if (pos < ebi) {
+                    int ri = 0;
+                    while (pos < ebi && exec_buf[pos] != 0 && ri < 95) {
+                        child_redir_out[ri++] = exec_buf[pos++];
+                    }
+                    child_redir_out[ri] = 0;
+                    if (pos < ebi) pos++;
+                }
+                if (pos < ebi) {
+                    int ri = 0;
+                    while (pos < ebi && exec_buf[pos] != 0 && ri < 95) {
+                        child_redir_err[ri++] = exec_buf[pos++];
+                    }
+                    child_redir_err[ri] = 0;
                 }
             }
 
@@ -913,7 +937,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 snprintf(cwd, 64, "%u:%u:%s", old_uid, old_gid, child_cwd);
             }
 
-            char *spawn_argv[10 + MAX_USER_ARGV];
+            char *spawn_argv[12 + MAX_USER_ARGV];
             int spawn_argc = 0;
             spawn_argv[spawn_argc++] = s_ser;
             spawn_argv[spawn_argc++] = s_fs;
@@ -924,9 +948,14 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             spawn_argv[spawn_argc++] = s_disp;
             spawn_argv[spawn_argc++] = s_crypto;
             spawn_argv[spawn_argc++] = cwd;
+            /* v0.4.115: argv[9] = stdout file-redirect path (or empty),
+             * argv[10] = stderr file-redirect path (or empty). User
+             * argv (incl. progname) starts at argv[11]. */
+            spawn_argv[spawn_argc++] = child_redir_out;
+            spawn_argv[spawn_argc++] = child_redir_err;
             if (exec_argc > 0) {
                 for (int ai = 0; ai < exec_argc
-                     && spawn_argc < 9 + MAX_USER_ARGV; ai++)
+                     && spawn_argc < 11 + MAX_USER_ARGV; ai++)
                     spawn_argv[spawn_argc++] = exec_argv[ai];
             } else {
                 spawn_argv[spawn_argc++] = elf_path;

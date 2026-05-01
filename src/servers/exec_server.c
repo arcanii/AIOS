@@ -390,6 +390,12 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
         }
         child_argv[child_argc++] = cwd_buf;
+        /* v0.4.115: redirect-path slots (empty -- exec_server-spawned
+         * processes never inherit a file redirect; only PIPE_EXEC paths
+         * propagate one). */
+        static char empty_redir[] = "";
+        child_argv[child_argc++] = empty_redir;
+        child_argv[child_argc++] = empty_redir;
         child_argv[child_argc++] = prog_name;
 
         /* Split exec_args by spaces */

@@ -823,13 +823,48 @@ int __wrap_main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 
+    /* v0.4.115: argv[9]/argv[10] are stdout/stderr file-redirect paths.
+     * Empty string = no redirect. Re-open the file and seed the
+     * redir state so writes to fd 1/2 land in the file (the redirect
+     * is set up by the parent shell via dup2 before fork+exec, but
+     * the libc state is lost across exec; we restore it here). */
+    if (argc > 9 && argv[9] && argv[9][0]) {
+        const char *path = argv[9];
+        int p = 0;
+        while (path[p] && p < (int)sizeof(stdout_redir_copy.path) - 1) {
+            stdout_redir_copy.path[p] = path[p];
+            p++;
+        }
+        stdout_redir_copy.path[p] = 0;
+        stdout_redir_copy.is_append = 0;
+        stdout_redir_copy.pos = 0;
+        stdout_redir_copy.size = 0;
+        stdout_redir_copy.active = 1;
+        stdout_redir_idx = 0;
+    }
+    if (argc > 10 && argv[10] && argv[10][0]) {
+        const char *path = argv[10];
+        int p = 0;
+        while (path[p] && p < (int)sizeof(stderr_redir_copy.path) - 1) {
+            stderr_redir_copy.path[p] = path[p];
+            p++;
+        }
+        stderr_redir_copy.path[p] = 0;
+        stderr_redir_copy.is_append = 0;
+        stderr_redir_copy.pos = 0;
+        stderr_redir_copy.size = 0;
+        stderr_redir_copy.active = 1;
+        stderr_redir_idx = 0;
+    }
+
     /* v0.4.78: store program path for /proc/self/exe */
-    if (argc > 9 && argv[9]) {
+    if (argc > 11 && argv[11]) {
         int pi = 0;
-        while (argv[9][pi] && pi < 127) { aios_progpath[pi] = argv[9][pi]; pi++; }
+        while (argv[11][pi] && pi < 127) { aios_progpath[pi] = argv[11][pi]; pi++; }
         aios_progpath[pi] = 0;
     }
 
-    /* Strip 9 args (ser, fs, thread, auth, pipe, net, disp, crypto, cwd) */
-    return __real_main(argc - 9, argv + 9);
+    /* Strip 11 args (ser, fs, thread, auth, pipe, net, disp, crypto,
+     * cwd, redir_out, redir_err) */
+    return __real_main(argc - 11, argv + 11);
 }

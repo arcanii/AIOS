@@ -118,6 +118,19 @@ long aios_sys_execve(va_list ap) {
         buf[pos++] = 0;
     }
 
+    /* v0.4.115: pack stdout file-redirect path after CWD so the new
+     * process can re-open the file and route fd 1 to it. Empty string
+     * (just a null) means no redirect. The corresponding stderr slot
+     * follows. */
+    {
+        const char *r1 = (stdout_redir_idx >= 0) ? stdout_redir_copy.path : "";
+        while (*r1 && pos < 898) buf[pos++] = *r1++;
+        buf[pos++] = 0;
+        const char *r2 = (stderr_redir_idx >= 0) ? stderr_redir_copy.path : "";
+        while (*r2 && pos < 898) buf[pos++] = *r2++;
+        buf[pos++] = 0;
+    }
+
     /* Pack pipe metadata in MR0, string buffer in MR1..MRn
      * MR0 bits [31:16] = stdout_pipe_id + 1 (0 = no redirect)
      * MR0 bits [15:0]  = stdin_pipe_id + 1  (0 = no redirect) */
