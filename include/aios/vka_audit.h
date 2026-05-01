@@ -15,6 +15,7 @@ typedef enum {
     VKA_SUB_NET,
     VKA_SUB_GPU,
     VKA_SUB_OTHER,
+    VKA_SUB_BLKCACHE,  /* v0.4.112: block cache pages */
     VKA_SUB_COUNT
 } vka_subsystem_t;
 

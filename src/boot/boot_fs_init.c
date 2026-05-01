@@ -8,6 +8,7 @@
 #include "aios/ext2.h"
 #include "aios/vfs.h"
 #include "aios/procfs.h"
+#include "aios/blk_cache.h"
 #define LOG_MODULE "boot"
 #define LOG_LEVEL LOG_LEVEL_DEBUG
 #include "aios/aios_log.h"
@@ -32,9 +33,14 @@ int boot_fs_init(void) {
     /* Mount root filesystem */
     vfs_init();
     proc_init();
-    int fs_err = ext2_init(&ext2, plat_blk_read, 0);
+    /* v0.4.112: route ext2 sector I/O through blk_cache. The cache
+     * fronts plat_blk_read/write so we get a hit-rate without ext2
+     * needing to know anything about caching. */
+    blk_cache_init(0);
+    blk_cache_register_backend(0, plat_blk_read, plat_blk_write);
+    int fs_err = ext2_init(&ext2, blk_cache_read0, 0);
     if (fs_err == 0) {
-        ext2_init_write(&ext2, plat_blk_write);
+        ext2_init_write(&ext2, blk_cache_write0);
         vfs_mount("/", &ext2_fs_ops, &ext2);
         vfs_mount("/proc", &procfs_ops, NULL);
         proc_add("fs_thread", 200);
@@ -60,10 +66,12 @@ int boot_fs_init(void) {
         uint8_t warmup_buf[512];
         (void)plat_blk_read(2, warmup_buf);  /* warmup: system disk */
 
-        int err = ext2_init(&ext2_log, plat_blk_read_log, 1);
+        /* v0.4.112: route log drive through cache too */
+        blk_cache_register_backend(1, plat_blk_read_log, plat_blk_write_log);
+        int err = ext2_init(&ext2_log, blk_cache_read1, 1);
 
         if (err == 0) {
-            ext2_init_write(&ext2_log, plat_blk_write_log);
+            ext2_init_write(&ext2_log, blk_cache_write1);
             vfs_mount("/var/log", &ext2_fs_ops, &ext2_log);
             LOG_INFO("log drive mounted at /var/log");
             AIOS_LOG_INFO("Log drive mounted at /var/log");

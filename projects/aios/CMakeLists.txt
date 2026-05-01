@@ -132,6 +132,7 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/vfs.c
     ${AIOS_ROOT}/src/procfs.c
     ${AIOS_ROOT}/src/aios_log.c
+    ${AIOS_ROOT}/src/blk_cache.c
     ${AIOS_ROOT}/src/process/fork.c
     ${AIOS_ROOT}/src/process/reap.c
     ${AIOS_ROOT}/src/process/cow.c

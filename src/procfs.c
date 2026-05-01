@@ -2,6 +2,7 @@
 #include "aios/vka_audit.h"
 #include "aios/hw_info.h"
 #include "aios/aios_log.h"
+#include "aios/blk_cache.h"
 #include <stdio.h>
 
 proc_entry_t proc_table[PROC_MAX];
@@ -67,8 +68,8 @@ static int procfs_list(void *ctx, uint32_t ino, char *buf, int bufsize) {
     (void)ctx; (void)ino;
     int w = 0;
     /* List virtual files */
-    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "d self\n" };
-    for (int i = 0; i < 13 && w < bufsize - 1; i++) {
+    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "d self\n" };
+    for (int i = 0; i < 14 && w < bufsize - 1; i++) {
     
         const char *e = entries[i];
         while (*e && w < bufsize - 1) buf[w++] = *e++;
@@ -378,6 +379,22 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         w += snprintf(buf + w, bufsize - w,
             "alloc_total: %u\nlive: %d\npeak: %d\n",
             total, vka_live_frames, vka_peak_frames);
+    } else if (path[0] == 'c' && path[1] == 'a' && path[2] == 'c'
+            && path[3] == 'h' && path[4] == 'e' && path[5] == 's'
+            && path[6] == 't' && path[7] == 'a' && path[8] == 't'
+            && path[9] == 's') {
+        /* v0.4.112: /proc/cachestats -- block cache hit/miss/size */
+        blk_cache_stats_t s;
+        blk_cache_stats(&s);
+        uint32_t lookups = s.hits + s.misses;
+        uint32_t hit_pct = lookups ? (s.hits * 100u / lookups) : 0;
+        w += snprintf(buf + w, bufsize - w,
+            "hits: %u\nmisses: %u\nhit_rate_pct: %u\n"
+            "pages: %u\npages_max: %u\n"
+            "evicted: %u\nwrites: %u\n",
+            s.hits, s.misses, hit_pct,
+            s.pages, s.pages_max,
+            s.evicted, s.writes);
     } else {
         return -1;
     }

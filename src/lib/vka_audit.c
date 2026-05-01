@@ -17,7 +17,8 @@
 vka_audit_entry_t vka_audit[VKA_SUB_COUNT];
 
 const char *vka_sub_names[VKA_SUB_COUNT] = {
-    "boot", "fork", "exec", "thread", "pipe", "net", "gpu", "other"
+    "boot", "fork", "exec", "thread", "pipe", "net", "gpu", "other",
+    "blkcache"
 };
 
 /* v0.4.103: pool capacity for pressure warnings */
