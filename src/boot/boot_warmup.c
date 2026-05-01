@@ -7,12 +7,12 @@
  * the first interactive `ls`, `cat`, etc. hit the cache instead of
  * the disk.
  *
- * The hot-list is conservative -- ~16 files, mostly the shell and
- * the most common sbase tools. Tune via /proc/filehits after a few
- * sessions.
+ * The hot-list is tuned from /proc/filehits captures of a basic
+ * interactive session (login + a few minutes of ls/cat/grep/edit).
+ * Order is informational; reads are sequential.
  *
  * AIOS root vfs_read returns the WHOLE file in one call into the
- * caller's buffer. We use a 4 KB buffer and ignore the data; the
+ * caller's buffer. We use an 8 KB buffer and ignore the data; the
  * cache fill is the entire point.
  */
 #include <stdint.h>
@@ -24,11 +24,15 @@
 #define LOG_LEVEL LOG_LEVEL_INFO
 #include "aios/aios_log.h"
 
+/* v0.4.116: tuned from /proc/filehits.
+ *  + /etc/environment (~66 opens/session, every shell startup reads it)
+ *  + /etc/motd        (~6 opens, login banner plus user reads)
+ *  - /bin/aios/login  (binary does not exist; auth is in-root via auth_server)
+ */
 static const char *warm_files[] = {
     "/bin/dash",
     "/bin/zsh",
     "/bin/aios/getty",
-    "/bin/aios/login",
     "/bin/ls",
     "/bin/cat",
     "/bin/echo",
@@ -43,6 +47,8 @@ static const char *warm_files[] = {
     "/bin/mkdir",
     "/etc/passwd",
     "/etc/hostname",
+    "/etc/environment",
+    "/etc/motd",
     NULL,
 };
 
