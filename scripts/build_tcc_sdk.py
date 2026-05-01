@@ -46,19 +46,43 @@ def stage_musl_headers():
 def stage_musl_libs():
     dst = os.path.join(SDK, "usr", "lib")
     os.makedirs(dst, exist_ok=True)
-    # libc.a -- augmented archive (AIOS runtime + musl)
-    # Built by scripts/build_libaios.py
-    libaios = os.path.join(BUILD, "libaios_full.a")
-    if os.path.exists(libaios):
-        shutil.copy2(libaios, os.path.join(dst, "libc.a"))
-        sz = os.path.getsize(os.path.join(dst, "libc.a"))
-        print(f"  /usr/lib/libc.a (augmented, {sz} bytes)")
+    # libc.a -- single-member archive wrapping libaios_tcc.o
+    # The on-AIOS tcc cannot parse the multi-member augmented libc.a
+    # (1418 entries with duplicate names trip TCCs archive parser).
+    # Wrapping the pre-linked relocatable blob in a one-member ar
+    # gives tcc a libc.a that resolves the same symbols via -lc.
+    blob = os.path.join(BUILD, "libaios_tcc.o")
+    libc_dst = os.path.join(dst, "libc.a")
+    if os.path.exists(blob):
+        # Remove any stale archive first so ar starts fresh
+        if os.path.exists(libc_dst):
+            os.unlink(libc_dst)
+        r = subprocess.run(
+            ["aarch64-linux-gnu-ar", "rcs", libc_dst, blob],
+            capture_output=True, text=True,
+        )
+        if r.returncode != 0:
+            print(f"FAIL -- ar libc.a:\n{r.stderr}")
+            sys.exit(1)
+        sz = os.path.getsize(libc_dst)
+        print(f"  /usr/lib/libc.a (blob-wrapped, {sz} bytes)")
+        # Keep the multi-member augmented archive available for callers
+        # that can parse it (eg gcc/host tooling). Not used by on-AIOS tcc.
+        full = os.path.join(BUILD, "libaios_full.a")
+        if os.path.exists(full):
+            shutil.copy2(full, os.path.join(dst, "libc_full.a"))
+            print(f"  /usr/lib/libc_full.a (multi-member, {os.path.getsize(full)} bytes)")
     else:
-        src = os.path.join(MUSL_LIB, "libc.a")
-        if os.path.exists(src):
-            shutil.copy2(src, dst)
-            sz = os.path.getsize(os.path.join(dst, "libc.a"))
-            print(f"  /usr/lib/libc.a (musl-only fallback, {sz} bytes)")
+        libaios = os.path.join(BUILD, "libaios_full.a")
+        if os.path.exists(libaios):
+            shutil.copy2(libaios, libc_dst)
+            print(f"  /usr/lib/libc.a (multi-member fallback, {os.path.getsize(libc_dst)} bytes)")
+            print(f"  WARN -- on-AIOS tcc will not parse this; build libaios_tcc.o first")
+        else:
+            src = os.path.join(MUSL_LIB, "libc.a")
+            if os.path.exists(src):
+                shutil.copy2(src, dst)
+                print(f"  /usr/lib/libc.a (musl-only fallback, {os.path.getsize(libc_dst)} bytes)")
     # crt1.o -- custom CRT with __aios_entry init
     # Built by scripts/build_libaios.py
     aios_crt1 = os.path.join(BUILD, "aios_crt1.o")
@@ -75,6 +99,16 @@ def stage_musl_libs():
         if os.path.exists(src):
             shutil.copy2(src, dst)
             print(f"  /usr/lib/{crt}")
+    # libaios_tcc.o -- pre-linked relocatable blob with libc + AIOS
+    # runtime symbols. Built by scripts/build_tcc_libc_blob.py.
+    # Lets the on-AIOS tcc link programs without parsing libc.a.
+    blob = os.path.join(BUILD, "libaios_tcc.o")
+    if os.path.exists(blob):
+        shutil.copy2(blob, os.path.join(dst, "libaios_tcc.o"))
+        sz = os.path.getsize(blob)
+        print(f"  /usr/lib/libaios_tcc.o ({sz} bytes, pre-linked libc blob)")
+    else:
+        print(f"  WARN -- libaios_tcc.o not found; run build_tcc_libc_blob.py")
 
 def stage_tcc_headers():
     dst = os.path.join(SDK, "usr", "lib", "tcc", "include")

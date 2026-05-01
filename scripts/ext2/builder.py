@@ -205,7 +205,19 @@ class Ext2Builder:
             self._write_block(blk, bd)
         self._write_inode(ino, 0o100755, size, blocks)
         if parent_ino in self.dirs:
-            self.dirs[parent_ino].append((name, ino, 1))
+            # If a file with the same name already exists in this dir,
+            # replace the entry rather than adding a duplicate. ext2 does
+            # not allow two entries with the same name -- leaving both
+            # makes lookup pick whichever the dir-block scan finds first
+            # which produces silent file-shadow bugs (eg SDK staging
+            # losing to a stale rootfs copy of libc.a).
+            entries = self.dirs[parent_ino]
+            for i, (en, ei, et) in enumerate(entries):
+                if en == name and et == 1:
+                    entries[i] = (name, ino, 1)
+                    self._write_dir_blocks(parent_ino)
+                    return ino
+            entries.append((name, ino, 1))
             self._write_dir_blocks(parent_ino)
         return ino
 

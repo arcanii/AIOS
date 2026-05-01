@@ -86,8 +86,10 @@ def main():
     # 5. libaios + SDK
     run([sys.executable, os.path.join(AIOS, "scripts", "build_libaios.py")],
         "libaios + CRT", tail=5)
+    run([sys.executable, os.path.join(AIOS, "scripts", "build_tcc_libc_blob.py")],
+        "tcc libc blob (libaios_tcc.o)", tail=4)
     run([sys.executable, os.path.join(AIOS, "scripts", "build_tcc_sdk.py")],
-        "tcc SDK", tail=3)
+        "tcc SDK", tail=4)
 
     # 6. disk image
     cmd = [sys.executable, os.path.join(AIOS, "scripts", "mkdisk.py"),
