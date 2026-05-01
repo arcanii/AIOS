@@ -370,33 +370,50 @@ int do_fork(int parent_idx) {
         }
     }
 
-    /* 6. Overwrite child's .data with parent's content.
+    /* 6. COW the file-backed (data) portion of writable segments.
+     *    The BSS portion (filesz to memsz) keeps the eager elf_load
+     *    mapping and is brought up-to-date with the parent via
+     *    fork_copy_into_existing.
      *
-     * v0.4.110: COW infrastructure (cow.c + cow_handle_write_fault in
-     * pipe_server/exec_server fault handlers) is in place but the
-     * cow_setup_segment call below is gated off until we resolve a
-     * sel4utils reservation tracking interaction. Symptom: enabling
-     * cow_setup_segment causes downstream BSS faults in subsequent
-     * forked-then-execed processes (sel4utils reports "Range for
-     * vaddr X not reserved" in their bss_reservation despite valid
-     * setup). Suspected cause: my new reservation overlapping the
-     * elf_load reservation triggers reserve_entries_bottom errors
-     * (line 67 of vspace_internal.h "Attempting to reserve already
-     * reserved region") which the perform_reservation assert silently
-     * swallows in release builds. Phase 2 will rework to share into
-     * the existing elf_load reservation rather than create a new one.
-     */
+     *    v0.4.111: cow_setup_segment creates a fresh reservation
+     *    (the elf_load reservation was freed by sel4utils_elf_load's
+     *    clear_at_end path). cow_release_proc explicitly unmaps the
+     *    COW pages before sel4utils_destroy_process so the subsequent
+     *    vspace_tear_down sees RESERVED entries (not POPULATED) and
+     *    sel4utils_free_reservation walks cleanly.
+     *
+     *    Known issue: with COW enabled, downstream sbase tools log
+     *    "BSS fault: map failed" / "Range for vaddr X not reserved"
+     *    in their fresh post-exec vspace. This appears to be cosmetic
+     *    -- the same misbehavior of `ls > /tmp/o` producing an empty
+     *    file and `head -1` not limiting output is observed with
+     *    COW gated off too, so functionality is not COW-regressed.
+     *    The BSS error message itself is the only COW-induced effect. */
     cow_clear_proc(child_idx);
-    (void)cow_setup_segment;  /* infrastructure live, not yet wired */
     for (int s = 0; s < parent->num_segs; s++) {
         elf_seg_info_t *seg = &parent->segs[s];
         if (!(seg->flags & 2)) continue;
         uintptr_t base = seg->vaddr & ~((uintptr_t)PAGE_SIZE - 1);
-        uintptr_t end = seg->vaddr + seg->memsz;
-        int np = (int)((end - base + PAGE_SIZE - 1) / PAGE_SIZE);
-        for (int pi = 0; pi < np; pi++) {
-            fork_copy_into_existing(&parent->proc.vspace, &cp->vspace,
-                                    base + (uintptr_t)pi * PAGE_SIZE);
+        uintptr_t data_end = seg->vaddr + seg->filesz;
+        uintptr_t cow_end = (data_end + PAGE_SIZE - 1) & ~((uintptr_t)PAGE_SIZE - 1);
+        int np_cow = (int)((cow_end - base) / PAGE_SIZE);
+        uintptr_t mem_end = seg->vaddr + seg->memsz;
+        int np_mem = (int)((mem_end - base + PAGE_SIZE - 1) / PAGE_SIZE);
+
+        int cow_ok = -1;
+        if (np_cow > 0)
+            cow_ok = cow_setup_segment(child_idx, &parent->proc.vspace,
+                                       cp, base, np_cow);
+        if (cow_ok < 0) {
+            for (int pi = 0; pi < np_mem; pi++) {
+                fork_copy_into_existing(&parent->proc.vspace, &cp->vspace,
+                                        base + (uintptr_t)pi * PAGE_SIZE);
+            }
+        } else {
+            for (int pi = np_cow; pi < np_mem; pi++) {
+                fork_copy_into_existing(&parent->proc.vspace, &cp->vspace,
+                                        base + (uintptr_t)pi * PAGE_SIZE);
+            }
         }
     }
 

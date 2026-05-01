@@ -535,6 +535,8 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
             /* v0.4.109: release per-process audit pages before destroy */
             vka_audit_release_proc_pages(&ap->audit_pages_allocated);
+            /* v0.4.111: defensive -- normally no COW for EXEC_RUN procs */
+            cow_release_proc(ap_idx);
             sel4utils_destroy_process(proc, &vka);
             vka_free_object(&vka, &child_fault_ep);
             seL4_CNode_Delete(seL4_CapInitThreadCNode, te_dest.capPtr, seL4_WordBits);

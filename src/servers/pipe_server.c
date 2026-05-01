@@ -741,7 +741,9 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             ap->ignore_next_fault = 1;
             /* v0.4.109: release old process's audit pages before destroy */
             vka_audit_release_proc_pages(&ap->audit_pages_allocated);
-            /* v0.4.110: drop the COW state from the prior (forked) vspace */
+            /* v0.4.111: explicitly unmap COW R/O dup pages so the
+             * vspace tear-down sees RESERVED entries (not POPULATED) */
+            cow_release_proc(ci);
             cow_clear_proc(ci);
             sel4utils_destroy_process(&ap->proc, &vka);
 

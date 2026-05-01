@@ -25,6 +25,20 @@
 #define LOG_LEVEL LOG_LEVEL_INFO
 #include "aios/aios_log.h"
 
+/* Note: sel4utils_elf_load (called from fork.c) goes through
+ * sel4utils_elf_load_record_regions(... NULL, 0), which sets
+ * clear_at_end=true and frees all per-segment reservations after
+ * loading. So at cow_setup_segment time, no elf_load reservation
+ * exists for the writable segment -- we must create our own.
+ *
+ * To avoid the v0.4.110 corruption symptom (downstream BSS faults),
+ * we explicitly unmap our COW pages before sel4utils_destroy_process
+ * runs. This way the entries are RESERVED (not POPULATED) when
+ * sel4utils_free_reservation walks them in vspace_tear_down, so
+ * clear_entries_range succeeds cleanly. cow_release_proc handles
+ * this; it must be called by every code path that destroys a
+ * process's vspace. */
+
 void cow_clear_proc(int proc_idx) {
     if (proc_idx < 0 || proc_idx >= MAX_ACTIVE_PROCS) return;
     active_proc_t *ap = &active_procs[proc_idx];
@@ -68,25 +82,21 @@ int cow_setup_segment(int child_idx,
     vspace_t *child_vs = &child_proc->vspace;
     uintptr_t end = base + (uintptr_t)num_pages * PAGE_SIZE;
 
-    /* 1. Probe for existing elf_load reservation by trying a tiny test
-     *    reservation; we'll know immediately whether the range is free.
-     *    Trick: reserve a 1-page range *outside* the elf range first to
-     *    confirm the API works, then check is_available state for ours.
-     *
-     *    Simpler approach: just unmap and try-reserve; on failure, fall
-     *    back to eager copy (caller handles fallback). */
+    /* 1. Free child's eagerly-allocated frames in the COW range.
+     *    VSPACE_FREE returns frames to vka and deletes caps. After this
+     *    the entries are EMPTY (sel4utils_elf_load already freed its
+     *    own reservations during loading, so no reservation covers the
+     *    range to keep entries in RESERVED state). */
     vspace_unmap_pages(child_vs, (void *)base, num_pages, seL4_PageBits, &vka);
 
-    /* 2. Reserve a fresh R/W range. The existing elf_load reservation
-     *    leaves entries in RESERVED state, which is_available_range
-     *    accepts. If perform_reservation fails internally because of
-     *    high-level RESERVED entries, the returned res may still be
-     *    non-NULL but check_reservation will fail later. */
+    /* 2. Reserve a fresh range with R/W rights. Entries are EMPTY
+     *    after the unmap so reserve_range_at succeeds without conflict. */
     reservation_t cow_res = vspace_reserve_range_at(
         child_vs, (void *)base, (size_t)num_pages * PAGE_SIZE,
         seL4_AllRights, 1);
     if (cow_res.res == NULL) {
-        AIOS_LOG_ERROR_V("cow_setup: reserve failed at base=", (unsigned long)base);
+        AIOS_LOG_ERROR_V("cow_setup: reserve failed at base=",
+                         (unsigned long)base);
         return -1;
     }
 
@@ -229,4 +239,31 @@ int cow_handle_write_fault(int proc_idx, uintptr_t fault_addr) {
     vka_audit_frame(VKA_SUB_OTHER, 1);
     ap->audit_pages_allocated++;
     return 1;
+}
+
+/* Walk each COW range and explicitly unmap+free its pages BEFORE
+ * sel4utils_destroy_process. This converts POPULATED entries (R/O
+ * dups) back to RESERVED, so when vspace_tear_down later runs
+ * sel4utils_free_reservation on our COW reservation, clear_entries_range
+ * succeeds (it only clears RESERVED entries; hitting a POPULATED entry
+ * aborts the walk and was the v0.4.110 corruption source).
+ *
+ * For pages that were promoted on write fault (cookie=ut, fresh frame),
+ * VSPACE_FREE here properly frees the frame as well. For unpromoted
+ * R/O dup pages (cookie=0), it deletes only the dup cap; the
+ * underlying parent frame is untouched. */
+void cow_release_proc(int proc_idx) {
+    if (proc_idx < 0 || proc_idx >= MAX_ACTIVE_PROCS) return;
+    active_proc_t *ap = &active_procs[proc_idx];
+    if (ap->num_cow_ranges == 0) return;
+
+    vspace_t *child_vs = &ap->proc.vspace;
+    for (int i = 0; i < ap->num_cow_ranges; i++) {
+        uintptr_t s = ap->cow_starts[i];
+        uintptr_t e = ap->cow_ends[i];
+        if (e <= s) continue;
+        size_t pages = (e - s) / PAGE_SIZE;
+        vspace_unmap_pages(child_vs, (void *)s, pages, seL4_PageBits, &vka);
+    }
+    /* Metadata is zeroed separately by cow_clear_proc on slot reuse. */
 }

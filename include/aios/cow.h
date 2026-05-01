@@ -39,4 +39,10 @@ int cow_in_range(int proc_idx, uintptr_t addr);
 /* Reset COW state for a proc slot (called when slot is reused). */
 void cow_clear_proc(int proc_idx);
 
+/* Explicitly unmap COW pages from this proc's vspace BEFORE
+ * sel4utils_destroy_process is called. Required so the subsequent
+ * vspace_tear_down sees the COW range entries as RESERVED (not
+ * POPULATED), letting sel4utils_free_reservation walk cleanly. */
+void cow_release_proc(int proc_idx);
+
 #endif

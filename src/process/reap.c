@@ -11,6 +11,7 @@
 #include "aios/root_shared.h"
 #include "aios/procfs.h"
 #include "aios/vka_audit.h"
+#include "aios/cow.h"
 
 /* Variable definitions (extern in root_shared.h) */
 wait_pending_t wait_pending[MAX_WAIT_PENDING];
@@ -41,6 +42,8 @@ void reap_forked_child(int child_idx) {
 
     /* v0.4.109: release per-process VKA audit pages before destroy */
     vka_audit_release_proc_pages(&child->audit_pages_allocated);
+    /* v0.4.111: unmap COW R/O dup pages before vspace tear-down */
+    cow_release_proc(child_idx);
     /* Destroy the process */
     sel4utils_destroy_process(&child->proc, &vka);
     /* Free fault endpoint: minted cap vs allocated endpoint */
