@@ -1,4 +1,5 @@
 #include "aios/vfs.h"
+#include "aios/filehits.h"
 #include <stdio.h>
 
 static mount_entry_t mounts[VFS_MAX_MOUNTS];
@@ -96,8 +97,9 @@ int vfs_read(const char *path, char *buf, int bufsize) {
     mount_entry_t *m = find_mount(path, &remainder);
     if (!m || !m->ops->fs_read) return -1;
 
+    int ret;
     if (m->path_len == 1) {
-        return m->ops->fs_read(m->ctx, path, buf, bufsize);
+        ret = m->ops->fs_read(m->ctx, path, buf, bufsize);
     } else {
         /* Pass remainder path within sub-mount */
         char sub_path[256];
@@ -105,8 +107,10 @@ int vfs_read(const char *path, char *buf, int bufsize) {
         int i = 1;
         while (remainder[i-1] && i < 255) { sub_path[i] = remainder[i-1]; i++; }
         sub_path[i] = '\0';
-        return m->ops->fs_read(m->ctx, sub_path, buf, bufsize);
+        ret = m->ops->fs_read(m->ctx, sub_path, buf, bufsize);
     }
+    filehits_record(path, ret);
+    return ret;
 }
 
 int vfs_pwrite(const char *path, int offset, const void *data, int len) {
@@ -131,16 +135,21 @@ int vfs_pread(const char *path, int offset, char *buf, int bufsize) {
     mount_entry_t *m = find_mount(path, &remainder);
     if (!m || !m->ops->fs_pread) return -1;
 
+    int ret;
     if (m->path_len == 1) {
-        return m->ops->fs_pread(m->ctx, path, offset, buf, bufsize);
+        ret = m->ops->fs_pread(m->ctx, path, offset, buf, bufsize);
     } else {
         char sub_path[256];
         sub_path[0] = '/';
         int i = 1;
         while (remainder[i-1] && i < 255) { sub_path[i] = remainder[i-1]; i++; }
         sub_path[i] = '\0';
-        return m->ops->fs_pread(m->ctx, sub_path, offset, buf, bufsize);
+        ret = m->ops->fs_pread(m->ctx, sub_path, offset, buf, bufsize);
     }
+    /* Only count first read (offset == 0) so a sequence of reads on
+     * the same fd registers as one open. */
+    if (offset == 0) filehits_record(path, ret);
+    return ret;
 }
 
 int vfs_stat(const char *path, uint32_t *mode, uint32_t *size) {

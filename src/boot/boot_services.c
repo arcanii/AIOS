@@ -185,6 +185,11 @@ void boot_start_services(vka_object_t *fault_ep) {
         return;
     }
 
+    /* v0.4.114: pre-load the most common files into the block cache
+     * before showing the login prompt. Drops first-use disk latency. */
+    extern void boot_warmup_prefetch(void);
+    boot_warmup_prefetch();
+
     {
         const char *sh_cmd = "/bin/aios/getty CWD=0:0:/";
         int sh_pl = 0;

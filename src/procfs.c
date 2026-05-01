@@ -3,6 +3,7 @@
 #include "aios/hw_info.h"
 #include "aios/aios_log.h"
 #include "aios/blk_cache.h"
+#include "aios/filehits.h"
 #include <stdio.h>
 
 proc_entry_t proc_table[PROC_MAX];
@@ -68,8 +69,8 @@ static int procfs_list(void *ctx, uint32_t ino, char *buf, int bufsize) {
     (void)ctx; (void)ino;
     int w = 0;
     /* List virtual files */
-    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "d self\n" };
-    for (int i = 0; i < 14 && w < bufsize - 1; i++) {
+    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- filehits\n", "d self\n" };
+    for (int i = 0; i < 15 && w < bufsize - 1; i++) {
     
         const char *e = entries[i];
         while (*e && w < bufsize - 1) buf[w++] = *e++;
@@ -379,6 +380,11 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         w += snprintf(buf + w, bufsize - w,
             "alloc_total: %u\nlive: %d\npeak: %d\n",
             total, vka_live_frames, vka_peak_frames);
+    } else if (path[0] == 'f' && path[1] == 'i' && path[2] == 'l'
+            && path[3] == 'e' && path[4] == 'h' && path[5] == 'i'
+            && path[6] == 't' && path[7] == 's') {
+        /* v0.4.114: /proc/filehits -- top accessed files */
+        w = filehits_format(buf, bufsize, 30);
     } else if (path[0] == 'c' && path[1] == 'a' && path[2] == 'c'
             && path[3] == 'h' && path[4] == 'e' && path[5] == 's'
             && path[6] == 't' && path[7] == 'a' && path[8] == 't'
