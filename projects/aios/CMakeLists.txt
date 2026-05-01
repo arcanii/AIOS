@@ -134,6 +134,7 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/aios_log.c
     ${AIOS_ROOT}/src/process/fork.c
     ${AIOS_ROOT}/src/process/reap.c
+    ${AIOS_ROOT}/src/process/cow.c
     ${AIOS_ROOT}/src/servers/thread_server.c
     ${AIOS_ROOT}/src/servers/fs_server.c
     ${AIOS_ROOT}/src/servers/exec_server.c

@@ -95,6 +95,9 @@
 #define MAX_EXEC_ARGS        12
 #define MAX_PIPE_READ_BLOCKED 4
 
+/* v0.4.110: COW fork -- per-process tracking of copy-on-write ranges. */
+#define MAX_COW_RANGES       4
+
 #ifndef PAGE_SIZE
 #define PAGE_SIZE 4096
 #endif
@@ -114,6 +117,7 @@ typedef struct {
 typedef struct {
     uintptr_t vaddr;
     size_t    memsz;
+    size_t    filesz;  /* v0.4.110: needed to bound COW range to data portion */
     uint32_t  flags;   /* PF_X=1, PF_W=2, PF_R=4 */
 } elf_seg_info_t;
 
@@ -153,6 +157,13 @@ typedef struct {
      * (and any other vka_audit_frame calls per-process). Used to decrement
      * vka_live_frames in cleanup paths so /proc/vka shows accurate counts. */
     int audit_pages_allocated;
+    /* v0.4.110: COW fork -- ranges (writable LOAD segments) where pages
+     * are R/O dups of parent frames. On write fault inside a range the
+     * fault handler allocates a fresh frame, copies, and remaps R/W. */
+    uintptr_t cow_starts[MAX_COW_RANGES];   /* page-aligned, inclusive */
+    uintptr_t cow_ends[MAX_COW_RANGES];     /* page-aligned, exclusive */
+    void     *cow_reservations[MAX_COW_RANGES]; /* opaque reservation_t.res */
+    int       num_cow_ranges;
 } active_proc_t;
 
 typedef struct {

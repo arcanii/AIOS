@@ -22,6 +22,10 @@
 #include "aios/vka_audit.h"
 #include "aios/vfs.h"
 #include "aios/procfs.h"
+#include "aios/cow.h"
+#define LOG_MODULE "fork"
+#define LOG_LEVEL LOG_LEVEL_INFO
+#include "aios/aios_log.h"
 
 static int fork_copy_region(vspace_t *parent_vs, sel4utils_process_t *child_proc,
                             uintptr_t start, int num_pages) {
@@ -366,7 +370,24 @@ int do_fork(int parent_idx) {
         }
     }
 
-    /* 6. Overwrite child's .data with parent's content */
+    /* 6. Overwrite child's .data with parent's content.
+     *
+     * v0.4.110: COW infrastructure (cow.c + cow_handle_write_fault in
+     * pipe_server/exec_server fault handlers) is in place but the
+     * cow_setup_segment call below is gated off until we resolve a
+     * sel4utils reservation tracking interaction. Symptom: enabling
+     * cow_setup_segment causes downstream BSS faults in subsequent
+     * forked-then-execed processes (sel4utils reports "Range for
+     * vaddr X not reserved" in their bss_reservation despite valid
+     * setup). Suspected cause: my new reservation overlapping the
+     * elf_load reservation triggers reserve_entries_bottom errors
+     * (line 67 of vspace_internal.h "Attempting to reserve already
+     * reserved region") which the perform_reservation assert silently
+     * swallows in release builds. Phase 2 will rework to share into
+     * the existing elf_load reservation rather than create a new one.
+     */
+    cow_clear_proc(child_idx);
+    (void)cow_setup_segment;  /* infrastructure live, not yet wired */
     for (int s = 0; s < parent->num_segs; s++) {
         elf_seg_info_t *seg = &parent->segs[s];
         if (!(seg->flags & 2)) continue;

@@ -23,6 +23,7 @@
 
 #include "aios/vfs.h"
 #include "aios/procfs.h"
+#include "aios/cow.h"
 
 /* ---- Blocked reader table ---- */
 static pipe_read_blocked_t pipe_read_blocked[MAX_PIPE_READ_BLOCKED];
@@ -308,6 +309,17 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                         }
                         /* Fall through to handle_child_fault on failure */
                     }
+                }
+                /* v0.4.110: COW write fault? promote the page in place. */
+                if (label == seL4_Fault_VMFault) {
+                    seL4_Word fault_addr = seL4_GetMR(seL4_VMFault_Addr);
+                    int rc = cow_handle_write_fault(ci, fault_addr);
+                    if (rc > 0) {
+                        seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
+                        continue;
+                    }
+                    /* rc == 0: not in any COW range; fall through.
+                     * rc < 0: hard error (logged); fall through to exit. */
                 }
                 handle_child_fault(ci);
                 continue;  /* No reply for faults */
@@ -729,6 +741,8 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             ap->ignore_next_fault = 1;
             /* v0.4.109: release old process's audit pages before destroy */
             vka_audit_release_proc_pages(&ap->audit_pages_allocated);
+            /* v0.4.110: drop the COW state from the prior (forked) vspace */
+            cow_clear_proc(ci);
             sel4utils_destroy_process(&ap->proc, &vka);
 
             /* Free old fault ep -- minted cap vs allocated endpoint */
@@ -772,6 +786,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                     elf_seg_info_t *seg = &ap->segs[ap->num_segs++];
                     seg->vaddr = (uintptr_t)elf_getProgramHeaderVaddr(&elf, si);
                     seg->memsz = (size_t)elf_getProgramHeaderMemorySize(&elf, si);
+                    seg->filesz = (size_t)elf_getProgramHeaderFileSize(&elf, si);
                     seg->flags = (uint32_t)elf_getProgramHeaderFlags(&elf, si);
                 }
             }

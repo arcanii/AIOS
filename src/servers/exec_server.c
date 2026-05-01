@@ -17,6 +17,7 @@
 #include "aios/vka_audit.h"
 #include "aios/vfs.h"
 #include "aios/procfs.h"
+#include "aios/cow.h"
 
 
 /* ── Process kill ── */
@@ -204,6 +205,7 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
                     elf_seg_info_t *seg = &ap->segs[ap->num_segs++];
                     seg->vaddr = (uintptr_t)elf_getProgramHeaderVaddr(&elf, si);
                     seg->memsz = (size_t)elf_getProgramHeaderMemorySize(&elf, si);
+                    seg->filesz = (size_t)elf_getProgramHeaderFileSize(&elf, si);
                     seg->flags = (uint32_t)elf_getProgramHeaderFlags(&elf, si);
                 }
             }
@@ -412,6 +414,7 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         }
 
         /* Register in active_procs + process table */
+        cow_clear_proc(ap_idx);  /* v0.4.110: zero stale COW state */
         ap->active = 1;
         ap->uid = (uint32_t)(uint8_t)cwd_buf[252] | ((uint32_t)(uint8_t)cwd_buf[253] << 8);
         ap->gid = (uint32_t)(uint8_t)cwd_buf[254] | ((uint32_t)(uint8_t)cwd_buf[255] << 8);
@@ -459,12 +462,12 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             seL4_MessageInfo_t fmsg = seL4_Recv(child_fault_ep.cptr, &child_badge);
             seL4_Word flabel = seL4_MessageInfo_get_label(fmsg);
 
-            if (flabel == seL4_Fault_VMFault
-                && ap->bss_reservation != NULL) {
+            if (flabel == seL4_Fault_VMFault) {
                 seL4_Word fault_addr = seL4_GetMR(seL4_VMFault_Addr);
-                if (fault_addr >= ap->bss_lazy_start
+                /* BSS demand-page first */
+                if (ap->bss_reservation != NULL
+                    && fault_addr >= ap->bss_lazy_start
                     && fault_addr <  ap->bss_lazy_end) {
-                    /* BSS demand-page: map a fresh page at the faulting page */
                     uintptr_t page_va = fault_addr & ~(uintptr_t)0xFFF;
                     if (vka_audit_check_headroom(1) < 0) {
                         AIOS_LOG_ERROR("BSS fault: out of memory");
@@ -481,12 +484,17 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
                     }
                     vka_audit_frame(VKA_SUB_OTHER, 1);
                     ap->audit_pages_allocated++;
-                    /* Reply to the fault EP -- child resumes from faulting insn */
                     seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
                     continue;  /* loop for more faults */
                 }
-                /* VM fault outside BSS -- log + treat as exit */
-                AIOS_LOG_ERROR_V("VM fault outside BSS addr=",
+                /* v0.4.110: COW write fault */
+                int rc = cow_handle_write_fault(ap_idx, fault_addr);
+                if (rc > 0) {
+                    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
+                    continue;
+                }
+                /* Not COW either -- log + treat as exit */
+                AIOS_LOG_ERROR_V("VM fault outside BSS/COW addr=",
                                  (unsigned long)fault_addr);
             }
             /* Non-fault message OR fault we cannot handle: treat as exit */
