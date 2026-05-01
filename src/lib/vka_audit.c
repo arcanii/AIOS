@@ -82,9 +82,26 @@ void vka_audit_frame_release(int pages) {
 
 /* v0.4.103: Check if we have headroom before spawning a new process.
  * Returns 0 if OK, -1 if pool too low. Caller should refuse to fork/exec
- * with a clear error rather than letting the allocation silently fail. */
+ * with a clear error rather than letting the allocation silently fail.
+ *
+ * v0.4.113: Under pressure, evict from the block cache before failing.
+ * Process pages beat cache pages -- the cache is reclaimable by design. */
 int vka_audit_check_headroom(int needed_pages) {
     int free_est = VKA_POOL_PAGES - vka_live_frames;
+    if (free_est < needed_pages) {
+        /* Reclaim from block cache. Overshoot by 256 pages so we don't
+         * thrash on every spawn. Weak symbol so this still links if
+         * blk_cache.c is omitted from a future minimal build. */
+        extern int blk_cache_evict(int n_pages) __attribute__((weak));
+        if (blk_cache_evict) {
+            int target = needed_pages - free_est + 256;
+            int got = blk_cache_evict(target);
+            if (got > 0) {
+                AIOS_LOG_INFO_V("Reclaimed cache pages=", (unsigned long)got);
+                free_est = VKA_POOL_PAGES - vka_live_frames;
+            }
+        }
+    }
     if (free_est < needed_pages) {
         AIOS_LOG_ERROR_V("Insufficient memory: free_pages=",
                          (unsigned long)(free_est < 0 ? 0 : free_est));
