@@ -88,6 +88,7 @@ AiosPosixApp(test_fswrite)
 AiosPosixApp(test_smp)
 AiosPosixApp(test_pipe_rw)
 AiosPosixApp(test_hw)
+AiosPosixApp(test_mprotect)
 AiosPosixApp(hwinfo)
 
 AiosPosixApp(posix_verify

@@ -63,6 +63,7 @@
 #define PIPE_DUP_REFS   82
 #define PIPE_MMAP_ANON  83  /* v0.4.104: alloc anonymous pages, map in caller vspace */
 #define PIPE_MUNMAP_ANON 84 /* v0.4.104: unmap pages allocated via PIPE_MMAP_ANON */
+#define PIPE_MPROTECT   85  /* v0.4.126: change rights via seL4_ARM_Page_Map remap */
 
 /* ---- NET IPC labels (90-109) ---- */
 #define NET_SOCKET       90

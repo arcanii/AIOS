@@ -1244,6 +1244,60 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }
+        case PIPE_MPROTECT: {
+            /* v0.4.126: change page rights via seL4_ARM_Page_Map remap-in-place.
+             * Backed by the kernel investigation in docs/NEXT_20260502c.md
+             * (performPageInvocationMap rewrites the PTE and TLB-flushes;
+             * the cap stays valid).
+             * MR0 = vaddr (page-aligned), MR1 = num pages, MR2 = prot bits
+             * (PROT_READ=1, PROT_WRITE=2, PROT_EXEC=4 -- exec bit is
+             * currently ignored).
+             * Pages that are not currently mapped are skipped silently;
+             * caller can re-mprotect after the page is faulted in. */
+            int ci = (int)badge - 1;
+            uintptr_t va = (uintptr_t)seL4_GetMR(0);
+            int npages = (int)seL4_GetMR(1);
+            int prot = (int)seL4_GetMR(2);
+            if (ci < 0 || ci >= MAX_ACTIVE_PROCS
+                || !active_procs[ci].active
+                || npages <= 0 || npages > 4096
+                || (va & (PAGE_SIZE - 1)) != 0) {
+                seL4_SetMR(0, (seL4_Word)-22 /* -EINVAL */);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            /* PROT_NONE (no rights) requires unmap; not supported in v1. */
+            int want_read = (prot & 1) != 0;
+            int want_write = (prot & 2) != 0;
+            if (!want_read && !want_write) {
+                seL4_SetMR(0, (seL4_Word)-38 /* -ENOSYS */);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            seL4_CapRights_t rights = seL4_CapRights_new(0, 0,
+                want_read || want_write, want_write);
+            seL4_ARM_VMAttributes attrs = seL4_ARM_Default_VMAttributes;
+            seL4_CPtr caller_pd = vspace_get_root(&active_procs[ci].proc.vspace);
+            int remapped = 0, skipped = 0, errs = 0;
+            for (int i = 0; i < npages; i++) {
+                uintptr_t page_va = va + (uintptr_t)i * PAGE_SIZE;
+                seL4_CPtr cap = vspace_get_cap(
+                    &active_procs[ci].proc.vspace, (void *)page_va);
+                if (cap == seL4_CapNull) { skipped++; continue; }
+                int merr = seL4_ARM_Page_Map(cap, caller_pd,
+                    (seL4_Word)page_va, rights, attrs);
+                if (merr) { errs++; continue; }
+                remapped++;
+            }
+            if (errs > 0) {
+                AIOS_LOG_WARN_V("MPROTECT: errs=", (unsigned long)errs);
+            }
+            seL4_SetMR(0, errs ? (seL4_Word)-1 : 0);
+            seL4_SetMR(1, (seL4_Word)remapped);
+            seL4_SetMR(2, (seL4_Word)skipped);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 3));
+            break;
+        }
         case PIPE_DUP_REFS: {
             /* v0.4.85: child increments refs for inherited pipe FDs
              * MR0 = pipe_id, MR1 = flags (bit0=read, bit1=write) */

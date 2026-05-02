@@ -372,14 +372,27 @@ long aios_sys_pipe2(va_list ap) {
     return 0;
 }
 
-/* v0.4.62: mprotect -- change memory protection
- * Stub: seL4 page-table updates not yet wired through VMM. */
+/* v0.4.126: mprotect via PIPE_MPROTECT IPC. Server (pipe_server) walks
+ * the caller's vspace and calls seL4_ARM_Page_Map per page with the
+ * requested rights. Pages not currently mapped are skipped silently --
+ * mprotect on demand-paged BSS only takes effect on pages that have
+ * been faulted in. PROT_NONE is not yet supported (would need unmap).
+ * PROT_EXEC is silently treated as PROT_READ. */
 long aios_sys_mprotect(va_list ap) {
     void *addr = va_arg(ap, void *);
     size_t len = va_arg(ap, size_t);
     int prot = va_arg(ap, int);
-    (void)addr; (void)len; (void)prot;
-    return 0;
+    if (len == 0) return 0;
+    uintptr_t va = (uintptr_t)addr;
+    if (va & 0xFFF) return -EINVAL;
+    size_t pages = (len + 4095) / 4096;
+    if (!pipe_ep) return -ENOSYS;
+    seL4_SetMR(0, (seL4_Word)va);
+    seL4_SetMR(1, (seL4_Word)pages);
+    seL4_SetMR(2, (seL4_Word)prot);
+    seL4_Call(pipe_ep, seL4_MessageInfo_new(85 /* PIPE_MPROTECT */, 0, 0, 3));
+    long rc = (long)seL4_GetMR(0);
+    return rc;
 }
 
 /* v0.4.104: mmap MAP_ANONYMOUS with on-demand allocation via IPC
