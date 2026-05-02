@@ -31,6 +31,15 @@
  * table shifted layout enough to amplify pre-existing BSS-fault noise. */
 #define COW_FRAME_TABLE_SIZE 64
 
+/* v0.4.123 Step 3 probe: also remap parents mapping R/O after dup-map
+ * succeeds. NO parent fault handling, NO parent cow_ranges. The point
+ * is to confirm seL4_ARM_Page_Map remap-in-place actually takes effect
+ * in production; we expect the parent (e.g., dash) to die with VMFault
+ * on its next write to a stripped data page. See docs/NEXT_20260502c.md. */
+#define COW_PROBE_PARENT_STRIP 0
+static uint32_t cow_probe_strip_attempts;
+static uint32_t cow_probe_strip_errs;
+
 typedef struct {
     uintptr_t paddr;     /* 0 = empty slot */
     uint16_t  refcount;  /* vspaces currently sharing this frame */
@@ -110,7 +119,9 @@ int cow_format_stats(char *buf, int bufsize) {
         "releases: %u\n"
         "release_untracked: %u\n"
         "table_full_drops: %u\n"
-        "max_refcount: %u\n",
+        "max_refcount: %u\n"
+        "probe_strip_attempts: %u\n"
+        "probe_strip_errs: %u\n",
         COW_FRAME_TABLE_SIZE,
         cow_table_live_entries,
         cow_unique_frames,
@@ -118,7 +129,9 @@ int cow_format_stats(char *buf, int bufsize) {
         cow_releases_total,
         cow_release_untracked,
         cow_table_full_drops,
-        cow_max_refcount_seen);
+        cow_max_refcount_seen,
+        cow_probe_strip_attempts,
+        cow_probe_strip_errs);
     return w;
 }
 
@@ -237,6 +250,24 @@ int cow_setup_segment(int child_idx,
         }
         cow_frame_acquire(cow_paddr_of(parent_cap));
         shared++;
+
+#if COW_PROBE_PARENT_STRIP
+        /* v0.4.123: remap parent R/O at the same vaddr. No fault handling
+         * yet -- parent will die on its next write here. Point is to confirm
+         * the kernel mechanism, not survive it. */
+        seL4_CapRights_t ro_rights = seL4_CapRights_new(0, 0, 1, 0);
+        seL4_ARM_VMAttributes attrs = seL4_ARM_Default_VMAttributes;
+        seL4_CPtr parent_pd = vspace_get_root(parent_vs);
+        cow_probe_strip_attempts++;
+        int strip_err = seL4_ARM_Page_Map(parent_cap, parent_pd,
+                                          (seL4_Word)va, ro_rights, attrs);
+        if (strip_err) {
+            cow_probe_strip_errs++;
+            if (cow_probe_strip_errs <= 3) {
+                AIOS_LOG_WARN_V("strip err=", (unsigned long)strip_err);
+            }
+        }
+#endif
     }
 
     /* 5. Record the range so the fault handler can find it later. */
