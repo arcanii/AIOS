@@ -1,4 +1,5 @@
 #include "aios/procfs.h"
+#include "aios/root_shared.h"
 #include "aios/vka_audit.h"
 #include "aios/hw_info.h"
 #include "aios/aios_log.h"
@@ -69,8 +70,9 @@ static int procfs_list(void *ctx, uint32_t ino, char *buf, int bufsize) {
     (void)ctx; (void)ino;
     int w = 0;
     /* List virtual files */
-    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- filehits\n", "d self\n" };
-    for (int i = 0; i < 15 && w < bufsize - 1; i++) {
+    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- filehits\n", "- serverstats\n", "d self\n" };
+    int n_entries = (int)(sizeof(entries) / sizeof(entries[0]));
+    for (int i = 0; i < n_entries && w < bufsize - 1; i++) {
     
         const char *e = entries[i];
         while (*e && w < bufsize - 1) buf[w++] = *e++;
@@ -385,6 +387,12 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
             && path[6] == 't' && path[7] == 's') {
         /* v0.4.114: /proc/filehits -- top accessed files */
         w = filehits_format(buf, bufsize, 30);
+    } else if (path[0] == 's' && path[1] == 'e' && path[2] == 'r'
+            && path[3] == 'v' && path[4] == 'e' && path[5] == 'r'
+            && path[6] == 's' && path[7] == 't' && path[8] == 'a'
+            && path[9] == 't' && path[10] == 's') {
+        /* v0.4.121: /proc/serverstats -- in-process server health probe */
+        w = serverstats_format(buf, bufsize);
     } else if (path[0] == 'c' && path[1] == 'a' && path[2] == 'c'
             && path[3] == 'h' && path[4] == 'e' && path[5] == 's'
             && path[6] == 't' && path[7] == 'a' && path[8] == 't'

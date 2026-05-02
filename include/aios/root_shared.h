@@ -24,6 +24,11 @@
 
 #define SER_KEY_PUSH    4
 
+/* v0.4.121: no-op heartbeat ping. Any server that recognises this label
+ * should reply MR0=0 immediately. Used by the serverstats probe thread
+ * to verify that each server's main loop is still draining its endpoint. */
+#define SVC_PING        5
+
 #define EXEC_RUN        20
 #define EXEC_NICE       21
 #define EXEC_RUN_BG     24
@@ -314,5 +319,9 @@ void crypto_server_main(void *arg0, void *arg1, void *ipc_buf);
 
 void boot_load_config(void);
 void aios_system_shutdown(void);
+
+/* v0.4.121: server health probe (src/servers/serverstats.c) */
+void serverstats_init(void);
+int  serverstats_format(char *buf, int bufsize);
 
 #endif /* AIOS_ROOT_SHARED_H */

@@ -126,6 +126,11 @@ void boot_start_services(vka_object_t *fault_ep) {
         AIOS_LOG_INFO("Crypto server started");
     }
 
+    /* v0.4.121: server health probe -- pings each in-process server every
+     * few seconds and tracks last-ok / latency. Surfaced via /proc/serverstats. */
+    serverstats_init();
+    proc_add("serverstats", 180);
+
     /* Spawn tty_server (CPIO, isolated process) */
     sel4utils_process_t serial_proc;
     seL4_CPtr caps[1], slots[1];

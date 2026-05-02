@@ -160,6 +160,19 @@ int cow_handle_write_fault(int proc_idx, uintptr_t fault_addr) {
     int ri = cow_find_range(ap, fault_addr);
     if (ri < 0) return 0;
 
+    /* v0.4.121 COW Phase 2 Step 1: discriminate read vs write.
+     * WnR is bit 6 of seL4_VMFault_FSR on AArch64 (1=write, 0=read).
+     * R/O dups are readable, so a read fault inside a COW range means
+     * an instruction fetch into data or a translation fault on a page
+     * the parent never mapped. Either way, not a COW promotion -- let
+     * the standard fault path handle it (kill the process). */
+    seL4_Word fsr = seL4_GetMR(seL4_VMFault_FSR);
+    if ((fsr & (1u << 6)) == 0) {
+        AIOS_LOG_WARN_V("cow: read fault in COW range, addr=",
+                        (unsigned long)fault_addr);
+        return 0;
+    }
+
     if (vka_audit_check_headroom(1) < 0) {
         AIOS_LOG_ERROR("cow fault: out of memory");
         return -1;

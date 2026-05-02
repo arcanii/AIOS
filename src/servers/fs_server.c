@@ -56,6 +56,12 @@ void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
 
 
         switch (label) {
+        case SVC_PING: {
+            /* v0.4.121: serverstats heartbeat. Reply 0 immediately. */
+            seL4_SetMR(0, 0);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
         case FS_LS: {
             /* Multi-round protocol: MR0=path_len, MR1=offset, MR2..=path */
             seL4_Word path_len = seL4_GetMR(0);
