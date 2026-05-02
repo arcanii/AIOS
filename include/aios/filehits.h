@@ -15,13 +15,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/* NOTE: FILEHITS_PATH_MAX is deliberately tuned to dodge a
- * BSS-layout-sensitive bug somewhere in the seL4 root-task setup.
- * Adding ~1 KB or more to BSS in this region can shift probe_info /
- * probe_done into a region where they are not zero-initialized at
- * boot, which causes plat_blk_init to read junk for num_blk and
- * either hang (16777216 devices) or report zero devices.
- * 80 chars is plenty for AIOS paths (deepest is ~30 chars). */
+/* 80 chars is plenty for AIOS paths (deepest is ~30 chars). */
 #define FILEHITS_MAX        96
 #define FILEHITS_PATH_MAX   80
 

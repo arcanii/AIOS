@@ -274,13 +274,15 @@ void boot_dtb_init(void) {
         return;
     }
 
-    /* Allocate buffer on stack (DTBs are typically 8-64KB) */
-    if (dtb_len > 65536) {
+    /* Static buffer (BSS): the user-task root stack is 16 KB
+     * (CONFIG_SEL4RUNTIME_ROOT_STACK), so a 64 KB stack array would
+     * overflow downward into BSS and silently corrupt nearby globals.
+     * v0.4.116 chased a layout-sensitive bug that traced back to this. */
+    static char dtb_buf[65536];
+    if (dtb_len > (ssize_t)sizeof(dtb_buf)) {
         printf("[dtb] DTB too large: %ld bytes\n", (long)dtb_len);
         return;
     }
-
-    char dtb_buf[65536];
     ssize_t copied = simple_get_extended_bootinfo(
         &simple, SEL4_BOOTINFO_HEADER_FDT,
         dtb_buf, (unsigned long)dtb_len);
