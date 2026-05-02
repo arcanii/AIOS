@@ -31,21 +31,16 @@
  * table shifted layout enough to amplify pre-existing BSS-fault noise. */
 #define COW_FRAME_TABLE_SIZE 64
 
-/* v0.4.124 Step 3: parent-side stripping + promotion. Implemented but
- * gated OFF by default. Smoke testing exposed a downstream bug: after
- * a parents promotion, vspace tracking still holds the (now stale)
- * parent_cap; the next fork.c fork_copy_into_existing reads via that
- * stale cap and the child sees pre-promotion bytes -- subtly corrupts
- * any subsequent fork+exec from the same parent. cow_disabled prevents
- * COW reuse but does NOT redirect the eager-copy fallback in fork.c.
- *
- * The fix is to teach fork_copy_into_existing about cow_promoted (look
- * up the va, source from the fresh frames cap instead of vspace tracking).
- * Deferred to a follow-up.
- *
- * All Step 3 plumbing (signature, per-proc state, cow_release_proc
- * cleanup, parent fault path) is in place and ready to enable once that
- * fix lands. See docs/NEXT_20260502c.md and the v0.4.124 commit message. */
+/* v0.4.125 Step 3: strip + promotion mechanism is proven (smoke shows
+ * parent_promotions counting up, no kernel errors). Kept OFF by default
+ * because of a residual post-promotion regression: dash can fork+exec
+ * the FIRST few commands fine (the ones that triggered promotion), but
+ * subsequent fork+execs see EPERM (e.g. `wc`, `shutdown` fail). The
+ * cow_current_cap helper correctly redirects fork.c's eager-copy
+ * fallback to the fresh frames, and bytes match expected, but something
+ * in the post-promotion state still corrupts something dash needs.
+ * Flip to 1 to repro and investigate. With strip=0, the system is
+ * v0.4.122-equivalent with all Step 3 plumbing in place. */
 #define COW_STRIP_PARENT 0
 #define MAX_COW_PROMOTED 8
 static uint32_t cow_strip_attempts;
@@ -55,6 +50,7 @@ static uint32_t cow_parent_promotions;
  * to keep active_proc_t layout stable. ~4 KiB BSS in cow.c is acceptable;
  * 4 KiB shift in active_proc_t broke a downstream BSS-fault sensitivity. */
 static vka_object_t cow_promoted_global[MAX_ACTIVE_PROCS][MAX_COW_PROMOTED];
+static uintptr_t    cow_promoted_va_global[MAX_ACTIVE_PROCS][MAX_COW_PROMOTED];
 static uint8_t      cow_num_promoted[MAX_ACTIVE_PROCS];
 static uint8_t      cow_disabled_global[MAX_ACTIVE_PROCS];
 
@@ -183,7 +179,22 @@ void cow_clear_proc(int proc_idx) {
     for (int i = 0; i < MAX_COW_PROMOTED; i++) {
         memset(&cow_promoted_global[proc_idx][i], 0,
                sizeof(cow_promoted_global[proc_idx][i]));
+        cow_promoted_va_global[proc_idx][i] = 0;
     }
+}
+
+seL4_CPtr cow_current_cap(int proc_idx, uintptr_t va) {
+    if (proc_idx < 0 || proc_idx >= MAX_ACTIVE_PROCS) return seL4_CapNull;
+    active_proc_t *ap = &active_procs[proc_idx];
+    if (cow_disabled_global[proc_idx]) {
+        uintptr_t page_va = va & ~((uintptr_t)PAGE_SIZE - 1);
+        for (int i = 0; i < cow_num_promoted[proc_idx]; i++) {
+            if (cow_promoted_va_global[proc_idx][i] == page_va) {
+                return cow_promoted_global[proc_idx][i].cptr;
+            }
+        }
+    }
+    return vspace_get_cap(&ap->proc.vspace, (void *)va);
 }
 
 /* v0.4.124: append [base, end) to ap's cow_ranges if no entry already
@@ -481,7 +492,10 @@ int cow_handle_write_fault(int proc_idx, uintptr_t fault_addr) {
             vka_free_object(&vka, &frame);
             return -1;
         }
-        cow_promoted_global[proc_idx][cow_num_promoted[proc_idx]++] = frame;
+        int slot = cow_num_promoted[proc_idx];
+        cow_promoted_global[proc_idx][slot] = frame;
+        cow_promoted_va_global[proc_idx][slot] = page_va;
+        cow_num_promoted[proc_idx] = slot + 1;
         cow_disabled_global[proc_idx] = 1;
         cow_parent_promotions++;
     }
@@ -544,6 +558,7 @@ void cow_release_proc(int proc_idx) {
         if (c == 0) continue;
         seL4_ARM_Page_Unmap(c);
         vka_free_object(&vka, &cow_promoted_global[proc_idx][i]);
+        cow_promoted_va_global[proc_idx][i] = 0;
     }
     cow_num_promoted[proc_idx] = 0;
     cow_disabled_global[proc_idx] = 0;

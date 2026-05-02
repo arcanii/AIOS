@@ -27,14 +27,16 @@
 #define LOG_LEVEL LOG_LEVEL_INFO
 #include "aios/aios_log.h"
 
-static int fork_copy_region(vspace_t *parent_vs, sel4utils_process_t *child_proc,
+static int fork_copy_region(int parent_idx,
+                            vspace_t *parent_vs, sel4utils_process_t *child_proc,
                             uintptr_t start, int num_pages) {
+    (void)parent_vs;
     for (int i = 0; i < num_pages; i++) {
         /* Page-align the start address */
         uintptr_t page_base = (start & ~((uintptr_t)PAGE_SIZE - 1)) + (uintptr_t)i * PAGE_SIZE;
         void *va = (void *)page_base;
 
-        seL4_CPtr parent_cap = vspace_get_cap(parent_vs, va);
+        seL4_CPtr parent_cap = cow_current_cap(parent_idx, page_base);
         if (parent_cap == seL4_CapNull) continue;
 
         /* Allocate new frame for child */
@@ -172,8 +174,16 @@ static int fork_share_region(vspace_t *parent_vs, sel4utils_process_t *child_pro
  * sel4utils already allocated stack for the child at the same addresses.
  * We just need to copy the content via temporary root mappings.
  */
-static int fork_copy_into_existing(vspace_t *parent_vs, vspace_t *child_vs, uintptr_t page) {
-    seL4_CPtr parent_cap = vspace_get_cap(parent_vs, (void *)page);
+static int fork_copy_into_existing(int parent_idx,
+                                   vspace_t *parent_vs, vspace_t *child_vs,
+                                   uintptr_t page) {
+    /* v0.4.125: source from cow_current_cap so promoted parent pages
+     * (where vspace_get_cap still returns the orphaned parent_cap) read
+     * correct, post-promotion bytes. Non-promoted pages fall through to
+     * vspace_get_cap. parent_vs is unused once we route through
+     * cow_current_cap, but kept in the signature to localise the change. */
+    (void)parent_vs;
+    seL4_CPtr parent_cap = cow_current_cap(parent_idx, page);
     seL4_CPtr child_cap = vspace_get_cap(child_vs, (void *)page);
     if (parent_cap == seL4_CapNull) return -1;
     if (child_cap == seL4_CapNull) return -2;  /* child doesn't have this page */
@@ -222,32 +232,33 @@ static int fork_copy_into_existing(vspace_t *parent_vs, vspace_t *child_vs, uint
     return 0;
 }
 
-static int fork_copy_stack(active_proc_t *parent, sel4utils_process_t *child_proc,
+static int fork_copy_stack(int parent_idx,
+                           active_proc_t *parent, sel4utils_process_t *child_proc,
                            uintptr_t sp) {
     uintptr_t page = sp & ~((uintptr_t)PAGE_SIZE - 1);
     int copied = 0;
 
     /* Probe upward from SP page */
     for (uintptr_t p = page; p < page + 64 * PAGE_SIZE; p += PAGE_SIZE) {
-        seL4_CPtr cap = vspace_get_cap(&parent->proc.vspace, (void *)p);
+        seL4_CPtr cap = cow_current_cap(parent_idx, p);
         if (cap == seL4_CapNull) break;
         /* Try copying into child's existing page first (stack/IPC buf) */
-        if (fork_copy_into_existing(&parent->proc.vspace, &child_proc->vspace, p) == 0) {
+        if (fork_copy_into_existing(parent_idx, &parent->proc.vspace, &child_proc->vspace, p) == 0) {
             copied++;
         } else {
             /* Child doesn't have this page — allocate and copy */
-            fork_copy_region(&parent->proc.vspace, child_proc, p, 1);
+            fork_copy_region(parent_idx, &parent->proc.vspace, child_proc, p, 1);
             copied++;
         }
     }
     /* Probe downward */
     for (uintptr_t p = page - PAGE_SIZE; ; p -= PAGE_SIZE) {
-        seL4_CPtr cap = vspace_get_cap(&parent->proc.vspace, (void *)p);
+        seL4_CPtr cap = cow_current_cap(parent_idx, p);
         if (cap == seL4_CapNull) break;
-        if (fork_copy_into_existing(&parent->proc.vspace, &child_proc->vspace, p) == 0) {
+        if (fork_copy_into_existing(parent_idx, &parent->proc.vspace, &child_proc->vspace, p) == 0) {
             copied++;
         } else {
-            fork_copy_region(&parent->proc.vspace, child_proc, p, 1);
+            fork_copy_region(parent_idx, &parent->proc.vspace, child_proc, p, 1);
             copied++;
         }
         if (p < PAGE_SIZE) break;
@@ -407,12 +418,14 @@ int do_fork(int parent_idx) {
                                        cp, base, np_cow);
         if (cow_ok < 0) {
             for (int pi = 0; pi < np_mem; pi++) {
-                fork_copy_into_existing(&parent->proc.vspace, &cp->vspace,
+                fork_copy_into_existing(parent_idx,
+                                        &parent->proc.vspace, &cp->vspace,
                                         base + (uintptr_t)pi * PAGE_SIZE);
             }
         } else {
             for (int pi = np_cow; pi < np_mem; pi++) {
-                fork_copy_into_existing(&parent->proc.vspace, &cp->vspace,
+                fork_copy_into_existing(parent_idx,
+                                        &parent->proc.vspace, &cp->vspace,
                                         base + (uintptr_t)pi * PAGE_SIZE);
             }
         }
@@ -425,15 +438,15 @@ int do_fork(int parent_idx) {
         uintptr_t sp_page = parent_regs.sp & ~((uintptr_t)PAGE_SIZE - 1);
         for (uintptr_t p = sp_page; p < sp_page + 64 * PAGE_SIZE; p += PAGE_SIZE) {
             if (p == ipc_page) continue;
-            seL4_CPtr pcap = vspace_get_cap(&parent->proc.vspace, (void *)p);
+            seL4_CPtr pcap = cow_current_cap(parent_idx, p);
             if (pcap == seL4_CapNull) break;
-            fork_copy_into_existing(&parent->proc.vspace, &cp->vspace, p);
+            fork_copy_into_existing(parent_idx, &parent->proc.vspace, &cp->vspace, p);
         }
         for (uintptr_t p = sp_page - PAGE_SIZE; ; p -= PAGE_SIZE) {
             if (p == ipc_page) { if (p < PAGE_SIZE) break; continue; }
-            seL4_CPtr pcap = vspace_get_cap(&parent->proc.vspace, (void *)p);
+            seL4_CPtr pcap = cow_current_cap(parent_idx, p);
             if (pcap == seL4_CapNull) break;
-            fork_copy_into_existing(&parent->proc.vspace, &cp->vspace, p);
+            fork_copy_into_existing(parent_idx, &parent->proc.vspace, &cp->vspace, p);
             if (p < PAGE_SIZE) break;
         }
     }

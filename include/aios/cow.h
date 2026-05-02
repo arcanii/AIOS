@@ -52,4 +52,13 @@ void cow_release_proc(int proc_idx);
 /* v0.4.122: render the per-frame refcount-table stats into buf. */
 int cow_format_stats(char *buf, int bufsize);
 
+/* v0.4.125: return the cap that currently backs `va` in proc_idx's
+ * address space. For a parent that has promoted COW pages, vspace_get_cap
+ * returns the orphaned parent_cap (stale -- points at the pre-promotion
+ * frame). This helper consults cow_promoted_global first and returns the
+ * fresh-frame cap when applicable; otherwise it falls through to
+ * vspace_get_cap. Use this anywhere fork-time logic copies bytes from a
+ * parent's vspace. */
+seL4_CPtr cow_current_cap(int proc_idx, uintptr_t va);
+
 #endif
