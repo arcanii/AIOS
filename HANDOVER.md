@@ -10,8 +10,7 @@ latest `docs/NEXT_*.md` for deeper background.
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4
 * **Repo**: `~/Desktop/github_repos/AIOS`
-* **Branch**: `main`, currently at **v0.4.119** (after a big batch from
-  v0.4.110)
+* **Branch**: `main`, currently at **v0.4.120**
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4)
 * **Host**: macOS Apple Silicon, cross-compile to aarch64-linux-gnu
 * **Developer**: Bryan -- prefers Python patch scripts over sed/heredocs;
@@ -57,13 +56,41 @@ been masquerading as a BSS-init mystery for several sessions.
   probe_info. Real fix landed; the FILEHITS comment is now just
   the simple "80 chars is plenty" line.
 * **v0.4.119**: cow_release_proc page-by-page unmap (was bulk).
-  Eliminates the residual "BSS fault: map failed / Range for vaddr X
-  not reserved" log noise after fork+exec.
+  Reduces but does NOT eliminate the residual "BSS fault: map
+  failed / Range for vaddr X not reserved" log noise after
+  fork+exec -- the v0.4.119 commit message overstated this.
+  Pure baseline still emits ~10 such errors per smoke session.
+* **v0.4.120**: Log rotation now keeps a backup generation. Was
+  unlink+recreate (data loss); now reads current `aios.log` into a
+  lazily-malloc'd 1 MB heap buffer, recreates `aios.log.1` from it,
+  then drops `aios.log` and recreates fresh. Buffer is heap (not
+  static BSS) to avoid shifting the root task's BSS layout.
 
-Cumulative: COW Phase 1 fully functional with no log noise,
-disk-cache hit rates ~84% in normal sessions, file redirection
-works end-to-end, on-AIOS tcc can build hello-world style programs
-against libc.
+### COW Phase 2 attempt (between v0.4.119 and v0.4.120, abandoned)
+
+Spent a session attempting Phase 2 (parent-side stripping +
+refcount table + stack COW per `docs/DESIGN_COW_FORK.md`). All
+of the work was reverted. Three concrete blockers found and
+documented in `docs/NEXT_20260502b.md`:
+
+1. **Parent stripping** via `seL4_ARM_Page_Map(parent_cap,
+   parent_pd, va, R/O)` triggered "Invocation of invalid cap" /
+   cap fault in the forked child. Mechanism unclear -- possibly
+   needs unmap-then-remap, or interacts with the shared frame's
+   CDT.
+2. **Stack COW** reservation collided with child's IPC buffer
+   when probe extended into low memory.
+3. **Refcount table size** (1024 entries) shifted BSS layout
+   enough to amplify the v0.4.119 baseline noise.
+
+The wholesale rewrite was too coupled to debug. The NEXT doc
+proposes a 5-step incremental restart. Step 1 (WnR fault
+detection) is ~10 LOC and risk-free; do that first if resuming.
+
+Cumulative this batch: COW Phase 1 fully functional, disk-cache
+hit rates ~84% in normal sessions, file redirection works
+end-to-end, on-AIOS tcc can build hello-world style programs
+against libc, log rotation keeps one historical generation.
 
 ---
 
@@ -72,24 +99,23 @@ against libc.
 Two design docs sit ready for implementation:
 
 * `docs/DESIGN_DEMAND_BSS.md` -- implemented in v0.4.106-107.
-* `docs/DESIGN_COW_FORK.md` -- **Phase 2 still pending**: parent-side
-  stripping (POSIX-correct fork semantics where parent's writes do
-  not leak to child), frame refcounting (so parent dying does not
-  invalidate child's COW pages), stack COW (currently only data seg).
-  Estimated 2-3 focused sessions.
+* `docs/DESIGN_COW_FORK.md` -- **Phase 2 still pending**, attempt
+  reverted v0.4.119 -> v0.4.120; see `docs/NEXT_20260502b.md` for
+  the incremental restart plan.
 
-Lesser items (rough priority):
-* RPi4 hardware re-test -- recovery mode is ready (v0.4.102).
-  `mkflash_rpi4.sh` single-script flasher would help.
-* Log rotation backup -- currently truncates at 1 MB. Add proper
-  `aios.log -> aios.log.1` rotation.
-* mprotect stub -> real implementation
-* file-backed mmap (currently -ENOSYS)
-* Server health probes -- periodic ping to fs/exec/pipe/net,
-  auto-restart on death.
-* Block cache: write-back (currently write-through). Defer until
-  there is real concurrent fs traffic to stress.
-* Swap / paging out (long-term research)
+### Tactical items, sized
+
+| Item | LOC | Risk | What ships |
+|---|---|---|---|
+| **COW Phase 2 Step 1** -- WnR fault detection | ~10 | very low | Read faults on R/O COW pages get killed instead of handled as writes. Pure correctness. No new BSS. |
+| **Server health probes -- ping only** | ~50 | low | Periodic poll thread that pings fs/exec/pipe/net/disp/crypto via a no-op IPC label. `/proc/serverstats` shows last-ping age. Auto-restart is a separate, much bigger step. |
+| **COW Phase 2 Step 2** -- refcount table observation-only | ~150 | low-med | Track shared-frame refcounts; expose via `/proc/cow`. Earlier 1024-entry table broke; 64 entries should be safe. Foundation for parent stripping. |
+| **Block cache write-back** | ~150 | medium | Switch from write-through. AIOS fs traffic too low for measurable speedup right now. |
+| **mprotect real impl** | ~200 | medium | New PIPE_MPROTECT label; server walks caller's vspace, calls `seL4_ARM_Page_Map` per page. We confirmed remap-in-place works during the COW work. |
+| **file-backed mmap** | ~300 | medium | MAP_SHARED on a regular file, extends PIPE_MMAP_ANON. Coherency on writes (msync?) is the hard bit. |
+| **Server health probes -- full** (with auto-restart) | ~400 | high | Detecting death is easy; restoring server state across restart is hard (BSS-resident state, in-flight reply caps, registered clients). |
+| **RPi4 hardware re-test** | n/a | n/a | Needs physical hardware. Recovery mode banner is ready (v0.4.102); `mkflash_rpi4.sh` flasher would streamline. |
+| **Swap / paging out** | many | long-term research | |
 
 ---
 
@@ -361,39 +387,15 @@ tcc /usr/include/hello.c -o /tmp/h  # native tcc with libc (v0.4.117)
 
 ## Suggested next sessions
 
-In rough order of impact:
+See the sized table in "What is pending" above. The shortest
+high-confidence next step is **COW Phase 2 Step 1 (WnR fault
+detection)** -- ~10 LOC, validates the incremental-restart
+approach from `docs/NEXT_20260502b.md` after the abandoned
+wholesale Phase 2 attempt.
 
-1. **COW fork Phase 2** -- `DESIGN_COW_FORK.md` sections 2 + 3.
-   Strip parent's mapping to R/O at fork (POSIX correctness: parent's
-   writes should not leak to child until child writes its copy).
-   Add frame refcounting (so parent dying does not invalidate
-   child's COW pages). Extend COW to stack pages (currently only
-   data segment). Phase 1 is fully clean as of v0.4.119, so this is
-   the natural follow-on. ~2-3 sessions.
-
-2. **mprotect** -- currently stub. Wire up real seL4 page-table
-   protection updates. Touched by JITs and the COW write-fault path
-   would benefit from a proper PageMap-with-rights helper here too.
-
-3. **file-backed mmap** -- currently -ENOSYS. Lay alongside
-   PIPE_MMAP_ANON in pipe_server. Useful for mmap'd config files
-   and would let dynamic linkers work later.
-
-4. **Server health probes** -- periodic ping to fs/exec/pipe/net.
-   Auto-restart on death. Distinguishes "frozen" from "broken"
-   (would have helped diagnose getty hang earlier in v0.4.99).
-
-5. **RPi4 hardware re-test** -- boot the v0.4.119 kernel on real
-   hardware, verify recovery mode banner appears when SD card has
-   no system partition. `mkflash_rpi4.sh` single-script flasher
-   would streamline.
-
-6. **Log rotation backup** -- currently truncates at 1 MB. Move
-   `aios.log` to `aios.log.1` first, keep 1 backup.
-
-7. **Block cache write-back** -- currently write-through. Defer
-   until there is real concurrent fs traffic that would benefit
-   from coalesced writes.
+After that, **server health probes (ping-only)** is the highest
+user-visible-value low-risk medium item. Then **mprotect real
+impl** for usefulness to JITs / dlopen-style code.
 
 ---
 
