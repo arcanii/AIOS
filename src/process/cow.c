@@ -262,8 +262,18 @@ void cow_release_proc(int proc_idx) {
         uintptr_t s = ap->cow_starts[i];
         uintptr_t e = ap->cow_ends[i];
         if (e <= s) continue;
-        size_t pages = (e - s) / PAGE_SIZE;
-        vspace_unmap_pages(child_vs, (void *)s, pages, seL4_PageBits, &vka);
+        /* v0.4.116: walk page-by-page. vspace_unmap_pages does NOT skip
+         * entries that are RESERVED but unmapped (e.g., pages parent
+         * never had so cow_setup_segment did not dup). For those entries
+         * get_cap returns UINTPTR_MAX, which then flows to
+         * vka_cnode_delete + vka_cspace_free, silently corrupting the
+         * slot allocator. We avoid that by only touching pages that
+         * have a real cap. */
+        for (uintptr_t va = s; va < e; va += PAGE_SIZE) {
+            seL4_CPtr cap = vspace_get_cap(child_vs, (void *)va);
+            if (cap == seL4_CapNull) continue;  /* EMPTY or RESERVED */
+            vspace_unmap_pages(child_vs, (void *)va, 1, seL4_PageBits, &vka);
+        }
     }
     /* Metadata is zeroed separately by cow_clear_proc on slot reuse. */
 }
