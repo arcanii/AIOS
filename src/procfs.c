@@ -5,6 +5,7 @@
 #include "aios/aios_log.h"
 #include "aios/blk_cache.h"
 #include "aios/filehits.h"
+#include "aios/cow.h"
 #include <stdio.h>
 
 proc_entry_t proc_table[PROC_MAX];
@@ -70,7 +71,7 @@ static int procfs_list(void *ctx, uint32_t ino, char *buf, int bufsize) {
     (void)ctx; (void)ino;
     int w = 0;
     /* List virtual files */
-    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- filehits\n", "- serverstats\n", "d self\n" };
+    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- filehits\n", "- serverstats\n", "- cow\n", "d self\n" };
     int n_entries = (int)(sizeof(entries) / sizeof(entries[0]));
     for (int i = 0; i < n_entries && w < bufsize - 1; i++) {
     
@@ -393,6 +394,10 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
             && path[9] == 't' && path[10] == 's') {
         /* v0.4.121: /proc/serverstats -- in-process server health probe */
         w = serverstats_format(buf, bufsize);
+    } else if (path[0] == 'c' && path[1] == 'o' && path[2] == 'w'
+            && path[3] == '\0') {
+        /* v0.4.122: /proc/cow -- COW per-frame refcount stats (Phase 2 Step 2) */
+        w = cow_format_stats(buf, bufsize);
     } else if (path[0] == 'c' && path[1] == 'a' && path[2] == 'c'
             && path[3] == 'h' && path[4] == 'e' && path[5] == 's'
             && path[6] == 't' && path[7] == 'a' && path[8] == 't'

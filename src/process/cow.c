@@ -25,6 +25,103 @@
 #define LOG_LEVEL LOG_LEVEL_INFO
 #include "aios/aios_log.h"
 
+/* v0.4.122 COW Phase 2 Step 2: per-frame refcount table.
+ * Observation-only: acquire/release update counts, behaviour unchanged.
+ * 64 entries keeps BSS impact small (~1 KiB) -- the earlier 1024-entry
+ * table shifted layout enough to amplify pre-existing BSS-fault noise. */
+#define COW_FRAME_TABLE_SIZE 64
+
+typedef struct {
+    uintptr_t paddr;     /* 0 = empty slot */
+    uint16_t  refcount;  /* vspaces currently sharing this frame */
+    uint16_t  reserved;
+} cow_frame_t;
+
+static cow_frame_t cow_frame_table[COW_FRAME_TABLE_SIZE];
+
+static uint32_t cow_acquires_total;
+static uint32_t cow_releases_total;
+static uint32_t cow_table_full_drops;     /* acquire when table full */
+static uint32_t cow_release_untracked;    /* release for paddr not in table */
+static uint32_t cow_unique_frames;        /* monotonic count of paddrs ever inserted */
+static uint32_t cow_max_refcount_seen;
+static uint32_t cow_table_live_entries;   /* active slots right now */
+
+static cow_frame_t *cow_frame_lookup(uintptr_t paddr) {
+    if (paddr == 0) return NULL;
+    for (int i = 0; i < COW_FRAME_TABLE_SIZE; i++) {
+        if (cow_frame_table[i].paddr == paddr) return &cow_frame_table[i];
+    }
+    return NULL;
+}
+
+static void cow_frame_acquire(uintptr_t paddr) {
+    if (paddr == 0) return;
+    cow_frame_t *f = cow_frame_lookup(paddr);
+    if (f) {
+        if (f->refcount < 0xFFFF) f->refcount++;
+        if (f->refcount > cow_max_refcount_seen) cow_max_refcount_seen = f->refcount;
+        cow_acquires_total++;
+        return;
+    }
+    for (int i = 0; i < COW_FRAME_TABLE_SIZE; i++) {
+        if (cow_frame_table[i].paddr == 0) {
+            cow_frame_table[i].paddr = paddr;
+            cow_frame_table[i].refcount = 1;
+            cow_acquires_total++;
+            cow_unique_frames++;
+            cow_table_live_entries++;
+            if (cow_max_refcount_seen < 1) cow_max_refcount_seen = 1;
+            return;
+        }
+    }
+    cow_table_full_drops++;
+}
+
+static void cow_frame_release(uintptr_t paddr) {
+    if (paddr == 0) return;
+    cow_frame_t *f = cow_frame_lookup(paddr);
+    if (!f) {
+        cow_release_untracked++;
+        return;
+    }
+    if (f->refcount > 0) f->refcount--;
+    cow_releases_total++;
+    if (f->refcount == 0) {
+        f->paddr = 0;
+        if (cow_table_live_entries > 0) cow_table_live_entries--;
+    }
+}
+
+static uintptr_t cow_paddr_of(seL4_CPtr cap) {
+    if (cap == seL4_CapNull) return 0;
+    seL4_ARM_Page_GetAddress_t r = seL4_ARM_Page_GetAddress(cap);
+    if (r.error) return 0;
+    return (uintptr_t)r.paddr;
+}
+
+int cow_format_stats(char *buf, int bufsize) {
+    int w = 0;
+    w += snprintf(buf + w, bufsize - w,
+        "table_size: %d\n"
+        "table_live: %u\n"
+        "unique_frames: %u\n"
+        "acquires: %u\n"
+        "releases: %u\n"
+        "release_untracked: %u\n"
+        "table_full_drops: %u\n"
+        "max_refcount: %u\n",
+        COW_FRAME_TABLE_SIZE,
+        cow_table_live_entries,
+        cow_unique_frames,
+        cow_acquires_total,
+        cow_releases_total,
+        cow_release_untracked,
+        cow_table_full_drops,
+        cow_max_refcount_seen);
+    return w;
+}
+
 /* Note: sel4utils_elf_load (called from fork.c) goes through
  * sel4utils_elf_load_record_regions(... NULL, 0), which sets
  * clear_at_end=true and frees all per-segment reservations after
@@ -138,6 +235,7 @@ int cow_setup_segment(int child_idx,
             vka_cspace_free(&vka, dup.capPtr);
             continue;
         }
+        cow_frame_acquire(cow_paddr_of(parent_cap));
         shared++;
     }
 
@@ -199,6 +297,9 @@ int cow_handle_write_fault(int proc_idx, uintptr_t fault_addr) {
 
     /* 3. Get the current R/O dup cap (if any) and copy bytes from it. */
     seL4_CPtr ro_cap = vspace_get_cap(child_vs, (void *)page_va);
+    /* v0.4.122: capture paddr now for refcount release; once unmapped the
+     * cap may be deleted and GetAddress would fail. */
+    uintptr_t old_paddr = cow_paddr_of(ro_cap);
     if (ro_cap != seL4_CapNull) {
         cspacepath_t src, tmp_dup;
         vka_cspace_make_path(&vka, ro_cap, &src);
@@ -230,6 +331,7 @@ int cow_handle_write_fault(int proc_idx, uintptr_t fault_addr) {
          *    its slot are cleaned up by VSPACE_FREE. */
         vspace_unmap_pages(&vspace, new_tmp, 1, seL4_PageBits, NULL);
         vspace_unmap_pages(child_vs, (void *)page_va, 1, seL4_PageBits, &vka);
+        cow_frame_release(old_paddr);
     } else {
         /* No current mapping (parent never touched this BSS page).
          * Zero the new frame -- BSS semantics. */
@@ -285,7 +387,13 @@ void cow_release_proc(int proc_idx) {
         for (uintptr_t va = s; va < e; va += PAGE_SIZE) {
             seL4_CPtr cap = vspace_get_cap(child_vs, (void *)va);
             if (cap == seL4_CapNull) continue;  /* EMPTY or RESERVED */
+            /* v0.4.122: capture paddr before unmap; release decrements
+             * the refcount if this is a tracked R/O dup. Promoted pages
+             * (cookie=ut, fresh frame) were never acquired and will fall
+             * through cow_frame_release as untracked. */
+            uintptr_t paddr = cow_paddr_of(cap);
             vspace_unmap_pages(child_vs, (void *)va, 1, seL4_PageBits, &vka);
+            cow_frame_release(paddr);
         }
     }
     /* Metadata is zeroed separately by cow_clear_proc on slot reuse. */

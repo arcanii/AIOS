@@ -45,4 +45,7 @@ void cow_clear_proc(int proc_idx);
  * POPULATED), letting sel4utils_free_reservation walk cleanly. */
 void cow_release_proc(int proc_idx);
 
+/* v0.4.122: render the per-frame refcount-table stats into buf. */
+int cow_format_stats(char *buf, int bufsize);
+
 #endif
