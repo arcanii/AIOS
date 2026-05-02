@@ -167,8 +167,11 @@ typedef struct {
      * fault handler allocates a fresh frame, copies, and remaps R/W. */
     uintptr_t cow_starts[MAX_COW_RANGES];   /* page-aligned, inclusive */
     uintptr_t cow_ends[MAX_COW_RANGES];     /* page-aligned, exclusive */
-    void     *cow_reservations[MAX_COW_RANGES]; /* opaque reservation_t.res */
+    void     *cow_reservations[MAX_COW_RANGES]; /* opaque reservation_t.res; NULL means parent-side range (no vspace tracking entry) */
     int       num_cow_ranges;
+    /* v0.4.124 Step 3 promoted-frame tracking lives in cow.c globals to
+     * avoid shifting active_proc_t's layout (which would amplify the
+     * baseline BSS-fault noise). */
 } active_proc_t;
 
 typedef struct {

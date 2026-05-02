@@ -402,7 +402,8 @@ int do_fork(int parent_idx) {
 
         int cow_ok = -1;
         if (np_cow > 0)
-            cow_ok = cow_setup_segment(child_idx, &parent->proc.vspace,
+            cow_ok = cow_setup_segment(child_idx, parent_idx,
+                                       &parent->proc.vspace,
                                        cp, base, np_cow);
         if (cow_ok < 0) {
             for (int pi = 0; pi < np_mem; pi++) {

@@ -31,14 +31,32 @@
  * table shifted layout enough to amplify pre-existing BSS-fault noise. */
 #define COW_FRAME_TABLE_SIZE 64
 
-/* v0.4.123 Step 3 probe: also remap parents mapping R/O after dup-map
- * succeeds. NO parent fault handling, NO parent cow_ranges. The point
- * is to confirm seL4_ARM_Page_Map remap-in-place actually takes effect
- * in production; we expect the parent (e.g., dash) to die with VMFault
- * on its next write to a stripped data page. See docs/NEXT_20260502c.md. */
-#define COW_PROBE_PARENT_STRIP 0
-static uint32_t cow_probe_strip_attempts;
-static uint32_t cow_probe_strip_errs;
+/* v0.4.124 Step 3: parent-side stripping + promotion. Implemented but
+ * gated OFF by default. Smoke testing exposed a downstream bug: after
+ * a parents promotion, vspace tracking still holds the (now stale)
+ * parent_cap; the next fork.c fork_copy_into_existing reads via that
+ * stale cap and the child sees pre-promotion bytes -- subtly corrupts
+ * any subsequent fork+exec from the same parent. cow_disabled prevents
+ * COW reuse but does NOT redirect the eager-copy fallback in fork.c.
+ *
+ * The fix is to teach fork_copy_into_existing about cow_promoted (look
+ * up the va, source from the fresh frames cap instead of vspace tracking).
+ * Deferred to a follow-up.
+ *
+ * All Step 3 plumbing (signature, per-proc state, cow_release_proc
+ * cleanup, parent fault path) is in place and ready to enable once that
+ * fix lands. See docs/NEXT_20260502c.md and the v0.4.124 commit message. */
+#define COW_STRIP_PARENT 0
+#define MAX_COW_PROMOTED 8
+static uint32_t cow_strip_attempts;
+static uint32_t cow_strip_errs;
+static uint32_t cow_parent_promotions;
+/* v0.4.124: per-proc parent-side state lives here, not in active_proc_t,
+ * to keep active_proc_t layout stable. ~4 KiB BSS in cow.c is acceptable;
+ * 4 KiB shift in active_proc_t broke a downstream BSS-fault sensitivity. */
+static vka_object_t cow_promoted_global[MAX_ACTIVE_PROCS][MAX_COW_PROMOTED];
+static uint8_t      cow_num_promoted[MAX_ACTIVE_PROCS];
+static uint8_t      cow_disabled_global[MAX_ACTIVE_PROCS];
 
 typedef struct {
     uintptr_t paddr;     /* 0 = empty slot */
@@ -120,8 +138,9 @@ int cow_format_stats(char *buf, int bufsize) {
         "release_untracked: %u\n"
         "table_full_drops: %u\n"
         "max_refcount: %u\n"
-        "probe_strip_attempts: %u\n"
-        "probe_strip_errs: %u\n",
+        "strip_attempts: %u\n"
+        "strip_errs: %u\n"
+        "parent_promotions: %u\n",
         COW_FRAME_TABLE_SIZE,
         cow_table_live_entries,
         cow_unique_frames,
@@ -130,8 +149,9 @@ int cow_format_stats(char *buf, int bufsize) {
         cow_release_untracked,
         cow_table_full_drops,
         cow_max_refcount_seen,
-        cow_probe_strip_attempts,
-        cow_probe_strip_errs);
+        cow_strip_attempts,
+        cow_strip_errs,
+        cow_parent_promotions);
     return w;
 }
 
@@ -158,6 +178,28 @@ void cow_clear_proc(int proc_idx) {
         ap->cow_ends[i] = 0;
         ap->cow_reservations[i] = NULL;
     }
+    cow_num_promoted[proc_idx] = 0;
+    cow_disabled_global[proc_idx] = 0;
+    for (int i = 0; i < MAX_COW_PROMOTED; i++) {
+        memset(&cow_promoted_global[proc_idx][i], 0,
+               sizeof(cow_promoted_global[proc_idx][i]));
+    }
+}
+
+/* v0.4.124: append [base, end) to ap's cow_ranges if no entry already
+ * covers it. Returns 1 if added, 0 if already present, -1 if full. */
+static int cow_add_range(active_proc_t *ap, uintptr_t base, uintptr_t end,
+                         void *res) {
+    for (int i = 0; i < ap->num_cow_ranges; i++) {
+        if (ap->cow_starts[i] == base && ap->cow_ends[i] == end) return 0;
+    }
+    if (ap->num_cow_ranges >= MAX_COW_RANGES) return -1;
+    int idx = ap->num_cow_ranges;
+    ap->cow_starts[idx] = base;
+    ap->cow_ends[idx] = end;
+    ap->cow_reservations[idx] = res;
+    ap->num_cow_ranges++;
+    return 1;
 }
 
 int cow_in_range(int proc_idx, uintptr_t addr) {
@@ -177,6 +219,7 @@ static int cow_find_range(active_proc_t *ap, uintptr_t addr) {
 }
 
 int cow_setup_segment(int child_idx,
+                      int parent_idx,
                       vspace_t *parent_vs,
                       sel4utils_process_t *child_proc,
                       uintptr_t base,
@@ -188,8 +231,14 @@ int cow_setup_segment(int child_idx,
         return -1;
     }
     if (num_pages <= 0) return 0;
+    active_proc_t *parent = (parent_idx >= 0 && parent_idx < MAX_ACTIVE_PROCS)
+                          ? &active_procs[parent_idx] : NULL;
+    /* If parent has already promoted any COW page, its vspace tracking is
+     * out of date for those pages -- duping parent_cap would give the child
+     * stale data. Bail out so the caller falls back to eager copy. */
+    if (parent != NULL && cow_disabled_global[parent_idx]) return -1;
 
-    vspace_t *child_vs = &child_proc->vspace;
+    vspace_t *proc_vs = &child_proc->vspace;
     uintptr_t end = base + (uintptr_t)num_pages * PAGE_SIZE;
 
     /* 1. Free child's eagerly-allocated frames in the COW range.
@@ -197,12 +246,12 @@ int cow_setup_segment(int child_idx,
      *    the entries are EMPTY (sel4utils_elf_load already freed its
      *    own reservations during loading, so no reservation covers the
      *    range to keep entries in RESERVED state). */
-    vspace_unmap_pages(child_vs, (void *)base, num_pages, seL4_PageBits, &vka);
+    vspace_unmap_pages(proc_vs, (void *)base, num_pages, seL4_PageBits, &vka);
 
     /* 2. Reserve a fresh range with R/W rights. Entries are EMPTY
      *    after the unmap so reserve_range_at succeeds without conflict. */
     reservation_t cow_res = vspace_reserve_range_at(
-        child_vs, (void *)base, (size_t)num_pages * PAGE_SIZE,
+        proc_vs, (void *)base, (size_t)num_pages * PAGE_SIZE,
         seL4_AllRights, 1);
     if (cow_res.res == NULL) {
         AIOS_LOG_ERROR_V("cow_setup: reserve failed at base=",
@@ -240,7 +289,7 @@ int cow_setup_segment(int child_idx,
 
         /* Map the R/O dup; pass cookie=NULL so vspace_tear_down won't
          * try to free the underlying frame (parent owns it). */
-        int merr = vspace_map_pages_at_vaddr(child_vs, &dup.capPtr, NULL,
+        int merr = vspace_map_pages_at_vaddr(proc_vs, &dup.capPtr, NULL,
             (void *)va, 1, seL4_PageBits, cow_res);
         if (merr) {
             AIOS_LOG_WARN_V("cow_setup: map err=", (unsigned long)merr);
@@ -248,34 +297,53 @@ int cow_setup_segment(int child_idx,
             vka_cspace_free(&vka, dup.capPtr);
             continue;
         }
-        cow_frame_acquire(cow_paddr_of(parent_cap));
+        uintptr_t parent_paddr = cow_paddr_of(parent_cap);
+        cow_frame_acquire(parent_paddr);
         shared++;
 
-#if COW_PROBE_PARENT_STRIP
-        /* v0.4.123: remap parent R/O at the same vaddr. No fault handling
-         * yet -- parent will die on its next write here. Point is to confirm
-         * the kernel mechanism, not survive it. */
-        seL4_CapRights_t ro_rights = seL4_CapRights_new(0, 0, 1, 0);
-        seL4_ARM_VMAttributes attrs = seL4_ARM_Default_VMAttributes;
-        seL4_CPtr parent_pd = vspace_get_root(parent_vs);
-        cow_probe_strip_attempts++;
-        int strip_err = seL4_ARM_Page_Map(parent_cap, parent_pd,
-                                          (seL4_Word)va, ro_rights, attrs);
-        if (strip_err) {
-            cow_probe_strip_errs++;
-            if (cow_probe_strip_errs <= 3) {
-                AIOS_LOG_WARN_V("strip err=", (unsigned long)strip_err);
+#if COW_STRIP_PARENT
+        /* v0.4.124: also remap parent R/O at the same vaddr in place.
+         * The kernel does true in-place remap (no Unmap required); see
+         * docs/NEXT_20260502c.md and kernel vspace.c performPageInvocationMap.
+         * Parent's vspace_t tracking is NOT updated -- we keep parent_cap
+         * as the "current" mapping from vspace's perspective. Promotion
+         * later swaps the kernel PTE for a fresh frame; the orphaned
+         * parent_cap stays valid (paddr mismatch makes its Unmap a no-op). */
+        if (parent != NULL) {
+            seL4_CapRights_t ro_rights = seL4_CapRights_new(0, 0, 1, 0);
+            seL4_ARM_VMAttributes attrs = seL4_ARM_Default_VMAttributes;
+            seL4_CPtr parent_pd = vspace_get_root(parent_vs);
+            cow_strip_attempts++;
+            int strip_err = seL4_ARM_Page_Map(parent_cap, parent_pd,
+                                              (seL4_Word)va, ro_rights, attrs);
+            if (strip_err) {
+                cow_strip_errs++;
+                if (cow_strip_errs <= 3) {
+                    AIOS_LOG_WARN_V("strip err=", (unsigned long)strip_err);
+                }
+            } else {
+                /* Strip succeeded. Parent now also shares this paddr. */
+                cow_frame_acquire(parent_paddr);
             }
         }
 #endif
     }
 
-    /* 5. Record the range so the fault handler can find it later. */
-    int idx = child->num_cow_ranges;
-    child->cow_starts[idx] = base;
-    child->cow_ends[idx]   = end;
-    child->cow_reservations[idx] = cow_res.res;
-    child->num_cow_ranges++;
+    /* 5. Record the range. Child gets its reservation; parent gets a
+     * NULL-reservation entry so cow_handle_write_fault knows to take the
+     * orphan-fresh-frame promotion path. */
+    int crc = cow_add_range(child, base, end, cow_res.res);
+    if (crc < 0) {
+        AIOS_LOG_WARN("cow: child range add failed (full)");
+    }
+#if COW_STRIP_PARENT
+    if (parent != NULL) {
+        int prc = cow_add_range(parent, base, end, NULL);
+        if (prc < 0) {
+            AIOS_LOG_WARN("cow: parent range add failed (full)");
+        }
+    }
+#endif
 
     AIOS_LOG_INFO_V("cow_setup pages_shared=", (unsigned long)shared);
     return 0;
@@ -308,7 +376,8 @@ int cow_handle_write_fault(int proc_idx, uintptr_t fault_addr) {
     }
 
     uintptr_t page_va = fault_addr & ~((uintptr_t)PAGE_SIZE - 1);
-    vspace_t *child_vs = &ap->proc.vspace;
+    vspace_t *proc_vs = &ap->proc.vspace;
+    int is_parent_range = (ap->cow_reservations[ri] == NULL);
 
     /* 1. Allocate a fresh frame for the child. */
     vka_object_t frame;
@@ -327,7 +396,7 @@ int cow_handle_write_fault(int proc_idx, uintptr_t fault_addr) {
     }
 
     /* 3. Get the current R/O dup cap (if any) and copy bytes from it. */
-    seL4_CPtr ro_cap = vspace_get_cap(child_vs, (void *)page_va);
+    seL4_CPtr ro_cap = vspace_get_cap(proc_vs, (void *)page_va);
     /* v0.4.122: capture paddr now for refcount release; once unmapped the
      * cap may be deleted and GetAddress would fail. */
     uintptr_t old_paddr = cow_paddr_of(ro_cap);
@@ -357,11 +426,17 @@ int cow_handle_write_fault(int proc_idx, uintptr_t fault_addr) {
             AIOS_LOG_WARN("cow fault: tmp cslot alloc failed");
             memset(new_tmp, 0, PAGE_SIZE);
         }
-        /* 4. Unmap and free the R/O dup from child's vspace. cookie was 0
-         *    so the underlying parent frame is not freed; the dup cap and
-         *    its slot are cleaned up by VSPACE_FREE. */
+        /* 4. Drop the temp root mapping. */
         vspace_unmap_pages(&vspace, new_tmp, 1, seL4_PageBits, NULL);
-        vspace_unmap_pages(child_vs, (void *)page_va, 1, seL4_PageBits, &vka);
+        if (!is_parent_range) {
+            /* Child path: unmap+delete the R/O dup from the childs vspace.
+             * cookie was 0 so the underlying parent frame is NOT freed; only
+             * the dup cap and its slot are reclaimed. */
+            vspace_unmap_pages(proc_vs, (void *)page_va, 1, seL4_PageBits, &vka);
+        }
+        /* Parent path: do NOT touch parent_cap in vspace tracking. The
+         * Page_Map below replaces the kernel PTE only; vspace tracking is
+         * left stale (cow_disabled prevents future forks from reading it). */
         cow_frame_release(old_paddr);
     } else {
         /* No current mapping (parent never touched this BSS page).
@@ -370,16 +445,45 @@ int cow_handle_write_fault(int proc_idx, uintptr_t fault_addr) {
         vspace_unmap_pages(&vspace, new_tmp, 1, seL4_PageBits, NULL);
     }
 
-    /* 5. Map the fresh frame at the same vaddr R/W in child. cookie=ut
-     *    so vspace_tear_down(VSPACE_FREE) frees this frame on exit. */
-    reservation_t cow_res = { .res = ap->cow_reservations[ri] };
-    uintptr_t cookie = (uintptr_t)frame.ut;
-    int merr = vspace_map_pages_at_vaddr(child_vs, &frame.cptr, &cookie,
-        (void *)page_va, 1, seL4_PageBits, cow_res);
-    if (merr) {
-        AIOS_LOG_ERROR_V("cow fault: child map err=", (unsigned long)merr);
-        vka_free_object(&vka, &frame);
-        return -1;
+    /* 5. Map the fresh frame at the same vaddr R/W. The path differs based
+     * on whether this is a child range (has reservation) or a parent range
+     * (NULL reservation, set up by cow_setup_segment Step 3 strip). */
+    if (ap->cow_reservations[ri] != NULL) {
+        /* Child path: vspace tracking owns the reservation; map cleanly. */
+        reservation_t cow_res = { .res = ap->cow_reservations[ri] };
+        uintptr_t cookie = (uintptr_t)frame.ut;
+        int merr = vspace_map_pages_at_vaddr(proc_vs, &frame.cptr, &cookie,
+            (void *)page_va, 1, seL4_PageBits, cow_res);
+        if (merr) {
+            AIOS_LOG_ERROR_V("cow fault: child map err=", (unsigned long)merr);
+            vka_free_object(&vka, &frame);
+            return -1;
+        }
+    } else {
+        /* Parent path: kernel-Page_Map fresh.cptr in place. vspace tracking
+         * still holds the (now stale) parent_cap; we set cow_disabled so
+         * future forks of this proc fall back to eager copy.
+         * Also stash the fresh frame in cow_promoted so cow_release_proc
+         * can free it on tear-down (vspace_tear_down will not see it). */
+        if (cow_num_promoted[proc_idx] >= MAX_COW_PROMOTED) {
+            AIOS_LOG_ERROR("cow fault: parent promoted slots full");
+            vka_free_object(&vka, &frame);
+            return -1;
+        }
+        seL4_CapRights_t rw = seL4_CapRights_new(0, 0, 1, 1);
+        seL4_ARM_VMAttributes attrs = seL4_ARM_Default_VMAttributes;
+        seL4_CPtr parent_pd = vspace_get_root(proc_vs);
+        int merr = seL4_ARM_Page_Map(frame.cptr, parent_pd,
+                                     (seL4_Word)page_va, rw, attrs);
+        if (merr) {
+            AIOS_LOG_ERROR_V("cow fault: parent Page_Map err=",
+                             (unsigned long)merr);
+            vka_free_object(&vka, &frame);
+            return -1;
+        }
+        cow_promoted_global[proc_idx][cow_num_promoted[proc_idx]++] = frame;
+        cow_disabled_global[proc_idx] = 1;
+        cow_parent_promotions++;
     }
 
     vka_audit_frame(VKA_SUB_OTHER, 1);
@@ -401,31 +505,47 @@ int cow_handle_write_fault(int proc_idx, uintptr_t fault_addr) {
 void cow_release_proc(int proc_idx) {
     if (proc_idx < 0 || proc_idx >= MAX_ACTIVE_PROCS) return;
     active_proc_t *ap = &active_procs[proc_idx];
-    if (ap->num_cow_ranges == 0) return;
 
-    vspace_t *child_vs = &ap->proc.vspace;
+    vspace_t *proc_vs = &ap->proc.vspace;
     for (int i = 0; i < ap->num_cow_ranges; i++) {
+        /* v0.4.124: NULL reservation marks a parent-side range. Do NOT
+         * call vspace_unmap_pages on those entries -- vspace tracking
+         * still holds the original parent_cap (elf-load-allocated) and
+         * unmap+vka would free its underlying frame, corrupting any
+         * children that still hold R/O dups. Parent-cap caps are reaped
+         * by sel4utils_destroy_process via the elf_load object list. */
+        if (ap->cow_reservations[i] == NULL) continue;
         uintptr_t s = ap->cow_starts[i];
         uintptr_t e = ap->cow_ends[i];
         if (e <= s) continue;
         /* v0.4.116: walk page-by-page. vspace_unmap_pages does NOT skip
-         * entries that are RESERVED but unmapped (e.g., pages parent
-         * never had so cow_setup_segment did not dup). For those entries
-         * get_cap returns UINTPTR_MAX, which then flows to
-         * vka_cnode_delete + vka_cspace_free, silently corrupting the
-         * slot allocator. We avoid that by only touching pages that
-         * have a real cap. */
+         * entries that are RESERVED but unmapped. We only touch pages
+         * that have a real cap. */
         for (uintptr_t va = s; va < e; va += PAGE_SIZE) {
-            seL4_CPtr cap = vspace_get_cap(child_vs, (void *)va);
+            seL4_CPtr cap = vspace_get_cap(proc_vs, (void *)va);
             if (cap == seL4_CapNull) continue;  /* EMPTY or RESERVED */
             /* v0.4.122: capture paddr before unmap; release decrements
              * the refcount if this is a tracked R/O dup. Promoted pages
              * (cookie=ut, fresh frame) were never acquired and will fall
              * through cow_frame_release as untracked. */
             uintptr_t paddr = cow_paddr_of(cap);
-            vspace_unmap_pages(child_vs, (void *)va, 1, seL4_PageBits, &vka);
+            vspace_unmap_pages(proc_vs, (void *)va, 1, seL4_PageBits, &vka);
             cow_frame_release(paddr);
         }
     }
+    /* v0.4.124 Step 3: free parent-side promoted frames. Each entry was
+     * a fresh frame allocated by cow_handle_write_fault and Page_Map'd
+     * into this procs vspace; sel4utils_destroy_process cannot find them
+     * (vspace tracking points at the orphaned parent_cap, not at us), so
+     * we must free explicitly. seL4_ARM_Page_Unmap clears the kernel PTE;
+     * vka_free_object deletes the cap and returns the UT. */
+    for (int i = 0; i < cow_num_promoted[proc_idx]; i++) {
+        seL4_CPtr c = cow_promoted_global[proc_idx][i].cptr;
+        if (c == 0) continue;
+        seL4_ARM_Page_Unmap(c);
+        vka_free_object(&vka, &cow_promoted_global[proc_idx][i]);
+    }
+    cow_num_promoted[proc_idx] = 0;
+    cow_disabled_global[proc_idx] = 0;
     /* Metadata is zeroed separately by cow_clear_proc on slot reuse. */
 }

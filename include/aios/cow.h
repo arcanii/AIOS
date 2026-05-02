@@ -20,8 +20,12 @@
 #include <sel4utils/vspace.h>
 
 /* Replace child's eager allocation in [base, base+num_pages*4096) with
- * R/O dups of parent's caps. Returns 0 on success, -1 on failure. */
+ * R/O dups of parent's caps. v0.4.124: with COW_STRIP_PARENT enabled,
+ * also kernel-Page_Maps the parent R/O at the same vaddr; parent's first
+ * write to each page later triggers cow_handle_write_fault on the parent
+ * proc slot. Returns 0 on success, -1 on failure. */
 int cow_setup_segment(int child_idx,
+                      int parent_idx,
                       vspace_t *parent_vs,
                       sel4utils_process_t *child_proc,
                       uintptr_t base,
