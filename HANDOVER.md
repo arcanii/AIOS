@@ -10,8 +10,8 @@ latest `docs/NEXT_*.md` for deeper background.
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4
 * **Repo**: `~/Desktop/github_repos/AIOS`
-* **Branch**: `main`, currently at **v0.4.109** (after a big batch from
-  v0.4.99)
+* **Branch**: `main`, currently at **v0.4.119** (after a big batch from
+  v0.4.110)
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4)
 * **Host**: macOS Apple Silicon, cross-compile to aarch64-linux-gnu
 * **Developer**: Bryan -- prefers Python patch scripts over sed/heredocs;
@@ -19,30 +19,51 @@ latest `docs/NEXT_*.md` for deeper background.
 
 ---
 
-## Where we left off (v0.4.99 -> v0.4.109)
+## Where we left off (v0.4.110 -> v0.4.119)
 
-Big focus on virtual memory and observability. Eager static BSS was the
-main resource bottleneck -- a process eagerly mapped a 6 MB
-morecore_area regardless of actual heap use, so a 4-process pipeline
-exhausted the 8000-page pool. We solved this end-to-end:
+Three intertwined arcs landed in this batch: copy-on-write fork,
+block-layer caching with reclaim, and a stack-overflow bug that had
+been masquerading as a BSS-init mystery for several sessions.
 
-* **v0.4.99**: ZSH Phase 2 interactive ZLE working
-* **v0.4.100**: `/var/log` mount; dual virtio-blk warmup fix
-* **v0.4.101**: boot/ printf migration to LOG_*
-* **v0.4.104**: logging round 2 + boot resilience (recovery banner) +
-  VKA observability + IPC-based anonymous mmap (PIPE_MMAP_ANON)
-* **v0.4.105**: design doc `DESIGN_DEMAND_BSS.md`
-* **v0.4.106**: demand-paged BSS for EXEC_RUN/PIPE_EXEC -- 10-50x
-  reduction in per-process page count
-* **v0.4.107**: demand-paged BSS extended to EXEC_RUN_BG (getty)
-* **v0.4.108**: TCC self-host PROVEN -- programs without libc
-  compile and run on AIOS via on-disk `/tmp/tcc2`
-* **v0.4.109**: VKA per-process page release on tear-down +
-  log rotation at 1 MB
+* **v0.4.110**: COW fork infrastructure (Phase 1 WIP) -- cow.c +
+  fault handler hooks, gated off pending the reservation-tracking
+  interaction.
+* **v0.4.111**: COW enabled for the file-backed (data) portion of
+  writable LOAD segments. Reservations created fresh after
+  sel4utils_elf_load frees its own. cow_release_proc explicitly
+  unmaps before destroy.
+* **v0.4.112**: Block cache + `/proc/cachestats`. ext2 sector I/O
+  routes through 4 KB cache lines (LRU, hash table, vka-backed).
+  Two backends (drive 0 = system disk, drive 1 = log).
+* **v0.4.113**: Cache reclaim under memory pressure --
+  vka_audit_check_headroom calls blk_cache_evict before failing.
+  Process pages always beat cache pages.
+* **v0.4.114**: Boot warmup prefetch + `/proc/filehits` profiler.
+  17 files (~123 KB) preloaded before login; per-path access counter
+  hooked into vfs_read.
+* **v0.4.115**: File-redirect inheritance across exec.
+  `aios_sys_execve` packs stdout/stderr file paths into the
+  PIPE_EXEC IPC; `__wrap_main` re-opens and seeds stdout_redir_*.
+  Fixes `ls > /tmp/o` producing an empty file.
+* **v0.4.116**: Warmup file list tuned from real `/proc/filehits`
+  data after a representative interactive session.
+* **v0.4.117**: TCC self-host with libc -- pre-linked libaios_tcc.o
+  (~613 KB) wraps the AIOS runtime + libc subset, packaged as a
+  one-member `/usr/lib/libc.a`. tcc on AIOS now compiles + links
+  programs that #include <stdio.h>, call printf/malloc/exit.
+* **v0.4.118**: Stack-overflow fix that we had been working around
+  with FILEHITS_MAX/PATH_MAX tuning since v0.4.114. Symptom looked
+  like a BSS-init bug; root cause was a stack overflow corrupting
+  probe_info. Real fix landed; the FILEHITS comment is now just
+  the simple "80 chars is plenty" line.
+* **v0.4.119**: cow_release_proc page-by-page unmap (was bulk).
+  Eliminates the residual "BSS fault: map failed / Range for vaddr X
+  not reserved" log noise after fork+exec.
 
-Cumulative this batch: 55+ printfs migrated to structured logging
-across 13 files; recovery mode banner; accurate `/proc/vka` and
-`/proc/meminfo`; eager BSS eliminated everywhere.
+Cumulative: COW Phase 1 fully functional with no log noise,
+disk-cache hit rates ~84% in normal sessions, file redirection
+works end-to-end, on-AIOS tcc can build hello-world style programs
+against libc.
 
 ---
 
@@ -50,24 +71,24 @@ across 13 files; recovery mode banner; accurate `/proc/vka` and
 
 Two design docs sit ready for implementation:
 
-* `docs/DESIGN_DEMAND_BSS.md` -- already implemented in v0.4.106-107
-  (kept for reference)
-* `docs/DESIGN_COW_FORK.md` -- the next architectural piece. Currently
-  fork eagerly duplicates writable pages via `fork_dup_region`. With
-  COW, fork shares R/O caps and only copies on write fault. Estimated
-  2-3 focused sessions for Phase 1 + 2.
+* `docs/DESIGN_DEMAND_BSS.md` -- implemented in v0.4.106-107.
+* `docs/DESIGN_COW_FORK.md` -- **Phase 2 still pending**: parent-side
+  stripping (POSIX-correct fork semantics where parent's writes do
+  not leak to child), frame refcounting (so parent dying does not
+  invalidate child's COW pages), stack COW (currently only data seg).
+  Estimated 2-3 focused sessions.
 
 Lesser items (rough priority):
-* TCC self-host with libc.a -- archive parser fails on AIOS's
-  augmented libc.a (1417 members, duplicates) and on libc_min.a
-  (177 members). Documented in `docs/NEXT_20260501a.md` with 5
-  candidate fixes. Multi-session research.
 * RPi4 hardware re-test -- recovery mode is ready (v0.4.102).
   `mkflash_rpi4.sh` single-script flasher would help.
 * Log rotation backup -- currently truncates at 1 MB. Add proper
   `aios.log -> aios.log.1` rotation.
 * mprotect stub -> real implementation
 * file-backed mmap (currently -ENOSYS)
+* Server health probes -- periodic ping to fs/exec/pipe/net,
+  auto-restart on death.
+* Block cache: write-back (currently write-through). Defer until
+  there is real concurrent fs traffic to stress.
 * Swap / paging out (long-term research)
 
 ---
@@ -318,12 +339,19 @@ cat /proc/vka                   # accurate live page count
 cat /proc/meminfo               # real MemTotal + Pool*
 cat /proc/log | tail -50        # ring buffer log
 cat /var/log/aios.log | tail    # persistent log
+cat /proc/cachestats            # block-cache hit rate / size
+cat /proc/filehits              # top accessed files (profiler)
 
 zsh                             # interactive, ZLE working
                                 # (compctl warning is cosmetic)
 
-/tmp/tcc2 -o /tmp/t /tmp/t.c    # for libc-free programs
-/tmp/t; echo $?                 # works for return-code programs
+ls /bin > /tmp/o; wc -c /tmp/o  # file redirect across exec works
+echo abc | wc -c                # pipe across fork+exec works
+cat /etc/passwd | head -1       # head limit works correctly
+
+/tmp/tcc2 -o /tmp/t /tmp/t.c    # native tcc (libc-free programs)
+tcc /usr/include/hello.c -o /tmp/h  # native tcc with libc (v0.4.117)
+/tmp/h; echo $?                 # libc programs run
 
 # kill foreground with Ctrl-C twice (two-stage SIGINT)
 # logout via Ctrl-D from getty
@@ -335,30 +363,37 @@ zsh                             # interactive, ZLE working
 
 In rough order of impact:
 
-1. **COW fork (Phase 1)** -- `DESIGN_COW_FORK.md` Phase 1 only.
-   Modify `fork_dup_region` to use CNode_Copy + R/O remap, extend
-   pipe_server fault handler with cow_ranges check + write-fault
-   path. ~2 sessions for working version.
+1. **COW fork Phase 2** -- `DESIGN_COW_FORK.md` sections 2 + 3.
+   Strip parent's mapping to R/O at fork (POSIX correctness: parent's
+   writes should not leak to child until child writes its copy).
+   Add frame refcounting (so parent dying does not invalidate
+   child's COW pages). Extend COW to stack pages (currently only
+   data segment). Phase 1 is fully clean as of v0.4.119, so this is
+   the natural follow-on. ~2-3 sessions.
 
-2. **TCC libc archive fix** -- try Approach 3 (pre-linked .o) from
-   `NEXT_20260501a.md`. Pre-link relevant musl/AIOS objects via
-   `ld -r` into a single .o; link that into programs. Avoids TCC's
-   archive parser entirely.
+2. **mprotect** -- currently stub. Wire up real seL4 page-table
+   protection updates. Touched by JITs and the COW write-fault path
+   would benefit from a proper PageMap-with-rights helper here too.
 
-3. **mprotect** -- currently stub. Wire up real seL4 page-table
-   protection updates. Touched only by JITs / dlopen-style code,
-   not critical.
+3. **file-backed mmap** -- currently -ENOSYS. Lay alongside
+   PIPE_MMAP_ANON in pipe_server. Useful for mmap'd config files
+   and would let dynamic linkers work later.
 
-4. **RPi4 hardware test** -- boot the existing kernel on real
-   hardware, verify recovery mode banner appears when SD card has
-   no system partition. `mkflash_rpi4.sh` would streamline.
-
-5. **Log rotation backup** -- currently truncates at 1 MB. Move
-   aios.log to aios.log.1 first, keep 1 backup.
-
-6. **Server health probes** -- periodic ping to fs/exec/pipe/net.
+4. **Server health probes** -- periodic ping to fs/exec/pipe/net.
    Auto-restart on death. Distinguishes "frozen" from "broken"
-   (would have helped diagnose getty hang earlier in this batch).
+   (would have helped diagnose getty hang earlier in v0.4.99).
+
+5. **RPi4 hardware re-test** -- boot the v0.4.119 kernel on real
+   hardware, verify recovery mode banner appears when SD card has
+   no system partition. `mkflash_rpi4.sh` single-script flasher
+   would streamline.
+
+6. **Log rotation backup** -- currently truncates at 1 MB. Move
+   `aios.log` to `aios.log.1` first, keep 1 backup.
+
+7. **Block cache write-back** -- currently write-through. Defer
+   until there is real concurrent fs traffic that would benefit
+   from coalesced writes.
 
 ---
 
