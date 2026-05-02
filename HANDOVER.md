@@ -10,13 +10,76 @@ latest `docs/NEXT_*.md` for deeper background.
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4
 * **Repo**: `~/Desktop/github_repos/AIOS`
-* **Branch**: `main`, currently at **v0.4.120**
+* **Branch**: `main`, currently at **v0.4.125**
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4)
 * **Host**: macOS Apple Silicon, cross-compile to aarch64-linux-gnu
 * **Developer**: Bryan -- prefers Python patch scripts over sed/heredocs;
   no apostrophes in C comments (zsh copy-paste breaks)
 
 ---
+
+## Where we left off (v0.4.121 -> v0.4.125)
+
+This batch finished COW Phase 2 Steps 1-3 from `docs/NEXT_20260502b.md`
+plus a new server health probe. Steps 1 and 2 are live. Step 3
+(parent-side stripping) has all the plumbing landed but is gated off
+because of an unresolved post-promotion regression -- see "COW Phase 2
+Step 3 status" below and `docs/NEXT_20260502c.md`.
+
+* **v0.4.121**: COW Phase 2 Step 1 (WnR fault detection) + server
+  health probes. cow_handle_write_fault now reads FSR bit 6 and
+  returns 0 on read faults so they fall through to the real
+  exit path (a read fault inside a COW range is an instruction-fetch
+  bug, not a COW promotion). New in-process probe thread pings
+  pipe/fs/thread/net/disp/crypto every 5s with `SVC_PING` (label 5);
+  exposed via `/proc/serverstats`. Probe runs at priority 200 (same
+  as the servers it pings) -- 180 was permanently starved.
+* **v0.4.122**: COW Phase 2 Step 2 (per-frame refcount). 64-entry
+  table in cow.c keyed by paddr; cow_frame_acquire wired into
+  cow_setup_segment, cow_frame_release into cow_release_proc and the
+  promotion path. Pure observation -- no behaviour change.
+  `/proc/cow` exposes the table. Smoke confirms BSS-fault count
+  unchanged from v0.4.121 baseline (kept the table to 64 entries
+  specifically to avoid the 1024-entry BSS-shift trap from the
+  abandoned attempt).
+* **v0.4.123**: kernel investigation + Step 3 probe. Read seL4 ARM
+  `performPageInvocationMap` to confirm Page_Map remap-in-place is
+  safe and only touches the cap slot, the PTE, and the TLB. Probe
+  (gated behind COW_PROBE_PARENT_STRIP) verified the kernel
+  mechanism in production: parent strip succeeds, parent dies on
+  next write to a stripped page, getty respawns. Probe code stays
+  in cow.c gated off; full investigation in
+  `docs/NEXT_20260502c.md`.
+* **v0.4.124**: Step 3 plumbing landed gated OFF. cow_setup_segment
+  takes parent_idx; cow_handle_write_fault has the parent-promotion
+  branch (kernel Page_Map of fresh frame, stash in
+  cow_promoted_global, set cow_disabled to flip future forks of
+  this proc to eager copy). cow_release_proc skips parent ranges
+  in the vspace_unmap walk. Per-proc Step 3 state lives in cow.c
+  globals (NOT active_proc_t) -- first attempt put it inline and the
+  resulting BSS shift broke dash startup, repeating the v0.4.122
+  lesson.
+* **v0.4.125**: cow_current_cap helper + fork.c plumbing. Threads
+  parent_idx through fork_copy_into_existing / region / stack so
+  the eager-copy fallback after a parent's promotion sources from
+  cow_promoted_global instead of the orphaned parent_cap. Step 3
+  mechanism now proven end-to-end: smoke shows
+  `parent_promotions: 2, strip_errs: 0`, no kernel errors. But
+  with COW_STRIP_PARENT=1 dash post-promotion sees EPERM on
+  subsequent fork+exec (`wc`, `shutdown` fail). With the gate at 0
+  the system is v0.4.122-equivalent.
+
+### COW Phase 2 Step 3 status
+
+Mechanism: working. Production-on: not yet. The wc/shutdown bug
+manifests only when COW_STRIP_PARENT=1, after a parent has
+promoted at least one page. It's behind a default-off flag and
+loses no existing capability (eager-copy fork path is unchanged
+when strip is 0). Next session can flip the flag, repro the EPERM
+on second fork+exec, and trace through `do_fork`'s 12 -1 paths
+to find which one fires post-promotion. Likely candidates: cap
+allocation interacting with the orphaned parent_cap, or a child
+cspace cap that ends up wrong. See `docs/NEXT_20260503a.md`.
 
 ## Where we left off (v0.4.110 -> v0.4.119)
 
@@ -96,23 +159,23 @@ against libc, log rotation keeps one historical generation.
 
 ## What is pending
 
-Two design docs sit ready for implementation:
+Design docs:
 
 * `docs/DESIGN_DEMAND_BSS.md` -- implemented in v0.4.106-107.
-* `docs/DESIGN_COW_FORK.md` -- **Phase 2 still pending**, attempt
-  reverted v0.4.119 -> v0.4.120; see `docs/NEXT_20260502b.md` for
-  the incremental restart plan.
+* `docs/DESIGN_COW_FORK.md` -- Phase 1 + Phase 2 Steps 1-2 live;
+  Step 3 plumbed but gated off (see `docs/NEXT_20260503a.md`).
+  Steps 4-5 (stack COW, parent-dies safety) not started.
 
 ### Tactical items, sized
 
 | Item | LOC | Risk | What ships |
 |---|---|---|---|
-| **COW Phase 2 Step 1** -- WnR fault detection | ~10 | very low | Read faults on R/O COW pages get killed instead of handled as writes. Pure correctness. No new BSS. |
-| **Server health probes -- ping only** | ~50 | low | Periodic poll thread that pings fs/exec/pipe/net/disp/crypto via a no-op IPC label. `/proc/serverstats` shows last-ping age. Auto-restart is a separate, much bigger step. |
-| **COW Phase 2 Step 2** -- refcount table observation-only | ~150 | low-med | Track shared-frame refcounts; expose via `/proc/cow`. Earlier 1024-entry table broke; 64 entries should be safe. Foundation for parent stripping. |
+| **COW Step 3 wc/shutdown fix** -- enable parent strip | ~? | medium | Trace `do_fork`'s -1 paths post-promotion to find what fails. Once fixed, flip COW_STRIP_PARENT to 1 and ship Step 3. See `docs/NEXT_20260503a.md`. |
 | **Block cache write-back** | ~150 | medium | Switch from write-through. AIOS fs traffic too low for measurable speedup right now. |
-| **mprotect real impl** | ~200 | medium | New PIPE_MPROTECT label; server walks caller's vspace, calls `seL4_ARM_Page_Map` per page. We confirmed remap-in-place works during the COW work. |
+| **mprotect real impl** | ~200 | medium | New PIPE_MPROTECT label; server walks caller's vspace, calls `seL4_ARM_Page_Map` per page. v0.4.123 kernel investigation confirmed remap-in-place works. |
 | **file-backed mmap** | ~300 | medium | MAP_SHARED on a regular file, extends PIPE_MMAP_ANON. Coherency on writes (msync?) is the hard bit. |
+| **COW Step 4** -- stack COW | ~200 | medium-high | Probe parent's stack range tightly, share via cow_setup_segment. Previous attempt collided with child's IPC buffer; bound the probe. |
+| **COW Step 5** -- parent-dies safety | ~? | high | Today: child reads through dup cap; if parent dies and frees underlying frame, child cap dangles. Needs cookie-ownership transfer at fork time. |
 | **Server health probes -- full** (with auto-restart) | ~400 | high | Detecting death is easy; restoring server state across restart is hard (BSS-resident state, in-flight reply caps, registered clients). |
 | **RPi4 hardware re-test** | n/a | n/a | Needs physical hardware. Recovery mode banner is ready (v0.4.102); `mkflash_rpi4.sh` flasher would streamline. |
 | **Swap / paging out** | many | long-term research | |
@@ -367,9 +430,12 @@ cat /proc/log | tail -50        # ring buffer log
 cat /var/log/aios.log | tail    # persistent log
 cat /proc/cachestats            # block-cache hit rate / size
 cat /proc/filehits              # top accessed files (profiler)
+cat /proc/serverstats           # ping-based server health (v0.4.121)
+cat /proc/cow                   # COW per-frame refcount (v0.4.122)
 
 zsh                             # interactive, ZLE working
                                 # (compctl warning is cosmetic)
+                                # (rebuild after libaios_posix.a edits!)
 
 ls /bin > /tmp/o; wc -c /tmp/o  # file redirect across exec works
 echo abc | wc -c                # pipe across fork+exec works
@@ -387,15 +453,18 @@ tcc /usr/include/hello.c -o /tmp/h  # native tcc with libc (v0.4.117)
 
 ## Suggested next sessions
 
-See the sized table in "What is pending" above. The shortest
-high-confidence next step is **COW Phase 2 Step 1 (WnR fault
-detection)** -- ~10 LOC, validates the incremental-restart
-approach from `docs/NEXT_20260502b.md` after the abandoned
-wholesale Phase 2 attempt.
+See the sized table in "What is pending" above. The most natural
+next step is **COW Step 3 wc/shutdown fix** -- the mechanism is
+proven (parent_promotions count up, no kernel errors with the
+gate on), only thing blocking ship is finding which `do_fork`
+failure path fires post-promotion. Repro is one-line (flip
+COW_STRIP_PARENT in cow.c). Detailed plan in
+`docs/NEXT_20260503a.md`.
 
-After that, **server health probes (ping-only)** is the highest
-user-visible-value low-risk medium item. Then **mprotect real
-impl** for usefulness to JITs / dlopen-style code.
+If you want a clean win unrelated to COW: **mprotect real impl**.
+The v0.4.123 kernel investigation already proved Page_Map
+remap-in-place is safe; mprotect is essentially the same
+mechanism applied to user-requested ranges.
 
 ---
 
