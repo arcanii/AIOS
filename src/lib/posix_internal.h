@@ -348,6 +348,8 @@ long aios_sys_clock_nanosleep(va_list ap);
 long aios_sys_mprotect(va_list ap);
 /* v0.4.104: on-demand mmap MAP_ANONYMOUS via pipe_server IPC */
 long aios_sys_mmap(va_list ap);
+/* v0.4.128: real munmap via pipe_server IPC */
+long aios_sys_munmap(va_list ap);
 
 /* v0.4.64: dash prerequisites */
 long aios_sys_setpgid(va_list ap);

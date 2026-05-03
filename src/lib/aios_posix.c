@@ -681,6 +681,8 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     muslcsys_install_syscall(__NR_mprotect, aios_sys_mprotect);
     /* v0.4.104: real mmap MAP_ANONYMOUS via pipe_server IPC */
     muslcsys_install_syscall(__NR_mmap, aios_sys_mmap);
+    /* v0.4.128: real munmap via pipe_server IPC */
+    muslcsys_install_syscall(__NR_munmap, aios_sys_munmap);
 
     /* v0.4.64: dash prerequisites */
     muslcsys_install_syscall(__NR_setpgid, aios_sys_setpgid);

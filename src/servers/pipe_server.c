@@ -1244,6 +1244,41 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }
+        case PIPE_MUNMAP_ANON: {
+            /* v0.4.128: unmap pages in caller's vspace -- complements
+             * PIPE_MMAP_ANON. The caller-vspace tracking owns the cookie
+             * for each frame (vspace_new_pages set it to the underlying
+             * UT), so passing &vka frees the frame too. Only operates
+             * on currently-mapped pages within the range; missing
+             * entries are silently skipped (consistent with mprotect). */
+            int ci = (int)badge - 1;
+            uintptr_t va = (uintptr_t)seL4_GetMR(0);
+            int npages = (int)seL4_GetMR(1);
+            if (ci < 0 || ci >= MAX_ACTIVE_PROCS
+                || !active_procs[ci].active
+                || npages <= 0 || npages > 4096
+                || (va & (PAGE_SIZE - 1)) != 0) {
+                seL4_SetMR(0, (seL4_Word)-22 /* -EINVAL */);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            int unmapped = 0;
+            vspace_t *cvs = &active_procs[ci].proc.vspace;
+            for (int i = 0; i < npages; i++) {
+                uintptr_t page_va = va + (uintptr_t)i * PAGE_SIZE;
+                seL4_CPtr cap = vspace_get_cap(cvs, (void *)page_va);
+                if (cap == seL4_CapNull) continue;
+                vspace_unmap_pages(cvs, (void *)page_va, 1, seL4_PageBits, &vka);
+                unmapped++;
+            }
+            if (unmapped > 0) {
+                vka_audit_frame_release(unmapped);
+            }
+            seL4_SetMR(0, 0);
+            seL4_SetMR(1, (seL4_Word)unmapped);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 2));
+            break;
+        }
         case PIPE_MPROTECT: {
             /* v0.4.126/127: change page rights via seL4_ARM_Page_Map
              * remap-in-place (kernel performPageInvocationMap rewrites the

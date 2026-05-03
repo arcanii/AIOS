@@ -89,6 +89,30 @@ int main(void) {
     }
     printf("OK: PROT_EXEC accepted\n");
 
+    /* v0.4.128: munmap actually frees pages now (not a no-op). */
+    int mu = munmap(p, len);
+    printf("munmap rc=%d\n", mu);
+    if (mu != 0) {
+        printf("FAIL: munmap rejected\n");
+        return 1;
+    }
+    printf("OK: munmap succeeded\n");
+
+    /* A fresh mmap right after munmap should succeed (pool was freed). */
+    void *q = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (q == MAP_FAILED || q == NULL) {
+        printf("FAIL: re-mmap after munmap\n");
+        return 1;
+    }
+    *(volatile int *)q = 0xABCD;
+    if (*(volatile int *)q != 0xABCD) {
+        printf("FAIL: re-mmap page not writable\n");
+        return 1;
+    }
+    munmap(q, 4096);
+    printf("OK: re-mmap after munmap works\n");
+
     printf("MPROTECT-DONE\n");
     return 0;
 }
