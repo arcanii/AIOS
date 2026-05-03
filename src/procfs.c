@@ -71,7 +71,7 @@ static int procfs_list(void *ctx, uint32_t ino, char *buf, int bufsize) {
     (void)ctx; (void)ino;
     int w = 0;
     /* List virtual files */
-    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- filehits\n", "- serverstats\n", "- cow\n", "d self\n" };
+    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- filehits\n", "- serverstats\n", "- cow\n", "- cmdline\n", "d self\n" };
     int n_entries = (int)(sizeof(entries) / sizeof(entries[0]));
     for (int i = 0; i < n_entries && w < bufsize - 1; i++) {
     
@@ -398,6 +398,20 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
             && path[3] == '\0') {
         /* v0.4.122: /proc/cow -- COW per-frame refcount stats (Phase 2 Step 2) */
         w = cow_format_stats(buf, bufsize);
+    } else if (path[0] == 'c' && path[1] == 'm' && path[2] == 'd'
+            && path[3] == 'l' && path[4] == 'i' && path[5] == 'n'
+            && path[6] == 'e') {
+        /* v0.4.129: /proc/cmdline -- one-line summary of the boot
+         * environment. AIOS has no Linux-style boot args; this stands
+         * in by stitching together the runtime-discovered values. */
+        extern uint32_t aios_total_mem;
+        const char *blk = hw_info.has_emmc ? "emmc" : "virtio";
+        const char *net = hw_info.has_genet ? "genet" :
+                          hw_info.has_virtio ? "virtio" : "none";
+        w += snprintf(buf + w, bufsize - w,
+            "aios root=/dev/vda init=/bin/aios/getty platform=%s cpu=%s cores=%d ram=%uM blk=%s net=%s\n",
+            "qemu-virt", hw_info.cpu_compat, hw_info.cpu_count,
+            (unsigned)aios_total_mem, blk, net);
     } else if (path[0] == 'c' && path[1] == 'a' && path[2] == 'c'
             && path[3] == 'h' && path[4] == 'e' && path[5] == 's'
             && path[6] == 't' && path[7] == 'a' && path[8] == 't'
