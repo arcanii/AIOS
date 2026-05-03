@@ -14,6 +14,7 @@ typedef struct {
     int (*fs_pread)(void *ctx, const char *path, int offset, char *buf, int bufsize);
     int (*fs_pwrite)(void *ctx, const char *path, int offset, const void *data, int len);
     int (*fs_unlink)(void *ctx, const char *path);
+    int (*fs_truncate)(void *ctx, const char *path, uint32_t new_size);
 } fs_ops_t;
 
 /* Mount entry */
@@ -43,5 +44,6 @@ int vfs_mkdir(const char *path);
 int vfs_create(const char *path, const void *data, int len);
 int vfs_unlink(const char *path);
 int vfs_rename(const char *oldpath, const char *newpath);
+int vfs_truncate(const char *path, uint32_t new_size);
 
 #endif

@@ -85,6 +85,7 @@ struct __attribute__((packed)) ext2_dir_entry {
 #define FS_RENAME 18
 #define FS_APPEND 19
 #define FS_PWRITE 20
+#define FS_TRUNCATE 21  /* v0.4.130 */
 
 /* Block read function type (provided by caller) */
 typedef int (*blk_read_fn)(uint64_t sector, void *buf);
@@ -122,6 +123,12 @@ int ext2_unlink(ext2_ctx_t *ctx, uint32_t parent_ino, const char *name);
 int ext2_pread_file(ext2_ctx_t *ctx, uint32_t ino, int offset, char *buf, int bufsize);
 int ext2_pwrite_file(ext2_ctx_t *ctx, uint32_t ino, int offset,
                      const uint8_t *data, int len);
+/* v0.4.130: set inode i_size. For shrinks, this only updates the
+ * size field; the freed blocks beyond new_size leak (block-bitmap
+ * deallocation is a future improvement). For grows, the bytes between
+ * old_size and new_size are NOT zero-filled -- caller must pwrite if
+ * it cares. Returns 0 on success, negative on lookup failure. */
+int ext2_truncate(ext2_ctx_t *ctx, uint32_t ino, uint32_t new_size);
 
 
 /* VFS adapter */

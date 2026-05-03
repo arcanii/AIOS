@@ -130,6 +130,23 @@ int vfs_pwrite(const char *path, int offset, const void *data, int len) {
     }
 }
 
+int vfs_truncate(const char *path, uint32_t new_size) {
+    const char *remainder;
+    mount_entry_t *m = find_mount(path, &remainder);
+    if (!m || !m->ops->fs_truncate) return -1;
+
+    if (m->path_len == 1) {
+        return m->ops->fs_truncate(m->ctx, path, new_size);
+    } else {
+        char sub_path[256];
+        sub_path[0] = '/';
+        int i = 1;
+        while (remainder[i-1] && i < 255) { sub_path[i] = remainder[i-1]; i++; }
+        sub_path[i] = '\0';
+        return m->ops->fs_truncate(m->ctx, sub_path, new_size);
+    }
+}
+
 int vfs_pread(const char *path, int offset, char *buf, int bufsize) {
     const char *remainder;
     mount_entry_t *m = find_mount(path, &remainder);

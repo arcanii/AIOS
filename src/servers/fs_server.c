@@ -406,6 +406,31 @@ void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }
+        case FS_TRUNCATE: {
+            /* v0.4.130: set file's i_size. Only updates the size field
+             * (block-bitmap deallocation deferred -- shrink leaks the
+             * blocks beyond the new end). MR0=path_len, MR1=new_size,
+             * MR2+=path. Returns 0 on success, -1 on failure. */
+            seL4_Word tr_pathlen = seL4_GetMR(0);
+            seL4_Word tr_size    = seL4_GetMR(1);
+            char tr_path[128];
+            int tr_pl = (tr_pathlen > 127) ? 127 : (int)tr_pathlen;
+            int tr_mr = 2;
+            for (int i = 0; i < tr_pl; i++) {
+                if (i % 8 == 0 && i > 0) tr_mr++;
+                tr_path[i] = (char)((seL4_GetMR(tr_mr) >> ((i % 8) * 8)) & 0xFF);
+            }
+            tr_path[tr_pl] = '\0';
+            if (!fs_check_path_write(fs_badge, tr_path)) {
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            int ret = vfs_truncate(tr_path, (uint32_t)tr_size);
+            seL4_SetMR(0, (seL4_Word)(ret >= 0 ? 0 : -1));
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
         default:
             AIOS_LOG_WARN_V("fs_server unhandled IPC label=", (unsigned long)label);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));

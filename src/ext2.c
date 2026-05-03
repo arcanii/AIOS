@@ -530,6 +530,13 @@ static int ext2_vfs_unlink(void *ctx, const char *path) {
     return ext2_unlink(e, parent_ino, name);
 }
 
+static int ext2_vfs_truncate(void *ctx, const char *path, uint32_t new_size) {
+    ext2_ctx_t *e = (ext2_ctx_t *)ctx;
+    uint32_t ino;
+    if (ext2_resolve_path(e, path, &ino) != 0) return -1;
+    return ext2_truncate(e, ino, new_size);
+}
+
 fs_ops_t ext2_fs_ops = {
     .fs_list = ext2_vfs_list,
     .fs_read = ext2_vfs_read,
@@ -540,6 +547,7 @@ fs_ops_t ext2_fs_ops = {
     .fs_mkdir = ext2_vfs_mkdir,
     .fs_create = ext2_vfs_create,
     .fs_unlink = ext2_vfs_unlink,
+    .fs_truncate = ext2_vfs_truncate,
 };
 
 
@@ -864,6 +872,20 @@ int ext2_create_file(ext2_ctx_t *ctx, uint32_t parent_ino, const char *name,
     add_dir_entry(ctx, parent_ino, name, new_ino, 1);
 
     return new_ino;
+}
+
+/* v0.4.130: set inode i_size + i_blocks. Shrink leaks the freed
+ * blocks; grow does not zero-fill (caller must pwrite if it cares).
+ * Block-bitmap deallocation is deferred. */
+int ext2_truncate(ext2_ctx_t *ctx, uint32_t ino, uint32_t new_size) {
+    struct ext2_inode inode;
+    if (ext2_read_inode(ctx, ino, &inode) != 0) return -1;
+    inode.i_size = new_size;
+    int block_size = (int)ctx->block_size;
+    int blocks_used = ((int)new_size + block_size - 1) / block_size;
+    inode.i_blocks = (uint32_t)(blocks_used * (block_size / 512));
+    write_inode(ctx, ino, &inode);
+    return 0;
 }
 
 int ext2_unlink(ext2_ctx_t *ctx, uint32_t parent_ino, const char *name) {

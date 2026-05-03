@@ -976,11 +976,35 @@ long aios_sys_openat_creat(const char *pathname, int flags, int mode) {
     return -ENOSYS; /* Let normal open handle reading */
 }
 
+/* v0.4.130: real ftruncate via FS_TRUNCATE IPC. Resolves fd to a path
+ * (we keep the path on the fd record) and sends to fs_server, which
+ * updates the inode's i_size. Shrinks leak the freed blocks for now;
+ * grows do not zero-fill the gap (caller must pwrite if it cares). */
 long aios_sys_ftruncate(va_list ap) {
     int fd = va_arg(ap, int);
     long length = va_arg(ap, long);
-    (void)fd; (void)length;
-    return 0;  /* stub — pretend success */
+    if (length < 0) return -EINVAL;
+    if (fd < AIOS_FD_BASE || fd >= AIOS_FD_BASE + AIOS_MAX_FDS) return -EBADF;
+    aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
+    if (!f->active) return -EBADF;
+    if (f->is_pipe || f->is_dir) return -EINVAL;
+    if (!f->path[0] || !fs_ep_cap) return -ENOSYS;
+    int plen = 0; while (f->path[plen]) plen++;
+    seL4_SetMR(0, (seL4_Word)plen);
+    seL4_SetMR(1, (seL4_Word)length);
+    int mr = 2;
+    seL4_Word w = 0;
+    for (int i = 0; i < plen; i++) {
+        w |= ((seL4_Word)(uint8_t)f->path[i]) << ((i % 8) * 8);
+        if (i % 8 == 7 || i == plen - 1) { seL4_SetMR(mr++, w); w = 0; }
+    }
+    seL4_Call(fs_ep_cap, seL4_MessageInfo_new(21 /* FS_TRUNCATE */, 0, 0, mr));
+    long rc = (long)seL4_GetMR(0);
+    if (rc == 0) {
+        /* Update cached size so subsequent fstat sees the new value. */
+        f->size = (int)length;
+    }
+    return rc;
 }
 
 
