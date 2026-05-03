@@ -1245,15 +1245,15 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             break;
         }
         case PIPE_MPROTECT: {
-            /* v0.4.126: change page rights via seL4_ARM_Page_Map remap-in-place.
-             * Backed by the kernel investigation in docs/NEXT_20260502c.md
-             * (performPageInvocationMap rewrites the PTE and TLB-flushes;
-             * the cap stays valid).
-             * MR0 = vaddr (page-aligned), MR1 = num pages, MR2 = prot bits
-             * (PROT_READ=1, PROT_WRITE=2, PROT_EXEC=4 -- exec bit is
-             * currently ignored).
-             * Pages that are not currently mapped are skipped silently;
-             * caller can re-mprotect after the page is faulted in. */
+            /* v0.4.126/127: change page rights via seL4_ARM_Page_Map
+             * remap-in-place (kernel performPageInvocationMap rewrites the
+             * PTE and TLB-flushes; cap stays valid). See
+             * docs/NEXT_20260502c.md.
+             * MR0 = vaddr (page-aligned), MR1 = num pages, MR2 = prot bits.
+             * PROT_READ=1, PROT_WRITE=2, PROT_EXEC=4. PROT_NONE (prot=0)
+             * remaps with all rights cleared -- subsequent accesses fault.
+             * PROT_EXEC controls the ARM Execute-Never attribute.
+             * Pages not currently mapped are skipped silently. */
             int ci = (int)badge - 1;
             uintptr_t va = (uintptr_t)seL4_GetMR(0);
             int npages = (int)seL4_GetMR(1);
@@ -1266,17 +1266,15 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                 break;
             }
-            /* PROT_NONE (no rights) requires unmap; not supported in v1. */
             int want_read = (prot & 1) != 0;
             int want_write = (prot & 2) != 0;
-            if (!want_read && !want_write) {
-                seL4_SetMR(0, (seL4_Word)-38 /* -ENOSYS */);
-                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
-                break;
-            }
+            int want_exec = (prot & 4) != 0;
             seL4_CapRights_t rights = seL4_CapRights_new(0, 0,
                 want_read || want_write, want_write);
-            seL4_ARM_VMAttributes attrs = seL4_ARM_Default_VMAttributes;
+            seL4_ARM_VMAttributes attrs = want_exec
+                ? seL4_ARM_Default_VMAttributes
+                : (seL4_ARM_VMAttributes)(seL4_ARM_Default_VMAttributes
+                                          | seL4_ARM_ExecuteNever);
             seL4_CPtr caller_pd = vspace_get_root(&active_procs[ci].proc.vspace);
             int remapped = 0, skipped = 0, errs = 0;
             for (int i = 0; i < npages; i++) {

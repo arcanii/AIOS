@@ -63,6 +63,32 @@ int main(void) {
     }
     printf("OK: post-restore write works\n");
 
+    /* v0.4.127: PROT_NONE round trip -- IPC succeeds; subsequent
+     * accesses would fault but we can't test that without a SIGSEGV
+     * handler. Restoring to PROT_READ|PROT_WRITE proves the cap survived. */
+    rc = mprotect(p, len, PROT_NONE);
+    printf("mprotect(NONE) rc=%d\n", rc);
+    if (rc != 0) {
+        printf("FAIL: PROT_NONE rejected\n");
+        return 1;
+    }
+    rc = mprotect(p, len, PROT_READ | PROT_WRITE);
+    printf("mprotect(R/W after NONE) rc=%d\n", rc);
+    if (rc != 0 || w[0] != 0x12345678) {
+        printf("FAIL: restore after PROT_NONE\n");
+        return 1;
+    }
+    printf("OK: PROT_NONE round-trip works\n");
+
+    /* PROT_EXEC -- IPC accepts and clears the XN bit. */
+    rc = mprotect(p, len, PROT_READ | PROT_EXEC);
+    printf("mprotect(R/X) rc=%d\n", rc);
+    if (rc != 0) {
+        printf("FAIL: PROT_EXEC rejected\n");
+        return 1;
+    }
+    printf("OK: PROT_EXEC accepted\n");
+
     printf("MPROTECT-DONE\n");
     return 0;
 }

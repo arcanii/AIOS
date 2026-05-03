@@ -372,12 +372,12 @@ long aios_sys_pipe2(va_list ap) {
     return 0;
 }
 
-/* v0.4.126: mprotect via PIPE_MPROTECT IPC. Server (pipe_server) walks
- * the caller's vspace and calls seL4_ARM_Page_Map per page with the
- * requested rights. Pages not currently mapped are skipped silently --
- * mprotect on demand-paged BSS only takes effect on pages that have
- * been faulted in. PROT_NONE is not yet supported (would need unmap).
- * PROT_EXEC is silently treated as PROT_READ. */
+/* v0.4.126/127: mprotect via PIPE_MPROTECT IPC. Server walks the caller's
+ * vspace and calls seL4_ARM_Page_Map per page with the requested rights.
+ * Supports PROT_NONE (rights cleared, accesses fault), PROT_READ,
+ * PROT_WRITE, and PROT_EXEC (controls the ARM Execute-Never attribute).
+ * Pages not currently mapped are skipped silently -- mprotect on
+ * demand-paged BSS only takes effect on pages that have been faulted in. */
 long aios_sys_mprotect(va_list ap) {
     void *addr = va_arg(ap, void *);
     size_t len = va_arg(ap, size_t);
