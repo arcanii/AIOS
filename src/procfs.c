@@ -401,16 +401,24 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
     } else if (path[0] == 'c' && path[1] == 'm' && path[2] == 'd'
             && path[3] == 'l' && path[4] == 'i' && path[5] == 'n'
             && path[6] == 'e') {
-        /* v0.4.129: /proc/cmdline -- one-line summary of the boot
+        /* v0.4.129/131: /proc/cmdline -- one-line summary of the boot
          * environment. AIOS has no Linux-style boot args; this stands
          * in by stitching together the runtime-discovered values. */
         extern uint32_t aios_total_mem;
         const char *blk = hw_info.has_emmc ? "emmc" : "virtio";
         const char *net = hw_info.has_genet ? "genet" :
                           hw_info.has_virtio ? "virtio" : "none";
+#if defined(PLAT_RPI4)
+        const char *plat = "bcm2711";
+#elif defined(PLAT_QEMU_VIRT)
+        const char *plat = "qemu-virt";
+#else
+        const char *plat = "unknown";
+#endif
+        const char *root = hw_info.has_emmc ? "/dev/mmcblk0p2" : "/dev/vda";
         w += snprintf(buf + w, bufsize - w,
-            "aios root=/dev/vda init=/bin/aios/getty platform=%s cpu=%s cores=%d ram=%uM blk=%s net=%s\n",
-            "qemu-virt", hw_info.cpu_compat, hw_info.cpu_count,
+            "aios root=%s init=/bin/aios/getty platform=%s cpu=%s cores=%d ram=%uM blk=%s net=%s\n",
+            root, plat, hw_info.cpu_compat, hw_info.cpu_count,
             (unsigned)aios_total_mem, blk, net);
     } else if (path[0] == 'c' && path[1] == 'a' && path[2] == 'c'
             && path[3] == 'h' && path[4] == 'e' && path[5] == 's'

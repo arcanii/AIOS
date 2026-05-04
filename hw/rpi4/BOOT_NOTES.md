@@ -1,6 +1,28 @@
 # RPi4 Boot Notes
 
-Verified working: v0.4.98, build 1541, 2026-04-15
+Last verified on hardware: v0.4.98, build 1541 (2026-04-15).
+
+Status against current main (v0.4.131, 2026-05-04):
+* RPi4 target builds clean -- the v0.4.99-131 churn (mprotect, munmap,
+  ftruncate, COW Phase 1+2, serverstats, /proc/cow, /proc/cmdline) all
+  compiles for PLAT_RPI4 with no #ifdef gaps.
+* `python3 scripts/mksdcard.py` produces a fresh kernel8.img with the
+  correct entry point + payload size baked into the relocator stub
+  (regenerated per build).
+* `/proc/cmdline` (v0.4.131) reports platform=bcm2711, emmc/genet, etc.
+  via runtime DTB parse.
+* **Not retested on actual hardware since v0.4.98.** All portable
+  features pass on qemu-virt; what's untested is whether any RPi4
+  platform-specific path (emmc blk, mini UART, DTB consumers) regressed.
+
+To verify on the next physical-hardware session:
+1. Boots from SD card to dash prompt over USB-serial.
+2. ZSH still launches (memory note: rebuild zsh after libaios_posix.a
+   changes; the RPi4 disk binaries should be regenerated alongside
+   the kernel8.img).
+3. mprotect, munmap, ftruncate work on SDHCI-backed disk.
+4. /proc/cmdline reports bcm2711 + emmc + cortex-a72.
+5. /proc/serverstats survives a mini-UART interactive session.
 
 ## Hardware
 - Board: Raspberry Pi 4 Model B (BCM2711, 4x Cortex-A72)

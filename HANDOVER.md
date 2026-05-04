@@ -166,19 +166,15 @@ Design docs:
   Step 3 plumbed but gated off (see `docs/NEXT_20260503a.md`).
   Steps 4-5 (stack COW, parent-dies safety) not started.
 
-### Tactical items, sized
+### Active tactical items
 
 | Item | LOC | Risk | What ships |
 |---|---|---|---|
-| **COW Step 3 wc/shutdown fix** -- enable parent strip | ~? | medium | Trace `do_fork`'s -1 paths post-promotion to find what fails. Once fixed, flip COW_STRIP_PARENT to 1 and ship Step 3. See `docs/NEXT_20260503a.md`. |
-| **Block cache write-back** | ~150 | medium | Switch from write-through. AIOS fs traffic too low for measurable speedup right now. |
-| **mprotect real impl** | ~200 | medium | New PIPE_MPROTECT label; server walks caller's vspace, calls `seL4_ARM_Page_Map` per page. v0.4.123 kernel investigation confirmed remap-in-place works. |
-| **file-backed mmap** | ~300 | medium | MAP_SHARED on a regular file, extends PIPE_MMAP_ANON. Coherency on writes (msync?) is the hard bit. |
-| **COW Step 4** -- stack COW | ~200 | medium-high | Probe parent's stack range tightly, share via cow_setup_segment. Previous attempt collided with child's IPC buffer; bound the probe. |
-| **COW Step 5** -- parent-dies safety | ~? | high | Today: child reads through dup cap; if parent dies and frees underlying frame, child cap dangles. Needs cookie-ownership transfer at fork time. |
-| **Server health probes -- full** (with auto-restart) | ~400 | high | Detecting death is easy; restoring server state across restart is hard (BSS-resident state, in-flight reply caps, registered clients). |
-| **RPi4 hardware re-test** | n/a | n/a | Needs physical hardware. Recovery mode banner is ready (v0.4.102); `mkflash_rpi4.sh` flasher would streamline. |
-| **Swap / paging out** | many | long-term research | |
+| **RPi4 hardware re-test** | n/a | n/a | Needs physical hardware. v0.4.98 was the last verified RPi4 boot (build 1541). Codebase has churned heavily since (v0.4.99-130). First step is rebuilding the RPi4 target against current main and addressing any new breakage before flashing. See `hw/rpi4/BOOT_NOTES.md`. |
+
+Everything else (COW Step 3 fix, block cache write-back, file-backed
+mmap, COW Steps 4+5, server-probe auto-restart, swap, smoke-driver
+polish, fault-observation harness) is in [BACKLOG.md](BACKLOG.md).
 
 ---
 
