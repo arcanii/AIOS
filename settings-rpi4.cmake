@@ -15,8 +15,16 @@ set(AIOS_PLATFORM "PLAT_RPI4" CACHE STRING "" FORCE)
 # RPi4 memory (1024, 2048, 4096, 8192)
 set(RPI4_MEMORY "4096" CACHE STRING "" FORCE)
 
-# SMP: RPi4 has 4 Cortex-A72 cores
-set(KernelMaxNumNodes 1 CACHE STRING "" FORCE)
+# SMP: RPi4 has 4 Cortex-A72 cores. v0.4.134 enables all 4 -- the
+# elfloader spin-table driver
+# (deps/seL4_tools/elfloader-tool/src/arch-arm/drivers/smp-spin-table.c)
+# already matches "raspberrypi,bcm2835-firmware" and the per-CPU
+# enable-method="spin-table" cpu-release-addr entries are in the RPi4
+# DTB. The elfloader is responsible for parking secondary cores and
+# the kernel is responsible for migrating IPC/scheduler state across
+# them; both pieces have been built into this image since the qemu-virt
+# config has run with KernelMaxNumNodes=4 since boot.
+set(KernelMaxNumNodes 4 CACHE STRING "" FORCE)
 
 # Debug
 set(KernelVerificationBuild OFF CACHE BOOL "" FORCE)

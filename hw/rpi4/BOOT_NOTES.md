@@ -201,12 +201,24 @@ No dtoverlay=disable-bt (need mini UART on GPIO 14/15).
 ## Remaining Issues
 - GENET Ethernet disabled (MMIO mapping crash)
 - VideoCore display disabled (VKA allocator assertion)
-- SMP disabled (secondary core parking not implemented; `KernelMaxNumNodes=1`)
+- SMP build enabled v0.4.134 (`KernelMaxNumNodes=4`); secondary cores
+  via spin-table driver (`elfloader-tool/src/arch-arm/drivers/smp-spin-table.c`).
+  Untested on hardware. Verify on first boot:
+  * "Boot cpu id = ..., index=0" then "Core N is up with logic id N"
+    for cores 1..3 in the elfloader log.
+  * "/proc/hw" shows 4 cores (qemu-virt logs this; should match).
+  * If only one core comes up, suspect cpu-release-addr mismatch in
+    DTB or kernel jump-after-MMU race; fall back is `KernelMaxNumNodes=1`
+    in `settings-rpi4.cmake`.
 
 ## Recent Fixes
 - v0.4.132: mksdcard.py FAT32 now uses macOS newfs_msdos (via hdiutil
   vnode) + BPB hidden_sectors patch. Output is RPi-friendly; safe to
   dd straight to an SD card.
 - v0.4.133: scripts/flash-rpi4.sh wraps mksdcard.py + dd with safety
-  checks (refuses /dev/disk0..2, requires `YES` confirmation, ejects
-  on completion).
+  checks (refuses /dev/disk0..2 + Internal=Yes, requires `YES`
+  confirmation, ejects on completion).
+- v0.4.134: KernelMaxNumNodes bumped 1->4 for RPi4. Build clean,
+  qemu-virt regression-free, image grew ~50KB. qemu raspi4b is silent
+  for our SD image (firmware/UART quirks unrelated to SMP) so the
+  full boot test waits for a real board.
