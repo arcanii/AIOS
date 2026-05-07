@@ -207,19 +207,53 @@ def create_config_txt(path, mem_mb, kernel_addr=None):
 
 
 def create_fat32_image(fat_img, size_mb, files):
-    """Create a FAT32 image and copy files into it using mtools."""
+    """Create a FAT32 image and copy files into it.
+
+    v0.4.132: prefer macOS newfs_msdos (run via hdiutil-attached vnode)
+    over mtools mformat. The RPi4 firmware FAT32 parser rejects the BPB
+    layout that mformat produces (see hw/rpi4/BOOT_NOTES.md "FAT32 Boot
+    Partition" -- diskutil's underlying newfs_msdos is what works on
+    real cards). After formatting we patch hidden_sectors in the BPB
+    to match the partition offset (newfs_msdos can't see that since we
+    attach the image as a whole-disk vnode, not a partition slice).
+    Then mcopy writes files in (mcopy is happy with either formatter).
+
+    Falls back to mformat on systems without hdiutil/newfs_msdos
+    (e.g. Linux); that path keeps the old documented-broken behaviour
+    and the printed warning at the end of main() still applies.
+    """
     size_bytes = size_mb * 1024 * 1024
+    total_sectors = size_bytes // SECTOR_SIZE
 
     # Create empty image
     with open(fat_img, "wb") as f:
         f.seek(size_bytes - 1)
         f.write(b"\x00")
 
-    # Format as FAT32 with hidden sectors matching partition offset
-    run(f'mformat -i "{fat_img}" -F -v AIOSBOOT -H {BOOT_START_SECTOR} '
-        f'-c 32 -T {size_bytes // SECTOR_SIZE} ::')
+    used_newfs = False
+    if shutil.which("newfs_msdos") and shutil.which("hdiutil"):
+        # Attach as a whole-disk vnode (no mount), format, detach.
+        attach_out = run(f'hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount "{fat_img}"')
+        # First column of first line is the device path.
+        device = attach_out.split("\n")[0].split()[0]
+        try:
+            run(f'newfs_msdos -F 32 -v AIOSBOOT "{device}" 2>&1 | tail -3')
+            used_newfs = True
+        finally:
+            run(f'hdiutil detach "{device}"', check=False)
+        # Patch BPB hidden_sectors (offset 0x1C, 4 bytes LE) to match the
+        # MBR partition LBA. newfs_msdos can't infer this from a vnode.
+        with open(fat_img, "r+b") as f:
+            f.seek(0x1C)
+            f.write(struct.pack("<I", BOOT_START_SECTOR))
+    else:
+        run(f'mformat -i "{fat_img}" -F -v AIOSBOOT -H {BOOT_START_SECTOR} '
+            f'-c 32 -T {total_sectors} ::')
 
-    # Copy files
+    if used_newfs:
+        print(f"  formatted via newfs_msdos (hidden_sectors={BOOT_START_SECTOR})")
+
+    # Copy files (mcopy works with any FAT image regardless of formatter)
     for src, dst_name in files:
         run(f'mcopy -i "{fat_img}" "{src}" "::{dst_name}"')
         sz = os.path.getsize(src)
@@ -376,9 +410,11 @@ def main():
     print(f"\nCreated {args.output} ({total_mb} MB)")
     print(f"  Partition 1: FAT32 boot ({BOOT_SIZE_MB}MB)")
     print(f"  Partition 2: ext2 system ({ext2_size // (1024*1024)}MB)")
-    print("\nWARNING: mtools FAT32 may not work with RPi firmware.")
-    print("  Use Method 2 (diskutil + cp) if boot fails.")
-    print("  See hw/rpi4/BOOT_NOTES.md")
+    if not (shutil.which("newfs_msdos") and shutil.which("hdiutil")):
+        print("\nWARNING: fell back to mtools mformat for FAT32 (no")
+        print("  newfs_msdos/hdiutil on this host). RPi firmware may")
+        print("  reject the BPB layout. See hw/rpi4/BOOT_NOTES.md")
+        print("  Method 2 if boot hangs at firmware.")
     print("\nFlash to SD card:")
     print(f"  diskutil list                    # find SD card (e.g. /dev/disk4)")
     print(f"  diskutil unmountDisk /dev/diskN")

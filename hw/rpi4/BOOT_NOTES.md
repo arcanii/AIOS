@@ -62,8 +62,21 @@ To verify on the next physical-hardware session:
 ### FAT32 Boot Partition
 - RPi firmware FAT32 parser rejects mtools-generated (mformat/mcopy) FAT32
 - Symptom: "dterror: Failed to load Device Tree file '?'" then no kernel
-- MUST use macOS diskutil to create FAT32 (Method 2)
-- Never dd an mtools/mksdcard.py FAT32 image to the SD card
+- v0.4.132 fix: scripts/mksdcard.py now formats via macOS newfs_msdos
+  (run against the image as a hdiutil -nomount vnode), then patches
+  hidden_sectors=2048 in the BPB, then mcopy's the boot files in.
+  This produces the same on-disk layout as `diskutil partitionDisk`.
+  The image written by mksdcard.py is now safe to dd straight to SD.
+- On Linux (no newfs_msdos/hdiutil), the script falls back to mformat
+  and prints a warning. Method 2 below stays the workaround for that
+  host.
+
+### Method 2 (still works as a manual backstop)
+- macOS only. Use when something has corrupted the FAT32 partition or
+  when running the script on a non-macOS host.
+- `diskutil partitionDisk /dev/diskN MBR FAT32 AIOSBOOT 64M "Free Space" SYS 0`
+- `cp` boot files into `/Volumes/AIOSBOOT/`
+- `dd` ext2 image into the second partition
 
 ### UART Configuration
 - WITHOUT dtoverlay=disable-bt: GPIO 14/15 = mini UART (ALT5) -- CORRECT
