@@ -201,5 +201,12 @@ No dtoverlay=disable-bt (need mini UART on GPIO 14/15).
 ## Remaining Issues
 - GENET Ethernet disabled (MMIO mapping crash)
 - VideoCore display disabled (VKA allocator assertion)
-- SMP disabled (secondary core parking not implemented)
-- mksdcard.py FAT32 not readable by RPi firmware (use Method 2 overlay)
+- SMP disabled (secondary core parking not implemented; `KernelMaxNumNodes=1`)
+
+## Recent Fixes
+- v0.4.132: mksdcard.py FAT32 now uses macOS newfs_msdos (via hdiutil
+  vnode) + BPB hidden_sectors patch. Output is RPi-friendly; safe to
+  dd straight to an SD card.
+- v0.4.133: scripts/flash-rpi4.sh wraps mksdcard.py + dd with safety
+  checks (refuses /dev/disk0..2, requires `YES` confirmation, ejects
+  on completion).
