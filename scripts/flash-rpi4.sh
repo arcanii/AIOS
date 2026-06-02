@@ -1,17 +1,25 @@
 #!/usr/bin/env bash
-# flash-rpi4.sh -- v0.4.133 one-shot SD card flasher for AIOS / RPi4.
+# flash-rpi4.sh -- one-shot SD card flasher for AIOS / RPi4.
 #
-# Wraps scripts/mksdcard.py with a dd-to-disk step plus several safety
-# checks. Run from the repo root with the target device as the only
-# argument:
+# Wraps scripts/mksdcard.py with a dd-to-disk step plus safety checks and
+# a post-flash hash verification. Run from the repo root:
 #
 #   ./scripts/flash-rpi4.sh /dev/disk4
+#   ./scripts/flash-rpi4.sh --allow-internal /dev/disk6   # built-in reader
 #
 # Refuses:
 # * any device in /dev/disk0..2 (typical macOS system internal disks)
 # * any device that is not a whole disk (e.g. partition slices)
-# * a target whose diskutil info says "internal=yes"
 # * proceeding without the user typing literally "YES"
+#
+# Device Location: Internal is allowed only when the device looks like a
+# removable SD card (Protocol Secure Digital + Removable Media Removable
+# + not read-only) -- the Mac built-in SDXC reader reports Internal -- or
+# when --allow-internal is passed explicitly.
+#
+# After dd it remounts the card and compares the FAT kernel8.img hash to
+# the source image, failing loudly on mismatch (catches silent
+# non-flashes where the card keeps booting an old image).
 #
 # This script is macOS-only -- it depends on diskutil + the mksdcard.py
 # newfs_msdos/hdiutil path. On Linux you can call mksdcard.py and dd by
@@ -31,15 +39,33 @@ KERNEL="$ROOT_DIR/build-rpi4/images/aios_root-image-arm-bcm2711"
 EXT2="$ROOT_DIR/disk/disk_ext2.img"
 IMG="$ROOT_DIR/disk/sdcard-rpi4.img"
 
-if [ $# -ne 1 ]; then
-    echo "usage: $0 /dev/diskN"
+ALLOW_INTERNAL=0
+TARGET=""
+for arg in "$@"; do
+    case "$arg" in
+        --allow-internal) ALLOW_INTERNAL=1 ;;
+        -*)
+            echo "FAIL: unknown option: $arg"
+            exit 1
+            ;;
+        *)
+            if [ -n "$TARGET" ]; then
+                echo "FAIL: more than one target device given."
+                exit 1
+            fi
+            TARGET="$arg"
+            ;;
+    esac
+done
+
+if [ -z "$TARGET" ]; then
+    echo "usage: $0 [--allow-internal] /dev/diskN"
     echo
     echo "Find your SD card with: diskutil list"
-    echo "Look for an external 'physical' disk matching the SD's size."
+    echo "Look for an external physical disk matching the SD size, or the"
+    echo "built-in SD reader (diskutil info shows Protocol: Secure Digital)."
     exit 1
 fi
-
-TARGET="$1"
 
 # Reject anything that does not look like /dev/disk<N>.
 if [[ ! "$TARGET" =~ ^/dev/disk[0-9]+$ ]]; then
@@ -67,10 +93,28 @@ if [ -z "$INFO" ]; then
     exit 1
 fi
 
+# Built-in SD readers (Mac SDXC slot) report Device Location: Internal
+# even though the media is removable. Allow when the device is clearly a
+# removable SD card, or when --allow-internal was passed; otherwise
+# refuse (it could be a real internal disk).
 if echo "$INFO" | grep -qi "Device Location:[[:space:]]*Internal"; then
-    echo "FAIL: $TARGET reports Device Location: Internal. Refusing."
-    echo "      Use an external SD card reader."
-    exit 1
+    IS_SD=0
+    if echo "$INFO" | grep -qi "Protocol:[[:space:]]*Secure Digital" \
+       && echo "$INFO" | grep -qi "Removable Media:[[:space:]]*Removable" \
+       && echo "$INFO" | grep -qi "Media Read-Only:[[:space:]]*No"; then
+        IS_SD=1
+    fi
+    if [ "$IS_SD" -eq 1 ]; then
+        echo "WARN: $TARGET is Device Location: Internal but looks like a"
+        echo "      removable SD card (Secure Digital, Removable). Allowing."
+    elif [ "$ALLOW_INTERNAL" -eq 1 ]; then
+        echo "WARN: $TARGET is Device Location: Internal; allowed via --allow-internal."
+    else
+        echo "FAIL: $TARGET reports Device Location: Internal. Refusing."
+        echo "      If this is the Mac built-in SD reader, re-run with"
+        echo "      --allow-internal, or use an external SD card reader."
+        exit 1
+    fi
 fi
 
 SIZE=$(echo "$INFO" | awk -F: '/Disk Size/ {print $2; exit}' | xargs)
@@ -101,7 +145,7 @@ if [ "$EXT2" -ot "$KERNEL" ]; then
 fi
 
 # Generate the SD image.
-echo "[1/3] Building SD image at $IMG"
+echo "[1/4] Building SD image at $IMG"
 python3 "$SCRIPT_DIR/mksdcard.py" --output "$IMG" >/dev/null
 
 if [ ! -f "$IMG" ]; then
@@ -114,7 +158,7 @@ echo "      $IMG ($IMG_MB MB)"
 
 # Final confirmation.
 echo
-echo "[2/3] About to flash:"
+echo "[2/4] About to flash:"
 echo "      target:  $TARGET ($SIZE)"
 echo "      device:  $NAME"
 echo "      source:  $IMG ($IMG_MB MB)"
@@ -129,10 +173,51 @@ fi
 # Switch to the raw device (faster) and unmount before dd.
 RAW="${TARGET/disk/rdisk}"
 echo
-echo "[3/3] Flashing $TARGET"
+echo "[3/4] Flashing $TARGET"
 diskutil unmountDisk "$TARGET" >/dev/null
 sudo dd if="$IMG" of="$RAW" bs=1m
-diskutil eject "$TARGET"
+sync
+
+# Post-flash verification: the card FAT kernel8.img must match the source
+# image kernel8.img. Catches silent non-flashes (wrong device, a dd that
+# did nothing, a stale card still booting an old image).
+echo
+echo "[4/4] Verifying kernel8.img on card matches source"
+diskutil mountDisk "$TARGET" >/dev/null 2>&1 || true
+CARD_MNT=$(mount | grep -i "${TARGET}s1 " | awk '{print $3}' | head -1 || true)
+[ -z "$CARD_MNT" ] && CARD_MNT="/Volumes/AIOSBOOT"
+
+SRC_OUT=$(hdiutil attach -readonly -nobrowse "$IMG" 2>/dev/null || true)
+SRC_DEV=$(printf '%s\n' "$SRC_OUT" | awk 'NR==1{print $1}' || true)
+SRC_MNT=$(printf '%s\n' "$SRC_OUT" | grep -o '/Volumes/.*' | head -1 || true)
+
+CARD_H=""
+SRC_H=""
+if [ -f "$CARD_MNT/kernel8.img" ]; then
+    CARD_H=$(shasum -a 256 "$CARD_MNT/kernel8.img" | awk '{print $1}' || true)
+fi
+if [ -n "$SRC_MNT" ] && [ -f "$SRC_MNT/kernel8.img" ]; then
+    SRC_H=$(shasum -a 256 "$SRC_MNT/kernel8.img" | awk '{print $1}' || true)
+fi
+
+# Clean up mounts before reporting.
+[ -n "$SRC_DEV" ] && hdiutil detach "$SRC_DEV" >/dev/null 2>&1 || true
+diskutil eject "$TARGET" >/dev/null 2>&1 || true
+
+if [ -n "$CARD_H" ] && [ -n "$SRC_H" ]; then
+    if [ "$CARD_H" = "$SRC_H" ]; then
+        echo "      OK: kernel8.img matches ($CARD_H)"
+    else
+        echo "      MISMATCH -- do NOT boot this card:"
+        echo "        card:   $CARD_H"
+        echo "        source: $SRC_H"
+        exit 1
+    fi
+else
+    echo "      WARN: could not read kernel8.img to verify"
+    echo "            (card=$CARD_MNT src=$SRC_MNT). dd reported success;"
+    echo "            verification was inconclusive -- check by hand."
+fi
 
 echo
 echo "OK: flashed $IMG to $TARGET"
