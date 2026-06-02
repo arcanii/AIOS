@@ -28,6 +28,11 @@
 /* ---- Blocked reader table ---- */
 static pipe_read_blocked_t pipe_read_blocked[MAX_PIPE_READ_BLOCKED];
 static vka_object_t read_reply_objs[MAX_PIPE_READ_BLOCKED];
+/* v0.4.139: per-pipe flag set once a child has been exec'd onto the pipe.
+ * Gates the orphaned-pipe reclaim so an in-flight (just-created, not yet
+ * child-associated) pipe is never reclaimed. Separate array (not a pipe_t
+ * field) to avoid shifting the root-task BSS layout. */
+static unsigned char pipe_had_child[MAX_PIPES];
 
 /* ---- Exec-wait barrier for SMP fork serialization ---- */
 static struct {
@@ -155,6 +160,45 @@ static void pipe_maybe_free(int pi) {
         }
         p->active = 0;
     }
+}
+
+/* v0.4.139: reclaim orphaned (leaked) pipes when CREATE finds no free
+ * slot. A pipe leaks when a child fork-fault leaves its refs unbalanced
+ * so pipe_maybe_free never collects it; after MAX_PIPES leaks pipe()
+ * fails ("Pipe call failed"). Only reclaim a pipe that was associated
+ * with an exec'd child (pipe_had_child), has no active process
+ * referencing it, and has no blocked reader -- so a freshly created pipe
+ * still being set up is never touched. Returns the number freed. */
+static int reclaim_orphaned_pipes(void) {
+    int reclaimed = 0;
+    for (int pi = 0; pi < MAX_PIPES; pi++) {
+        if (!pipes[pi].active || !pipe_had_child[pi]) continue;
+        int referenced = 0;
+        for (int ci = 0; ci < MAX_ACTIVE_PROCS; ci++) {
+            if (active_procs[ci].active &&
+                (active_procs[ci].stdout_pipe_id == pi ||
+                 active_procs[ci].stdin_pipe_id == pi)) {
+                referenced = 1;
+                break;
+            }
+        }
+        if (referenced) continue;
+        int blocked = 0;
+        for (int bi = 0; bi < MAX_PIPE_READ_BLOCKED; bi++) {
+            if (pipe_read_blocked[bi].active &&
+                pipe_read_blocked[bi].pipe_id == pi) {
+                blocked = 1;
+                break;
+            }
+        }
+        if (blocked) continue;
+        /* Orphaned: children exec'd and reaped, nobody references it. */
+        pipes[pi].read_refs = 0;
+        pipes[pi].write_refs = 0;
+        pipe_maybe_free(pi);
+        if (!pipes[pi].active) reclaimed++;
+    }
+    return reclaimed;
 }
 
 /* Handle child fault arriving on pipe_ep */
@@ -335,11 +379,22 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 if (!pipes[i].active) { pi = i; break; }
             }
             if (pi < 0) {
+                /* v0.4.139: slots exhausted -- reclaim leaked pipes (a
+                 * child fork-fault can leave stuck refs that
+                 * pipe_maybe_free never collects) and retry once. */
+                if (reclaim_orphaned_pipes() > 0) {
+                    for (int i = 0; i < MAX_PIPES; i++) {
+                        if (!pipes[i].active) { pi = i; break; }
+                    }
+                }
+            }
+            if (pi < 0) {
                 seL4_SetMR(0, (seL4_Word)-1);
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                 break;
             }
             pipes[pi].active = 1;
+            pipe_had_child[pi] = 0;  /* v0.4.139: not yet child-associated */
             pipes[pi].head = 0;
             pipes[pi].count = 0;
             pipes[pi].read_closed = 0;
@@ -984,11 +1039,15 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             /* v0.4.84: increment pipe refs so child exit does not
              * close the pipe while parent still uses it */
             if (exec_stdout_pipe >= 0 && exec_stdout_pipe < MAX_PIPES
-                && pipes[exec_stdout_pipe].active)
+                && pipes[exec_stdout_pipe].active) {
                 pipes[exec_stdout_pipe].write_refs++;
+                pipe_had_child[exec_stdout_pipe] = 1;  /* v0.4.139 */
+            }
             if (exec_stdin_pipe >= 0 && exec_stdin_pipe < MAX_PIPES
-                && pipes[exec_stdin_pipe].active)
+                && pipes[exec_stdin_pipe].active) {
                 pipes[exec_stdin_pipe].read_refs++;
+                pipe_had_child[exec_stdin_pipe] = 1;  /* v0.4.139 */
+            }
             ap->exit_status = 0;
             ap->sig_pending = 0;  /* v0.4.87: clear stale signals from previous slot occupant */
             ap->exit_cb_ran = 0;
