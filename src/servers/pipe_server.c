@@ -142,12 +142,14 @@ static void pipe_maybe_free(int pi) {
             seL4_CNode_Revoke(xp.root, xp.capPtr, xp.capDepth);
             vspace_unmap_pages(&vspace, p->xfer_buf, 1, seL4_PageBits, NULL);
             vka_free_object(&vka, &p->xfer_frame);
+            vka_audit_frame_release(1);  /* v0.4.138: keep live count accurate */
             p->xfer_buf = NULL;
             p->xfer_valid = 0;
         }
         if (p->shm_valid) {
             vspace_unmap_pages(&vspace, p->shm_buf, 1, seL4_PageBits, NULL);
             vka_free_object(&vka, &p->shm_frame);
+            vka_audit_frame_release(1);  /* v0.4.138: keep live count accurate */
             p->shm_buf = p->buf;
             p->shm_valid = 0;
         }
