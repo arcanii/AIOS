@@ -43,6 +43,15 @@ static struct {
 static vka_object_t exec_wait_reply_obj;
 static int exec_done[MAX_ACTIVE_PROCS];
 
+/* v0.4.140 bug-1 fix: per-proc BSS reservation stored BY VALUE here. The
+ * old code set bss_reservation to the malloc-d sel4utils_res_t pointer that
+ * vspace_reserve_range_at returns; libsel4utils later frees and recycles
+ * that struct, so the stored pointer dangled and described an unrelated
+ * range (bounds=0 BSS-fault). A stable per-proc struct filled via
+ * sel4utils_reserve_range_at_no_alloc has malloced=0, so libsel4utils never
+ * frees it and the pointer cannot dangle. Shared with exec_server.c. */
+sel4utils_res_t aios_bss_res[MAX_ACTIVE_PROCS];
+
 /* v0.4.87: Wake a blocked reader whose PID matches, return EINTR (-4).
  * Called from PIPE_SIGNAL when a signal is delivered to a blocked process. */
 static void wake_blocked_reader_signal(int target_pid) {
@@ -909,13 +918,15 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                     size_t pages = (be - bs) / 4096;
                     vspace_unmap_pages(&proc->vspace, (void *)bs,
                                        pages, seL4_PageBits, &vka);
-                    reservation_t r = vspace_reserve_range_at(
-                        &proc->vspace, (void *)bs, pages * 4096,
+                    int bidx = (int)(ap - active_procs);
+                    sel4utils_res_t *bres = &aios_bss_res[bidx];
+                    int rerr = sel4utils_reserve_range_at_no_alloc(
+                        &proc->vspace, bres, (void *)bs, pages * 4096,
                         seL4_AllRights, 1);
-                    if (r.res) {
+                    if (!rerr) {
                         ap->bss_lazy_start = bs;
                         ap->bss_lazy_end   = be;
-                        ap->bss_reservation = r.res;
+                        ap->bss_reservation = bres;
                         AIOS_LOG_INFO_V("BSS lazy pages=", (unsigned long)pages);
                     }
                 }

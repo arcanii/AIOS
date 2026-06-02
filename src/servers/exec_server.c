@@ -16,6 +16,10 @@
 #include "aios/root_shared.h"
 #include "aios/vka_audit.h"
 #include "aios/vfs.h"
+
+/* v0.4.140 bug-1 fix: BSS reservation storage shared with pipe_server.c.
+ * See the aios_bss_res definition there for the rationale. */
+extern sel4utils_res_t aios_bss_res[];
 #include "aios/procfs.h"
 #include "aios/cow.h"
 
@@ -262,13 +266,15 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
                 vspace_unmap_pages(&proc->vspace, (void *)bs,
                                    pages, seL4_PageBits, &vka);
                 /* Establish our own reservation for fault-time mapping */
-                reservation_t bss_res = vspace_reserve_range_at(
-                    &proc->vspace, (void *)bs, pages * 4096,
+                int bidx = (int)(ap - active_procs);
+                sel4utils_res_t *bres = &aios_bss_res[bidx];
+                int rerr = sel4utils_reserve_range_at_no_alloc(
+                    &proc->vspace, bres, (void *)bs, pages * 4096,
                     seL4_AllRights, 1);
-                if (bss_res.res) {
+                if (!rerr) {
                     ap->bss_lazy_start = bs;
                     ap->bss_lazy_end   = be;
-                    ap->bss_reservation = bss_res.res;
+                    ap->bss_reservation = bres;
                     AIOS_LOG_INFO_V("BSS lazy pages=", (unsigned long)pages);
                 } else {
                     AIOS_LOG_WARN("BSS reservation failed, BSS will fault-fail");
