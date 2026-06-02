@@ -10,13 +10,70 @@ latest `docs/NEXT_*.md` for deeper background.
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4
 * **Repo**: `~/Desktop/github_repos/AIOS`
-* **Branch**: `main`, currently at **v0.4.125**
+* **Branch**: `main`, currently at **v0.4.134**
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4)
 * **Host**: macOS Apple Silicon, cross-compile to aarch64-linux-gnu
 * **Developer**: Bryan -- prefers Python patch scripts over sed/heredocs;
   no apostrophes in C comments (zsh copy-paste breaks)
 
 ---
+
+## Where we left off (v0.4.126 -> v0.4.134)
+
+Two arcs landed in this batch: POSIX VM/FS syscall fill-in (replacing
+silent stubs with real IPC) and RPi4 hardware-test prep (FAT32, flash
+script, SMP build enable, test plan). User has an RPi4 in hand; first
+hardware boot is the next milestone.
+
+* **v0.4.126**: real `mprotect` via new `PIPE_MPROTECT` (label 85).
+  Server walks caller's vspace, calls `seL4_ARM_Page_Map` per page with
+  new rights. Same kernel mechanism the v0.4.123 COW investigation
+  proved safe. `src/apps/test_mprotect.c` covers the round trip.
+* **v0.4.127**: mprotect extended -- `PROT_NONE` via per-page Unmap,
+  `PROT_EXEC` clears the XN bit. test_mprotect now exercises both.
+* **v0.4.128**: real `munmap` via `PIPE_MUNMAP_ANON`. Previously a
+  no-op; now actually frees frames. Verified by re-mmap after munmap.
+* **v0.4.129**: `/proc/cmdline` summarises the boot environment.
+* **v0.4.130**: real `ftruncate` via new `FS_TRUNCATE` IPC.
+* **v0.4.131**: `/proc/cmdline` platform-aware (rpi4 vs qemu-virt) +
+  `BACKLOG.md` for deferred items so HANDOVER's pending table stays
+  tight.
+* **v0.4.132**: `scripts/mksdcard.py` swapped mtools `mformat` for
+  macOS `newfs_msdos` (run against the image as a hdiutil `-nomount`
+  vnode), then patches BPB `hidden_sectors=2048` by hand. RPi4 firmware
+  now reads our FAT32 partition cleanly -- the documented Method 2
+  manual workaround is no longer the only path. Linux dev hosts fall
+  back to mformat.
+* **v0.4.133**: `scripts/flash-rpi4.sh` -- one-shot SD card flasher.
+  Wraps `mksdcard.py` + `dd` with safety checks (refuses
+  /dev/disk0..2, refuses Device Location: Internal, refuses partition
+  slices, requires literal `YES`). Tested all five refusal paths;
+  hardware happy path waits on a real card.
+* **v0.4.134**: `KernelMaxNumNodes` 1 -> 4 in `settings-rpi4.cmake`.
+  Build clean, image grew ~50 KiB. Elfloader spin-table driver was
+  already wired upstream. qemu raspi4b is silent for our SD image
+  (firmware/UART quirks unrelated to SMP); validation happens on real
+  hardware.
+
+Also landed two docs (no version bump):
+* **`hw/rpi4/HARDWARE_TEST.md`**: phase-by-phase first-boot checklist.
+  Physical setup, expected serial output at each stage, functional
+  checklist, diagnosis playbook, version fallback ladder.
+* **`docs/SEL4_DEVInvestigation.md`**: seed for a session that wants
+  to look at the seL4 side -- current snapshot, the `seL4_Debug*`
+  ABI we underuse, five concrete diagnostic gaps from this session's
+  work, ground rules for kernel patches behind a single
+  `CONFIG_AIOS_KDEBUG` gate, ordered investigation list (A-E).
+
+### State of the RPi4 hardware test (waiting on first boot)
+
+* `disk/sdcard-rpi4.img` (193 MB) is current at v0.4.134. dash + zsh
+  were rebuilt against fresh `libaios_posix.a` so the on-disk
+  programs include the v0.4.121-134 syscall surface.
+* `scripts/flash-rpi4.sh /dev/diskN` is the one-line flash.
+* `hw/rpi4/HARDWARE_TEST.md` is the checklist. Open question on
+  first boot is whether all four cores come up (v0.4.134 is the
+  first RPi4 build with SMP enabled).
 
 ## Where we left off (v0.4.121 -> v0.4.125)
 
@@ -428,6 +485,7 @@ cat /proc/cachestats            # block-cache hit rate / size
 cat /proc/filehits              # top accessed files (profiler)
 cat /proc/serverstats           # ping-based server health (v0.4.121)
 cat /proc/cow                   # COW per-frame refcount (v0.4.122)
+cat /proc/cmdline               # platform-aware boot env summary (v0.4.131)
 
 zsh                             # interactive, ZLE working
                                 # (compctl warning is cosmetic)
@@ -436,6 +494,10 @@ zsh                             # interactive, ZLE working
 ls /bin > /tmp/o; wc -c /tmp/o  # file redirect across exec works
 echo abc | wc -c                # pipe across fork+exec works
 cat /etc/passwd | head -1       # head limit works correctly
+
+test_mprotect                   # mprotect R/O, PROT_NONE, PROT_EXEC,
+                                # munmap, re-mmap round trip (v0.4.126-128)
+ftruncate $file $size           # real fs-side truncate (v0.4.130)
 
 /tmp/tcc2 -o /tmp/t /tmp/t.c    # native tcc (libc-free programs)
 tcc /usr/include/hello.c -o /tmp/h  # native tcc with libc (v0.4.117)
@@ -449,18 +511,36 @@ tcc /usr/include/hello.c -o /tmp/h  # native tcc with libc (v0.4.117)
 
 ## Suggested next sessions
 
-See the sized table in "What is pending" above. The most natural
-next step is **COW Step 3 wc/shutdown fix** -- the mechanism is
-proven (parent_promotions count up, no kernel errors with the
-gate on), only thing blocking ship is finding which `do_fork`
-failure path fires post-promotion. Repro is one-line (flip
-COW_STRIP_PARENT in cow.c). Detailed plan in
-`docs/NEXT_20260503a.md`.
+**Top pick: RPi4 first hardware boot** (waiting on the user).
+Artefacts are ready -- `disk/sdcard-rpi4.img` is current at v0.4.134
+with dash/zsh rebuilt against fresh libaios_posix.a, the
+`scripts/flash-rpi4.sh` one-liner handles the flash with safety
+checks, and `hw/rpi4/HARDWARE_TEST.md` is the phase-by-phase
+checklist. The interesting signal on first boot is whether
+all four cores come up (v0.4.134 is the first RPi4 build with
+SMP enabled). If only the boot CPU appears, fall back is one line
+in `settings-rpi4.cmake`. Either outcome unblocks the next batch.
 
-If you want a clean win unrelated to COW: **mprotect real impl**.
-The v0.4.123 kernel investigation already proved Page_Map
-remap-in-place is safe; mprotect is essentially the same
-mechanism applied to user-requested ranges.
+**If hardware testing is blocked, three good paths:**
+
+1. **seL4 dev investigation (item A)** -- name all long-lived
+   threads via `seL4_DebugNameThread`. Pure win, no kernel patch,
+   ~1 hour. Every fault print becomes legible
+   (`"child of: 'dash@pid7'"` instead of
+   `"child of: 'rootserver'"`). See `docs/SEL4_DEVInvestigation.md`.
+
+2. **COW Step 3 wc/shutdown fix** -- mechanism is proven
+   (parent_promotions count, no kernel errors with the gate on),
+   blocker is finding which `do_fork` failure path fires
+   post-promotion. Repro is one-line (flip `COW_STRIP_PARENT` in
+   `src/process/cow.c`). Detailed plan in
+   `docs/NEXT_20260503a.md`. Item B of SEL4_DEVInvestigation
+   (verbose cap-fault dump) would directly help.
+
+3. **file-backed mmap** -- the next POSIX VM piece. Extends
+   `PIPE_MMAP_ANON` with file path + offset; fs_server reads the
+   page; caller maps. `msync` write-back is the hard bit. See
+   `BACKLOG.md`.
 
 ---
 
