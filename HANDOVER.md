@@ -10,7 +10,7 @@ latest `docs/NEXT_*.md` for deeper background.
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4
 * **Repo**: `~/Desktop/github_repos/AIOS`
-* **Branch**: `main`, currently at **v0.4.135**
+* **Branch**: `main`, currently at **v0.4.139**
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4)
 * **Host**: macOS Apple Silicon, cross-compile to aarch64-linux-gnu
 * **Developer**: Bryan -- prefers Python patch scripts over sed/heredocs;
@@ -18,7 +18,7 @@ latest `docs/NEXT_*.md` for deeper background.
 
 ---
 
-## Where we left off (v0.4.126 -> v0.4.135)
+## Where we left off (v0.4.126 -> v0.4.139)
 
 Two arcs landed in this batch: POSIX VM/FS syscall fill-in (replacing
 silent stubs with real IPC) and RPi4 hardware-test prep (FAT32, flash
@@ -60,6 +60,20 @@ hardware boot is the next milestone.
   `KernelMaxNumNodes` 4 -> 1 in `settings-rpi4.cmake`; single-core boots
   cleanly to login on hardware. Full record: `docs/NEXT_20260602a.md`.
 
+* **v0.4.136**: `flash-rpi4.sh` accepts the macOS built-in SDXC reader
+  (auto-allows removable Secure Digital, or `--allow-internal`) and
+  hash-gates the flash to catch silent non-flashes.
+* **v0.4.137**: `scripts/aios_console.py` -- stdlib (no-pty) driver to
+  drive AIOS over a qemu unix socket or the RPi4 serial. Logs in, runs
+  commands, captures output. The session's diagnostic workhorse.
+* **v0.4.138**: `pipe_maybe_free` releases the VKA audit count on pipe
+  free -- `/proc/vka` `live` is now accurate. This was the real cure for
+  the RPi4 pipe wedge (removed a false-memory-pressure spiral).
+* **v0.4.139**: pipe_server reclaims orphaned pipes at slot exhaustion
+  (a `had_child`-guarded safety net). Wedge fix VERIFIED on hardware:
+  580 pipes / 3 boots / 0 wedge / `live` flat. See
+  `docs/NEXT_20260602a.md` sections 3.1-3.2.
+
 Also landed two docs (no version bump):
 * **`hw/rpi4/HARDWARE_TEST.md`**: phase-by-phase first-boot checklist.
   Physical setup, expected serial output at each stage, functional
@@ -70,27 +84,27 @@ Also landed two docs (no version bump):
   work, ground rules for kernel patches behind a single
   `CONFIG_AIOS_KDEBUG` gate, ordered investigation list (A-E).
 
-### State of the RPi4 hardware test (FIRST BOOT DONE, 2026-06-02)
+### State of the RPi4 hardware test (BOOT + PIPE FIX DONE, 2026-06-02)
 
-First real-hardware boot is done. Full record in
-`docs/NEXT_20260602a.md`. Headlines:
+First real-hardware boot done AND the pipe bug fixed this session. Full
+record: `docs/NEXT_20260602a.md`. Headlines:
 
-* **SMP does not come up.** v0.4.134 (SMP=4) hangs at the
-  firmware-to-kernel handoff (elfloader spin-table bring-up). v0.4.135
-  falls back to single-core (`KernelMaxNumNodes=1`) and boots.
-* **Works on HW** (v0.4.135): boot, login, eMMC/ext2, all servers,
-  `/proc/hw`, `/proc/cmdline` (platform-aware), file redirect,
-  `test_mprotect` full round-trip.
-* **Broken on HW**: shell pipes (`echo abc | wc -c` -> `abc` + `0`).
-  Isolated to the RPi4 platform -- NOT the single-core fallback and NOT
-  the userspace binaries (QEMU single-core with the same disk image
-  pipes fine). Prime untested lead: RPi4 root-task morecore (8MB)
-  shifting the BSS layout. Next steps in `docs/NEXT_20260602a.md`.
-* **Flashing**: the macOS built-in SDXC reader is `Device Location:
-  Internal`, which `flash-rpi4.sh` refuses (false positive); CLI `dd`
-  is blocked by pty + TCC walls. Use **balenaEtcher**, and **hash-gate**
-  the card (`shasum kernel8.img`) before booting -- it caught two
-  silent non-flashes this session.
+* **Boots + works on HW** (v0.4.139, single-core): login, eMMC/ext2, all
+  servers, `/proc/hw`, `/proc/cmdline`, file redirect, `test_mprotect`,
+  and now **shell pipes** (580 pipes / 3 boots / 0 wedge, `live` flat).
+* **Pipe wedge FIXED** (v0.4.138/139). The cure was v0.4.138's accurate
+  `/proc/vka` `live` count (it removed a false-memory-pressure spiral:
+  refused BSS maps -> failed forks -> leaked pipes -> wedge). v0.4.139
+  adds a slot-reclaim safety net (dormant -- nothing leaked in 580).
+* **SMP still off.** v0.4.134 (SMP=4) hangs at the firmware-to-kernel
+  handoff (elfloader spin-table). v0.4.135 fell back to single-core.
+  Re-enabling SMP is the main open RPi4 item.
+* **Benign leftover**: the demand-BSS reservation race (`Range ... not
+  reserved`) still fires (~4/pipe) but is now harmless log noise.
+* **Tooling**: drive AIOS over serial/qemu with `scripts/aios_console.py`
+  (no pty). Flash with **balenaEtcher** + hash-gate `kernel8.img` (the
+  built-in SDXC reader trips `flash-rpi4.sh`'s internal guard; v0.4.136
+  relaxed it).
 
 ## Where we left off (v0.4.121 -> v0.4.125)
 
@@ -244,7 +258,7 @@ Design docs:
 
 | Item | LOC | Risk | What ships |
 |---|---|---|---|
-| **RPi4 pipe bug** | ? | med | First HW boot done (v0.4.135, single-core). Shell pipes broken on RPi4 only (`echo abc \| wc -c` -> `abc`+`0`); isolated to the platform, not the SMP fallback. Repro + ruled-out table + plan in `docs/NEXT_20260602a.md`. Cheapest first test: RPi4 at 6MB morecore. |
+| **RPi4 pipe bug** | done | n/a | FIXED v0.4.138/139, verified on HW (580 pipes / 3 boots / 0 wedge). Cure was v0.4.138 accurate `live`; v0.4.139 reclaim is a dormant safety net. Underlying demand-BSS reservation race (bug 1) still fires but is now benign log noise -- see `docs/NEXT_20260602a.md` for a future cleanup. |
 | **RPi4 SMP bring-up** | ? | high | v0.4.135 fell back to single-core because the elfloader spin-table secondary-core bring-up hangs on real HW. To re-enable: make the elfloader print on the RPi4 UART, then per-core boot trace (item E, `docs/SEL4_DEVInvestigation.md`). |
 
 Everything else (COW Step 3 fix, block cache write-back, file-backed
@@ -529,14 +543,25 @@ tcc /usr/include/hello.c -o /tmp/h  # native tcc with libc (v0.4.117)
 
 ## Suggested next sessions
 
-**Top pick: RPi4 pipe bug** (`docs/NEXT_20260602a.md`). First hardware
-boot is done (v0.4.135, single-core). Shell pipes are broken on RPi4
-only -- isolated to the platform (QEMU single-core with the same disk
-image pipes fine), so it is not the SMP fallback. Cheapest first test is
-RPi4 at 6MB morecore (the root task is 8MB on RPi4 vs 6MB on QEMU, and
-this codebase is fragile to root-task BSS shifts); then instrument the
-demand-BSS fault handler. Quick win if 6MB fixes it. Re-enabling SMP
-(the elfloader spin-table hang) is a separate, deeper thread.
+**RPi4 is now functional single-core (boots + pipes work). Top picks --
+pick one:**
+
+1. **Re-enable RPi4 SMP** -- the main open RPi4 item. v0.4.134's SMP=4
+   hangs in the elfloader spin-table bring-up. First make the elfloader
+   print on the RPi4 UART, then per-core boot trace (item E,
+   `docs/SEL4_DEVInvestigation.md`).
+2. **Silence bug 1** -- the demand-BSS reservation race
+   (`sel4utils overlap reservations`) is now benign but spams the log
+   (~4 lines/pipe). Fixing the reservation tracking removes the noise
+   AND the underlying fragility v0.4.138 papered over. Well characterized
+   with a hardware repro via `aios_console.py`; see
+   `docs/NEXT_20260602a.md` section 3.2.
+3. **Rebuild the disk** -- getty/dash on the SD are still v0.4.134-built
+   (the boot banner shows it); rebuild sbase+dash+zsh + regenerate
+   `disk_ext2.img` for a clean v0.4.139 userspace.
+
+(Or return to the deferred backlog: COW Step 3, file-backed mmap -- see
+BACKLOG.md.)
 
 **If hardware testing is blocked, three good paths:**
 
