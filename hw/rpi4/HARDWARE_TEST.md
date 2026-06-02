@@ -8,6 +8,14 @@ something doesn't match.
 The artefact under test is `disk/sdcard-rpi4.img` (193 MB at v0.4.134).
 Flashing produced it via `scripts/flash-rpi4.sh /dev/diskN`.
 
+> **UPDATE 2026-06-02 -- first boot done (v0.4.135).** SMP did NOT come
+> up: v0.4.134 (SMP=4) hangs at the firmware-to-kernel handoff, so we
+> fell back to single-core (`KernelMaxNumNodes=1` = v0.4.135), which
+> boots to login. Pipes are broken on RPi4 (platform-specific, not the
+> fallback). Flashing gotcha: the macOS built-in SDXC reader trips the
+> `flash-rpi4.sh` internal-disk guard -- use balenaEtcher and hash-gate
+> the card before booting. Full record: `docs/NEXT_20260602a.md`.
+
 ---
 
 ## Physical setup

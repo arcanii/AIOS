@@ -10,7 +10,7 @@ latest `docs/NEXT_*.md` for deeper background.
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4
 * **Repo**: `~/Desktop/github_repos/AIOS`
-* **Branch**: `main`, currently at **v0.4.134**
+* **Branch**: `main`, currently at **v0.4.135**
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4)
 * **Host**: macOS Apple Silicon, cross-compile to aarch64-linux-gnu
 * **Developer**: Bryan -- prefers Python patch scripts over sed/heredocs;
@@ -18,7 +18,7 @@ latest `docs/NEXT_*.md` for deeper background.
 
 ---
 
-## Where we left off (v0.4.126 -> v0.4.134)
+## Where we left off (v0.4.126 -> v0.4.135)
 
 Two arcs landed in this batch: POSIX VM/FS syscall fill-in (replacing
 silent stubs with real IPC) and RPi4 hardware-test prep (FAT32, flash
@@ -54,6 +54,11 @@ hardware boot is the next milestone.
   already wired upstream. qemu raspi4b is silent for our SD image
   (firmware/UART quirks unrelated to SMP); validation happens on real
   hardware.
+* **v0.4.135**: RPi4 SMP fallback. The first real-hardware boot found
+  that v0.4.134 (SMP=4) HANGS at the firmware-to-kernel handoff -- the
+  elfloader spin-table secondary-core bring-up never returns. Reverted
+  `KernelMaxNumNodes` 4 -> 1 in `settings-rpi4.cmake`; single-core boots
+  cleanly to login on hardware. Full record: `docs/NEXT_20260602a.md`.
 
 Also landed two docs (no version bump):
 * **`hw/rpi4/HARDWARE_TEST.md`**: phase-by-phase first-boot checklist.
@@ -65,15 +70,27 @@ Also landed two docs (no version bump):
   work, ground rules for kernel patches behind a single
   `CONFIG_AIOS_KDEBUG` gate, ordered investigation list (A-E).
 
-### State of the RPi4 hardware test (waiting on first boot)
+### State of the RPi4 hardware test (FIRST BOOT DONE, 2026-06-02)
 
-* `disk/sdcard-rpi4.img` (193 MB) is current at v0.4.134. dash + zsh
-  were rebuilt against fresh `libaios_posix.a` so the on-disk
-  programs include the v0.4.121-134 syscall surface.
-* `scripts/flash-rpi4.sh /dev/diskN` is the one-line flash.
-* `hw/rpi4/HARDWARE_TEST.md` is the checklist. Open question on
-  first boot is whether all four cores come up (v0.4.134 is the
-  first RPi4 build with SMP enabled).
+First real-hardware boot is done. Full record in
+`docs/NEXT_20260602a.md`. Headlines:
+
+* **SMP does not come up.** v0.4.134 (SMP=4) hangs at the
+  firmware-to-kernel handoff (elfloader spin-table bring-up). v0.4.135
+  falls back to single-core (`KernelMaxNumNodes=1`) and boots.
+* **Works on HW** (v0.4.135): boot, login, eMMC/ext2, all servers,
+  `/proc/hw`, `/proc/cmdline` (platform-aware), file redirect,
+  `test_mprotect` full round-trip.
+* **Broken on HW**: shell pipes (`echo abc | wc -c` -> `abc` + `0`).
+  Isolated to the RPi4 platform -- NOT the single-core fallback and NOT
+  the userspace binaries (QEMU single-core with the same disk image
+  pipes fine). Prime untested lead: RPi4 root-task morecore (8MB)
+  shifting the BSS layout. Next steps in `docs/NEXT_20260602a.md`.
+* **Flashing**: the macOS built-in SDXC reader is `Device Location:
+  Internal`, which `flash-rpi4.sh` refuses (false positive); CLI `dd`
+  is blocked by pty + TCC walls. Use **balenaEtcher**, and **hash-gate**
+  the card (`shasum kernel8.img`) before booting -- it caught two
+  silent non-flashes this session.
 
 ## Where we left off (v0.4.121 -> v0.4.125)
 
@@ -227,7 +244,8 @@ Design docs:
 
 | Item | LOC | Risk | What ships |
 |---|---|---|---|
-| **RPi4 hardware re-test** | n/a | n/a | Needs physical hardware. v0.4.98 was the last verified RPi4 boot (build 1541). Codebase has churned heavily since (v0.4.99-130). First step is rebuilding the RPi4 target against current main and addressing any new breakage before flashing. See `hw/rpi4/BOOT_NOTES.md`. |
+| **RPi4 pipe bug** | ? | med | First HW boot done (v0.4.135, single-core). Shell pipes broken on RPi4 only (`echo abc \| wc -c` -> `abc`+`0`); isolated to the platform, not the SMP fallback. Repro + ruled-out table + plan in `docs/NEXT_20260602a.md`. Cheapest first test: RPi4 at 6MB morecore. |
+| **RPi4 SMP bring-up** | ? | high | v0.4.135 fell back to single-core because the elfloader spin-table secondary-core bring-up hangs on real HW. To re-enable: make the elfloader print on the RPi4 UART, then per-core boot trace (item E, `docs/SEL4_DEVInvestigation.md`). |
 
 Everything else (COW Step 3 fix, block cache write-back, file-backed
 mmap, COW Steps 4+5, server-probe auto-restart, swap, smoke-driver
@@ -511,15 +529,14 @@ tcc /usr/include/hello.c -o /tmp/h  # native tcc with libc (v0.4.117)
 
 ## Suggested next sessions
 
-**Top pick: RPi4 first hardware boot** (waiting on the user).
-Artefacts are ready -- `disk/sdcard-rpi4.img` is current at v0.4.134
-with dash/zsh rebuilt against fresh libaios_posix.a, the
-`scripts/flash-rpi4.sh` one-liner handles the flash with safety
-checks, and `hw/rpi4/HARDWARE_TEST.md` is the phase-by-phase
-checklist. The interesting signal on first boot is whether
-all four cores come up (v0.4.134 is the first RPi4 build with
-SMP enabled). If only the boot CPU appears, fall back is one line
-in `settings-rpi4.cmake`. Either outcome unblocks the next batch.
+**Top pick: RPi4 pipe bug** (`docs/NEXT_20260602a.md`). First hardware
+boot is done (v0.4.135, single-core). Shell pipes are broken on RPi4
+only -- isolated to the platform (QEMU single-core with the same disk
+image pipes fine), so it is not the SMP fallback. Cheapest first test is
+RPi4 at 6MB morecore (the root task is 8MB on RPi4 vs 6MB on QEMU, and
+this codebase is fragile to root-task BSS shifts); then instrument the
+demand-BSS fault handler. Quick win if 6MB fixes it. Re-enabling SMP
+(the elfloader spin-table hang) is a separate, deeper thread.
 
 **If hardware testing is blocked, three good paths:**
 

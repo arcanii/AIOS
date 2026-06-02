@@ -41,6 +41,9 @@ code*.bin
 .vscode/
 .idea/
 
+# Serial console captures (hw/rpi4 sessions)
+screenlog.*
+
 # Disk images (built, not tracked)
 disk/*.img
 disk/rpi4-firmware/
