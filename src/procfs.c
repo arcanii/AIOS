@@ -436,6 +436,9 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
             s.hits, s.misses, hit_pct,
             s.pages, s.pages_max,
             s.evicted, s.writes);
+        extern volatile uint32_t blk_poll_renotifies;
+        w += snprintf(buf + w, bufsize - w,
+            "blk_read_renotifies: %u\n", (unsigned)blk_poll_renotifies);
     } else {
         return -1;
     }

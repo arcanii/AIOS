@@ -254,6 +254,40 @@ int plat_blk_init_log(void) {
 /* ============================================================
  * Sector I/O -- primary device
  * ============================================================ */
+
+/* v0.4.147: hardened virtio-blk completion wait. The original single
+ * 10M-iteration poll could expire before QEMUs virtio I/O thread ran under
+ * heavy host contention, returning -1 and making an UNCACHED disk read fail
+ * (exec ELF reads -> spurious EPERM, the COW Step 3 red herring). We now poll
+ * in batches and RE-NOTIFY the device between batches. The request stays in the
+ * avail ring -- we never re-issue it -- so there is no double-completion risk;
+ * re-notify is idempotent (it just asks the device to re-check the ring,
+ * covering a missed kick or a starved I/O thread). last is captured BEFORE the
+ * notify (the original captured it after, a latent race if the device was
+ * unusually fast). Returns 1 if the used ring advanced, 0 if it never did. */
+#define BLK_POLL_ITERS   4000000
+#define BLK_POLL_RETRIES 32
+volatile uint32_t blk_poll_renotifies;   /* diag: total re-notify batches used */
+static int blk_complete(volatile uint32_t *vio, volatile struct virtq_used *used) {
+    uint16_t last = used->idx;
+    arch_dmb();
+    vio[VIRTIO_MMIO_QUEUE_NOTIFY / 4] = 0;
+    int done = 0;
+    for (int r = 0; r < BLK_POLL_RETRIES; r++) {
+        for (int t = 0; t < BLK_POLL_ITERS; t++) {
+            arch_dmb();
+            if (used->idx != last) { done = 1; break; }
+        }
+        if (done) break;
+        blk_poll_renotifies++;
+        arch_dmb();
+        vio[VIRTIO_MMIO_QUEUE_NOTIFY / 4] = 0;   /* re-nudge; idempotent */
+    }
+    arch_dmb();
+    vio[VIRTIO_MMIO_INTERRUPT_ACK / 4] = vio[VIRTIO_MMIO_INTERRUPT_STATUS / 4];
+    return done;
+}
+
 int plat_blk_read(uint64_t sector, void *buf) {
     struct virtq_desc  *desc  = (struct virtq_desc *)(blk_dma);
     struct virtq_avail *avail = (struct virtq_avail *)(blk_dma + 0x100);
@@ -278,17 +312,7 @@ int plat_blk_read(uint64_t sector, void *buf) {
     arch_dmb();
     avail->idx += 1;
     arch_dmb();
-    blk_vio[VIRTIO_MMIO_QUEUE_NOTIFY / 4] = 0;
-
-    uint16_t last = used->idx;
-    for (int t = 0; t < 10000000; t++) {
-        arch_dmb();
-        if (used->idx != last) break;
-    }
-    arch_dmb();
-    blk_vio[VIRTIO_MMIO_INTERRUPT_ACK / 4] = blk_vio[VIRTIO_MMIO_INTERRUPT_STATUS / 4];
-
-    if (used->idx == last || req->status != 0) return -1;
+    if (!blk_complete(blk_vio, used) || req->status != 0) return -1;
     uint8_t *src = req->data;
     uint8_t *dst = (uint8_t *)buf;
     for (int i = 0; i < 512; i++) dst[i] = src[i];
@@ -322,17 +346,7 @@ int plat_blk_write(uint64_t sector, const void *buf) {
     arch_dmb();
     avail->idx += 1;
     arch_dmb();
-    blk_vio[VIRTIO_MMIO_QUEUE_NOTIFY / 4] = 0;
-
-    uint16_t last = used->idx;
-    for (int t = 0; t < 10000000; t++) {
-        arch_dmb();
-        if (used->idx != last) break;
-    }
-    arch_dmb();
-    blk_vio[VIRTIO_MMIO_INTERRUPT_ACK / 4] = blk_vio[VIRTIO_MMIO_INTERRUPT_STATUS / 4];
-
-    if (used->idx == last || req->status != 0) return -1;
+    if (!blk_complete(blk_vio, used) || req->status != 0) return -1;
     return 0;
 }
 
@@ -363,18 +377,7 @@ int plat_blk_read_log(uint64_t sector, void *buf) {
     arch_dmb();
     avail->idx += 1;
     arch_dmb();
-    blk_vio_log[VIRTIO_MMIO_QUEUE_NOTIFY / 4] = 0;
-
-    uint16_t last = used->idx;
-    for (int t = 0; t < 10000000; t++) {
-        arch_dmb();
-        if (used->idx != last) break;
-    }
-    arch_dmb();
-    blk_vio_log[VIRTIO_MMIO_INTERRUPT_ACK / 4] =
-        blk_vio_log[VIRTIO_MMIO_INTERRUPT_STATUS / 4];
-
-    if (used->idx == last || req->status != 0) return -1;
+    if (!blk_complete(blk_vio_log, used) || req->status != 0) return -1;
     uint8_t *src = req->data;
     uint8_t *dst = (uint8_t *)buf;
     for (int i = 0; i < 512; i++) dst[i] = src[i];
@@ -408,17 +411,6 @@ int plat_blk_write_log(uint64_t sector, const void *buf) {
     arch_dmb();
     avail->idx += 1;
     arch_dmb();
-    blk_vio_log[VIRTIO_MMIO_QUEUE_NOTIFY / 4] = 0;
-
-    uint16_t last = used->idx;
-    for (int t = 0; t < 10000000; t++) {
-        arch_dmb();
-        if (used->idx != last) break;
-    }
-    arch_dmb();
-    blk_vio_log[VIRTIO_MMIO_INTERRUPT_ACK / 4] =
-        blk_vio_log[VIRTIO_MMIO_INTERRUPT_STATUS / 4];
-
-    if (used->idx == last || req->status != 0) return -1;
+    if (!blk_complete(blk_vio_log, used) || req->status != 0) return -1;
     return 0;
 }
