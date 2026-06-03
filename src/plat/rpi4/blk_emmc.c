@@ -11,6 +11,7 @@
 #include "aios/root_shared.h"
 #include "aios/vka_audit.h"
 #include <sel4platsupport/device.h>
+#include "aios/device_map.h"
 #include <stdio.h>
 #include <string.h>
 #include "arch.h"
@@ -347,31 +348,13 @@ int plat_blk_init(void) {
            (unsigned long)arm_paddr,
            hw_info.emmc_irq);
 
-    /* Map SDHCI register page */
-    vka_object_t emmc_frame;
-    err = sel4platsupport_alloc_frame_at(&vka, arm_paddr,
-                                          seL4_PageBits, &emmc_frame);
-    if (err) {
-        /* Fallback: try raw VC address (in case seL4 translated it) */
-        printf("[blk] ARM addr alloc failed (%d), trying VC addr\n", err);
-        err = sel4platsupport_alloc_frame_at(&vka, hw_info.emmc_paddr,
-                                              seL4_PageBits, &emmc_frame);
-        if (err) {
-            printf("[blk] MMIO alloc failed: %d\n", err);
-            return -1;
-        }
-        printf("[blk] Using VC address for MMIO\n");
-    }
-
-    void *emmc_vaddr = vspace_map_pages(&vspace, &emmc_frame.cptr, NULL,
-        seL4_AllRights, 1, seL4_PageBits, 0);
-    if (!emmc_vaddr) {
-        printf("[blk] MMIO map failed\n");
+    /* v0.4.149: use the pre-mapped eMMC MMIO (ascending-order device map). */
+    (void)arm_paddr;
+    if (!dev_emmc_vaddr) {
+        printf("[blk] eMMC MMIO not pre-mapped\n");
         return -1;
     }
-
-    /* Register base (page-aligned, no offset needed for 0xFE340000) */
-    emmc_regs = (volatile uint32_t *)emmc_vaddr;
+    emmc_regs = dev_emmc_vaddr;
 
     /* Verify controller is alive by reading version register */
     arch_dmb();

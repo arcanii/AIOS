@@ -16,6 +16,7 @@
 #include "aios/gpu.h"
 #include "aios/vka_audit.h"
 #include <sel4platsupport/device.h>
+#include "aios/device_map.h"
 #include <stdio.h>
 #include <string.h>
 #include "arch.h"
@@ -140,8 +141,10 @@ static int mbox_call(uint64_t buf_pa, volatile uint32_t *buf) {
  * Phase B: Fallback to full VC mailbox protocol.
  * ============================================================ */
 int plat_display_init(uint32_t width, uint32_t height) {
-    /* Display disabled until serial boot is stable */
-    printf("[gpu] Display disabled (serial mode)\n");
+    /* v0.4.150 checkpoint: the VC mailbox MMIO now maps (prealloc_rpi4_devices,
+     * see [devmap]), but full display bring-up (Phase A/B + framebuffer map) is
+     * deferred to keep the Pi bootable. Re-enable when tackling the display. */
+    printf("[gpu] Display bring-up deferred (mailbox mapped)\n");
     return -1;
 
     /* === Phase A: Map diagnostic stub framebuffer === */
@@ -231,25 +234,13 @@ static int plat_display_init_mailbox(uint32_t width, uint32_t height) {
         return -1;
     }
 
-    /* Map mailbox MMIO page */
-    vka_object_t mbox_frame;
-    error = sel4platsupport_alloc_frame_at(&vka, hw_info.vc_mbox_paddr,
-                                            seL4_PageBits, &mbox_frame);
-    if (error) {
-        printf("[gpu] VC mbox alloc: %d\n", error);
+    /* v0.4.149: use the pre-mapped VC mailbox page (ascending-order device
+     * map); dev_vcmbox_off is the mailbox register offset within the page. */
+    if (!dev_vcmbox_vaddr) {
+        printf("[gpu] VC mbox not pre-mapped\n");
         return -1;
     }
-
-    void *mbox_vaddr = vspace_map_pages(&vspace, &mbox_frame.cptr, NULL,
-        seL4_AllRights, 1, seL4_PageBits, 0);
-    if (!mbox_vaddr) {
-        printf("[gpu] VC mbox map fail\n");
-        return -1;
-    }
-
-    uint32_t page_offset = (uint32_t)(hw_info.vc_mbox_paddr & 0xFFF);
-    mbox_regs = (volatile uint32_t *)((uintptr_t)mbox_vaddr +
-                                       0x880 - page_offset);
+    mbox_regs = (volatile uint32_t *)((uintptr_t)dev_vcmbox_vaddr + dev_vcmbox_off);
 
     printf("[gpu] VC mailbox mapped at %p (paddr 0x%lx)\n",
            (void *)mbox_regs, (unsigned long)hw_info.vc_mbox_paddr);

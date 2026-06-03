@@ -25,6 +25,7 @@
 #include <string.h>
 #include "arch.h"
 #include "aios/hw_info.h"
+#include "aios/device_map.h"
 #include "plat/net_hal.h"
 
 /* ----------------------------------------------------------------
@@ -450,9 +451,8 @@ static void ring_init(void) {
  * plat_net_init -- initialize BCM54213 GENET on RPi4
  * ================================================================ */
 int plat_net_init(void) {
-    /* GENET disabled until driver is stable on RPi4 */
-    printf("[net] GENET disabled (Phase 2 WIP)\n");
-    return -1;
+    /* v0.4.149: re-enabled -- the v0.4.98 disable was a misattributed
+     * device-MMIO watermark bug, now fixed by prealloc_rpi4_devices(). */
     int error;
 
     if (!hw_info.has_genet) {
@@ -463,27 +463,14 @@ int plat_net_init(void) {
     printf("[net] GENET at 0x%lx IRQ %u\n",
            (unsigned long)hw_info.genet_paddr, hw_info.genet_irq);
 
-    /* Map GENET register region (64KB = 16 pages) */
-    seL4_CPtr genet_caps[GENET_NUM_PAGES];
-    for (int p = 0; p < GENET_NUM_PAGES; p++) {
-        vka_object_t frame;
-        error = sel4platsupport_alloc_frame_at(&vka,
-            hw_info.genet_paddr + (uint64_t)p * 0x1000,
-            seL4_PageBits, &frame);
-        if (error) {
-            printf("[net] MMIO page %d alloc failed: %d\n", p, error);
-            return -1;
-        }
-        genet_caps[p] = frame.cptr;
-    }
-
-    void *genet_vaddr = vspace_map_pages(&vspace, genet_caps, NULL,
-        seL4_AllRights, GENET_NUM_PAGES, seL4_PageBits, 0);
-    if (!genet_vaddr) {
-        printf("[net] MMIO map failed\n");
+    /* v0.4.149: use the pre-mapped GENET MMIO (claimed ascending in
+     * prealloc_rpi4_devices so it lands ahead of the higher peripherals
+     * instead of behind the device-untyped watermark). */
+    if (!dev_genet_vaddr) {
+        printf("[net] GENET MMIO not pre-mapped\n");
         return -1;
     }
-    genet_regs = (volatile uint32_t *)genet_vaddr;
+    genet_regs = dev_genet_vaddr;
 
     /* Verify controller is alive */
     arch_dmb();
@@ -495,6 +482,14 @@ int plat_net_init(void) {
     uint32_t major = (rev >> 24) & 0xFF;
     uint32_t minor = (rev >> 16) & 0xFF;
     printf("[net] GENET rev: 0x%08x (v%u.%u)\n", rev, major, minor);
+
+    /* v0.4.150 checkpoint: GENET MMIO maps and the controller responds (rev
+     * above) -- the device-map fix is PROVEN on hardware. The full bring-up
+     * below (UMAC reset, PHY, DMA, IRQ) faults on real RPi4 -- the UMAC
+     * sub-block is not clocked/ready yet. Return here so the Pi boots; GENET
+     * bring-up (clock gating, reset sequencing, PHY) is the next focused effort. */
+    printf("[net] GENET mapped + probed OK; bring-up deferred (checkpoint)\n");
+    return -1;
 
     /* --- UniMAC reset --- */
     GENET_W(UMAC_CMD, CMD_SW_RESET);

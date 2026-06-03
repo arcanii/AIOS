@@ -10,6 +10,7 @@
 #include <sel4platsupport/device.h>
 #include <allocman/bootstrap.h>
 #include <allocman/vka.h>
+#include "aios/device_map.h"
 #include <sel4utils/vspace.h>
 #include <sel4utils/process.h>
 #include <sel4utils/process_config.h>
@@ -169,69 +170,62 @@ int main(int argc, char *argv[]) {
 
     aios_log_init();
 
-#ifdef PLAT_RPI4
-    /* RPi4 LED diagnostic: 3 fast blinks = root task reached.
-     * Visible on ACT LED (GPIO 42) without serial adapter. */
-    {
-        vka_object_t gpio_frame;
-        int gerr = sel4platsupport_alloc_frame_at(&vka, 0xFE200000,
-                                                   seL4_PageBits, &gpio_frame);
-        if (!gerr) {
-            volatile uint32_t *gpio = vspace_map_pages(&vspace,
-                &gpio_frame.cptr, NULL, seL4_AllRights, 1, seL4_PageBits, 0);
-            if (gpio) {
-                uint32_t val = gpio[0x10/4];
-                val &= ~(7U << 6);
-                val |= (1U << 6);
-                gpio[0x10/4] = val;
-                for (int blink = 0; blink < 3; blink++) {
-                    gpio[0x20/4] = (1U << 10);
-                    for (volatile int d = 0; d < 500000; d++) {}
-                    gpio[0x2C/4] = (1U << 10);
-                    for (volatile int d = 0; d < 500000; d++) {}
-                }
-                gpio[0x20/4] = (1U << 10);
-            }
-        }
-    }
-#endif
-
-    /* Parse device tree for hardware discovery */
+    /* Parse device tree for hardware discovery (needed by the device pre-map
+     * below -- it reads peripheral paddrs from hw_info). */
     boot_dtb_init();
     boot_hw_report();
 
-    /* Map UART */
+#ifdef PLAT_RPI4
+    /* v0.4.149: pre-map ALL peripheral MMIO in ascending physical-address
+     * order BEFORE anything maps a higher region. seL4 device untypeds are
+     * forward-only, so GENET (0xFD58) and the VC mailbox (0xFE00B) -- which
+     * sit below GPIO/UART/eMMC -- only map if claimed first. Fixes the
+     * v0.4.98 GENET + display disable. */
+    prealloc_rpi4_devices();
+
+    /* RPi4 LED diagnostic: 3 fast blinks = root task reached.
+     * Visible on ACT LED (GPIO 42) without serial adapter. */
+    if (dev_gpio_vaddr) {
+        volatile uint32_t *gpio = dev_gpio_vaddr;
+        uint32_t val = gpio[0x10/4];
+        val &= ~(7U << 6);
+        val |= (1U << 6);
+        gpio[0x10/4] = val;
+        for (int blink = 0; blink < 3; blink++) {
+            gpio[0x20/4] = (1U << 10);
+            for (volatile int d = 0; d < 500000; d++) {}
+            gpio[0x2C/4] = (1U << 10);
+            for (volatile int d = 0; d < 500000; d++) {}
+        }
+        gpio[0x20/4] = (1U << 10);
+    }
+#endif
+
+    /* Map UART (interactive serial console RX/TX -- printf itself already uses
+     * the kernel debug UART, so this is only for keystroke input + shell I/O). */
     uart = NULL;
+#ifdef PLAT_RPI4
+    /* RPi4: mini UART (AUX 0xFE215000), pre-mapped above in ascending order. */
+    uart = dev_uart_vaddr;
+    if (uart) {
+        uart[MU_CNTL / 4] = 0x03;  /* RX_EN | TX_EN */
+        while (uart[MU_LSR / 4] & LSR_DATA_READY)
+            (void)uart[MU_IO / 4];
+        AIOS_LOG_INFO_V("Mini UART mapped at 0x", (unsigned long)RPI4_AUX_PADDR);
+    }
+#else
     {
         vka_object_t frame;
-#ifdef PLAT_RPI4
-        /* RPi4: use mini UART (AUX block at 0xFE215000).
-         * Without overlays/disable-bt.dtbo on SD card, GPIO 14/15
-         * are ALT5 = mini UART. PL011 is not connected to GPIO.
-         * The seL4 kernel also uses mini UART (userAvailable=true). */
-        uint64_t uart_paddr = RPI4_AUX_PADDR;
-#else
-        uint64_t uart_paddr = hw_info.uart_paddr;
-#endif
-        error = sel4platsupport_alloc_frame_at(&vka, uart_paddr,
+        error = sel4platsupport_alloc_frame_at(&vka, hw_info.uart_paddr,
                                                 seL4_PageBits, &frame);
         if (!error) {
             void *v = vspace_map_pages(&vspace, &frame.cptr, NULL,
                 seL4_AllRights, 1, seL4_PageBits, 0);
-            if (v) {
-                uart = (volatile uint32_t *)v;
-#ifdef PLAT_RPI4
-                /* Enable mini UART RX + TX */
-                uart[MU_CNTL / 4] = 0x03;  /* RX_EN | TX_EN */
-                /* Drain stale data */
-                while (uart[MU_LSR / 4] & LSR_DATA_READY)
-                    (void)uart[MU_IO / 4];
-                AIOS_LOG_INFO_V("Mini UART mapped at 0x", (unsigned long)uart_paddr);
-#endif
-            }
+            if (v) uart = (volatile uint32_t *)v;
         }
-        if (!uart) AIOS_LOG_ERROR("UART map failed");
     }
+#endif
+    if (!uart) AIOS_LOG_ERROR("UART map failed");
 
     vka_object_t fault_ep;
     vka_audit_endpoint(VKA_SUB_BOOT);
