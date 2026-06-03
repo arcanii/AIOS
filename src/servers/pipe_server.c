@@ -176,6 +176,26 @@ static void pipe_maybe_free(int pi) {
     }
 }
 
+/* v0.4.143: is there a live process registered as a WRITER of pipe pi (its
+ * stdout is this pipe, recorded at PIPE_EXEC) that has not closed its write
+ * end? The write end must report EOF to readers only when the actual writer
+ * is gone -- NOT when the creating shell or the sibling reader closes its
+ * inherited write-end copy. Those non-writer closes race ahead of a slow
+ * (fs-reading) writer and would otherwise latch write_closed before the
+ * writer ever writes, giving the reader a premature EOF. except_ci excludes
+ * a process that is itself exiting/closing (pass -1 for none). */
+static int pipe_live_writer_exists(int pi, int except_ci) {
+    if (pi < 0 || pi >= MAX_PIPES) return 0;
+    for (int i = 0; i < MAX_ACTIVE_PROCS; i++) {
+        if (i == except_ci) continue;
+        if (active_procs[i].active
+            && active_procs[i].stdout_pipe_id == pi
+            && !active_procs[i].pipe_write_closed)
+            return 1;
+    }
+    return 0;
+}
+
 /* v0.4.139: reclaim orphaned (leaked) pipes when CREATE finds no free
  * slot. A pipe leaks when a child fork-fault leaves its refs unbalanced
  * so pipe_maybe_free never collects it; after MAX_PIPES leaks pipe()
@@ -256,18 +276,25 @@ static void handle_child_fault(int child_idx) {
     if (net_ep_cap && ch->pid > 0)
         pending_net_cleanup_pid = ch->pid;
 
-    /* Auto-close write end if child was writing to a pipe. */
+    /* Auto-close write end if child was a registered pipe writer. */
     if (ch->stdout_pipe_id >= 0 && ch->stdout_pipe_id < MAX_PIPES
-        && pipes[ch->stdout_pipe_id].active
-        && !ch->pipe_write_closed
-        && !pipes[ch->stdout_pipe_id].write_closed) {
-        pipes[ch->stdout_pipe_id].write_refs--;
-        if (pipes[ch->stdout_pipe_id].write_refs <= 0) {
-            pipes[ch->stdout_pipe_id].write_closed = 1;
-
-            wake_blocked_readers_eof(ch->stdout_pipe_id);
+        && pipes[ch->stdout_pipe_id].active) {
+        int wpi = ch->stdout_pipe_id;
+        /* accounting only -- skip if it already closed via PIPE_CLOSE_WRITE */
+        if (!ch->pipe_write_closed) pipes[wpi].write_refs--;
+        /* v0.4.143: the registered writer is EXITING -- the sole authoritative
+         * EOF. Latch once no other live writer remains. Because this is the
+         * only place write_closed is set, no close (the creating shell, the
+         * sibling reader, or the writer's own redundant original-write-fd
+         * close) can cause a premature EOF before the writer has produced its
+         * data. write_refs is not consulted -- it is unreliable (forked
+         * write-end inheritance and dup2 are not counted). */
+        if (!pipes[wpi].write_closed
+            && !pipe_live_writer_exists(wpi, child_idx)) {
+            pipes[wpi].write_closed = 1;
+            wake_blocked_readers_eof(wpi);
         }
-        pipe_maybe_free(ch->stdout_pipe_id);
+        pipe_maybe_free(wpi);
     }
     /* Auto-close read end if child was reading from a pipe */
     if (ch->stdin_pipe_id >= 0 && ch->stdin_pipe_id < MAX_PIPES
@@ -569,10 +596,23 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
             if (pi >= 0 && pi < MAX_PIPES && pipes[pi].active) {
                 pipes[pi].write_refs--;
-                if (pipes[pi].write_refs <= 0) {
-                    pipes[pi].write_closed = 1;
-                    wake_blocked_readers_eof(pi);
-                }
+                /* v0.4.143: do not latch EOF while a live REGISTERED writer
+                 * remains -- this stops a post-registration non-writer close
+                 * (the creating shell or the sibling reader) from giving the
+                 * reader a premature EOF while the writer is still producing.
+                 * (Builtins write unregistered, so the write_refs<=0 fallback
+                 * still latches them -- see PIPE_SET_PIPES note. A residual
+                 * pre-registration window remains; see the v0.4.143 caveat.) */
+                /* v0.4.143: a close NEVER latches EOF -- not the creating
+                 * shell relinquishing the write end it set up, not the writer's
+                 * own redundant original-write-fd close (it still holds fd 1),
+                 * not the sibling reader closing its inherited copy. ALL of
+                 * those race the writer's data/registration and caused the old
+                 * premature-EOF flake (cat|wc=0, ls|wc=1). The registered
+                 * writer's EXIT (handle_child_fault) is the sole authoritative
+                 * EOF -- and every writer, builtins included, is registered
+                 * server-side (PIPE_EXEC or dup2/PIPE_SET_PIPES) and stays so
+                 * until exit. */
                 pipe_maybe_free(pi);
             }
             seL4_SetMR(0, 0);
