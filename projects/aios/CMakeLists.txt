@@ -161,6 +161,7 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/servers/net_server.c
     ${AIOS_ROOT}/src/net/net_stack.c
     ${AIOS_ROOT}/src/net/net_tcp.c
+    ${AIOS_ROOT}/src/net/net_dhcp.c
     ${AIOS_ROOT}/src/crypto/crypto_chacha20.c
     ${AIOS_ROOT}/src/crypto/entropy_collect.c
     ${AIOS_ROOT}/src/crypto/crypto_server.c

@@ -228,4 +228,9 @@ void net_udp_deliver(uint16_t dst_port, uint16_t src_port,
                      const uint8_t *src_ip,
                      const uint8_t *data, uint32_t len);
 
+/* DHCP client (src/net/net_dhcp.c) -- run once at net_server startup */
+extern int net_dhcp_pending;   /* 1 while a lease is being acquired */
+int  net_dhcp_acquire(void);   /* 0 = bound (net_cfg_* updated), -1 = timeout */
+void net_dhcp_input(const uint8_t *p, uint32_t len, const uint8_t *src_ip);
+
 #endif /* AIOS_NET_H */

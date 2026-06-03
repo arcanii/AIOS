@@ -354,6 +354,17 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
     }
 
 
+    /* v0.4.152: acquire an address via DHCP before announcing/using an IP.
+     * Falls back to the static /etc/network.conf config on timeout. */
+    if (net_available) {
+        printf("[net] DHCP: discovering...\n");
+        if (net_dhcp_acquire() == 0)
+            printf("[net] DHCP: lease acquired\n");
+        else
+            printf("[net] DHCP: no lease, using static %d.%d.%d.%d\n",
+                   net_cfg_ip[0], net_cfg_ip[1], net_cfg_ip[2], net_cfg_ip[3]);
+    }
+
     net_send_gratuitous_arp();
     uint8_t gw[4];
     for (int _g = 0; _g < 4; _g++) gw[_g] = net_cfg_gw[_g];

@@ -228,6 +228,12 @@ static void handle_udp(const uint8_t *pkt, uint32_t len,
     if (payload_len > len - sizeof(struct udp_hdr))
         payload_len = len - sizeof(struct udp_hdr);
 
+    if (dst_port == 68) {   /* DHCP client port -- handled by the DHCP module */
+        net_dhcp_input(payload, payload_len, ip->src);
+        stats.udp_datagrams++;
+        return;
+    }
+
     net_udp_deliver(dst_port, src_port, ip->src, payload, payload_len);
     stats.udp_datagrams++;
 }
@@ -242,8 +248,13 @@ static void handle_ipv4(const uint8_t *pkt, uint32_t len,
 
     if ((ip->ver_ihl >> 4) != 4) return;
 
-    if (ip->dst[0] != my_ip[0] || ip->dst[1] != my_ip[1] ||
-        ip->dst[2] != my_ip[2] || ip->dst[3] != my_ip[3])
+    int is_bcast = (ip->dst[0] == 255 && ip->dst[1] == 255 &&
+                    ip->dst[2] == 255 && ip->dst[3] == 255);
+    int for_me   = (ip->dst[0] == my_ip[0] && ip->dst[1] == my_ip[1] &&
+                    ip->dst[2] == my_ip[2] && ip->dst[3] == my_ip[3]);
+    /* While a DHCP lease is pending we have no usable IP yet, so accept any
+     * destination (the OFFER/ACK may be broadcast or unicast to the offered IP). */
+    if (!net_dhcp_pending && !is_bcast && !for_me)
         return;
 
     uint32_t ihl = (ip->ver_ihl & 0x0F) * 4;
