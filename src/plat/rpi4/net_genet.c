@@ -422,10 +422,13 @@ static void ring_init(void) {
     }
     arch_dsb();
 
-    /* Advance producer index to make all descriptors available */
-    rx_prod_idx = GENET_RX_DESCS;
+    /* v0.4.153: the RX producer index is HW-owned -- it advances as the engine
+     * fills descriptors -- so initialize it to 0 (Linux/Circle do the same). The
+     * previous code wrote GENET_RX_DESCS (16), which made the driver "consume" 16
+     * empty descriptors at boot and desynced the producer so real RX was masked. */
+    rx_prod_idx = 0;
     rx_cons_idx = 0;
-    GENET_W(rdma_ring + RING_PROD_INDEX, rx_prod_idx);
+    GENET_W(rdma_ring + RING_PROD_INDEX, 0);
 
     /* --- TX ring 16 (default) --- */
     uint32_t tx_desc_base = GENET_TX_DESC_OFF;
@@ -657,25 +660,41 @@ int plat_net_tx(const uint8_t *frame, uint32_t len) {
  * into the shared net_rx_ring (SPSC) for net_server.
  * ================================================================ */
 void plat_net_driver_fn(void *arg0, void *arg1, void *ipc_buf) {
-    seL4_CPtr drv_ntfn = (seL4_CPtr)(uintptr_t)arg0;
-    (void)arg1; (void)ipc_buf;
+    (void)arg0; (void)arg1; (void)ipc_buf;
 
     uint32_t rdma_ring = RDMA_BASE + DMA_RING16_OFF;
+    uint32_t tdma_ring = TDMA_BASE + DMA_RING16_OFF;
 
     volatile struct genet_desc *rx_descs =
         (volatile struct genet_desc *)((uintptr_t)genet_regs + GENET_DESC_BASE + GENET_RX_DESC_OFF);
 
-    printf("[net-drv] GENET driver thread ready\n");
+    /* v0.4.153: poll the RX ring instead of waiting on the GENET IRQ. The IRQ
+     * path was never proven on hardware (no frame was ever received -- DHCP got
+     * no reply on a real LAN). Polling decouples RX bring-up from the INTRL2
+     * interrupt-enable question and prints the ring producer/consumer indices so
+     * we can see whether the RX/TX DMA engines actually advance. Go back to
+     * IRQ-driven once the datapath is proven. */
+    printf("[net-drv] GENET driver thread ready (polling RX)\n");
+    uint16_t last_rxp = 0xFFFF, last_txc = 0xFFFF, last_txp = 0xFFFF;
+    int diag = 0;
 
     while (1) {
-        seL4_Word badge;
-        seL4_Wait(drv_ntfn, &badge);
-
-        int drained = 0;
-
-        /* Read current producer index from hardware */
         arch_dmb();
         uint16_t hw_prod = (uint16_t)(GENET_R(rdma_ring + RING_PROD_INDEX) & 0xFFFF);
+        uint16_t tx_cons = (uint16_t)(GENET_R(tdma_ring + RING_CONS_INDEX) & 0xFFFF);
+
+        /* Diagnostic: report the first index changes so we can tell whether TX
+         * frames are consumed by HW (TXc -> TXp = sent) and whether RX frames
+         * arrive (RXp advances). Short fields survive console interleaving. */
+        if (diag < 24 && (hw_prod != last_rxp || tx_cons != last_txc ||
+                          tx_prod_idx != last_txp)) {
+            printf("[net-drv] RXp=%u RXc=%u TXp=%u TXc=%u\n",
+                   hw_prod, rx_cons_idx, tx_prod_idx, tx_cons);
+            last_rxp = hw_prod; last_txc = tx_cons; last_txp = tx_prod_idx; diag++;
+        }
+
+        uint16_t cons_before = rx_cons_idx;
+        int drained = 0;
 
         while (rx_cons_idx != hw_prod) {
             uint16_t idx = rx_cons_idx % GENET_RX_DESCS;
@@ -723,16 +742,14 @@ void plat_net_driver_fn(void *arg0, void *arg1, void *ipc_buf) {
             rx_cons_idx++;
         }
 
-        /* Update consumer index so HW knows we processed these */
-        GENET_W(rdma_ring + RING_CONS_INDEX, rx_cons_idx);
+        /* Update consumer index only when we actually advanced. */
+        if (rx_cons_idx != cons_before)
+            GENET_W(rdma_ring + RING_CONS_INDEX, rx_cons_idx);
 
-        if (drained > 0) {
+        if (drained > 0)
             seL4_Signal(net_srv_ntfn_cap);
-        }
 
-        /* ACK IRQ */
-        if (genet_irq_handler)
-            seL4_IRQHandler_Ack(genet_irq_handler);
+        seL4_Yield();
     }
 }
 
