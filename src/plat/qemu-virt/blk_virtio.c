@@ -267,7 +267,7 @@ int plat_blk_init_log(void) {
  * unusually fast). Returns 1 if the used ring advanced, 0 if it never did. */
 #define BLK_POLL_ITERS   4000000
 #define BLK_POLL_RETRIES 32
-volatile uint32_t blk_poll_renotifies;   /* diag: total re-notify batches used */
+extern volatile uint32_t blk_poll_renotifies;   /* defined in blk_cache.c (shared) */
 static int blk_complete(volatile uint32_t *vio, volatile struct virtq_used *used) {
     uint16_t last = used->idx;
     arch_dmb();

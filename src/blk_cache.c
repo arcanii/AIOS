@@ -25,6 +25,11 @@
 #define LOG_LEVEL LOG_LEVEL_INFO
 #include "aios/aios_log.h"
 
+/* v0.4.147: virtio-blk re-notify counter. Defined here (blk_cache.c is built
+ * on BOTH qemu-virt and rpi4) so /proc/cachestats links on RPi4 too. The
+ * qemu-virt driver increments it; the RPi4 eMMC driver leaves it 0. */
+volatile uint32_t blk_poll_renotifies;
+
 #define HASH_BUCKETS 512
 
 typedef struct cache_line {
