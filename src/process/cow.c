@@ -41,7 +41,7 @@
  * in the post-promotion state still corrupts something dash needs.
  * Flip to 1 to repro and investigate. With strip=0, the system is
  * v0.4.122-equivalent with all Step 3 plumbing in place. */
-#define COW_STRIP_PARENT 0
+#define COW_STRIP_PARENT 1
 #define MAX_COW_PROMOTED 8
 static uint32_t cow_strip_attempts;
 static uint32_t cow_strip_errs;
