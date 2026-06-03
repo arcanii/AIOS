@@ -14,6 +14,13 @@ sandboxes). Two transports:
           8N1 at the given baud via termios. Only one process may own the
           port -- quit screen first.
 
+  watch   Live-render a session mirror file on screen (read-only, colored),
+          so a human can watch the input/output while another process drives
+          the console. qemu/serial mirror their transcript to DEFAULT_MIRROR
+          by default; run `watch` in a second terminal to follow it live.
+          (Only one process can own the port, so the viewer taps the mirror
+          file rather than the device.)
+
 Examples:
   scripts/aios_console.py qemu \\
       --kernel build-04/images/aios_root-image-arm-qemu-arm-virt --smp 4 \\
@@ -21,6 +28,10 @@ Examples:
 
   scripts/aios_console.py serial /dev/cu.usbserial-0001 \\
       --cmd 'cat /proc/hw' --cmd 'echo abc | wc -c'
+
+  # Watch live while another process drives:
+  #   terminal 1 (you):    scripts/aios_console.py watch
+  #   terminal 2 (driver): scripts/aios_console.py serial /dev/cu... --login --cmd '...'
 
 Notes:
   * Commands are matched against the dash prompt "# ". Output that itself
@@ -49,15 +60,24 @@ PASSWORD_PROMPT = "Password:"
 SHELL_PROMPT = "# "
 WELCOME = "Welcome,"
 
+# Real-time session transcript that the `watch` subcommand renders live, so a
+# human can watch the I/O on screen while something else drives the console
+# (only one process may own the port, so the viewer taps this file, not the fd).
+# Kept under the repo root so the driver and the viewer -- even in different
+# shells/sandboxes -- resolve the SAME path (a fixed /tmp can differ between
+# them). Gitignored.
+DEFAULT_MIRROR = os.path.join(REPO_ROOT, ".aios_console.live")
+
 
 class Console:
     """Expect-style interaction over a single fd (socket or serial)."""
 
-    def __init__(self, fd, logfile=None, echo=True):
+    def __init__(self, fd, logfile=None, echo=True, mirrorfile=None):
         self.fd = fd
         self.buf = ""
         self.logfile = logfile
         self.echo = echo
+        self.mirrorfile = mirrorfile
 
     def _emit(self, text):
         if self.echo:
@@ -66,6 +86,15 @@ class Console:
         if self.logfile:
             self.logfile.write(text)
             self.logfile.flush()
+        if self.mirrorfile:
+            self.mirrorfile.write(text)
+            self.mirrorfile.flush()
+
+    def mark_tx(self, label):
+        """Annotate the transcript with input we are sending, so the live
+        viewer shows both directions. RX echoes commands back, but login
+        keystrokes and nudges are otherwise invisible."""
+        self._emit("\n>>> %s\n" % label)
 
     def read_until(self, patterns, timeout):
         """Read until any pattern (substring) appears or timeout elapses.
@@ -130,10 +159,12 @@ class Console:
         # switch and corrupts the line (first char echoes unmasked -> the
         # field is mis-read -> login denied), so settle briefly each time.
         time.sleep(settle)
+        self.mark_tx("login: %s" % user)
         self.sendline(user)
         if self.read_until(PASSWORD_PROMPT, 30)[0] is None:
             raise TimeoutError("no password prompt")
         time.sleep(settle)
+        self.mark_tx("password: ****")
         self.sendline(password)
         pat, _ = self.read_until([SHELL_PROMPT, WELCOME, LOGIN_PROMPT], 30)
         if pat == LOGIN_PROMPT:
@@ -209,6 +240,27 @@ def connect_qemu_socket(path, timeout=15.0):
     raise TimeoutError("could not connect to qemu socket %s (%s)" % (path, last))
 
 
+def open_mirror(args):
+    """Open the real-time transcript mirror (truncating) unless disabled.
+
+    The `watch` subcommand renders this file live, letting a human watch the
+    session on screen while this process drives it headlessly."""
+    if getattr(args, "no_mirror", False):
+        return None
+    path = getattr(args, "mirror", None) or DEFAULT_MIRROR
+    try:
+        f = open(path, "w")
+    except OSError as e:
+        print("WARN: live mirror disabled (%s)" % e, file=sys.stderr)
+        return None
+    f.write("=== aios_console %s @ pid %d -- live transcript ===\n"
+            % (args.mode, os.getpid()))
+    f.flush()
+    print("=== live mirror -> %s  (watch with: python3 scripts/aios_console.py "
+          "watch) ===" % path, flush=True)
+    return f
+
+
 def run_qemu(args):
     sock_path = os.path.join("/tmp", "aios-console-%d.sock" % os.getpid())
     if os.path.exists(sock_path):
@@ -222,10 +274,12 @@ def run_qemu(args):
         return 2
     sock = None
     logf = open(args.log, "w") if args.log else None
+    mirf = open_mirror(args)
     rc = 0
     try:
         sock = connect_qemu_socket(sock_path)
-        con = Console(sock.fileno(), logfile=logf, echo=not args.quiet)
+        con = Console(sock.fileno(), logfile=logf, echo=not args.quiet,
+                      mirrorfile=mirf)
         con.ensure_shell(args.user, args.password, args.boot_timeout, nudge=False)
         for c in args.cmd or []:
             con.run(c, args.cmd_timeout)
@@ -250,6 +304,8 @@ def run_qemu(args):
                 proc.kill()
         if logf:
             logf.close()
+        if mirf:
+            mirf.close()
         if os.path.exists(sock_path):
             try:
                 os.unlink(sock_path)
@@ -261,12 +317,13 @@ def run_qemu(args):
 
 def run_serial(args):
     logf = open(args.log, "w") if args.log else None
+    mirf = open_mirror(args)
     fd = None
     rc = 0
     try:
         fd = os.open(args.device, os.O_RDWR | os.O_NOCTTY)
         configure_serial(fd, args.baud)
-        con = Console(fd, logfile=logf, echo=not args.quiet)
+        con = Console(fd, logfile=logf, echo=not args.quiet, mirrorfile=mirf)
         if args.login:
             con.ensure_shell(args.user, args.password, args.boot_timeout,
                              nudge=True)
@@ -287,8 +344,97 @@ def run_serial(args):
                 pass
         if logf:
             logf.close()
+        if mirf:
+            mirf.close()
     print("\n=== serial console done (exit %d) ===" % rc, flush=True)
     return rc
+
+
+# ── live viewer ──────────────────────────────────────────────────────────────
+_ANSI = {
+    "reset": "\033[0m", "cmd": "\033[1;36m", "err": "\033[1;31m",
+    "wrn": "\033[33m", "ok": "\033[1;32m", "tx": "\033[1;35m",
+    "dim": "\033[2m", "num": "\033[1;37m",
+}
+
+
+def _colorize(line):
+    """Color a transcript line by content for the live viewer."""
+    s = line.rstrip("\r\n")
+    if "===CMD:" in s:
+        c = _ANSI["cmd"]
+    elif s.startswith(">>> "):
+        c = _ANSI["tx"]
+    elif ("TIMEOUT" in s or "FAIL:" in s or "[ERR]" in s or "denied" in s
+          or "not permitted" in s or "not reserved" in s or "map failed" in s):
+        c = _ANSI["err"]
+    elif "[WRN]" in s:
+        c = _ANSI["wrn"]
+    elif ("console done" in s or "login OK" in s or "Welcome" in s
+          or "shutdown complete" in s):
+        c = _ANSI["ok"]
+    elif s.strip().isdigit():            # a bare wc/seq count -- the result
+        c = _ANSI["num"]
+    elif s.startswith("[INF]") or "cow_setup" in s or "BSS lazy" in s:
+        c = _ANSI["dim"]
+    else:
+        c = ""
+    return (c + line + _ANSI["reset"]) if c else line
+
+
+def run_watch(args):
+    """Live-render a session mirror file (read-only) with color, so a human
+    can watch the I/O on screen while another process drives the console.
+    Tails the file, follows truncation/recreation (new session), and flushes
+    lingering partial lines (e.g. the bare '# ' prompt)."""
+    path = args.file or DEFAULT_MIRROR
+    color = sys.stdout.isatty() and not args.no_color
+
+    def emit(text):
+        sys.stdout.write(_colorize(text) if color else text)
+
+    ok = _ANSI["ok"] if color else ""
+    rst = _ANSI["reset"] if color else ""
+    if color:
+        sys.stdout.write("\033[2J\033[H")
+    sys.stdout.write("%s== aios_console watch: %s ==%s  (Ctrl-C to stop)\n\n"
+                     % (ok, path, rst))
+    sys.stdout.flush()
+
+    pos, ino, pending = 0, None, ""
+    try:
+        while True:
+            try:
+                st = os.stat(path)
+            except FileNotFoundError:
+                time.sleep(0.2)
+                continue
+            if ino is None:
+                ino = st.st_ino
+            if st.st_ino != ino or st.st_size < pos:   # driver started fresh
+                pos, pending, ino = 0, "", st.st_ino
+                sys.stdout.write("\n%s-- new session --%s\n" % (ok, rst))
+            if st.st_size > pos:
+                with open(path, "r", errors="replace") as f:
+                    f.seek(pos)
+                    pending += f.read()
+                    pos = f.tell()
+                while True:
+                    nl = pending.find("\n")
+                    if nl == -1:
+                        break
+                    emit(pending[:nl + 1])
+                    pending = pending[nl + 1:]
+                sys.stdout.flush()
+            else:
+                if pending:               # show the trailing prompt, no newline
+                    emit(pending)
+                    pending = ""
+                    sys.stdout.flush()
+                time.sleep(0.15)
+    except KeyboardInterrupt:
+        sys.stdout.write("\n%s== watch stopped ==%s\n" % (ok, rst))
+    return 0
 
 
 def build_parser():
@@ -310,6 +456,12 @@ def build_parser():
     s.add_argument("--login", action="store_true",
                    help="perform login (default: assume already at a shell)")
 
+    w = sub.add_parser("watch",
+                       help="live-view a session mirror on screen (read-only)")
+    w.add_argument("file", nargs="?", default=None,
+                   help="mirror file to watch (default: %s)" % DEFAULT_MIRROR)
+    w.add_argument("--no-color", action="store_true", help="disable ANSI color")
+
     for sp in (q, s):
         sp.add_argument("--cmd", action="append", help="command to run (repeatable)")
         sp.add_argument("--shutdown", action="store_true",
@@ -323,6 +475,11 @@ def build_parser():
         sp.add_argument("--log", help="also write the transcript to this file")
         sp.add_argument("--quiet", action="store_true",
                         help="do not echo the transcript to stdout")
+        sp.add_argument("--mirror", default=None,
+                        help="real-time transcript file the `watch` viewer "
+                             "renders live (default: %s)" % DEFAULT_MIRROR)
+        sp.add_argument("--no-mirror", action="store_true",
+                        help="do not write the live mirror file")
     return p
 
 
@@ -333,6 +490,8 @@ def main(argv):
         return run_qemu(args)
     if args.mode == "serial":
         return run_serial(args)
+    if args.mode == "watch":
+        return run_watch(args)
     return 2
 
 

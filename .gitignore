@@ -56,3 +56,6 @@ deps/
 !ref/dead_code/
 !ref/dead_code/**
 src/lib/aios_posix.c.pre_modular
+
+# aios_console.py live mirror (watch viewer)
+.aios_console.live
