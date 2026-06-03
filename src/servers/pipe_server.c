@@ -25,6 +25,11 @@
 #include "aios/procfs.h"
 #include "aios/cow.h"
 
+/* v0.4.142: declared in sel4utils/vspace_internal.h, which we cannot include
+ * here (that header carries many static helper definitions). Returns the
+ * frame cap mapped at vaddr, or 0 if the page is unmapped. */
+seL4_CPtr sel4utils_get_cap(vspace_t *vspace, void *vaddr);
+
 /* ---- Blocked reader table ---- */
 static pipe_read_blocked_t pipe_read_blocked[MAX_PIPE_READ_BLOCKED];
 static vka_object_t read_reply_objs[MAX_PIPE_READ_BLOCKED];
@@ -343,10 +348,21 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 if (label == seL4_Fault_VMFault
                     && active_procs[ci].bss_reservation != NULL) {
                     seL4_Word fault_addr = seL4_GetMR(seL4_VMFault_Addr);
+                    uintptr_t page_va = fault_addr & ~(uintptr_t)0xFFF;
+                    /* v0.4.142: a pre-exec fork can leave a few COW-shared
+                     * pages inside the lazy-BSS range. Those already have a
+                     * frame cap and are COW-managed, so the BSS map below
+                     * would fail its reservation check (logging noise) before
+                     * the COW handler promotes them. Skip the BSS path for an
+                     * in-range page that is already mapped or COW-managed;
+                     * genuine demand-BSS pages are unmapped (get_cap==0) and
+                     * not COW, so they still take it. */
                     if (fault_addr >= active_procs[ci].bss_lazy_start
-                        && fault_addr <  active_procs[ci].bss_lazy_end) {
+                        && fault_addr <  active_procs[ci].bss_lazy_end
+                        && !cow_in_range(ci, page_va)
+                        && sel4utils_get_cap(&active_procs[ci].proc.vspace,
+                                             (void *)page_va) == 0) {
                         if (vka_audit_check_headroom(1) >= 0) {
-                            uintptr_t page_va = fault_addr & ~(uintptr_t)0xFFF;
                             reservation_t res = { .res = active_procs[ci].bss_reservation };
                             int merr = vspace_new_pages_at_vaddr(
                                 &active_procs[ci].proc.vspace,
@@ -1051,12 +1067,35 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
              * close the pipe while parent still uses it */
             if (exec_stdout_pipe >= 0 && exec_stdout_pipe < MAX_PIPES
                 && pipes[exec_stdout_pipe].active) {
-                pipes[exec_stdout_pipe].write_refs++;
+                /* v0.4.141: this exec-ing child is the live writer for this
+                 * pipe. Forked writers hold no write_ref until exec, so the
+                 * parent (pipe creator) and the sibling reader may close their
+                 * inherited write-end copies first -- driving write_refs to 0
+                 * and latching write_closed -- before a slow writer (one that
+                 * does an fs read before its first write, e.g. cat/ls) reaches
+                 * exec. That premature write_closed gave the reader an early
+                 * EOF (cat /etc/passwd | wc -l returned 0, while seq | wc and
+                 * echo | wc -- writers that write immediately -- worked).
+                 * Reclaim the end: ensure a live ref and clear the premature
+                 * close. */
+                if (pipes[exec_stdout_pipe].write_refs < 1)
+                    pipes[exec_stdout_pipe].write_refs = 1;
+                else
+                    pipes[exec_stdout_pipe].write_refs++;
+                pipes[exec_stdout_pipe].write_closed = 0;
                 pipe_had_child[exec_stdout_pipe] = 1;  /* v0.4.139 */
             }
             if (exec_stdin_pipe >= 0 && exec_stdin_pipe < MAX_PIPES
                 && pipes[exec_stdin_pipe].active) {
-                pipes[exec_stdin_pipe].read_refs++;
+                /* v0.4.141: symmetric reclaim for the read end -- a forked
+                 * reader that execs after its inherited read-end copy was
+                 * closed elsewhere would otherwise inherit a latched
+                 * read_closed. */
+                if (pipes[exec_stdin_pipe].read_refs < 1)
+                    pipes[exec_stdin_pipe].read_refs = 1;
+                else
+                    pipes[exec_stdin_pipe].read_refs++;
+                pipes[exec_stdin_pipe].read_closed = 0;
                 pipe_had_child[exec_stdin_pipe] = 1;  /* v0.4.139 */
             }
             ap->exit_status = 0;

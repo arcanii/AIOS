@@ -23,6 +23,11 @@ extern sel4utils_res_t aios_bss_res[];
 #include "aios/procfs.h"
 #include "aios/cow.h"
 
+/* v0.4.142: declared in sel4utils/vspace_internal.h, which we cannot include
+ * here (that header carries many static helper definitions). Returns the
+ * frame cap mapped at vaddr, or 0 if the page is unmapped. */
+seL4_CPtr sel4utils_get_cap(vspace_t *vspace, void *vaddr);
+
 
 /* ── Process kill ── */
 /* process_kill -- DEPRECATED: prefer handle_child_fault in pipe_server.
@@ -476,11 +481,20 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
 
             if (flabel == seL4_Fault_VMFault) {
                 seL4_Word fault_addr = seL4_GetMR(seL4_VMFault_Addr);
-                /* BSS demand-page first */
+                uintptr_t page_va = fault_addr & ~(uintptr_t)0xFFF;
+                /* BSS demand-page first.
+                 * v0.4.142: skip the BSS map for an in-range page that is
+                 * already mapped or COW-managed (a pre-exec fork can leave
+                 * COW pages inside the lazy-BSS range); otherwise
+                 * vspace_new_pages_at_vaddr fails its reservation check and
+                 * logs noise before the COW handler promotes the page.
+                 * Genuine demand-BSS pages are unmapped (get_cap==0) and not
+                 * COW, so they still take this path. */
                 if (ap->bss_reservation != NULL
                     && fault_addr >= ap->bss_lazy_start
-                    && fault_addr <  ap->bss_lazy_end) {
-                    uintptr_t page_va = fault_addr & ~(uintptr_t)0xFFF;
+                    && fault_addr <  ap->bss_lazy_end
+                    && !cow_in_range(ap_idx, page_va)
+                    && sel4utils_get_cap(&proc->vspace, (void *)page_va) == 0) {
                     if (vka_audit_check_headroom(1) < 0) {
                         AIOS_LOG_ERROR("BSS fault: out of memory");
                         break;  /* Treat as exit */
