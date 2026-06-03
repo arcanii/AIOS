@@ -388,7 +388,11 @@ static void ring_init(void) {
     genet_delay(1000);
 
     /* --- RX ring 16 (default) --- */
-    /* Descriptor addresses use the GENET internal SRAM at 0x10000 */
+    /* Descriptor addresses use the GENET internal SRAM at 0x10000.
+     * NOTE (BCM2711 GENET errata, RPi forum): RING_START_ADDR, RING_END_ADDR,
+     * RING_READ_PTR and the write pointer are WRITE-ONCE after a hard reset. If a
+     * later re-init is ever needed, write the value, read it back, and use the
+     * read-back value -- do not assume the write stuck. First init here is fine. */
     uint32_t rx_desc_base = GENET_RX_DESC_OFF;
     uint32_t rx_desc_end  = rx_desc_base + GENET_RX_DESCS * 12 - 1;
 
@@ -483,19 +487,23 @@ int plat_net_init(void) {
     uint32_t minor = (rev >> 16) & 0xFF;
     printf("[net] GENET rev: 0x%08x (v%u.%u)\n", rev, major, minor);
 
-    /* v0.4.150 checkpoint: GENET MMIO maps and the controller responds (rev
-     * above) -- the device-map fix is PROVEN on hardware. The full bring-up
-     * below (UMAC reset, PHY, DMA, IRQ) faults on real RPi4 -- the UMAC
-     * sub-block is not clocked/ready yet. Return here so the Pi boots; GENET
-     * bring-up (clock gating, reset sequencing, PHY) is the next focused effort. */
-    printf("[net] GENET mapped + probed OK; bring-up deferred (checkpoint)\n");
-    return -1;
+    /* v0.4.151: release the UMAC software-reset latch BEFORE touching any UMAC
+     * register. The GENET powers up with SYS_RBUF_FLUSH_CTRL.SWINIT set, which
+     * holds the UMAC sub-block in reset; accessing UMAC (0x808) while it is held
+     * in reset bus-errors -> external abort -> kernel halt. NOT clock-gating (the
+     * firmware clocks GENET; the rev read above proves the SYS block is live).
+     * HW-CONFIRMED on real RPi4 (v0.4.151). Linux/Circle reset_umac do the same
+     * via rbuf_ctrl_set(0). If GENET ever halts right after the rev print above,
+     * this clear is the first thing to check. */
+    GENET_W(SYS_RBUF_FLUSH_CTRL, 0);
+    genet_delay(10);
 
-    /* --- UniMAC reset --- */
-    GENET_W(UMAC_CMD, CMD_SW_RESET);
-    genet_delay(10000);
+    /* --- UniMAC reset (Linux/Circle reset_umac order) --- */
     GENET_W(UMAC_CMD, 0);
-    genet_delay(10000);
+    GENET_W(UMAC_CMD, CMD_SW_RESET | CMD_LCL_LOOP);
+    genet_delay(2);
+    GENET_W(UMAC_CMD, 0);
+    genet_delay(10);
 
     /* Read MAC address from UniMAC (set by firmware) */
     read_mac_from_umac();
