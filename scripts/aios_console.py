@@ -185,22 +185,32 @@ class Console:
 
 
 def configure_serial(fd, baud):
-    """Set raw 8N1 at baud on a serial fd via termios."""
-    speed = getattr(termios, "B%d" % baud, None)
-    if speed is None:
-        raise ValueError("unsupported baud: %d" % baud)
-    a = termios.tcgetattr(fd)
-    # a = [iflag, oflag, cflag, lflag, ispeed, ospeed, cc]
-    a[0] &= ~(termios.IGNBRK | termios.BRKINT | termios.PARMRK | termios.ISTRIP
-              | termios.INLCR | termios.IGNCR | termios.ICRNL | termios.IXON)
-    a[1] &= ~termios.OPOST
-    a[2] &= ~(termios.CSIZE | termios.PARENB | termios.CSTOPB)
-    a[2] |= termios.CS8 | termios.CLOCAL | termios.CREAD
-    a[3] &= ~(termios.ECHO | termios.ECHONL | termios.ICANON | termios.ISIG
-              | termios.IEXTEN)
-    a[4] = speed
-    a[5] = speed
-    termios.tcsetattr(fd, termios.TCSANOW, a)
+    """Set raw 8N1 at baud on a serial fd. Prefer termios; fall back to stty on
+    the open fd (some macOS USB-serial drivers reject the termios speed combo
+    with EINVAL, which used to crash the whole driver before it read a byte)."""
+    try:
+        speed = getattr(termios, "B%d" % baud, None)
+        if speed is None:
+            raise termios.error("no B%d constant" % baud)
+        a = termios.tcgetattr(fd)
+        # a = [iflag, oflag, cflag, lflag, ispeed, ospeed, cc]
+        a[0] &= ~(termios.IGNBRK | termios.BRKINT | termios.PARMRK | termios.ISTRIP
+                  | termios.INLCR | termios.IGNCR | termios.ICRNL | termios.IXON)
+        a[1] &= ~termios.OPOST
+        a[2] &= ~(termios.CSIZE | termios.PARENB | termios.CSTOPB)
+        a[2] |= termios.CS8 | termios.CLOCAL | termios.CREAD
+        a[3] &= ~(termios.ECHO | termios.ECHONL | termios.ICANON | termios.ISIG
+                  | termios.IEXTEN)
+        a[4] = speed
+        a[5] = speed
+        termios.tcsetattr(fd, termios.TCSANOW, a)
+    except termios.error:
+        import subprocess
+        r = subprocess.run(["stty", str(baud), "raw", "-echo"], stdin=fd,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        if r.returncode != 0:
+            raise RuntimeError("serial config failed (termios and stty): %s"
+                               % r.stderr.decode(errors="replace").strip())
 
 
 def qemu_command(args, sock_path):
@@ -223,6 +233,9 @@ def qemu_command(args, sock_path):
     for i, path in enumerate(drives):
         cmd += ["-drive", "file=%s,format=raw,if=none,id=hd%d" % (path, i),
                 "-device", "virtio-blk-device,drive=hd%d" % i]
+    if getattr(args, "net", "none") == "user":
+        cmd += ["-netdev", "user,id=n0",
+                "-device", "virtio-net-device,netdev=n0"]
     return cmd
 
 
@@ -449,6 +462,8 @@ def build_parser():
     q.add_argument("--mem", default="2G", help="qemu memory (default 2G)")
     q.add_argument("--disk", action="append",
                    help="raw disk image (repeatable; default disk/disk_ext2.img + disk/log_ext2.img)")
+    q.add_argument("--net", choices=["none", "user"], default="none",
+                   help="qemu networking: user = SLIRP (built-in DHCP server, 10.0.2.x)")
 
     s = sub.add_parser("serial", help="drive a serial device")
     s.add_argument("device", help="serial char device, e.g. /dev/cu.usbserial-0001")
