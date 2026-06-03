@@ -401,6 +401,7 @@ int do_fork(int parent_idx) {
      *    COW gated off too, so functionality is not COW-regressed.
      *    The BSS error message itself is the only COW-induced effect. */
     cow_clear_proc(child_idx);
+    { extern void clear_file_vmas(int ci); clear_file_vmas(child_idx); }  /* v0.4.146 */
     for (int s = 0; s < parent->num_segs; s++) {
         elf_seg_info_t *seg = &parent->segs[s];
         if (!(seg->flags & 2)) continue;

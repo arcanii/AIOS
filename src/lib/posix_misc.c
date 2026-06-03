@@ -372,10 +372,82 @@ long aios_sys_pipe2(va_list ap) {
     return 0;
 }
 
+/* v0.4.144: file-backed mmap registry (architecture A -- eager client-side).
+ * mmap(MAP_SHARED/MAP_PRIVATE, fd, off) reads the file region into fresh
+ * anonymous pages (PIPE_MMAP_ANON) at map time; msync/munmap write a
+ * MAP_SHARED + writable region back via FS_PWRITE. Single-process semantics:
+ * two processes mapping the same file get independent frames. Write-back rides
+ * the path-based FS_PWRITE, so a MAP_SHARED + PROT_WRITE map persists even
+ * though AIOS open() is read-only -- mmap write permission is deliberately
+ * decoupled from the fd open mode here. */
+#ifndef MAP_SHARED
+#define MAP_SHARED  0x01
+#endif
+#ifndef MAP_PRIVATE
+#define MAP_PRIVATE 0x02
+#endif
+#ifndef PROT_WRITE
+#define PROT_WRITE  0x2
+#endif
+
+#define AIOS_MAX_FILE_MMAPS 16
+typedef struct {
+    int       active;
+    uintptr_t vaddr;     /* page-aligned base returned to caller */
+    size_t    length;    /* requested mapping length in bytes */
+    size_t    pages;     /* ceil(length / 4096) */
+    long      offset;    /* page-aligned file offset */
+    int       flags;     /* MAP_SHARED / MAP_PRIVATE */
+    int       prot;      /* PROT_* -- gates write-back */
+    char      path[128]; /* resolved file path */
+} aios_file_mmap_t;
+static aios_file_mmap_t aios_file_mmaps[AIOS_MAX_FILE_MMAPS];
+
+static aios_file_mmap_t *file_mmap_find(uintptr_t va) {
+    for (int i = 0; i < AIOS_MAX_FILE_MMAPS; i++) {
+        aios_file_mmap_t *m = &aios_file_mmaps[i];
+        if (m->active && va >= m->vaddr
+            && va < m->vaddr + m->pages * 4096) return m;
+    }
+    return NULL;
+}
+
+/* Write a MAP_SHARED + writable mapping back to its file, clamped to the file
+ * current size so we never extend it with trailing zero bytes. Returns 0 on
+ * success or when there is nothing to do, -1 on a write error. */
+static int file_mmap_writeback(aios_file_mmap_t *m) {
+    if (!(m->flags & MAP_SHARED) || !(m->prot & PROT_WRITE)) return 0;
+    if (!m->path[0] || !fs_ep_cap || !pipe_ep) return 0;
+    uint32_t fmode = 0, fsize = 0;
+    if (fetch_stat(m->path, &fmode, &fsize) != 0) return -1;
+    long avail = (long)fsize - m->offset;
+    if (avail <= 0) return 0;
+    size_t wlen = m->length;
+    if ((long)wlen > avail) wlen = (size_t)avail;
+    /* C: hand the whole clamped region to the server, which maps each child
+     * page and writes it back with vfs_pwrite. MR0=vaddr, MR1=len, MR2=offset,
+     * MR3=path_len, MR4+=path. */
+    int pl = str_len(m->path);
+    seL4_SetMR(0, (seL4_Word)m->vaddr);
+    seL4_SetMR(1, (seL4_Word)wlen);
+    seL4_SetMR(2, (seL4_Word)m->offset);
+    seL4_SetMR(3, (seL4_Word)pl);
+    int mr = 4;
+    seL4_Word w = 0;
+    for (int i = 0; i < pl; i++) {
+        w |= ((seL4_Word)(uint8_t)m->path[i]) << ((i % 8) * 8);
+        if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
+    }
+    seL4_Call(pipe_ep, seL4_MessageInfo_new(87 /* PIPE_MSYNC */, 0, 0, mr));
+    return ((long)seL4_GetMR(0) < 0) ? -1 : 0;
+}
+
 /* v0.4.128: munmap via PIPE_MUNMAP_ANON IPC. Frees the pages in the
  * caller's vspace (cookie tracking deletes the underlying frame too).
  * Pages not currently mapped are silently skipped. Returns 0 on success
- * or -EINVAL for bogus inputs. */
+ * or -EINVAL for bogus inputs.
+ * v0.4.144: a file-backed mapping flushes MAP_SHARED writes, then frees the
+ * whole mapping and drops its registry entry. */
 long aios_sys_munmap(va_list ap) {
     void *addr = va_arg(ap, void *);
     size_t len = va_arg(ap, size_t);
@@ -384,6 +456,17 @@ long aios_sys_munmap(va_list ap) {
     if (va & 0xFFF) return -EINVAL;
     size_t pages = (len + 4095) / 4096;
     if (!pipe_ep) return -ENOSYS;
+    aios_file_mmap_t *m = file_mmap_find(va);
+    if (m && va == m->vaddr) {
+        /* B: flush MAP_SHARED writes, then have the server free resident pages,
+         * release the reservation, and drop its descriptor. */
+        file_mmap_writeback(m);
+        seL4_SetMR(0, (seL4_Word)va);
+        seL4_SetMR(1, (seL4_Word)m->pages);
+        seL4_Call(pipe_ep, seL4_MessageInfo_new(88 /* PIPE_MUNMAP_FILE */, 0, 0, 2));
+        m->active = 0;
+        return (long)seL4_GetMR(0);
+    }
     seL4_SetMR(0, (seL4_Word)va);
     seL4_SetMR(1, (seL4_Word)pages);
     seL4_Call(pipe_ep, seL4_MessageInfo_new(84 /* PIPE_MUNMAP_ANON */, 0, 0, 2));
@@ -413,16 +496,20 @@ long aios_sys_mprotect(va_list ap) {
     return rc;
 }
 
-/* v0.4.104: mmap MAP_ANONYMOUS with on-demand allocation via IPC
+/* v0.4.104: mmap MAP_ANONYMOUS with on-demand allocation via IPC.
+ * v0.4.144: file-backed mmap (architecture A -- eager client-side).
  *
  * For MAP_ANONYMOUS, request fresh pages from pipe_server (root) which
  * allocates frames and maps them in our VSpace. This avoids stealing
  * from the static morecore_area (which is eagerly mapped at ELF load).
  *
- * For non-anonymous mmap (file-backed), return -ENOTSUP -- not supported
- * yet.
+ * For a file-backed mapping, allocate the same anonymous pages and then read
+ * the file region [offset, offset+length) into them with FS_PREAD. Bytes past
+ * EOF stay zero (fresh frames are zero-filled). The mapping is recorded so
+ * msync/munmap can write a MAP_SHARED + writable region back. MAP_PRIVATE and
+ * read-only maps never write back.
  *
- * Returns vaddr on success, -ENOMEM on failure. */
+ * Returns vaddr on success, negative errno on failure. */
 #ifndef MAP_ANONYMOUS
 #define MAP_ANONYMOUS 0x20
 #endif
@@ -433,13 +520,9 @@ long aios_sys_mmap(va_list ap) {
     int flags = va_arg(ap, int);
     int fd = va_arg(ap, int);
     long offset = va_arg(ap, long);
-    (void)addr; (void)prot; (void)fd; (void)offset;
+    (void)addr;
 
     if (length == 0) return -EINVAL;
-    if (!(flags & MAP_ANONYMOUS)) {
-        /* file-backed mmap not implemented */
-        return -ENOSYS;
-    }
     if (!pipe_ep) {
         /* No pipe_ep yet (very early init) -- caller can fall back to morecore */
         return -ENOMEM;
@@ -453,6 +536,49 @@ long aios_sys_mmap(va_list ap) {
         return -ENOMEM;
     }
 
+    if (!(flags & MAP_ANONYMOUS)) {
+        /* File-backed: validate the fd, grab anonymous pages, fill from disk. */
+        if (offset & 0xFFF) return -EINVAL;   /* offset must be page-aligned */
+        if (fd < AIOS_FD_BASE || fd >= AIOS_FD_BASE + AIOS_MAX_FDS) return -EBADF;
+        aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
+        if (!f->active || f->is_pipe || f->is_dir || f->is_socket || !f->path[0])
+            return -EACCES;
+        /* Reserve a registry slot up front so we never leak pages. */
+        int slot = -1;
+        for (int i = 0; i < AIOS_MAX_FILE_MMAPS; i++)
+            if (!aios_file_mmaps[i].active) { slot = i; break; }
+        if (slot < 0) return -ENOMEM;
+
+        /* C: the server allocates the pages and fills them from the file with
+         * vfs_pread (root-side), so the client never round-trips the data.
+         * MR0=pages, MR1=offset, MR2=path_len, MR3+=path. */
+        int pl = str_len(f->path);
+        seL4_SetMR(0, (seL4_Word)pages);
+        seL4_SetMR(1, (seL4_Word)offset);
+        seL4_SetMR(2, (seL4_Word)pl);
+        int mr = 3;
+        seL4_Word w = 0;
+        for (int i = 0; i < pl; i++) {
+            w |= ((seL4_Word)(uint8_t)f->path[i]) << ((i % 8) * 8);
+            if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
+        }
+        seL4_Call(pipe_ep, seL4_MessageInfo_new(86 /* PIPE_MMAP_FILE */, 0, 0, mr));
+        uintptr_t vaddr = (uintptr_t)seL4_GetMR(0);
+        if (vaddr == 0) return -ENOMEM;
+
+        aios_file_mmap_t *m = &aios_file_mmaps[slot];
+        m->active = 1;
+        m->vaddr  = vaddr;
+        m->length = length;
+        m->pages  = pages;
+        m->offset = offset;
+        m->flags  = flags;
+        m->prot   = prot;
+        str_copy(m->path, f->path, sizeof(m->path));
+        return (long)vaddr;
+    }
+
+    /* MAP_ANONYMOUS path */
     seL4_SetMR(0, (seL4_Word)pages);
     seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
         seL4_MessageInfo_new(83 /* PIPE_MMAP_ANON */, 0, 0, 1));
@@ -460,4 +586,19 @@ long aios_sys_mmap(va_list ap) {
     long vaddr = (long)seL4_GetMR(0);
     if (vaddr == 0) return -ENOMEM;
     return vaddr;
+}
+
+/* v0.4.144: msync -- write a MAP_SHARED + writable file mapping back to disk.
+ * MAP_PRIVATE, read-only, and anonymous mappings are no-ops. Whole-region
+ * write-back (no per-page dirty tracking in v1); the (addr, length) sub-range
+ * is treated as a flush of the whole containing mapping. */
+long aios_sys_msync(va_list ap) {
+    void *addr = va_arg(ap, void *);
+    size_t length = va_arg(ap, size_t);
+    int flags = va_arg(ap, int);
+    (void)length; (void)flags;
+    aios_file_mmap_t *m = file_mmap_find((uintptr_t)addr);
+    if (!m) return 0;          /* not a tracked file mapping -- nothing to sync */
+    if (file_mmap_writeback(m) != 0) return -EIO;
+    return 0;
 }

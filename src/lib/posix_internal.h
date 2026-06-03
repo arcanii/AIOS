@@ -350,6 +350,8 @@ long aios_sys_mprotect(va_list ap);
 long aios_sys_mmap(va_list ap);
 /* v0.4.128: real munmap via pipe_server IPC */
 long aios_sys_munmap(va_list ap);
+/* v0.4.144: msync write-back for file-backed mmap */
+long aios_sys_msync(va_list ap);
 
 /* v0.4.64: dash prerequisites */
 long aios_sys_setpgid(va_list ap);

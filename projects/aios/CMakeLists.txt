@@ -89,6 +89,7 @@ AiosPosixApp(test_smp)
 AiosPosixApp(test_pipe_rw)
 AiosPosixApp(test_hw)
 AiosPosixApp(test_mprotect)
+AiosPosixApp(test_mmap)
 AiosPosixApp(test_ftruncate)
 AiosPosixApp(hwinfo)
 

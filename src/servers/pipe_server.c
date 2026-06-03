@@ -328,6 +328,108 @@ static int mint_pipe_fault_ep(int child_idx, vka_object_t *out) {
     return 0;
 }
 
+/* v0.4.145: file-backed mmap (server-side fill / msync write-back). A child
+ * page frame is mapped into the child vspace only, so to read or write its
+ * bytes from the root we CNode_Copy the frame cap and map the copy into the
+ * root vspace (a frame cap maps into one vspace at a time). This mirrors the
+ * fork.c bounce-copy pattern. file_bounce_map returns ok=0 on any failure;
+ * callers then skip that page (a missing fill page just stays zero). */
+typedef struct { void *rptr; cspacepath_t dup; int ok; } file_bounce_t;
+
+static file_bounce_t file_bounce_map(int ci, uintptr_t cva) {
+    file_bounce_t b;
+    b.rptr = NULL; b.ok = 0;
+    seL4_CPtr ccap = vspace_get_cap(&active_procs[ci].proc.vspace, (void *)cva);
+    if (ccap == seL4_CapNull) return b;
+    cspacepath_t src;
+    vka_cspace_make_path(&vka, ccap, &src);
+    if (vka_cspace_alloc_path(&vka, &b.dup) != 0) return b;
+    if (seL4_CNode_Copy(b.dup.root, b.dup.capPtr, b.dup.capDepth,
+                        src.root, src.capPtr, src.capDepth, seL4_AllRights) != 0) {
+        vka_cspace_free(&vka, b.dup.capPtr);
+        return b;
+    }
+    b.rptr = vspace_map_pages(&vspace, &b.dup.capPtr, NULL,
+                              seL4_AllRights, 1, seL4_PageBits, 1);
+    if (!b.rptr) {
+        seL4_CNode_Delete(b.dup.root, b.dup.capPtr, b.dup.capDepth);
+        vka_cspace_free(&vka, b.dup.capPtr);
+        return b;
+    }
+    b.ok = 1;
+    return b;
+}
+
+static void file_bounce_unmap(file_bounce_t *b) {
+    if (!b->ok) return;
+    vspace_unmap_pages(&vspace, b->rptr, 1, seL4_PageBits, NULL);
+    seL4_CNode_Delete(b->dup.root, b->dup.capPtr, b->dup.capDepth);
+    vka_cspace_free(&vka, b->dup.capPtr);
+    b->ok = 0;
+}
+
+/* v0.4.146: demand-paged file-backed mmap descriptors (architecture B). Kept
+ * file-local here (NOT in active_proc_t) to avoid shifting the root task BSS
+ * layout. handle_file_mmap_fault is called from both fault handlers (this file
+ * and exec_server.c) -- a fault address inside a registered range allocates a
+ * frame into the reservation and fills it from the file with vfs_pread (direct
+ * MMIO block read, no nested IPC, so the fault reply cap is safe). */
+#define MAX_FILE_VMAS 16
+typedef struct {
+    int       active;
+    int       ci;
+    uintptr_t va_start;
+    uintptr_t va_end;     /* exclusive */
+    long      offset;
+    void     *reservation;
+    char      path[128];
+} file_vma_t;
+static file_vma_t file_vmas[MAX_FILE_VMAS];
+
+static file_vma_t *file_vma_find(int ci, uintptr_t va) {
+    for (int i = 0; i < MAX_FILE_VMAS; i++) {
+        file_vma_t *v = &file_vmas[i];
+        if (v->active && v->ci == ci && va >= v->va_start && va < v->va_end)
+            return v;
+    }
+    return NULL;
+}
+
+/* Clear all descriptors for a process slot on teardown/reuse (mirrors
+ * cow_clear_proc). Does NOT free the reservation -- the vspace tear-down owns
+ * it by then; PIPE_MUNMAP_FILE is the path that frees a live reservation. */
+void clear_file_vmas(int ci) {
+    for (int i = 0; i < MAX_FILE_VMAS; i++)
+        if (file_vmas[i].active && file_vmas[i].ci == ci)
+            file_vmas[i].active = 0;
+}
+
+/* Returns 1 if the fault was a file-mmap page (filled + ready to resume),
+ * 0 if the address is not in any file-mmap range, -1 on a hard error. */
+int handle_file_mmap_fault(int ci, seL4_Word fault_addr) {
+    if (ci < 0 || ci >= MAX_ACTIVE_PROCS || !active_procs[ci].active) return 0;
+    file_vma_t *v = file_vma_find(ci, (uintptr_t)fault_addr);
+    if (!v) return 0;
+    uintptr_t page_va = (uintptr_t)fault_addr & ~(uintptr_t)0xFFF;
+    if (vspace_get_cap(&active_procs[ci].proc.vspace, (void *)page_va) != seL4_CapNull)
+        return 0;  /* already mapped -- let the normal path handle it */
+    extern int vka_audit_check_headroom(int needed_pages);
+    if (vka_audit_check_headroom(1) < 0) return -1;
+    reservation_t rsv = { .res = v->reservation };
+    int merr = vspace_new_pages_at_vaddr(&active_procs[ci].proc.vspace,
+                                         (void *)page_va, 1, seL4_PageBits, rsv);
+    if (merr) return -1;
+    vka_audit_frame(VKA_SUB_OTHER, 1);
+    active_procs[ci].audit_pages_allocated++;
+    long foff = v->offset + (long)(page_va - v->va_start);
+    file_bounce_t fb = file_bounce_map(ci, page_va);
+    if (fb.ok) {
+        vfs_pread(v->path, (int)foff, (char *)fb.rptr, PAGE_SIZE);
+        file_bounce_unmap(&fb);
+    }
+    return 1;
+}
+
 void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
     seL4_CPtr ep = (seL4_CPtr)(uintptr_t)arg0;
     (void)arg1; (void)ipc_buf;
@@ -406,6 +508,14 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                             AIOS_LOG_ERROR("BSS fault: out of memory");
                         }
                         /* Fall through to handle_child_fault on failure */
+                    }
+                }
+                /* v0.4.146: file-backed mmap demand-page fault */
+                if (label == seL4_Fault_VMFault) {
+                    seL4_Word ffa = seL4_GetMR(seL4_VMFault_Addr);
+                    if (handle_file_mmap_fault(ci, ffa) > 0) {
+                        seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
+                        continue;
                     }
                 }
                 /* v0.4.110: COW write fault? promote the page in place. */
@@ -891,6 +1001,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
              * vspace tear-down sees RESERVED entries (not POPULATED) */
             cow_release_proc(ci);
             cow_clear_proc(ci);
+            clear_file_vmas(ci);  /* v0.4.146: drop stale file-mmap descriptors */
             sel4utils_destroy_process(&ap->proc, &vka);
 
             /* Free old fault ep -- minted cap vs allocated endpoint */
@@ -1480,6 +1591,149 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             seL4_SetMR(1, (seL4_Word)remapped);
             seL4_SetMR(2, (seL4_Word)skipped);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 3));
+            break;
+        }
+        case PIPE_MMAP_FILE: {
+            /* v0.4.146: file-backed mmap (architecture B -- demand-paged).
+             * Reserve the range and record a descriptor; allocate NO frames.
+             * The first touch of each page faults into handle_file_mmap_fault,
+             * which allocates a frame, fills it from the file via vfs_pread,
+             * and resumes. MR0=pages, MR1=offset, MR2=path_len, MR3+=path.
+             * Reply MR0=vaddr (0 on failure). */
+            int ci = (int)badge - 1;
+            int pages = (int)seL4_GetMR(0);
+            long foff = (long)seL4_GetMR(1);
+            int pl = (int)seL4_GetMR(2);
+            char fpath[128];
+            int fi = 0;
+            for (int m = 3; fi < pl && fi < 127; m++) {
+                seL4_Word w = seL4_GetMR(m);
+                for (int b = 0; b < 8 && fi < pl && fi < 127; b++)
+                    fpath[fi++] = (char)((w >> (b * 8)) & 0xFF);
+            }
+            fpath[fi] = 0;
+            if (ci < 0 || ci >= MAX_ACTIVE_PROCS || !active_procs[ci].active
+                || pages <= 0 || pages > 1024 || fi == 0) {
+                seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            int slot = -1;
+            for (int i = 0; i < MAX_FILE_VMAS; i++)
+                if (!file_vmas[i].active) { slot = i; break; }
+            if (slot < 0) {
+                AIOS_LOG_ERROR("MMAP_FILE: no free vma slot");
+                seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            void *vout = NULL;
+            reservation_t rsv = vspace_reserve_range(
+                &active_procs[ci].proc.vspace, (size_t)pages * PAGE_SIZE,
+                seL4_AllRights, 1, &vout);
+            if (rsv.res == NULL || vout == NULL) {
+                AIOS_LOG_ERROR("MMAP_FILE: reserve_range failed");
+                seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            file_vmas[slot].active = 1;
+            file_vmas[slot].ci = ci;
+            file_vmas[slot].va_start = (uintptr_t)vout;
+            file_vmas[slot].va_end = (uintptr_t)vout + (size_t)pages * PAGE_SIZE;
+            file_vmas[slot].offset = foff;
+            file_vmas[slot].reservation = rsv.res;
+            for (int i = 0; i < fi && i < 127; i++)
+                file_vmas[slot].path[i] = fpath[i];
+            file_vmas[slot].path[fi < 127 ? fi : 127] = 0;
+            AIOS_LOG_DEBUG_V("MMAP_FILE(lazy): pages=", (unsigned long)pages);
+            seL4_SetMR(0, (seL4_Word)vout);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        case PIPE_MUNMAP_FILE: {
+            /* v0.4.146: tear down a demand-paged file mapping -- unmap any
+             * resident pages, release the reservation, drop the descriptor.
+             * (Write-back, if needed, already happened via PIPE_MSYNC.)
+             * MR0=vaddr, MR1=pages. Reply MR0=0/-EINVAL, MR1=pages freed. */
+            int ci = (int)badge - 1;
+            uintptr_t va = (uintptr_t)seL4_GetMR(0);
+            int npages = (int)seL4_GetMR(1);
+            if (ci < 0 || ci >= MAX_ACTIVE_PROCS || !active_procs[ci].active
+                || npages <= 0 || (va & (PAGE_SIZE - 1)) != 0) {
+                seL4_SetMR(0, (seL4_Word)-22 /* -EINVAL */);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            vspace_t *cvs = &active_procs[ci].proc.vspace;
+            int unmapped = 0;
+            for (int p = 0; p < npages; p++) {
+                uintptr_t pva = va + (uintptr_t)p * PAGE_SIZE;
+                if (vspace_get_cap(cvs, (void *)pva) == seL4_CapNull) continue;
+                vspace_unmap_pages(cvs, (void *)pva, 1, seL4_PageBits, &vka);
+                unmapped++;
+            }
+            if (unmapped > 0) {
+                vka_audit_frame_release(unmapped);
+                /* These pages were counted into audit_pages_allocated when
+                 * faulted in (handle_file_mmap_fault); drop them here so the
+                 * teardown release does not double-count. */
+                if (active_procs[ci].audit_pages_allocated >= unmapped)
+                    active_procs[ci].audit_pages_allocated -= unmapped;
+                else
+                    active_procs[ci].audit_pages_allocated = 0;
+            }
+            file_vma_t *v = file_vma_find(ci, va);
+            if (v) {
+                reservation_t rsv = { .res = v->reservation };
+                vspace_free_reservation(cvs, rsv);
+                v->active = 0;
+            }
+            seL4_SetMR(0, 0);
+            seL4_SetMR(1, (seL4_Word)unmapped);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 2));
+            break;
+        }
+        case PIPE_MSYNC: {
+            /* v0.4.145: write a file-backed mapping back to disk via vfs_pwrite.
+             * Sent only for MAP_SHARED + writable maps; the client has already
+             * clamped len to the file size. MR0=vaddr, MR1=len, MR2=offset,
+             * MR3=path_len, MR4+=path. Reply MR0=0 / -EINVAL, MR1=bytes. */
+            int ci = (int)badge - 1;
+            uintptr_t va = (uintptr_t)seL4_GetMR(0);
+            int len = (int)seL4_GetMR(1);
+            long foff = (long)seL4_GetMR(2);
+            int pl = (int)seL4_GetMR(3);
+            char fpath[128];
+            int fi = 0;
+            for (int m = 4; fi < pl && fi < 127; m++) {
+                seL4_Word w = seL4_GetMR(m);
+                for (int b = 0; b < 8 && fi < pl && fi < 127; b++)
+                    fpath[fi++] = (char)((w >> (b * 8)) & 0xFF);
+            }
+            fpath[fi] = 0;
+            if (ci < 0 || ci >= MAX_ACTIVE_PROCS || !active_procs[ci].active
+                || len <= 0 || fi == 0 || (va & (PAGE_SIZE - 1)) != 0) {
+                seL4_SetMR(0, (seL4_Word)-22 /* -EINVAL */);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            int npages = (len + (int)PAGE_SIZE - 1) / (int)PAGE_SIZE;
+            int written = 0;
+            for (int p = 0; p < npages; p++) {
+                uintptr_t cva = va + (uintptr_t)p * PAGE_SIZE;
+                int pg_len = len - p * (int)PAGE_SIZE;
+                if (pg_len > (int)PAGE_SIZE) pg_len = (int)PAGE_SIZE;
+                file_bounce_t fb = file_bounce_map(ci, cva);
+                if (!fb.ok) continue;
+                int wr = vfs_pwrite(fpath, (int)(foff + (long)p * PAGE_SIZE),
+                                    (char *)fb.rptr, pg_len);
+                if (wr > 0) written += wr;
+                file_bounce_unmap(&fb);
+            }
+            seL4_SetMR(0, 0);
+            seL4_SetMR(1, (seL4_Word)written);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 2));
             break;
         }
         case PIPE_DUP_REFS: {

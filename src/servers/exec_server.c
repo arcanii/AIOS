@@ -432,6 +432,7 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
 
         /* Register in active_procs + process table */
         cow_clear_proc(ap_idx);  /* v0.4.110: zero stale COW state */
+        { extern void clear_file_vmas(int ci); clear_file_vmas(ap_idx); }  /* v0.4.146 */
         ap->active = 1;
         ap->uid = (uint32_t)(uint8_t)cwd_buf[252] | ((uint32_t)(uint8_t)cwd_buf[253] << 8);
         ap->gid = (uint32_t)(uint8_t)cwd_buf[254] | ((uint32_t)(uint8_t)cwd_buf[255] << 8);
@@ -512,6 +513,14 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
                     ap->audit_pages_allocated++;
                     seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
                     continue;  /* loop for more faults */
+                }
+                /* v0.4.146: file-backed mmap demand-page fault */
+                {
+                    extern int handle_file_mmap_fault(int ci, seL4_Word fault_addr);
+                    if (handle_file_mmap_fault(ap_idx, fault_addr) > 0) {
+                        seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
+                        continue;
+                    }
                 }
                 /* v0.4.110: COW write fault */
                 int rc = cow_handle_write_fault(ap_idx, fault_addr);

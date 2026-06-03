@@ -64,6 +64,9 @@
 #define PIPE_MMAP_ANON  83  /* v0.4.104: alloc anonymous pages, map in caller vspace */
 #define PIPE_MUNMAP_ANON 84 /* v0.4.104: unmap pages allocated via PIPE_MMAP_ANON */
 #define PIPE_MPROTECT   85  /* v0.4.126: change rights via seL4_ARM_Page_Map remap */
+#define PIPE_MMAP_FILE  86  /* v0.4.145: alloc + vfs_pread-fill file pages in caller vspace */
+#define PIPE_MSYNC      87  /* v0.4.145: write file-backed mmap pages back via vfs_pwrite */
+#define PIPE_MUNMAP_FILE 88 /* v0.4.146: free demand-paged file mmap + reservation + descriptor */
 
 /* ---- NET IPC labels (90-109) ---- */
 #define NET_SOCKET       90
