@@ -28,4 +28,9 @@ void plat_net_driver_fn(void *arg0, void *arg1, void *ipc_buf);
 /* Get hardware MAC address (6 bytes). */
 void plat_net_get_mac(uint8_t mac[6]);
 
+/* Live diagnostic hook, driven from /proc/genet (RPi4 GENET only).
+ * args is the path text after "genet" ("" = dump, ".cmd[.hexargs]" = command).
+ * Writes a human-readable report into buf; returns bytes, or -1 on bad command. */
+int genet_diag_cmd(const char *args, char *buf, int bufsize);
+
 #endif /* AIOS_NET_HAL_H */

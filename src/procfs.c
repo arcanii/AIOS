@@ -8,6 +8,11 @@
 #include "aios/cow.h"
 #include <stdio.h>
 
+#if defined(PLAT_RPI4)
+/* v0.4.156: live GENET probe exposed at /proc/genet (impl in net_genet.c). */
+int genet_diag_cmd(const char *args, char *buf, int bufsize);
+#endif
+
 proc_entry_t proc_table[PROC_MAX];
 static int next_pid = 1;
 
@@ -71,7 +76,11 @@ static int procfs_list(void *ctx, uint32_t ino, char *buf, int bufsize) {
     (void)ctx; (void)ino;
     int w = 0;
     /* List virtual files */
-    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- filehits\n", "- serverstats\n", "- cow\n", "- cmdline\n", "d self\n" };
+    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- filehits\n", "- serverstats\n", "- cow\n", "- cmdline\n",
+#if defined(PLAT_RPI4)
+        "- genet\n",
+#endif
+        "d self\n" };
     int n_entries = (int)(sizeof(entries) / sizeof(entries[0]));
     for (int i = 0; i < n_entries && w < bufsize - 1; i++) {
     
@@ -439,6 +448,16 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         extern volatile uint32_t blk_poll_renotifies;
         w += snprintf(buf + w, bufsize - w,
             "blk_read_renotifies: %u\n", (unsigned)blk_poll_renotifies);
+#if defined(PLAT_RPI4)
+    } else if (path[0] == 'g' && path[1] == 'e' && path[2] == 'n'
+            && path[3] == 'e' && path[4] == 't') {
+        /* v0.4.156: /proc/genet -- live GENET probe/poke (see net_genet.c).
+         * cat /proc/genet[.cmd[.hexargs]] -- dump / peek / poke / mr / mw /
+         * tx / reinit -- debug the RX datapath without reflashing. */
+        int gw = genet_diag_cmd(path + 5, buf, bufsize);
+        if (gw < 0) return -1;
+        w = gw;
+#endif
     } else {
         return -1;
     }

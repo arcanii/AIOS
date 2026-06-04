@@ -233,4 +233,8 @@ extern int net_dhcp_pending;   /* 1 while a lease is being acquired */
 int  net_dhcp_acquire(void);   /* 0 = bound (net_cfg_* updated), -1 = timeout */
 void net_dhcp_input(const uint8_t *p, uint32_t len, const uint8_t *src_ip);
 
+/* v0.4.158: DHCP diagnostic counters (read via /proc/genet.ip; one short line
+ * survives the lossy mini-UART). Pinpoint where DHCP fails. */
+extern int dhcp_replies, dhcp_offers, dhcp_acks, dhcp_naks, dhcp_mismatch, dhcp_bound;
+
 #endif /* AIOS_NET_H */

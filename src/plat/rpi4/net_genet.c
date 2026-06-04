@@ -19,6 +19,7 @@
  */
 #include "aios/root_shared.h"
 #include "aios/net.h"
+#include "aios/config.h"
 #include "aios/vka_audit.h"
 #include <sel4platsupport/device.h>
 #include <stdio.h>
@@ -48,9 +49,26 @@
 #define RBUF_CTRL           0x0300
 #define RBUF_ALIGN_2B       (1u << 1)   /* 2-byte alignment for IP headers */
 #define RBUF_BAD_DIS        (1u << 2)   /* discard bad frames */
+#define RBUF_TBUF_SIZE_CTRL 0x03B4      /* TBUF size control (set to 1 in reset) */
 
 /* TBUF (transmit buffer control) */
 #define TBUF_CTRL           0x0600
+
+/* EXT block -- GENET<->external PHY RGMII out-of-band control */
+#define GENET_EXT_OFF       0x0080
+#define EXT_RGMII_OOB_CTRL  (GENET_EXT_OFF + 0x0C)  /* 0x008C */
+#define RGMII_LINK          (1u << 4)
+#define OOB_DISABLE         (1u << 5)
+#define RGMII_MODE_EN       (1u << 6)
+#define ID_MODE_DIS         (1u << 16)   /* MAC internal delay off (rgmii-rxid) */
+
+/* INTRL2_0 -- CPU interrupt controller (RX/TX done, errors). Masked at boot;
+ * unmask live for IRQ bring-up via cat /proc/genet.poke.214.<bits>. */
+#define INTRL2_STAT         0x0200       /* asserted (post-mask) interrupt status */
+#define INTRL2_CLEAR        0x0208       /* write-1-to-clear */
+#define INTRL2_MASK_STATUS  0x020C       /* 1 = masked */
+#define INTRL2_MASK_SET     0x0210       /* write-1-to-mask */
+#define INTRL2_MASK_CLEAR   0x0214       /* write-1-to-unmask */
 
 /* UniMAC registers (offset 0x0800) */
 #define UMAC_BASE           0x0800
@@ -59,6 +77,7 @@
 #define UMAC_MAC1           (UMAC_BASE + 0x010)  /* MAC[1:0] */
 #define UMAC_MAX_FRAME      (UMAC_BASE + 0x014)
 #define UMAC_MDIO_CMD       (UMAC_BASE + 0x614)
+#define UMAC_TX_FLUSH       (UMAC_BASE + 0x334)  /* pulse 1 then 0 to flush TX */
 
 /* UniMAC CMD bits */
 #define CMD_TX_EN           (1u << 0)
@@ -84,46 +103,76 @@
 
 /* MIB counters (offset 0x0D00) -- not used in Phase 1 */
 
-/* GENET DMA registers (offset 0x2000 for RX, 0x4000 for TX)
- * Each DMA engine has control, status, and per-ring registers.
- * We use default queue 16 (rings 0-15 are priority queues). */
+/* ----------------------------------------------------------------
+ * GENET DMA register map (BCM2711 GENET v5)
+ *
+ * Layout corrected in v0.4.154 against the RPi4-proven U-Boot driver
+ * (drivers/net/bcmgenet.c). The previous map was wrong on every axis --
+ * descriptors past the 64KB MMIO window, control registers landing on top
+ * of descriptor 0, RX prod/cons swapped -- so the DMA engines never ran.
+ *
+ * The descriptor RAM and the DMA registers all live INSIDE the 64KB
+ * register block (genet_regs). Per direction (RX base 0x2000, TX 0x4000):
+ *   - descriptor RAM:     256 slots * 12 bytes  (we use only ring 16)
+ *   - per-ring registers: base + 256*12 + 16*0x40   (RX 0x3000, TX 0x5000)
+ *   - global DMA regs:    base + 256*12 + 17*0x40   (RX 0x3040, TX 0x5040)
+ *
+ * Descriptor START/END/READ/WRITE pointers are in 32-bit WORD units
+ * (3 words per 12-byte descriptor), not byte offsets.
+ * ---------------------------------------------------------------- */
+#define TOTAL_DESC          256         /* descriptor RAM slots per direction (HW) */
+#define DMA_DESC_SIZE       12          /* length_status + addr_lo + addr_hi */
+#define DMA_RING_SIZE       0x40        /* bytes per per-ring register set */
+#define DEFAULT_Q           16          /* default ring index (DESC_INDEX) */
 
-/* DMA control block offsets */
-#define RDMA_BASE           0x2000
-#define TDMA_BASE           0x4000
+/* Descriptor RAM (in the register block) */
+#define GENET_RX_DESC_BASE  0x2000
+#define GENET_TX_DESC_BASE  0x4000
 
-/* DMA ring config: ring 16 = default ring.
- * Ring 16 registers are at DMA_BASE + 0x10 * RING + offset.
- * But the default ring (DESC_INDEX=16) has special register layout. */
-#define DMA_RINGS           0x0200   /* offset to ring registers from DMA_BASE */
-#define DMA_RING_SIZE       0x40     /* bytes per ring register set */
+/* REG_OFF = desc_base + TOTAL_DESC*DMA_DESC_SIZE (registers follow the RAM) */
+#define RDMA_REG_OFF        (GENET_RX_DESC_BASE + TOTAL_DESC * DMA_DESC_SIZE) /* 0x2C00 */
+#define TDMA_REG_OFF        (GENET_TX_DESC_BASE + TOTAL_DESC * DMA_DESC_SIZE) /* 0x4C00 */
 
-/* DMA control register (at DMA_BASE + 0x00) */
-#define DMA_CTRL            0x00
-#define DMA_CTRL_EN         (1u << 0)
+/* Per-ring register base for the default ring 16 */
+#define RDMA_RING_BASE      (RDMA_REG_OFF + DEFAULT_Q * DMA_RING_SIZE)        /* 0x3000 */
+#define TDMA_RING_BASE      (TDMA_REG_OFF + DEFAULT_Q * DMA_RING_SIZE)        /* 0x5000 */
 
-/* DMA status register */
-#define DMA_STATUS          0x04
+/* Global DMA register base (after all 17 per-ring register sets) */
+#define DMA_RINGS_SIZE      (DMA_RING_SIZE * (DEFAULT_Q + 1))                 /* 0x440 */
+#define RDMA_CTRL_BASE      (RDMA_REG_OFF + DMA_RINGS_SIZE)                   /* 0x3040 */
+#define TDMA_CTRL_BASE      (TDMA_REG_OFF + DMA_RINGS_SIZE)                   /* 0x5040 */
 
-/* DMA SCB burst size */
-#define DMA_SCB_BURST       0x0C
+/* Per-ring register offsets. NOTE: TX and RX SWAP PROD/CONS:
+ *   TX (TDMA): CONS at 0x08 (HW updates), PROD at 0x0C (SW updates)
+ *   RX (RDMA): PROD at 0x08 (HW updates), CONS at 0x0C (SW updates) */
+#define TDMA_READ_PTR       0x00
+#define TDMA_CONS_INDEX     0x08
+#define TDMA_PROD_INDEX     0x0C
+#define RDMA_WRITE_PTR      0x00
+#define RDMA_PROD_INDEX     0x08
+#define RDMA_CONS_INDEX     0x0C
+#define DMA_RING_BUF_SIZE   0x10        /* (num_descs << 16) | buf_len */
+#define DMA_START_ADDR      0x14        /* word units */
+#define DMA_END_ADDR        0x1C        /* word units */
+#define DMA_MBUF_DONE_THR   0x24
+#define DMA_XON_XOFF_THR    0x28        /* RX flow-control threshold */
+#define TDMA_FLOW_PERIOD    0x28
+#define TDMA_WRITE_PTR      0x2C
+#define RDMA_READ_PTR       0x2C
 
-/* Ring 16 (default) register offsets from DMA_BASE + DMA_RINGS + 16*DMA_RING_SIZE */
-#define DMA_RING16_OFF      (DMA_RINGS + 16 * DMA_RING_SIZE)
+/* Global DMA register offsets (from *_CTRL_BASE) */
+#define DMA_RING_CFG        0x00        /* per-ring enable: 1 << ring_index */
+#define DMA_CTRL            0x04
+#define DMA_SCB_BURST_SIZE  0x0C
 
-/* Per-ring registers (offset from ring base) */
-#define RING_READ_PTR       0x00
-#define RING_READ_PTR_HI    0x04
-#define RING_CONS_INDEX     0x08
-#define RING_PROD_INDEX     0x0C
-#define RING_BUF_SIZE       0x10     /* (buf_len << 16) | ring_size */
-#define RING_START_ADDR     0x14
-#define RING_START_ADDR_HI  0x18
-#define RING_END_ADDR       0x1C
-#define RING_END_ADDR_HI    0x20
-#define RING_MBUF_DONE_THR  0x24
-#define RING_XON_XOFF_THR   0x28
-#define RING_FLOW_PERIOD    0x2C
+/* DMA_CTRL bits */
+#define DMA_EN              (1u << 0)
+#define DMA_RING_BUF_EN_SHIFT 1         /* ring i buffer enable = 1 << (i+1) */
+
+/* DMA tunables (U-Boot DMA_MAX_BURST_LENGTH, ring-size shift, FC threshold) */
+#define DMA_MAX_BURST_LENGTH 0x08
+#define DMA_RING_SIZE_SHIFT 16
+#define DMA_FC_THRESH_LO    5
 
 /* DMA descriptor format (12 bytes each) */
 struct genet_desc {
@@ -133,28 +182,15 @@ struct genet_desc {
 };
 
 /* Descriptor length_status bits */
-#define DESC_OWN            (1u << 15)  /* owned by HW */
-#define DESC_EOP            (1u << 14)  /* end of packet */
-#define DESC_SOP            (1u << 13)  /* start of packet */
-#define DESC_WRAP           (1u << 12)  /* wrap ring */
-#define DESC_CRC            (1u << 11)  /* append CRC (TX) */
+#define DESC_OWN            (1u << 15)  /* 0x8000 owned by HW (set on RX init) */
+#define DESC_EOP            (1u << 14)  /* 0x4000 end of packet */
+#define DESC_SOP            (1u << 13)  /* 0x2000 start of packet */
+#define DESC_WRAP           (1u << 12)  /* 0x1000 wrap ring */
+#define DESC_TX_CRC         (1u << 6)   /* 0x0040 append CRC (TX) */
+#define DESC_TX_QTAG_SHIFT  7           /* TX qtag field; must be 0x3F */
+#define DESC_TX_QTAG_MASK   0x3F
 #define DESC_LEN_SHIFT      16
 #define DESC_LEN_MASK       0xFFF0000u
-
-/* RX descriptor status bits */
-#define RDESC_OVFLOW        (1u << 0)
-#define RDESC_CRC_ERR       (1u << 1)
-#define RDESC_RX_ERR        (1u << 2)
-#define RDESC_NO            (1u << 3)
-#define RDESC_LG            (1u << 4)   /* frame too long */
-
-/* Descriptor ring in DMA-able memory (at 0x10000 within GENET regs) */
-#define GENET_DESC_BASE     0x10000
-
-/* TX descriptors start at GENET_DESC_BASE + 0 */
-/* RX descriptors start at GENET_DESC_BASE + 256*12 */
-#define GENET_TX_DESC_OFF   0
-#define GENET_RX_DESC_OFF   (256 * 12)
 
 /* PHY registers (MDIO) */
 #define PHY_ADDR            1   /* BCM54213 default PHY address */
@@ -203,6 +239,18 @@ static uint16_t tx_cons_idx;
 
 /* IRQ */
 static seL4_CPtr genet_irq_handler;
+
+/* v0.4.157: IRQ instrumentation -- INTRL2 is masked at boot (RX stays polled,
+ * no regression). Unmask live (poke 0x214) and watch these climb to prove the
+ * GENET RX interrupt fires before switching the driver to IRQ-driven. */
+static volatile uint32_t genet_irq_count;
+static volatile uint32_t genet_last_intstat;
+
+/* v0.4.159/162: RX IRQ-driven mode. 1 = block on the GENET IRQ (DEFAULT as of
+ * v0.4.162, verified working on HW); 0 = poll. Toggle live via /proc/genet.irqon
+ * / .irqoff -- .irqoff masks INTRL2, sets 0, and signals net_drv_ntfn to wake a
+ * blocked driver: the live escape hatch if the IRQ path ever wedges. */
+static volatile int net_rx_irq_mode = 1;
 
 /* MAC address storage */
 static uint8_t genet_mac[6];
@@ -313,8 +361,8 @@ static void read_mac_from_umac(void) {
     genet_mac[1] = (uint8_t)(mac0 >> 16);
     genet_mac[2] = (uint8_t)(mac0 >>  8);
     genet_mac[3] = (uint8_t)(mac0 >>  0);
-    genet_mac[4] = (uint8_t)(mac1 >> 24);
-    genet_mac[5] = (uint8_t)(mac1 >> 16);
+    genet_mac[4] = (uint8_t)(mac1 >> 8);   /* UMAC_MAC1 is a 16-bit field (low bits) */
+    genet_mac[5] = (uint8_t)(mac1 >> 0);
 
     /* Copy to global net_mac for stack */
     for (int i = 0; i < 6; i++) net_mac[i] = genet_mac[i];
@@ -379,79 +427,148 @@ static int dma_init(void) {
  * ring_init -- configure RX and TX default rings (ring 16)
  * ---------------------------------------------------------------- */
 static void ring_init(void) {
-    uint32_t rdma_ring = RDMA_BASE + DMA_RING16_OFF;
-    uint32_t tdma_ring = TDMA_BASE + DMA_RING16_OFF;
+    /* --- Disable both DMA engines first (U-Boot bcmgenet_disable_dma) --- */
+    GENET_W(TDMA_CTRL_BASE + DMA_CTRL,
+            GENET_R(TDMA_CTRL_BASE + DMA_CTRL) & ~DMA_EN);
+    GENET_W(RDMA_CTRL_BASE + DMA_CTRL,
+            GENET_R(RDMA_CTRL_BASE + DMA_CTRL) & ~DMA_EN);
+    GENET_W(UMAC_TX_FLUSH, 1);
+    genet_delay(10);
+    GENET_W(UMAC_TX_FLUSH, 0);
+    genet_delay(10);
 
-    /* Disable DMA engines first */
-    GENET_W(RDMA_BASE + DMA_CTRL, 0);
-    GENET_W(TDMA_BASE + DMA_CTRL, 0);
-    genet_delay(1000);
-
-    /* --- RX ring 16 (default) --- */
-    /* Descriptor addresses use the GENET internal SRAM at 0x10000.
-     * NOTE (BCM2711 GENET errata, RPi forum): RING_START_ADDR, RING_END_ADDR,
-     * RING_READ_PTR and the write pointer are WRITE-ONCE after a hard reset. If a
-     * later re-init is ever needed, write the value, read it back, and use the
-     * read-back value -- do not assume the write stuck. First init here is fine. */
-    uint32_t rx_desc_base = GENET_RX_DESC_OFF;
-    uint32_t rx_desc_end  = rx_desc_base + GENET_RX_DESCS * 12 - 1;
-
-    GENET_W(rdma_ring + RING_START_ADDR, rx_desc_base);
-    GENET_W(rdma_ring + RING_START_ADDR_HI, 0);
-    GENET_W(rdma_ring + RING_END_ADDR, rx_desc_end);
-    GENET_W(rdma_ring + RING_END_ADDR_HI, 0);
-    GENET_W(rdma_ring + RING_BUF_SIZE,
-            (GENET_PKT_BUF_SIZE << 16) | GENET_RX_DESCS);
-    GENET_W(rdma_ring + RING_READ_PTR, 0);
-    GENET_W(rdma_ring + RING_READ_PTR_HI, 0);
-    GENET_W(rdma_ring + RING_CONS_INDEX, 0);
-    GENET_W(rdma_ring + RING_PROD_INDEX, 0);
-    GENET_W(rdma_ring + RING_MBUF_DONE_THR, 1);
-    GENET_W(rdma_ring + RING_XON_XOFF_THR, (5u << 16) | 10u);
-
-    /* Set up RX descriptors pointing to DMA buffers */
+    /* ============================================================
+     * RX ring 16 (default). Descriptors live in the register block at
+     * GENET_RX_DESC_BASE; each points to a DMA buffer in DRAM. Hand every
+     * descriptor to HW (DESC_OWN) with its buffer length.
+     * ============================================================ */
     volatile struct genet_desc *rx_descs =
-        (volatile struct genet_desc *)((uintptr_t)genet_regs + GENET_DESC_BASE + GENET_RX_DESC_OFF);
-
+        (volatile struct genet_desc *)((uintptr_t)genet_regs + GENET_RX_DESC_BASE);
     for (int i = 0; i < GENET_RX_DESCS; i++) {
         uint64_t buf_pa = genet_dma_pa + GENET_RX_BUF_OFF +
                           (uint64_t)i * GENET_PKT_BUF_SIZE;
         rx_descs[i].addr_lo = (uint32_t)buf_pa;
         rx_descs[i].addr_hi = (uint32_t)(buf_pa >> 32);
-        rx_descs[i].length_status = GENET_PKT_BUF_SIZE << DESC_LEN_SHIFT;
+        rx_descs[i].length_status =
+            (GENET_PKT_BUF_SIZE << DESC_LEN_SHIFT) | DESC_OWN;
     }
     arch_dsb();
 
-    /* v0.4.153: the RX producer index is HW-owned -- it advances as the engine
-     * fills descriptors -- so initialize it to 0 (Linux/Circle do the same). The
-     * previous code wrote GENET_RX_DESCS (16), which made the driver "consume" 16
-     * empty descriptors at boot and desynced the producer so real RX was masked. */
-    rx_prod_idx = 0;
-    rx_cons_idx = 0;
-    GENET_W(rdma_ring + RING_PROD_INDEX, 0);
+    GENET_W(RDMA_CTRL_BASE + DMA_SCB_BURST_SIZE, DMA_MAX_BURST_LENGTH);
 
-    /* --- TX ring 16 (default) --- */
-    uint32_t tx_desc_base = GENET_TX_DESC_OFF;
-    uint32_t tx_desc_end  = tx_desc_base + GENET_TX_DESCS * 12 - 1;
+    /* Ring window in WORD units: [0, descs*12/4 - 1]. */
+    GENET_W(RDMA_RING_BASE + DMA_START_ADDR, 0);
+    GENET_W(RDMA_RING_BASE + RDMA_READ_PTR, 0);
+    GENET_W(RDMA_RING_BASE + RDMA_WRITE_PTR, 0);
+    GENET_W(RDMA_RING_BASE + DMA_END_ADDR,
+            GENET_RX_DESCS * DMA_DESC_SIZE / 4 - 1);
 
-    GENET_W(tdma_ring + RING_START_ADDR, tx_desc_base);
-    GENET_W(tdma_ring + RING_START_ADDR_HI, 0);
-    GENET_W(tdma_ring + RING_END_ADDR, tx_desc_end);
-    GENET_W(tdma_ring + RING_END_ADDR_HI, 0);
-    GENET_W(tdma_ring + RING_BUF_SIZE,
-            (GENET_PKT_BUF_SIZE << 16) | GENET_TX_DESCS);
-    GENET_W(tdma_ring + RING_READ_PTR, 0);
-    GENET_W(tdma_ring + RING_READ_PTR_HI, 0);
-    GENET_W(tdma_ring + RING_CONS_INDEX, 0);
-    GENET_W(tdma_ring + RING_PROD_INDEX, 0);
+    /* RX producer is HW-owned: read it, align our consumer to it, and do NOT
+     * write the producer. Indices are free-running 16-bit; descriptor index =
+     * counter % GENET_RX_DESCS (16 divides 65536 exactly). */
+    {
+        uint16_t p = (uint16_t)(GENET_R(RDMA_RING_BASE + RDMA_PROD_INDEX) & 0xFFFF);
+        GENET_W(RDMA_RING_BASE + RDMA_CONS_INDEX, p);
+        rx_prod_idx = p;
+        rx_cons_idx = p;
+    }
+    GENET_W(RDMA_RING_BASE + DMA_RING_BUF_SIZE,
+            (GENET_RX_DESCS << DMA_RING_SIZE_SHIFT) | GENET_PKT_BUF_SIZE);
+    GENET_W(RDMA_RING_BASE + DMA_XON_XOFF_THR,
+            (DMA_FC_THRESH_LO << 16) | (GENET_RX_DESCS >> 4));
+    GENET_W(RDMA_CTRL_BASE + DMA_RING_CFG, 1u << DEFAULT_Q);  /* activate ring 16 */
 
-    tx_prod_idx = 0;
-    tx_cons_idx = 0;
+    /* ============================================================
+     * TX ring 16 (default). Descriptors are filled on demand in plat_net_tx.
+     * ============================================================ */
+    GENET_W(TDMA_CTRL_BASE + DMA_SCB_BURST_SIZE, DMA_MAX_BURST_LENGTH);
 
-    /* Enable DMA engines */
-    GENET_W(RDMA_BASE + DMA_CTRL, DMA_CTRL_EN | (1u << 17));  /* ring 16 enable */
-    GENET_W(TDMA_BASE + DMA_CTRL, DMA_CTRL_EN | (1u << 17));  /* ring 16 enable */
+    GENET_W(TDMA_RING_BASE + DMA_START_ADDR, 0);
+    GENET_W(TDMA_RING_BASE + TDMA_READ_PTR, 0);
+    GENET_W(TDMA_RING_BASE + TDMA_WRITE_PTR, 0);
+    GENET_W(TDMA_RING_BASE + DMA_END_ADDR,
+            GENET_TX_DESCS * DMA_DESC_SIZE / 4 - 1);
+
+    /* TX consumer is HW-owned: read it, align our producer to it. */
+    {
+        uint16_t c = (uint16_t)(GENET_R(TDMA_RING_BASE + TDMA_CONS_INDEX) & 0xFFFF);
+        GENET_W(TDMA_RING_BASE + TDMA_PROD_INDEX, c);
+        tx_prod_idx = c;
+        tx_cons_idx = c;
+    }
+    GENET_W(TDMA_RING_BASE + DMA_MBUF_DONE_THR, 1);
+    GENET_W(TDMA_RING_BASE + TDMA_FLOW_PERIOD, 0);
+    GENET_W(TDMA_RING_BASE + DMA_RING_BUF_SIZE,
+            (GENET_TX_DESCS << DMA_RING_SIZE_SHIFT) | GENET_PKT_BUF_SIZE);
+    GENET_W(TDMA_CTRL_BASE + DMA_RING_CFG, 1u << DEFAULT_Q);  /* activate ring 16 */
+
+    /* ============================================================
+     * Enable both DMA engines: global DMA_EN + ring-16 buffer enable.
+     * RING_CFG uses bit DEFAULT_Q (16); CTRL uses bit DEFAULT_Q+1 (17).
+     * ============================================================ */
+    {
+        uint32_t dma_ctrl = (1u << (DEFAULT_Q + DMA_RING_BUF_EN_SHIFT)) | DMA_EN;
+        GENET_W(TDMA_CTRL_BASE + DMA_CTRL, dma_ctrl);
+        GENET_W(RDMA_CTRL_BASE + DMA_CTRL,
+                GENET_R(RDMA_CTRL_BASE + DMA_CTRL) | dma_ctrl);
+    }
     arch_dsb();
+}
+
+/* VC property-mailbox call (channel 8). buf_pa = VC bus address of a 16-byte-
+ * aligned tag buffer; buf = ARM pointer to read the response. From display_vc.c. */
+static int genet_mbox_call(uint64_t buf_pa, volatile uint32_t *buf) {
+    if (!dev_vcmbox_vaddr) return -1;
+    volatile uint32_t *mbox =
+        (volatile uint32_t *)((uintptr_t)dev_vcmbox_vaddr + dev_vcmbox_off);
+    uint32_t addr_ch = (uint32_t)(buf_pa & 0xFFFFFFF0u) | 8u;
+    for (int t = 0; t < 10000000; t++) {
+        arch_dmb();
+        if (!(mbox[0x18 / 4] & 0x80000000u)) break;     /* not FULL */
+    }
+    arch_dsb();
+    mbox[0x20 / 4] = addr_ch;                            /* WRITE */
+    arch_dsb();
+    for (int t = 0; t < 10000000; t++) {
+        arch_dmb();
+        if (mbox[0x18 / 4] & 0x40000000u) continue;     /* EMPTY */
+        arch_dmb();
+        if (mbox[0x00 / 4] == addr_ch)                   /* our response */
+            return (buf[1] == 0x80000000u) ? 0 : -1;
+    }
+    return -1;
+}
+
+/* v0.4.158: read the REAL board MAC via the VC firmware mailbox
+ * (PROPTAG_GET_MAC_ADDRESS) and program it into genet_mac/net_mac/UMAC. Uses a
+ * slice of the non-cacheable DMA buffer as the tag buffer (VC bus alias). Returns
+ * 0 on success; -1 on any failure (caller keeps the existing MAC). Needs genet_dma
+ * (call after dma_init). HW-confirmed: returns dc:a6:32:xx:xx:xx. */
+static int read_mac_from_mailbox(void) {
+    if (!dev_vcmbox_vaddr || !genet_dma) return -1;
+    volatile uint32_t *m = (volatile uint32_t *)(genet_dma + 0x10000);
+    uint64_t bus = (genet_dma_pa + 0x10000) | 0xC0000000ULL;
+    m[0] = 32; m[1] = 0; m[2] = 0x00010003u; m[3] = 8; m[4] = 0;
+    m[5] = 0; m[6] = 0; m[7] = 0;
+    arch_dsb();
+    if (genet_mbox_call(bus, m) != 0) return -1;
+    arch_dmb();
+    uint32_t lo = m[5], hi = m[6];
+    uint8_t mac[6] = {
+        (uint8_t)(lo & 0xFF), (uint8_t)((lo >> 8) & 0xFF),
+        (uint8_t)((lo >> 16) & 0xFF), (uint8_t)((lo >> 24) & 0xFF),
+        (uint8_t)(hi & 0xFF), (uint8_t)((hi >> 8) & 0xFF)
+    };
+    if ((mac[0]|mac[1]|mac[2]|mac[3]|mac[4]|mac[5]) == 0) return -1;
+    for (int i = 0; i < 6; i++) { genet_mac[i] = mac[i]; net_mac[i] = mac[i]; }
+    GENET_W(UMAC_MAC0, ((uint32_t)mac[0] << 24) | ((uint32_t)mac[1] << 16) |
+                       ((uint32_t)mac[2] << 8) | mac[3]);
+    /* v0.4.161: UMAC_MAC1 is a 16-bit field -- bytes 4,5 go in the LOW half
+     * (the upper 16 bits are reserved). The old <<24/<<16 packing landed them in
+     * the reserved half -> MAC1 read back 0 -> unicast RX filter was
+     * dc:a6:32:xx:00:00 -> pings (unicast) were dropped while broadcast worked. */
+    GENET_W(UMAC_MAC1, ((uint32_t)mac[4] << 8) | (uint32_t)mac[5]);
+    return 0;
 }
 
 /* ================================================================
@@ -526,8 +643,8 @@ int plat_net_init(void) {
                       ((uint32_t)genet_mac[1] << 16) |
                       ((uint32_t)genet_mac[2] <<  8) |
                       ((uint32_t)genet_mac[3]);
-        uint32_t m1 = ((uint32_t)genet_mac[4] << 24) |
-                      ((uint32_t)genet_mac[5] << 16);
+        uint32_t m1 = ((uint32_t)genet_mac[4] << 8) |
+                      ((uint32_t)genet_mac[5]);     /* MAC1 = 16-bit low field */
         GENET_W(UMAC_MAC0, m0);
         GENET_W(UMAC_MAC1, m1);
         for (int i = 0; i < 6; i++) net_mac[i] = genet_mac[i];
@@ -539,6 +656,10 @@ int plat_net_init(void) {
     /* Configure RBUF */
     GENET_W(RBUF_CTRL, RBUF_ALIGN_2B | RBUF_BAD_DIS);
 
+    /* v0.4.154: TBUF size control -- U-Boot/Linux set this in the reset path;
+     * AIOS omitted it. Required for the TX buffer engine. */
+    GENET_W(RBUF_TBUF_SIZE_CTRL, 1);
+
     /* Set port mode to external GPHY (BCM54213) */
     GENET_W(SYS_PORT_CTRL, PORT_MODE_EXT_GPHY);
 
@@ -547,11 +668,33 @@ int plat_net_init(void) {
         printf("[net] PHY init failed (continuing without link)\n");
     }
 
+    /* v0.4.155: configure the GENET<->BCM54213 RGMII link (EXT_RGMII_OOB_CTRL).
+     * AIOS never did this; U-Boot/Linux set it in adjust_link. This is the lead
+     * suspect for the v0.4.154 RX-dead/TX-works split -- RX is the RGMII timing
+     * -sensitive direction. Clear OOB_DISABLE, force RGMII_LINK + RGMII_MODE_EN;
+     * set ID_MODE_DIS because RPi4 genet is rgmii-rxid (PHY adds the RX delay, so
+     * the MAC must not add its own). */
+    {
+        uint32_t oob = GENET_R(EXT_RGMII_OOB_CTRL);
+        oob &= ~OOB_DISABLE;
+        oob |= RGMII_LINK | RGMII_MODE_EN | ID_MODE_DIS;
+        GENET_W(EXT_RGMII_OOB_CTRL, oob);
+    }
+
     /* Allocate DMA buffers */
     if (dma_init() != 0) {
         printf("[net] DMA init failed\n");
         return -1;
     }
+
+    /* v0.4.158: now that the DMA buffer exists, read the REAL board MAC from the
+     * VC firmware mailbox and override the fake fallback (so DHCP uses the real
+     * MAC). Falls back silently to whatever read_mac_from_umac set. */
+    if (read_mac_from_mailbox() == 0)
+        printf("[net] real MAC (mailbox): %02x:%02x:%02x:%02x:%02x:%02x\n",
+               net_mac[0], net_mac[1], net_mac[2], net_mac[3], net_mac[4], net_mac[5]);
+    else
+        printf("[net] mailbox MAC read failed, keeping fallback\n");
 
     /* Set up descriptor rings */
     ring_init();
@@ -601,6 +744,25 @@ int plat_net_init(void) {
                        CMD_PAD_EN | CMD_CRC_FWD);
     arch_dsb();
 
+    /* v0.4.155 diag: confirm the RX-side config actually stuck. Expect
+     * OOB with RGMII_LINK|RGMII_MODE_EN|ID_MODE_DIS set + OOB_DISABLE clear,
+     * RDMActrl/TDMActrl = 0x20001 (DMA_EN | ring16 buf-en), RDMAcfg = 0x10000. */
+    arch_dmb();
+    printf("[net] cfg: OOB=0x%x RDMActrl=0x%x RDMAcfg=0x%x TDMActrl=0x%x CMD=0x%x\n",
+           GENET_R(EXT_RGMII_OOB_CTRL),
+           GENET_R(RDMA_CTRL_BASE + DMA_CTRL),
+           GENET_R(RDMA_CTRL_BASE + DMA_RING_CFG),
+           GENET_R(TDMA_CTRL_BASE + DMA_CTRL),
+           GENET_R(UMAC_CMD));
+
+    /* v0.4.162: RX is IRQ-driven by default. Unmask GENET interrupts so RX-done
+     * wakes the driver (which blocks on the bound notification). The driver
+     * drains-then-rechecks before blocking, so the boot-time DHCP OFFER is still
+     * delivered via the IRQ path without a stall. /proc/genet.irqoff reverts. */
+    GENET_W(INTRL2_MASK_CLEAR, 0xFFFFFFFFu);
+    if (genet_irq_handler) seL4_IRQHandler_Ack(genet_irq_handler);
+    arch_dsb();
+
     net_available = 1;
     genet_initialized = 1;
 
@@ -617,11 +779,9 @@ int plat_net_tx(const uint8_t *frame, uint32_t len) {
     if (!genet_initialized || len > GENET_PKT_BUF_SIZE || len == 0)
         return -1;
 
-    uint32_t tdma_ring = TDMA_BASE + DMA_RING16_OFF;
-
-    /* Check for space in TX ring */
+    /* Check for a free descriptor (prod - cons < ring size). */
     arch_dmb();
-    uint16_t cons = (uint16_t)(GENET_R(tdma_ring + RING_CONS_INDEX) & 0xFFFF);
+    uint16_t cons = (uint16_t)(GENET_R(TDMA_RING_BASE + TDMA_CONS_INDEX) & 0xFFFF);
     if ((uint16_t)(tx_prod_idx - cons) >= GENET_TX_DESCS) {
         printf("[net] TX ring full\n");
         return -1;
@@ -629,26 +789,28 @@ int plat_net_tx(const uint8_t *frame, uint32_t len) {
 
     uint16_t idx = tx_prod_idx % GENET_TX_DESCS;
 
-    /* Copy frame to DMA buffer */
+    /* Copy frame into the (non-cacheable) DMA buffer. */
     uint8_t *buf = genet_dma + GENET_TX_BUF_OFF +
                    (uint32_t)idx * GENET_PKT_BUF_SIZE;
     memcpy(buf, frame, len);
 
-    /* Write TX descriptor */
+    /* Write the TX descriptor (in the register block at GENET_TX_DESC_BASE). */
     volatile struct genet_desc *tx_descs =
-        (volatile struct genet_desc *)((uintptr_t)genet_regs + GENET_DESC_BASE + GENET_TX_DESC_OFF);
+        (volatile struct genet_desc *)((uintptr_t)genet_regs + GENET_TX_DESC_BASE);
 
     uint64_t buf_pa = genet_dma_pa + GENET_TX_BUF_OFF +
                       (uint64_t)idx * GENET_PKT_BUF_SIZE;
     tx_descs[idx].addr_lo = (uint32_t)buf_pa;
     tx_descs[idx].addr_hi = (uint32_t)(buf_pa >> 32);
+    /* length + QTAG(0x3F) + append-CRC + SOP + EOP; HW takes it on PROD bump. */
     tx_descs[idx].length_status = (len << DESC_LEN_SHIFT) |
-                                   DESC_SOP | DESC_EOP | DESC_CRC;
+                                   (DESC_TX_QTAG_MASK << DESC_TX_QTAG_SHIFT) |
+                                   DESC_TX_CRC | DESC_SOP | DESC_EOP;
     arch_dsb();
 
-    /* Advance producer index */
+    /* Advance the producer index (tells HW to transmit). */
     tx_prod_idx++;
-    GENET_W(tdma_ring + RING_PROD_INDEX, tx_prod_idx);
+    GENET_W(TDMA_RING_BASE + TDMA_PROD_INDEX, tx_prod_idx);
 
     return 0;
 }
@@ -662,11 +824,8 @@ int plat_net_tx(const uint8_t *frame, uint32_t len) {
 void plat_net_driver_fn(void *arg0, void *arg1, void *ipc_buf) {
     (void)arg0; (void)arg1; (void)ipc_buf;
 
-    uint32_t rdma_ring = RDMA_BASE + DMA_RING16_OFF;
-    uint32_t tdma_ring = TDMA_BASE + DMA_RING16_OFF;
-
     volatile struct genet_desc *rx_descs =
-        (volatile struct genet_desc *)((uintptr_t)genet_regs + GENET_DESC_BASE + GENET_RX_DESC_OFF);
+        (volatile struct genet_desc *)((uintptr_t)genet_regs + GENET_RX_DESC_BASE);
 
     /* v0.4.153: poll the RX ring instead of waiting on the GENET IRQ. The IRQ
      * path was never proven on hardware (no frame was ever received -- DHCP got
@@ -680,8 +839,8 @@ void plat_net_driver_fn(void *arg0, void *arg1, void *ipc_buf) {
 
     while (1) {
         arch_dmb();
-        uint16_t hw_prod = (uint16_t)(GENET_R(rdma_ring + RING_PROD_INDEX) & 0xFFFF);
-        uint16_t tx_cons = (uint16_t)(GENET_R(tdma_ring + RING_CONS_INDEX) & 0xFFFF);
+        uint16_t hw_prod = (uint16_t)(GENET_R(RDMA_RING_BASE + RDMA_PROD_INDEX) & 0xFFFF);
+        uint16_t tx_cons = (uint16_t)(GENET_R(TDMA_RING_BASE + TDMA_CONS_INDEX) & 0xFFFF);
 
         /* Diagnostic: report the first index changes so we can tell whether TX
          * frames are consumed by HW (TXc -> TXp = sent) and whether RX frames
@@ -703,13 +862,8 @@ void plat_net_driver_fn(void *arg0, void *arg1, void *ipc_buf) {
             uint32_t ls = rx_descs[idx].length_status;
             uint32_t frame_len = (ls & DESC_LEN_MASK) >> DESC_LEN_SHIFT;
 
-            /* Skip error frames */
-            if (ls & (RDESC_OVFLOW | RDESC_CRC_ERR | RDESC_RX_ERR)) {
-                rx_cons_idx++;
-                continue;
-            }
-
-            /* Strip CRC (4 bytes) and 2-byte RBUF alignment padding */
+            /* Bad frames are dropped by HW (RBUF_BAD_DIS). The reported length
+             * includes the 2-byte RBUF alignment pad and the 4-byte CRC. */
             if (frame_len > 6) {
                 frame_len -= 4;  /* CRC */
                 uint8_t *src = genet_dma + GENET_RX_BUF_OFF +
@@ -731,25 +885,47 @@ void plat_net_driver_fn(void *arg0, void *arg1, void *ipc_buf) {
                 }
             }
 
-            /* Recycle descriptor */
-            uint64_t buf_pa = genet_dma_pa + GENET_RX_BUF_OFF +
-                              (uint64_t)idx * GENET_PKT_BUF_SIZE;
-            rx_descs[idx].addr_lo = (uint32_t)buf_pa;
-            rx_descs[idx].addr_hi = (uint32_t)(buf_pa >> 32);
-            rx_descs[idx].length_status = GENET_PKT_BUF_SIZE << DESC_LEN_SHIFT;
-            arch_dsb();
-
+            /* Index model: the descriptor's buffer address persists across
+             * laps, so recycling is just advancing the consumer -- no re-arm. */
             rx_cons_idx++;
         }
 
         /* Update consumer index only when we actually advanced. */
         if (rx_cons_idx != cons_before)
-            GENET_W(rdma_ring + RING_CONS_INDEX, rx_cons_idx);
+            GENET_W(RDMA_RING_BASE + RDMA_CONS_INDEX, rx_cons_idx);
+
+        /* v0.4.157/159: handle the GENET interrupt. Count + clear asserted bits
+         * and re-arm the seL4 IRQ. In poll mode (INTRL2 masked at boot) STAT reads
+         * 0 -> no-op. In IRQ mode we ack every wake to re-arm delivery. */
+        {
+            uint32_t ist = GENET_R(INTRL2_STAT);
+            if (ist) {
+                genet_last_intstat = ist;
+                GENET_W(INTRL2_CLEAR, ist);
+                genet_irq_count++;
+            }
+            if (genet_irq_handler && (ist || net_rx_irq_mode))
+                seL4_IRQHandler_Ack(genet_irq_handler);
+        }
 
         if (drained > 0)
             seL4_Signal(net_srv_ntfn_cap);
 
-        seL4_Yield();
+        /* v0.4.159/160: IRQ-driven when enabled. Block on the GENET IRQ ONLY if
+         * the ring is truly empty -- re-read the producer after clearing the IRQ.
+         * Frames that arrived during the drain had their completion IRQ cleared;
+         * without this re-check the ring fills and we deadlock waiting for an IRQ
+         * that cannot come (no free slots -> no new completion). seL4 notifications
+         * latch, so a frame arriving between this check and the Wait still wakes
+         * us -- no lost-wakeup. (NAPI-style re-check.) */
+        if (net_rx_irq_mode) {
+            arch_dmb();
+            uint16_t p2 = (uint16_t)(GENET_R(RDMA_RING_BASE + RDMA_PROD_INDEX) & 0xFFFF);
+            if (p2 == rx_cons_idx)
+                seL4_Wait(net_drv_ntfn_cap, NULL);
+        } else {
+            seL4_Yield();
+        }
     }
 }
 
@@ -758,4 +934,195 @@ void plat_net_driver_fn(void *arg0, void *arg1, void *ipc_buf) {
  * ================================================================ */
 void plat_net_get_mac(uint8_t mac[6]) {
     for (int i = 0; i < 6; i++) mac[i] = genet_mac[i];
+}
+
+/* ================================================================
+ * Live diagnostic interface -- driven from /proc/genet so the GENET
+ * datapath can be probed AND poked from the AIOS shell WITHOUT reflashing.
+ * Each `cat` triggers exactly one read (one FS_CAT), so commands run once.
+ *
+ *   cat /proc/genet                 full register / ring / PHY snapshot
+ *   cat /proc/genet.peek.OFF        read MMIO reg at byte offset OFF
+ *   cat /proc/genet.poke.OFF.VAL    write VAL to reg OFF (+ readback)
+ *   cat /proc/genet.mr.PHY.REG      MDIO read PHY register
+ *   cat /proc/genet.mw.PHY.REG.VAL  MDIO write PHY register (+ readback)
+ *   cat /proc/genet.tx              send one broadcast test frame
+ *   cat /proc/genet.reinit          re-run ring_init (re-apply DMA setup)
+ *
+ * All numbers hex. Wired into src/procfs.c (PLAT_RPI4). poke/tx/reinit
+ * race the net driver/stack -- fine for interactive bring-up, not prod.
+ * ================================================================ */
+static int diag_pfx(const char **pp, const char *s) {
+    const char *p = *pp;
+    while (*s) { if (*p != *s) return 0; p++; s++; }
+    *pp = p;
+    return 1;
+}
+
+static uint32_t diag_hex(const char **pp) {
+    const char *p = *pp;
+    uint32_t v = 0;
+    if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) p += 2;
+    for (;;) {
+        char c = *p; uint32_t d;
+        if (c >= '0' && c <= '9') d = (uint32_t)(c - '0');
+        else if (c >= 'a' && c <= 'f') d = (uint32_t)(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') d = (uint32_t)(c - 'A' + 10);
+        else break;
+        v = v * 16u + d; p++;
+    }
+    if (*p == '.') p++;   /* consume separator */
+    *pp = p;
+    return v;
+}
+
+static uint32_t diag_peek(uint32_t off) {
+    if (off >= 0x10000) return 0xDEADBEEFu;
+    arch_dmb();
+    return GENET_R(off & ~3u);
+}
+
+static uint32_t diag_poke(uint32_t off, uint32_t val) {
+    if (off >= 0x10000) return 0xDEADBEEFu;
+    GENET_W(off & ~3u, val);
+    arch_dmb();
+    return GENET_R(off & ~3u);
+}
+
+static int diag_tx_test(void) {
+    /* 60-byte broadcast ARP request (sender = our MAC) to exercise TX. */
+    uint8_t f[60];
+    memset(f, 0, sizeof(f));
+    for (int i = 0; i < 6; i++) { f[i] = 0xFF; f[6 + i] = genet_mac[i]; }
+    f[12] = 0x08; f[13] = 0x06;                       /* ethertype ARP */
+    f[14] = 0x00; f[15] = 0x01;                       /* HW type ethernet */
+    f[16] = 0x08; f[17] = 0x00;                       /* proto IPv4 */
+    f[18] = 6; f[19] = 4; f[20] = 0x00; f[21] = 0x01; /* request */
+    for (int i = 0; i < 6; i++) f[22 + i] = genet_mac[i];
+    return plat_net_tx(f, sizeof(f));
+}
+
+static int diag_dump(char *buf, int bufsize) {
+    arch_dmb();
+    int w = 0;
+    uint16_t bmcr = mdio_read(PHY_ADDR, MII_BMCR);
+    uint16_t bmsr = mdio_read(PHY_ADDR, MII_BMSR);
+    w += snprintf(buf + w, bufsize - w,
+        "GENET diag (hex). cmds: .peek.OFF .poke.OFF.VAL .mr.P.R .mw.P.R.V .tx .reinit\n");
+    w += snprintf(buf + w, bufsize - w,
+        "SYS  rev=%08x port=%x rbufflush=%x  EXT oob(8c)=%x  RBUF ctrl(300)=%x\n",
+        GENET_R(SYS_REV_CTRL), GENET_R(SYS_PORT_CTRL),
+        GENET_R(SYS_RBUF_FLUSH_CTRL), GENET_R(EXT_RGMII_OOB_CTRL), GENET_R(RBUF_CTRL));
+    w += snprintf(buf + w, bufsize - w,
+        "UMAC cmd(808)=%x mac=%02x%02x%02x%02x%02x%02x\n",
+        GENET_R(UMAC_CMD), genet_mac[0], genet_mac[1], genet_mac[2],
+        genet_mac[3], genet_mac[4], genet_mac[5]);
+    w += snprintf(buf + w, bufsize - w,
+        "RDMA ctrl(3044)=%x cfg(3040)=%x scb(304c)=%x  prod(08)=%x cons(0c)=%x start=%x end=%x bufsz=%x\n",
+        GENET_R(RDMA_CTRL_BASE + DMA_CTRL), GENET_R(RDMA_CTRL_BASE + DMA_RING_CFG),
+        GENET_R(RDMA_CTRL_BASE + DMA_SCB_BURST_SIZE),
+        GENET_R(RDMA_RING_BASE + RDMA_PROD_INDEX), GENET_R(RDMA_RING_BASE + RDMA_CONS_INDEX),
+        GENET_R(RDMA_RING_BASE + DMA_START_ADDR), GENET_R(RDMA_RING_BASE + DMA_END_ADDR),
+        GENET_R(RDMA_RING_BASE + DMA_RING_BUF_SIZE));
+    w += snprintf(buf + w, bufsize - w,
+        "TDMA ctrl(5044)=%x cfg(5040)=%x  prod(0c)=%x cons(08)=%x\n",
+        GENET_R(TDMA_CTRL_BASE + DMA_CTRL), GENET_R(TDMA_CTRL_BASE + DMA_RING_CFG),
+        GENET_R(TDMA_RING_BASE + TDMA_PROD_INDEX), GENET_R(TDMA_RING_BASE + TDMA_CONS_INDEX));
+    w += snprintf(buf + w, bufsize - w,
+        "SW   rxc=%x txp=%x net_avail=%d  RXdesc.ls:",
+        rx_cons_idx, tx_prod_idx, net_available);
+    volatile struct genet_desc *rd =
+        (volatile struct genet_desc *)((uintptr_t)genet_regs + GENET_RX_DESC_BASE);
+    for (int i = 0; i < 8 && i < GENET_RX_DESCS; i++)
+        w += snprintf(buf + w, bufsize - w, " %x", rd[i].length_status);
+    w += snprintf(buf + w, bufsize - w,
+        "\nPHY  bmcr=%x bmsr=%x link=%d\n", bmcr, bmsr, (bmsr & BMSR_LINK) ? 1 : 0);
+    w += snprintf(buf + w, bufsize - w,
+        "IRQ  count=%x laststat=%x mask(20c)=%x  (.mac reads real MAC; unmask IRQ: poke.214.<bits>)\n",
+        genet_irq_count, genet_last_intstat, GENET_R(INTRL2_MASK_STATUS));
+    return w;
+}
+
+int genet_diag_cmd(const char *args, char *buf, int bufsize) {
+    if (!genet_regs)
+        return snprintf(buf, bufsize, "GENET not present/initialized\n");
+    if (args[0] == '\0')
+        return diag_dump(buf, bufsize);
+    if (args[0] != '.')
+        return -1;
+    const char *p = args + 1;
+
+    if (diag_pfx(&p, "peek.")) {
+        uint32_t off = diag_hex(&p);
+        return snprintf(buf, bufsize, "[%05x] = %08x\n", off, diag_peek(off));
+    }
+    if (diag_pfx(&p, "poke.")) {
+        uint32_t off = diag_hex(&p);
+        uint32_t val = diag_hex(&p);
+        uint32_t rb = diag_poke(off, val);
+        return snprintf(buf, bufsize, "[%05x] <= %08x  readback %08x\n", off, val, rb);
+    }
+    if (diag_pfx(&p, "mr.")) {
+        int phy = (int)diag_hex(&p);
+        int reg = (int)diag_hex(&p);
+        return snprintf(buf, bufsize, "mdio phy %x reg %x = %04x\n",
+                        phy, reg, mdio_read(phy & 0x1f, reg & 0x1f));
+    }
+    if (diag_pfx(&p, "mw.")) {
+        int phy = (int)diag_hex(&p);
+        int reg = (int)diag_hex(&p);
+        uint16_t val = (uint16_t)diag_hex(&p);
+        mdio_write(phy & 0x1f, reg & 0x1f, val);
+        return snprintf(buf, bufsize, "mdio phy %x reg %x <= %04x  readback %04x\n",
+                        phy, reg, val, mdio_read(phy & 0x1f, reg & 0x1f));
+    }
+    if (diag_pfx(&p, "tx")) {
+        int r = diag_tx_test();
+        arch_dmb();
+        return snprintf(buf, bufsize, "tx ret=%d  txp=%x txc=%x\n", r, tx_prod_idx,
+                        (uint16_t)(GENET_R(TDMA_RING_BASE + TDMA_CONS_INDEX) & 0xFFFF));
+    }
+    if (diag_pfx(&p, "reinit")) {
+        ring_init();
+        return snprintf(buf, bufsize, "ring_init re-run\n");
+    }
+    if (diag_pfx(&p, "mac")) {
+        int r = read_mac_from_mailbox();
+        return snprintf(buf, bufsize,
+            "mac read ret=%d -> %02x:%02x:%02x:%02x:%02x:%02x\n", r,
+            genet_mac[0], genet_mac[1], genet_mac[2],
+            genet_mac[3], genet_mac[4], genet_mac[5]);
+    }
+    if (diag_pfx(&p, "ip")) {
+        /* One short line (survives the lossy mini-UART): MAC, net config, RX
+         * producer index, IRQ count, and the DHCP failure-mode counters. After a
+         * boot: bnd=1 + a real ip=... means a lease; bnd=0 + rep=0 means no DHCP
+         * replies reached us; off=0/ack=0/mis>0 localize the rest. */
+        arch_dmb();
+        uint16_t rxp = (uint16_t)(GENET_R(RDMA_RING_BASE + RDMA_PROD_INDEX) & 0xFFFF);
+        return snprintf(buf, bufsize,
+            "mac=%02x%02x%02x%02x%02x%02x ip=%d.%d.%d.%d gw=%d.%d.%d.%d bnd=%d "
+            "rxp=%x irq=%x rep=%d off=%d ack=%d mis=%d\n",
+            genet_mac[0], genet_mac[1], genet_mac[2],
+            genet_mac[3], genet_mac[4], genet_mac[5],
+            net_cfg_ip[0], net_cfg_ip[1], net_cfg_ip[2], net_cfg_ip[3],
+            net_cfg_gw[0], net_cfg_gw[1], net_cfg_gw[2], net_cfg_gw[3],
+            dhcp_bound, rxp, genet_irq_count,
+            dhcp_replies, dhcp_offers, dhcp_acks, dhcp_mismatch);
+    }
+    if (diag_pfx(&p, "irqon")) {
+        GENET_W(INTRL2_MASK_CLEAR, 0xFFFFFFFFu);   /* unmask all GENET interrupts */
+        if (genet_irq_handler) seL4_IRQHandler_Ack(genet_irq_handler);
+        net_rx_irq_mode = 1;
+        return snprintf(buf, bufsize,
+            "RX IRQ-driven ON: INTRL2 unmasked, driver blocks on IRQ. "
+            "Check .ip rxp keeps climbing; .irqoff reverts.\n");
+    }
+    if (diag_pfx(&p, "irqoff")) {
+        GENET_W(INTRL2_MASK_SET, 0xFFFFFFFFu);     /* mask all GENET interrupts */
+        net_rx_irq_mode = 0;
+        seL4_Signal(net_drv_ntfn_cap);             /* wake the driver if blocked */
+        return snprintf(buf, bufsize, "RX IRQ-driven OFF: polling, driver woken.\n");
+    }
+    return -1;
 }

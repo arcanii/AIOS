@@ -45,6 +45,17 @@
 
 int net_dhcp_pending;            /* read by net_stack.c handle_ipv4 / handle_udp */
 
+/* v0.4.158: diagnostic counters -- read in ONE short line via /proc/genet.ip,
+ * which survives the lossy RPi4 mini-UART (multi-line dumps fragment). They show
+ * exactly where DHCP breaks: repl=0 (no replies reach us), off=0 (no OFFER),
+ * ack=0 (OFFER but no ACK), mism>0 (xid mismatch). */
+int dhcp_replies;
+int dhcp_offers;
+int dhcp_acks;
+int dhcp_naks;
+int dhcp_mismatch;
+int dhcp_bound;
+
 static int      dhcp_state;      /* 0 idle, 1 discover sent, 2 request sent, 3 bound */
 static uint32_t dhcp_xid;
 static uint8_t  dhcp_yiaddr[4];  /* offered IP */
@@ -120,9 +131,14 @@ void net_dhcp_input(const uint8_t *p, uint32_t len, const uint8_t *src_ip) {
     (void)src_ip;
     if (!net_dhcp_pending || len < 240) return;
     if (p[0] != BOOTREPLY) return;
+    dhcp_replies++;
     uint32_t xid = ((uint32_t)p[4] << 24) | ((uint32_t)p[5] << 16) |
                    ((uint32_t)p[6] << 8) | p[7];
-    if (xid != dhcp_xid) return;
+    /* v0.4.157 diag: log every BOOTP reply so we can see on the wire whether
+     * the server OFFERs and whether the xid matches (the suspected failure). */
+    printf("[net] DHCP reply xid=%08x ours=%08x%s\n",
+           xid, dhcp_xid, (xid != dhcp_xid) ? " MISMATCH" : "");
+    if (xid != dhcp_xid) { dhcp_mismatch++; return; }
     if (!(p[236] == 0x63 && p[237] == 0x82 && p[238] == 0x53 && p[239] == 0x63)) return;
 
     uint8_t msgtype = 0, r_router[4], r_mask[4], r_server[4];
@@ -143,6 +159,7 @@ void net_dhcp_input(const uint8_t *p, uint32_t len, const uint8_t *src_ip) {
     }
 
     if (msgtype == DHCPOFFER && dhcp_state == 1) {
+        dhcp_offers++;
         for (int k = 0; k < 4; k++) dhcp_yiaddr[k] = p[16 + k];   /* yiaddr */
         if (g_server) for (int k=0;k<4;k++) dhcp_server[k] = r_server[k];
         if (g_router) { for (int k=0;k<4;k++) dhcp_router[k]=r_router[k]; have_router=1; }
@@ -153,6 +170,7 @@ void net_dhcp_input(const uint8_t *p, uint32_t len, const uint8_t *src_ip) {
         dhcp_send(DHCPREQUEST);
         dhcp_state = 2;
     } else if (msgtype == DHCPACK && dhcp_state == 2) {
+        dhcp_acks++; dhcp_bound = 1;
         for (int k = 0; k < 4; k++) net_cfg_ip[k] = p[16 + k];   /* yiaddr from ACK */
         if (have_router) for (int k=0;k<4;k++) net_cfg_gw[k]   = dhcp_router[k];
         if (have_mask)   for (int k=0;k<4;k++) net_cfg_mask[k] = dhcp_mask[k];
@@ -162,6 +180,7 @@ void net_dhcp_input(const uint8_t *p, uint32_t len, const uint8_t *src_ip) {
                net_cfg_gw[0], net_cfg_gw[1], net_cfg_gw[2], net_cfg_gw[3],
                net_cfg_mask[0], net_cfg_mask[1], net_cfg_mask[2], net_cfg_mask[3]);
     } else if (msgtype == DHCPNAK) {
+        dhcp_naks++;
         printf("[net] DHCP NAK; will retry\n");
         dhcp_state = 0;
     }
@@ -189,9 +208,13 @@ int net_dhcp_acquire(void) {
     have_router = have_mask = 0;
     net_dhcp_pending = 1;
 
-    const int ATTEMPTS = 4;
+    /* v0.4.157: DHCP retransmissions MUST reuse the SAME xid (RFC 2131). The
+     * old code did dhcp_xid++ per attempt, so an OFFER that arrived a beat late
+     * (in the next attempt window) failed the xid check in net_dhcp_input and
+     * was dropped -> never bound. SLIRP replies instantly (same window) so QEMU
+     * worked; a real router lost the race. One xid per acquire; more attempts. */
+    const int ATTEMPTS = 8;
     for (int a = 0; a < ATTEMPTS && dhcp_state != 3; a++) {
-        dhcp_xid++;
         dhcp_state = 1;
         dhcp_send(DHCPDISCOVER);
         uint64_t deadline = read_cntpct() + freq;   /* ~1 second */
@@ -202,5 +225,11 @@ int net_dhcp_acquire(void) {
     }
 
     net_dhcp_pending = 0;
+    dhcp_bound = (dhcp_state == 3) ? 1 : 0;
+    /* v0.4.158: one concise result line -- short enough to survive the lossy
+     * RPi4 mini-UART (the multi-line OFFER/ACK exchange fragments). */
+    printf("[net] DHCP result: bound=%d ip=%d.%d.%d.%d repl=%d off=%d ack=%d mism=%d\n",
+           dhcp_bound, net_cfg_ip[0], net_cfg_ip[1], net_cfg_ip[2], net_cfg_ip[3],
+           dhcp_replies, dhcp_offers, dhcp_acks, dhcp_mismatch);
     return (dhcp_state == 3) ? 0 : -1;
 }
