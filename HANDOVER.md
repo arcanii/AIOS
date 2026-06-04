@@ -10,14 +10,36 @@ latest `docs/NEXT_*.md` for deeper background.
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4
 * **Repo**: `~/Desktop/github_repos/AIOS`
-* **Branch**: `main`, currently at **v0.4.164** (network control achieved +
-  HW-verified, committed `616aa10`. See `docs/NEXT_20260604c.md`)
+* **Branch**: `main`, currently at **v0.4.165** (network control + file
+  transfer + redirect fix, all HW-verified; committed `cfead22`. See
+  `docs/NEXT_20260604c.md`)
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4)
 * **Host**: macOS Apple Silicon, cross-compile to aarch64-linux-gnu
 * **Developer**: Bryan -- prefers Python patch scripts over sed/heredocs;
   no apostrophes in C comments (zsh copy-paste breaks)
 
 ---
+
+## Where we left off (v0.4.165) -- FILE TRANSFER + REDIRECT FIX
+
+Built on the v0.4.164 network-control base; all HW-verified on the real RPi4. Committed
+`cfead22`. Record + next: **`docs/NEXT_20260604c.md`**. Three things:
+
+* **File push + pull over netconsole** (`scripts/pi_filexfer.py push|pull`, no crypto/reflash).
+  Length-framed + sha256-verified. PULL = `wc -c` + `sha256sum` + `cat` read-exactly-N-bytes;
+  PUSH = netconsole intercepts `__put <path> <len>` then reads N raw bytes into the file. HW:
+  5120-byte binary pushed integrity-OK, /proc + configs pulled. PULL of larger DISK files is
+  slow (sbase `cat` small-chunk fs reads) -- a netconsole `__get` would fix that.
+* **`2>&1` redirect fix** -- shell fd-dup redirects hung over netconsole because `close(fd 2)`
+  reset the SHARED `stdout_pipe_id` (AIOS routes fd 1+2 via one global), killing fd 1 routing
+  so output went to serial, not the pipe. close(2) now leaves it alone. See
+  `netconsole-redirect-fd-bug` memory. (libaios_posix change -> dash rebuilt.)
+* **Faster pipe SHM** -- the shared xfer page is now cacheable on BOTH ends (v0.4.164 made it
+  non-cacheable: correct but slow). Coherent on the single-core PIPT A72, HW-verified. The
+  v0.4.164 bug was the cacheability MISMATCH, not cacheable-ness.
+
+**Next:** a netconsole `__get` (fast pull); flash-over-network (needs FAT-boot-partition write);
+scp/sftp proper (needs the lost mbedTLS rebuilt). See `docs/NEXT_20260604c.md`.
 
 ## Where we left off (v0.4.163 -> v0.4.164) -- NETWORK CONTROL ACHIEVED
 
