@@ -10,11 +10,134 @@ latest `docs/NEXT_*.md` for deeper background.
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4
 * **Repo**: `~/Desktop/github_repos/AIOS`
-* **Branch**: `main`, currently at **v0.4.139**
+* **Branch**: `main`, currently at **v0.4.162** (GENET networking arc committed
+  this session; push from GitHub Desktop. See `docs/NEXT_20260604b.md`)
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4)
 * **Host**: macOS Apple Silicon, cross-compile to aarch64-linux-gnu
 * **Developer**: Bryan -- prefers Python patch scripts over sed/heredocs;
   no apostrophes in C comments (zsh copy-paste breaks)
+
+---
+
+## Where we left off (v0.4.153 -> v0.4.162) -- GENET NETWORKING COMPLETE
+
+**Full bidirectional networking on real RPi4 hardware.** GENET went from "DMA inert
+both ways" to a cold-boot DHCP lease (192.168.0.8) + bidirectional ping (0% loss,
+~4.5ms), IRQ-driven RX, real board MAC (dc:a6:32:1c:2e:e1). All HW-verified. Full
+record + the network-control roadmap: **`docs/NEXT_20260604b.md`**. Headlines:
+
+* **DMA datapath (v0.4.154)** -- rewrote the register map vs U-Boot bcmgenet:
+  descriptors in the register block (RX 0x2000 / TX 0x4000), correct ring/ctrl bases
+  (0x3000/0x5000, 0x3040/0x5040), word-unit ring addrs, SCB_BURST, RING_CFG, DESC_OWN,
+  TX QTAG+CRC, RX prod/cons de-swap. The old map put descriptors past the 64KB window
+  and control regs onto descriptor 0, so DMA never ran. TX up.
+* **RGMII (v0.4.155)** -- EXT_RGMII_OOB_CTRL config. RX up (RXp climbs to 78 on HW).
+* **/proc/genet live probe (v0.4.156)** -- dump/peek/poke/mdio/tx/reinit/ip/irq/mac.
+  The tool that let us bisect the rest with live register pokes, not a flash per attempt.
+* **DHCP (v0.4.157/158)** -- xid reuse across retransmits (RFC 2131; a real-LAN OFFER was
+  xid-rejected, QEMU SLIRP masked it) + real board MAC via VC firmware mailbox + .ip
+  one-line counters. Real-LAN lease 192.168.0.8.
+* **IRQ-driven RX (v0.4.159/160/162)** -- behind a live toggle, ring-full deadlock fixed
+  (NAPI re-check), then defaulted on. Cold-boot verified.
+* **UMAC_MAC1 packing (v0.4.161)** -- 16-bit field, bytes 4,5 in the LOW half; the old
+  high-half write left the unicast RX filter wrong -> ARP/DHCP (broadcast) worked but
+  ping (unicast) was dropped. Fixed -> ping both ways.
+
+**Next: network control** (run longer, flash less -- see `docs/NEXT_20260604b.md`). SSH
+server EXISTS (src/ssh/, port 2222) -- confirm it over GENET + auto-start it = Claude
+controls the Pi over the network, no serial. Reboot and scp/sftp are NOT implemented
+(add a BCM2711 watchdog reset; add an exec-channel / sftp subsystem).
+
+## Where we left off (v0.4.150 -> v0.4.153)
+
+Networking session: **RPi4 GENET MAC layer brought up on real hardware**, a **DHCP
+client** shipped (QEMU-proven), the serial tool fixed -- and the GENET DMA datapath
+pinned down as the remaining blocker. All code COMMITTED. Full detail + next-session
+plan: **`docs/NEXT_20260604a.md`**. Headlines:
+
+* **GENET full MAC bring-up, HW-VERIFIED (v0.4.151, `143e1ce`).** The v0.4.150 "UMAC
+  fault" was the SYS_RBUF_FLUSH_CTRL.SWINIT reset latch, not clock-gating. Clear it
+  before any UMAC access -> UMAC reachable, PHY BCM54213 link up 100Mbps FD, boots to
+  login. See `genet-umac-swinit` memory.
+* **DHCP client (v0.4.152, `e292e88`), QEMU-proven.** `src/net/net_dhcp.c` --
+  DISCOVER/OFFER/REQUEST/ACK at net_server startup, applies the lease in place, falls
+  back to static on a ~4s timeout. Leases 10.0.2.15 from QEMU SLIRP (`aios_console.py
+  qemu --net user`), then ARP+ping the gateway. See `dhcp-client` memory.
+* **Tooling (`8da5683`).** `aios_console.py` configure_serial() now falls back to
+  `stty` (the termios path EINVAL'd on this macOS host and killed the driver); added
+  `qemu --net user` (the fast QEMU net harness).
+* **GENET DMA = THE NEXT BLOCKER (v0.4.153, `42b2e31`, WIP).** MAC+PHY work but the
+  descriptor DMA engines are INERT both ways: HW diag shows TXp climbing (frames
+  queued) while TXc stays 0 (TX DMA never sends) and RXp stays 0. v0.4.153 fixed the
+  RX prod-init (16 -> 0) and switched to polling RX + datapath diagnostics. Next: port
+  the bcmgenet DMA-enable (DMA_SCB_BURST_SIZE, DMA_RING_CFG, word-unit ring addrs).
+  HARDWARE-GATED -- a flash per attempt. Plan in `docs/NEXT_20260604a.md`.
+
+## Where we left off (v0.4.144 -> v0.4.150)
+
+A very large session -- file-backed mmap, a block-read race fix, COW Step 3, and a
+**HW-verified RPi4 device-MMIO fix**. Full detail + next steps: **`docs/NEXT_20260603c.md`**.
+Several pieces are verified but **UNCOMMITTED** (push from GitHub Desktop). Headlines:
+
+* **File-backed mmap (v0.4.144-146, COMMITTED `a60a12e`).** Explored A/C/B; kept
+  demand-paged B. `mmap(MAP_SHARED/MAP_PRIVATE, fd, off)` + `msync` write-back;
+  both fault handlers fill pages via `vfs_pread`. `test_mmap` 9/9 on QEMU.
+* **Block-read hardening (v0.4.147, COMMITTED `c784577`).** virtio-blk completion
+  poll captured `used->idx` AFTER `QUEUE_NOTIFY` -> raced fast cached completions
+  under host load -> spurious `-1` on uncached reads -> spurious exec EPERM. Fixed
+  (capture before notify). **This commit BROKE build-rpi4** (procfs referenced a
+  qemu-only symbol); the fix is uncommitted in `blk_cache.c` -- commit it soon.
+* **COW Step 3 RESOLVED (v0.4.148, uncommitted).** The "post-promotion EPERM" was
+  the block-read race, NOT a COW bug -- `do_fork` always succeeded; it reproduced
+  with the gate OFF. `COW_STRIP_PARENT=1` now works (0 EPERM, parent_promotions 2,
+  strip_errs 0). The NEXT_20260503a hypothesis was wrong.
+* **RPi4 device-MMIO blocker FIXED + HW-VERIFIED (v0.4.149/150, uncommitted).**
+  GENET + display were disabled in v0.4.98 for one shared root cause: seL4 device
+  untypeds are forward-only, so peripheral MMIO must be claimed ASCENDING by paddr
+  (GENET 0xFD58 + VC mailbox 0xFE00B sit below the first-mapped GPIO/UART/eMMC).
+  Fix: `prealloc_rpi4_devices()` (new `boot_device_map.c`) maps all peripheral MMIO
+  low->high. On real RPi4: `[devmap]` maps all 5 ascending, GENET responds **rev
+  v6.0**, eMMC + ext2 work. GENET full bring-up (UMAC clock-gating) still faults ->
+  made probe-only in v0.4.150 to keep the Pi bootable; display deferred.
+  GENET/display bring-up = next, HW-gated.
+
+**Uncommitted, ready to commit:** `cow.c` (COW Step 3); `blk_cache.c` + `blk_virtio.c`
+(RPi4 build fix); `boot_device_map.c` + `device_map.h` + `aios_root.c` + `net_genet.c`
++ `blk_emmc.c` + `display_vc.c` + `CMakeLists.txt` + `version.h` (RPi4 device-map).
+**Immediate: verify the v0.4.150 checkpoint boots on the Pi (`disk/sdcard-rpi4.img`
+ready @ 23:36), then commit.**
+
+## Where we left off (v0.4.140 -> v0.4.143)
+
+The headline: the long-standing **`cat /etc/passwd | wc -l` = 0** bug (and
+`ls | wc -l`) is FIXED, verified on QEMU and on the **real RPi4 hardware**. Full
+record + seed: `docs/NEXT_20260603b.md`.
+
+* **v0.4.140** (prior session): `aios_bss_res[]` fixed a real use-after-free of
+  `bss_reservation`. Kept -- but it never affected the cat|wc symptom.
+* **v0.4.141 -> v0.4.143** (this session): the cat|wc bug was NOT demand-BSS (the
+  earlier docs mis-attributed it). It was a pipe writer/reader **EOF-ordering
+  race**: the creating shell (and the sibling reader, and the writer's own
+  redundant write-fd close) latched the pipe `write_closed` BEFORE the slow
+  fs-reading writer registered -> the reader got a premature EOF. **v0.4.143**
+  latches `write_closed` in exactly one place -- the registered writer's exit
+  (`handle_child_fault`, helper `pipe_live_writer_exists`); no close latches.
+  Builtins register via dup2/PIPE_SET_PIPES so they latch on exit too.
+  Timing-independent. Verified deterministic on QEMU --smp 4 and on the RPi4
+  single-core (cat|wc=2, ls|wc=104, seq 2000|wc=2000, multi-stage, early-exit).
+  v0.4.142 silenced the benign "Range ... not reserved" COW-in-BSS-range noise.
+* **Tooling** (committed, no version bump): `scripts/aios_console.py` now has a live
+  `watch` subcommand -- colored on-screen transcript of a session while the driver
+  runs headless (mirrors to `.aios_console.live`, gitignored). Run `watch` in your
+  own terminal.
+* **Item 1 "harden pipes under load" -- investigated, deferred.** It is a resource
+  -ceiling problem (MAX_ACTIVE_PROCS=16, VKA 8000, morecore 6MB -> ~16 procs) whose
+  failures (EPERM-on-exec, "Cannot fork", dropped pipe writes, boot storms) are
+  largely artifacts of artificial multi-QEMU host contention; single-instance and
+  real hardware work reliably. A v0.4.144 client-side pipe-write data-loss fix was
+  tried and REVERTED (busy-yield added pressure / deadlocked late readers). See
+  `docs/NEXT_20260603b.md` and BACKLOG.md "Next up". Recommended next: item 2
+  (file-backed mmap).
 
 ---
 

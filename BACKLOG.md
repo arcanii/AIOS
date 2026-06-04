@@ -7,6 +7,50 @@ they're up next.
 
 ---
 
+## Next up -- recommended order (queued 2026-06-03)
+
+Execution order set after the v0.4.143 pipe-EOF fix shipped: reliability
+first, then a clean feature, then efficiency, then the high-risk/hardware
+item. Intended to be `/schedule`-d as one-per-day sessions; recorded here so
+the order survives regardless of the scheduler.
+
+1. **Harden pipes under load -- INVESTIGATED 2026-06-03, DEFERRED (resource
+   ceiling).** Root cause is NOT the pipe path: it is a **resource ceiling** --
+   `MAX_ACTIVE_PROCS = 16` (root_shared.h, BSS-shift hazard to change), VKA pool
+   8000 pages, morecore 6 MB/proc -> ~16 concurrent procs max. Under heavy
+   concurrency the failures CASCADE: VKA/slot pressure -> PIPE_EXEC/do_fork fail
+   (EPERM / "Cannot fork") -> a reader that fails to exec leaves the writer with
+   no reader -> the writer's bytes are dropped (PIPE_WRITE `written<wlen`). 3+
+   concurrent QEMU boots also overwhelm the host. These are largely artifacts of
+   ARTIFICIAL multi-QEMU host-CPU contention; single-instance + real RPi4 work
+   reliably. A secondary, genuine pipe-write **data-loss** bug exists (client
+   advances `sent += chunk`, ignoring server `written`; 4096 ring drops overflow
+   when the reader lags). A client busy-yield fix was tried (v0.4.144) and
+   REVERTED -- it busy-spins on a full ring, adding pressure and deadlocking late
+   readers. The only safe data-loss fix is server-side NON-spinning writer
+   blocking (mirror pipe_read_blocked -> pipe_write_blocked, stash + resume on
+   drain, EPIPE on read_closed) -- but it does NOT fix the load ceiling. A real
+   "harden" needs capacity/admission work (swap, footprint reduction, careful
+   limit raising) -- large, low payoff for real use. See docs/NEXT_20260603b.md.
+   Repro: 2-3 concurrent QEMU `--smp 4` on separate disk copies (`--no-mirror`);
+   an unclean QEMU kill corrupts `disk_ext2.img` -- regenerate via mkdisk.py.
+
+2. **file-backed mmap** -- new POSIX VM feature; see the Medium-risk entry
+   below. Self-contained, QEMU-testable, no hardware. ~300 LOC.
+
+3. **COW Step 3 -- wc/shutdown post-promotion EPERM** -- efficiency win; see
+   the Medium-risk entry below. One focused session, ~30 LOC + tracing.
+
+4. **RPi4 SMP bring-up** -- re-enable SMP=4 (`settings-rpi4.cmake`
+   `KernelMaxNumNodes` 1 -> 4). v0.4.135 fell back to single-core because the
+   elfloader spin-table secondary-core bring-up hangs at the firmware->kernel
+   handoff. First make the elfloader print on the RPi4 UART, then per-core
+   boot trace. Highest risk, hardware-gated (needs the Pi + serial). See
+   `docs/SEL4_DEVInvestigation.md` item E and `feedback_rpi4_boot`; also
+   tracked in HANDOVER's active table.
+
+---
+
 ## Medium-risk
 
 ### COW Step 3 -- wc/shutdown post-promotion EPERM
