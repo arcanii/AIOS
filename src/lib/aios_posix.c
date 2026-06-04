@@ -624,6 +624,7 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     muslcsys_install_syscall(__NR_faccessat, aios_sys_faccessat);
     muslcsys_install_syscall(__NR_clock_gettime, aios_sys_clock_gettime);
     muslcsys_install_syscall(__NR_gettimeofday, aios_sys_gettimeofday);
+    muslcsys_install_syscall(__NR_settimeofday, aios_sys_settimeofday);
     muslcsys_install_syscall(__NR_nanosleep, aios_sys_nanosleep);
     muslcsys_install_syscall(__NR_getdents64, aios_sys_getdents64);
 #ifdef __NR_clone

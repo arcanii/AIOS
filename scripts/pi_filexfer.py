@@ -53,33 +53,31 @@ class NC:
 
 def pull(remote, local, host=DEFAULT_HOST):
     nc = NC(host); nc.expect(b"aios# ")
-    # NOTE: do NOT add `2>&1` -- netconsole already dup2's the child stderr to
-    # the stdout pipe, and a redundant 2>&1 re-dups the pipe fd and breaks the
-    # writer/EOF tracking, hanging the command. stderr already comes through.
-    size_out = nc.cmd("wc -c %s" % remote).decode("utf-8", "replace").split()
-    if not size_out or not size_out[0].isdigit():
-        nc.close()
-        print("pull failed: could not size %s (got %r)." % (remote, " ".join(size_out)[:80]))
-        return False
-    n = int(size_out[0])
-    sha = nc.cmd("sha256sum %s" % remote).split()[0].decode()
-    print("pi: %s = %d bytes, sha256 %s" % (remote, n, sha))
+    # sha256sum for integrity (fast -- tiny output; the bottleneck was never the
+    # file read, it was cat's small-chunk pipe writes, which __get avoids).
+    sout = nc.cmd("sha256sum %s" % remote).split()
+    sha = sout[0].decode() if sout and len(sout[0]) == 64 else None
     t0 = time.time()
-    nc.s.sendall(("cat %s\n" % remote).encode())
+    # __get: netconsole reads the file directly and streams it length-framed --
+    # "__get ok <len>\n" + <len> bytes, or "__get err <reason>\n".
+    nc.s.sendall(("__get %s\n" % remote).encode())
+    hdr = nc.expect(b"\n").decode("utf-8", "replace").strip()
+    if not hdr.startswith("__get ok"):
+        nc.close(); print("pull failed: %r" % hdr); return False
+    n = int(hdr.split()[2])
     try:
-        # cat reads disk files in small chunks (fs IPC) -- ~100s of B/s on HW,
-        # so scale the timeout generously by size. Fast files return early.
-        data = nc.read_n(n, to=max(30, n // 100 + 30))
+        data = nc.read_n(n, to=max(30, n // 2000 + 30))
     except TimeoutError as e:
-        nc.close(); print("pull failed: %s (file too large/slow for netconsole)" % e); return False
+        nc.close(); print("pull failed: %s" % e); return False
     nc.expect(b"aios# "); nc.close()
     dt = time.time() - t0
     mac = hashlib.sha256(data).hexdigest()
-    ok = (mac == sha and len(data) == n)
+    ok = (len(data) == n) and (sha is None or mac == sha)
     with open(local, "wb") as f:
         f.write(data)
-    print("pulled %d bytes -> %s in %.1fs   INTEGRITY: %s" %
-          (len(data), local, dt, "OK" if ok else "MISMATCH (%s)" % mac))
+    print("pulled %d bytes -> %s in %.1fs (%.1f KB/s)   INTEGRITY: %s" %
+          (len(data), local, dt, len(data) / max(dt, 0.01) / 1024,
+           "OK" if ok else ("MISMATCH (%s)" % mac if sha else "unverified")))
     return ok
 
 def push(local, remote, host=DEFAULT_HOST):

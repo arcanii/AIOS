@@ -176,6 +176,18 @@ static void pipe_maybe_free(int pi) {
     }
 }
 
+/* v0.4.166: wall-clock epoch offset (seconds). wall_time = uptime + offset.
+ * 0 until set via PIPE_SET_TIME (the SNTP client). aios_wall_now() gives the
+ * current wall-clock seconds for in-root-task callers (e.g. fs mtimes). */
+long aios_wall_offset_sec = 0;
+long aios_wall_now(void) {
+    uint64_t cnt, freq;
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(cnt));
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+    if (freq == 0) freq = 62500000;
+    return (long)(cnt / freq) + aios_wall_offset_sec;
+}
+
 /* v0.4.143: is there a live process registered as a WRITER of pipe pi (its
  * stdout is this pipe, recorded at PIPE_EXEC) that has not closed its write
  * end? The write end must report EOF to readers only when the actual writer
@@ -1901,6 +1913,20 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 active_procs[caller_idx].sig_pending = 0;
             }
             seL4_SetMR(0, (seL4_Word)pending);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        case PIPE_GET_TIME: {
+            /* v0.4.166: return the wall-clock epoch offset (seconds). */
+            seL4_SetMR(0, (seL4_Word)aios_wall_offset_sec);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        case PIPE_SET_TIME: {
+            /* v0.4.166: set the wall-clock epoch offset (MR0). Read it before
+             * the reply overwrites the message registers. */
+            aios_wall_offset_sec = (long)seL4_GetMR(0);
+            seL4_SetMR(0, 0);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }

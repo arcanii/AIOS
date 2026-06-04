@@ -56,6 +56,7 @@
 #include <signal.h>
 #include <time.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <netinet/in.h>
 
@@ -264,6 +265,65 @@ static void handle_put(int cfd, char *args, int *client_gone)
     }
 }
 
+/* Append a decimal number to msg at offset m, return the new offset. */
+static int append_num(char *msg, int m, long v)
+{
+    char num[24];
+    int ni = 0;
+    if (v == 0) num[ni++] = '0';
+    while (v > 0) { num[ni++] = (char)('0' + (v % 10)); v /= 10; }
+    while (ni > 0) msg[m++] = num[--ni];
+    return m;
+}
+
+/* Send a file: control line is "__get <path>". We stat for the size, then
+ * read the file ourselves in big chunks and stream it straight to the socket
+ * -- bypassing `dash -c cat` (fork + the pipe relay + cat's small-chunk
+ * writes), which is the real bottleneck for a pull. Reply is
+ * "__get ok <len>\n" then exactly <len> raw bytes (binary-safe, length-framed,
+ * like __put in reverse), or "__get err <reason>\n". This is the fast pull. */
+static void handle_get(int cfd, const char *path, int *client_gone)
+{
+    struct stat st;
+    if (stat(path, &st) < 0) {
+        write_all(cfd, "__get err stat\n", 15);
+        return;
+    }
+    long size = (long)st.st_size;
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        write_all(cfd, "__get err open\n", 15);
+        return;
+    }
+
+    char hdr[40];
+    int m = 0;
+    const char *ok = "__get ok ";
+    while (ok[m]) { hdr[m] = ok[m]; m++; }
+    m = append_num(hdr, m, size);
+    hdr[m++] = '\n';
+    if (write_all(cfd, hdr, m) < 0) {
+        *client_gone = 1;
+        close(fd);
+        return;
+    }
+
+    char buf[NETCON_BUF];
+    long remaining = size;
+    while (remaining > 0) {
+        int want = remaining < NETCON_IO ? (int)remaining : NETCON_IO;
+        int n = (int)read(fd, buf, want);
+        if (n <= 0)
+            break;                        /* short/early EOF -- client sees it via the length */
+        if (write_all(cfd, buf, n) < 0) {
+            *client_gone = 1;
+            break;
+        }
+        remaining -= n;
+    }
+    close(fd);
+}
+
 /* Serve one connected client: prompt, read a command line, run it, repeat
  * until the client types exit/quit or drops the connection. */
 static void serve_client(int cfd)
@@ -287,6 +347,10 @@ static void serve_client(int cfd)
         if (strncmp(line, "__put ", 6) == 0) {
             handle_put(cfd, line + 6, &client_gone);
             continue;                     /* file upload, not a shell command */
+        }
+        if (strncmp(line, "__get ", 6) == 0) {
+            handle_get(cfd, line + 6, &client_gone);
+            continue;                     /* fast file download              */
         }
 
         run_command(cfd, line, &client_gone);

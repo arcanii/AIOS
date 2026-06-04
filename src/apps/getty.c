@@ -287,6 +287,20 @@ int main(int argc, char *argv[]) {
             ser_puts("getty: netconsole spawn failed (network shell off)\n");
     }
 
+    /* v0.4.166: one-shot SNTP at boot to set the wall clock (the RPi4 has no
+     * RTC, so time otherwise starts at the epoch). Fork-and-forget; non-fatal
+     * if the network is not up yet -- time just stays uptime-based and sntp
+     * can be re-run by hand. */
+    {
+        pid_t tp = fork();
+        if (tp == 0) {
+            char *tp_argv[] = { (char *)"sntp", (void *)0 };
+            execv("/bin/aios/sntp", tp_argv);
+            _exit(127);
+        }
+        (void)tp;
+    }
+
     while (1) {
         uint32_t uid = 0, gid = 0, token = 0;
         char username[32];

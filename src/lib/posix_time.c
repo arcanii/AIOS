@@ -4,15 +4,30 @@
  */
 #include "posix_internal.h"
 
+/* v0.4.166: wall-clock epoch offset (seconds), so wall_time = uptime + offset.
+ * Lazily fetched from the root task (PIPE_GET_TIME) and cached. Re-query while
+ * it is still 0 (unset) so a process that asked BEFORE the SNTP sync picks up
+ * the real offset afterward; once non-zero it stays cached (a real 2020s epoch
+ * is never ~0). gettimeofday and CLOCK_REALTIME add it; CLOCK_MONOTONIC and
+ * the sleep paths stay on raw uptime. */
+static long aios_wall_offset_cache = 0;
+static long aios_wall_offset(void) {
+    if (aios_wall_offset_cache == 0 && pipe_ep) {
+        seL4_Call(pipe_ep, seL4_MessageInfo_new(89 /* PIPE_GET_TIME */, 0, 0, 0));
+        aios_wall_offset_cache = (long)seL4_GetMR(0);
+    }
+    return aios_wall_offset_cache;
+}
+
 long aios_sys_clock_gettime(va_list ap) {
     int clk_id = va_arg(ap, int);
     struct timespec *tp = va_arg(ap, struct timespec *);
-    (void)clk_id;
     uint64_t cnt, freq;
     __asm__ volatile("mrs %0, cntpct_el0" : "=r"(cnt));
     __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
     if (freq == 0) freq = 62500000;
     tp->tv_sec = (long)(cnt / freq);
+    if (clk_id == 0 /* CLOCK_REALTIME */) tp->tv_sec += aios_wall_offset();
     tp->tv_nsec = (long)((cnt % freq) * 1000000000ULL / freq);
     return 0;
 }
@@ -25,8 +40,28 @@ long aios_sys_gettimeofday(va_list ap) {
     __asm__ volatile("mrs %0, cntpct_el0" : "=r"(cnt));
     __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
     if (freq == 0) freq = 62500000;
-    tv->tv_sec = (long)(cnt / freq);
+    tv->tv_sec = (long)(cnt / freq) + aios_wall_offset();
     tv->tv_usec = (long)((cnt % freq) * 1000000ULL / freq);
+    return 0;
+}
+
+/* v0.4.166: set the wall-clock. Compute the epoch offset from the requested
+ * time minus current uptime and push it to the root task (PIPE_SET_TIME) so
+ * every process and the fs see it. Used by the SNTP client. */
+long aios_sys_settimeofday(va_list ap) {
+    const struct timeval *tv = va_arg(ap, const struct timeval *);
+    (void)va_arg(ap, void *); /* tz */
+    if (!tv) return -22 /* EINVAL */;
+    uint64_t cnt, freq;
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(cnt));
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+    if (freq == 0) freq = 62500000;
+    long offset = (long)tv->tv_sec - (long)(cnt / freq);
+    aios_wall_offset_cache = offset;
+    if (pipe_ep) {
+        seL4_SetMR(0, (seL4_Word)offset);
+        seL4_Call(pipe_ep, seL4_MessageInfo_new(90 /* PIPE_SET_TIME */, 0, 0, 1));
+    }
     return 0;
 }
 
@@ -72,7 +107,7 @@ long aios_sys_times(va_list ap)
     }
     /* Return current clock ticks (monotonic approximation) */
     struct timespec ts;
-    clock_gettime(0 /* CLOCK_MONOTONIC */, &ts);
+    clock_gettime(1 /* CLOCK_MONOTONIC -- no wall offset */, &ts);
     return (long)(ts.tv_sec * 100 + ts.tv_nsec / 10000000);
 }
 

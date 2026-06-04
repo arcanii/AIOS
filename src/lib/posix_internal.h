@@ -304,6 +304,7 @@ long aios_sys_rt_sigpending(va_list ap);
 /* ---- Syscall handlers: posix_time.c ---- */
 long aios_sys_clock_gettime(va_list ap);
 long aios_sys_gettimeofday(va_list ap);
+long aios_sys_settimeofday(va_list ap);
 long aios_sys_nanosleep(va_list ap);
 long aios_sys_times(va_list ap);
 

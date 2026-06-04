@@ -144,9 +144,18 @@ int plat_display_init(uint32_t width, uint32_t height) {
     /* v0.4.150 checkpoint: the VC mailbox MMIO now maps (prealloc_rpi4_devices,
      * see [devmap]), but full display bring-up (Phase A/B + framebuffer map) is
      * deferred to keep the Pi bootable. Re-enable when tackling the display. */
-    printf("[gpu] Display bring-up deferred (mailbox mapped)\n");
-    return -1;
+    /* v0.4.166: re-enabled. Skip the diag-stub Phase A (no longer in the boot
+     * chain -- mksdcard builds kernel8.img as relocator + seL4 only) and go
+     * straight to Phase B (VC mailbox alloc + map). The framebuffer lands in
+     * the GPU reserved region [0x3A000000,0x40000000), a device untyped SEPARATE
+     * from the peripheral block (untouched by prealloc_rpi4_devices), so the FB
+     * is the FIRST claim there -- forward from the untyped base -- avoiding the
+     * behind-the-watermark VKA case that broke the old Phase A. alloc_frame_at
+     * RETURNS an error (it does not assert), so any failure (no untyped / mailbox
+     * error) falls through to -1 and the system boots without a display. */
+    return plat_display_init_mailbox(width, height);
 
+#if 0  /* Phase A (diag-stub FB) -- retained for reference; diag stub not built */
     /* === Phase A: Map diagnostic stub framebuffer === */
 
     printf("[gpu] Phase A: reading fb_info at 0x%lx\n",
@@ -217,6 +226,7 @@ int plat_display_init(uint32_t width, uint32_t height) {
 phase_b:
     printf("[gpu] Phase A failed, trying Phase B (VC mailbox)\n");
     return plat_display_init_mailbox(width, height);
+#endif  /* Phase A */
 }
 
 /* ============================================================

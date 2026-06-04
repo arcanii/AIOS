@@ -67,6 +67,8 @@
 #define PIPE_MMAP_FILE  86  /* v0.4.145: alloc + vfs_pread-fill file pages in caller vspace */
 #define PIPE_MSYNC      87  /* v0.4.145: write file-backed mmap pages back via vfs_pwrite */
 #define PIPE_MUNMAP_FILE 88 /* v0.4.146: free demand-paged file mmap + reservation + descriptor */
+#define PIPE_GET_TIME    89 /* v0.4.166: read the wall-clock epoch offset (seconds) */
+#define PIPE_SET_TIME    90 /* v0.4.166: set the wall-clock epoch offset (e.g. from SNTP) */
 
 /* ---- NET IPC labels (90-109) ---- */
 #define NET_SOCKET       90
@@ -327,6 +329,12 @@ void crypto_server_main(void *arg0, void *arg1, void *ipc_buf);
 void boot_load_config(void);
 void aios_system_shutdown(void);
 void aios_system_reboot(void);   /* v0.4.163: BCM2711 watchdog reset (RPi4) */
+
+/* v0.4.166: wall-clock epoch offset (seconds) so wall_time = uptime + offset.
+ * 0 until set (e.g. by the SNTP client via PIPE_SET_TIME). aios_wall_now()
+ * returns current wall-clock seconds for in-root-task users (e.g. fs mtimes). */
+extern long aios_wall_offset_sec;
+long aios_wall_now(void);
 
 /* v0.4.121: server health probe (src/servers/serverstats.c) */
 void serverstats_init(void);
