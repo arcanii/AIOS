@@ -740,61 +740,54 @@ tcc /usr/include/hello.c -o /tmp/h  # native tcc with libc (v0.4.117)
 
 ## Suggested next sessions
 
-**RPi4 is now functional single-core (boots + pipes work). Top picks --
-pick one:**
+**The networking + control + file-transfer + wall-clock arc is COMPLETE and
+HW-verified (v0.4.166): drive the Pi over the LAN, reboot it, auto-recover,
+push/pull files fast, real calendar time. Top picks for next -- pick one:**
 
-1. **Re-enable RPi4 SMP** -- the main open RPi4 item. v0.4.134's SMP=4
-   hangs in the elfloader spin-table bring-up. First make the elfloader
-   print on the RPi4 UART, then per-core boot trace (item E,
-   `docs/SEL4_DEVInvestigation.md`).
-2. **Silence bug 1** -- the demand-BSS reservation race
-   (`sel4utils overlap reservations`) is now benign but spams the log
-   (~4 lines/pipe). Fixing the reservation tracking removes the noise
-   AND the underlying fragility v0.4.138 papered over. Well characterized
-   with a hardware repro via `aios_console.py`; see
-   `docs/NEXT_20260602a.md` section 3.2.
-3. **Rebuild the disk** -- getty/dash on the SD are still v0.4.134-built
-   (the boot banner shows it); rebuild sbase+dash+zsh + regenerate
-   `disk_ext2.img` for a clean v0.4.139 userspace.
+1. **Debug HDMI Phase B (VC mailbox)** -- `display_vc.c` is re-enabled and boot-safe
+   but the mailbox framebuffer alloc fails on the Pi (`[gpu] VC mailbox call failed`).
+   Phase B was never HW-tested (the old working HDMI used Phase A diag-stub). Prime
+   lead: the DMA tag buffer is passed as ARM-physical, but the VideoCore likely needs
+   the bus alias (`| 0xC0000000`) -- a one-line change + a flash, ideally with a monitor
+   connected. See `rpi4-hdmi-phaseb-mailbox` memory. Closest path to a working display.
+2. **ext2 file mtimes** -- wall-clock now exists (`aios_wall_now()` in pipe_server.c,
+   set by SNTP at boot). Wire it into `src/ext2.c` create/mkdir so `ls -l` timestamps
+   are real (the inode fields exist but are never written). Small, no flash risk.
+3. **RPi4 SMP bring-up** -- still the main open RPi4 platform item. v0.4.135's SMP=4
+   hangs in the elfloader spin-table bring-up. Make the elfloader print on the RPi4 UART,
+   then per-core boot trace (item E, `docs/SEL4_DEVInvestigation.md`). High-risk, HW-gated.
 
-(Or return to the deferred backlog: COW Step 3, file-backed mmap -- see
-BACKLOG.md.)
+**Network-control roadmap leftovers (see `docs/NEXT_20260604c.md`):**
 
-**If hardware testing is blocked, three good paths:**
+* **flash-over-network** -- scp a `kernel8.img` to the FAT boot partition + reboot. Needs
+  FAT-partition write support (AIOS mounts only ext2 today) + the existing reboot/transfer.
+* **scp/sftp proper** -- blocked on rebuilding the LOST mbedTLS (the SSH server exists).
+* **Bluetooth/HCI** -- plan in `docs/DESIGN_BLUETOOTH_HCI.md`; low priority (proprietary
+  firmware blob + needs a host stack; but the PL011 BT UART is free, so console-safe).
 
-1. **seL4 dev investigation (item A)** -- name all long-lived
-   threads via `seL4_DebugNameThread`. Pure win, no kernel patch,
-   ~1 hour. Every fault print becomes legible
-   (`"child of: 'dash@pid7'"` instead of
-   `"child of: 'rootserver'"`). See `docs/SEL4_DEVInvestigation.md`.
-
-2. **COW Step 3 wc/shutdown fix** -- mechanism is proven
-   (parent_promotions count, no kernel errors with the gate on),
-   blocker is finding which `do_fork` failure path fires
-   post-promotion. Repro is one-line (flip `COW_STRIP_PARENT` in
-   `src/process/cow.c`). Detailed plan in
-   `docs/NEXT_20260503a.md`. Item B of SEL4_DEVInvestigation
-   (verbose cap-fault dump) would directly help.
-
-3. **file-backed mmap** -- the next POSIX VM piece. Extends
-   `PIPE_MMAP_ANON` with file path + offset; fs_server reads the
-   page; caller maps. `msync` write-back is the hard bit. See
-   `BACKLOG.md`.
+**If hardware is unavailable:** the netconsole/time/`__get`/SNTP logic is
+platform-independent -- develop + QEMU-test it without the Pi (the QEMU net harness NATs
+UDP to the host, so even SNTP works). The deferred VM backlog (COW Step 3, COW Steps 4-5,
+block-cache write-back, swap) is in [BACKLOG.md](BACKLOG.md).
 
 ---
 
 ## Final notes
 
-The system is in a good place: stable boot, recovery mode, demand
-paging, accurate accounting, persistent logs, working shell + ZLE,
-TCC for simple programs. The next leap (COW fork) has a written
-plan ready to execute against.
+The system is in a strong place: stable boot on QEMU + real RPi4, demand
+paging, real GENET networking (DHCP, ping), a netconsole control channel
+(drive the Pi over the LAN -- run commands, push/pull files, reboot), real
+wall-clock time via SNTP, working shell + ZLE, TCC for simple programs. The
+"control the Pi over the network, flash less" goal is met. Drive the live Pi
+over `nc 192.168.0.8 2323` (or `scripts/pi_filexfer.py`) instead of the lossy
+mini-UART once it has booted.
 
 When in doubt:
 * Check `cat /proc/log` and `cat /var/log/aios.log` for traces
 * `cat /proc/vka` to see if memory pressure is the culprit
+* `cat /proc/genet.ip` (RPi4) for one-line network status
 * Look at `[INF]` / `[WRN]` / `[ERR]` tagged lines on serial -- the
-  module name (boot, fs, blk, exec, pipe, vka, etc.) tells you
+  module name (boot, fs, blk, exec, pipe, vka, gpu, net, etc.) tells you
   which subsystem to read
 
 Good luck.
