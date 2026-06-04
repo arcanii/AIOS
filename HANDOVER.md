@@ -10,14 +10,41 @@ latest `docs/NEXT_*.md` for deeper background.
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4
 * **Repo**: `~/Desktop/github_repos/AIOS`
-* **Branch**: `main`, currently at **v0.4.162** (GENET networking arc committed
-  this session; push from GitHub Desktop. See `docs/NEXT_20260604b.md`)
+* **Branch**: `main`, currently at **v0.4.164** (network control achieved +
+  HW-verified, committed `616aa10`. See `docs/NEXT_20260604c.md`)
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4)
 * **Host**: macOS Apple Silicon, cross-compile to aarch64-linux-gnu
 * **Developer**: Bryan -- prefers Python patch scripts over sed/heredocs;
   no apostrophes in C comments (zsh copy-paste breaks)
 
 ---
+
+## Where we left off (v0.4.163 -> v0.4.164) -- NETWORK CONTROL ACHIEVED
+
+**Drive the Pi over the LAN, reboot it over the network, auto-recover -- no serial after
+flashing.** All HW-verified on the real RPi4. Full record + next steps:
+**`docs/NEXT_20260604c.md`**. Committed `616aa10`. Headlines:
+
+* **netconsole v2** (`src/apps/netconsole.c`) -- command-per-connection plaintext TCP shell
+  (port 2323, LAN/dev only, no auth). Reads a socket line, runs `dash -c "<line>"` (runs +
+  EXITS -> clean stdout EOF), streams output back, loops. Replaces the v1 `dash -i` relay that
+  never flowed I/O on HW (no tty/line discipline). O_NONBLOCK poll + per-command timeout/SIGKILL.
+* **net_server accept backlog** -- `NET_ACCEPT` drains an already-ESTABLISHED child before
+  blocking; fixes the fast-reconnect race that capped netconsole AND sshd at one session.
+* **reboot** (BCM2711 watchdog) -- PM block 0xFE100000 mapped ascending; `aios_system_reboot()`
+  arms PM_WDOG/PM_RSTC; `reboot` + `shutdown -r` via the PIPE_SHUTDOWN reboot flag.
+* **auto-start** -- getty forks/execs netconsole once at startup (a running, post-settle
+  process). Spawning it from boot_services aborted the root server (boot-critical-path allocator
+  reclamation race) -- do NOT retry from the boot path.
+* **pipe SHM cache fix (the HW-only blocker)** -- the PIPE_MAP_SHM xfer frame was mapped
+  cacheable in pipe_server but non-cacheable in the client; on the Cortex-A72 the server's write
+  stayed in D-cache while the client read stale zeros -> netconsole output came back all-NUL.
+  Mapped both ends non-cacheable. **QEMU does not model cache attributes -- a 9/9 QEMU pass did
+  NOT catch it; only real hardware did.** See `pipe-shm-cache-coherency` memory.
+
+**Next: SCP/SFTP** (file transfer over the network) -- the last roadmap item. SSH is blocked on
+rebuilding the lost mbedTLS; a base64-over-netconsole or a plaintext file-transfer port unblocks
+it without that yak-shave. See `docs/NEXT_20260604c.md`.
 
 ## Where we left off (v0.4.153 -> v0.4.162) -- GENET NETWORKING COMPLETE
 
