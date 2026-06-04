@@ -19,11 +19,13 @@ volatile uint32_t *dev_emmc_vaddr;
 volatile uint32_t *dev_genet_vaddr;
 volatile uint32_t *dev_vcmbox_vaddr;
 uint32_t dev_vcmbox_off;
+volatile uint32_t *dev_pm_vaddr;
 
 #ifdef PLAT_RPI4
 
 #define RPI4_GPIO_PADDR 0xFE200000UL
 #define RPI4_MUART_PADDR 0xFE215000UL
+#define RPI4_PM_PADDR 0xFE100000UL     /* power management / watchdog */
 
 struct dev_req {
     uint64_t paddr;          /* page-aligned */
@@ -55,11 +57,15 @@ static void *map_dev(uint64_t paddr, int npages)
 
 void prealloc_rpi4_devices(void)
 {
-    struct dev_req reqs[5];
+    struct dev_req reqs[6];
     int n = 0;
 
     reqs[n++] = (struct dev_req){ RPI4_GPIO_PADDR,  1, &dev_gpio_vaddr, "gpio" };
     reqs[n++] = (struct dev_req){ RPI4_MUART_PADDR, 1, &dev_uart_vaddr, "uart" };
+    /* PM/watchdog block (0xFE100000) -- sits between the VC mailbox (0xFE00B)
+     * and GPIO (0xFE200000); the ascending sort places it correctly. Used by
+     * aios_system_reboot for the BCM2711 watchdog reset. */
+    reqs[n++] = (struct dev_req){ RPI4_PM_PADDR, 1, &dev_pm_vaddr, "pm" };
     if (hw_info.has_emmc)
         reqs[n++] = (struct dev_req){ hw_info.emmc_paddr & ~0xFFFUL, 1,
                                       &dev_emmc_vaddr, "emmc" };
@@ -72,7 +78,7 @@ void prealloc_rpi4_devices(void)
                                       &dev_vcmbox_vaddr, "vcmbox" };
     }
 
-    /* Insertion sort ascending by paddr (n <= 5). This ordering is the whole
+    /* Insertion sort ascending by paddr (n <= 6). This ordering is the whole
      * point -- claim low addresses before the watermark passes them. */
     for (int i = 1; i < n; i++) {
         struct dev_req k = reqs[i];

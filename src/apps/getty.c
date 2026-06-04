@@ -265,6 +265,28 @@ int main(int argc, char *argv[]) {
     ser_puts("  " AIOS_VERSION_FULL "\n");
     ser_puts("============================================\n");
 
+    /* v0.4.163: auto-start netconsole (background TCP command shell on port
+     * 2323) once, so the Pi is controllable over the LAN right after boot --
+     * no serial needed, including after a reboot. Spawned from getty (a
+     * running, post-boot-settle process) via the normal fork+exec path, the
+     * way a shell would background it; the child inherits the standard server
+     * caps (incl net) from the spawn machinery. NOT spawned from boot_services
+     * -- a back-to-back boot-time spawn there raced frame reclamation and
+     * aborted the root server. A failure here is non-fatal: login still runs.
+     * NOTE: this is an UNAUTHENTICATED root shell -- trusted LAN / dev use only. */
+    {
+        pid_t nc = fork();
+        if (nc == 0) {
+            char *nc_argv[] = { (char *)"netconsole", (void *)0 };
+            execv("/bin/netconsole", nc_argv);
+            _exit(127);
+        }
+        /* Parent: do not waitpid -- netconsole runs in the background for the
+         * whole boot session (orphaned but alive). */
+        if (nc < 0)
+            ser_puts("getty: netconsole spawn failed (network shell off)\n");
+    }
+
     while (1) {
         uint32_t uid = 0, gid = 0, token = 0;
         char username[32];

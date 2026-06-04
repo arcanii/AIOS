@@ -24,5 +24,6 @@ extern volatile uint32_t *dev_emmc_vaddr;    /* eMMC SDHCI, 1 page */
 extern volatile uint32_t *dev_genet_vaddr;   /* GENET, 16 pages (64KB) */
 extern volatile uint32_t *dev_vcmbox_vaddr;  /* VC mailbox, page base */
 extern uint32_t dev_vcmbox_off;              /* mailbox reg byte offset in page */
+extern volatile uint32_t *dev_pm_vaddr;      /* 0xFE100000, 1 page (PM/watchdog) */
 
 #endif /* AIOS_DEVICE_MAP_H */

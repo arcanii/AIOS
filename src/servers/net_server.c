@@ -224,6 +224,11 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
             seL4_CNode_Delete(seL4_CapInitThreadCNode,
                               sockets[pi].accept_blocked_cap, seL4_WordBits);
             sockets[pi].has_accept_blocked = 0;
+            /* v0.4.163: handed to a blocked accept -- mark consumed so the
+             * NET_ACCEPT backlog scan does not return it a second time. If no
+             * accept was blocked, listen_parent stays set and the connection
+             * waits in the backlog for the next accept(). */
+            s->listen_parent = -1;
         }
     }
 
@@ -452,10 +457,33 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 seL4_SetMR(0, (seL4_Word)-1);
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             } else {
-                seL4_CNode_SaveCaller(seL4_CapInitThreadCNode,
-                    accept_slots[sid], seL4_WordBits);
-                sockets[sid].accept_blocked_cap = accept_slots[sid];
-                sockets[sid].has_accept_blocked = 1;
+                /* v0.4.163: drain the accept backlog before blocking. A
+                 * connection can reach ESTABLISHED before the app re-enters
+                 * accept() -- the wake-on-handshake only fires when a caller is
+                 * already blocked. Without this scan a fast reconnect blocks
+                 * forever on an already-established socket, the limitation that
+                 * capped netconsole and sshd at one session. A pending child is
+                 * an ESTABLISHED socket whose listen_parent still points here;
+                 * clear it to -1 to mark it consumed. */
+                int pending = -1;
+                for (int i = 0; i < MAX_NET_SOCKETS; i++) {
+                    if (sockets[i].in_use && sockets[i].type == 1 &&
+                        sockets[i].state == TCP_ESTAB &&
+                        sockets[i].listen_parent == sid) {
+                        pending = i;
+                        break;
+                    }
+                }
+                if (pending >= 0) {
+                    sockets[pending].listen_parent = -1;
+                    seL4_SetMR(0, (seL4_Word)pending);
+                    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                } else {
+                    seL4_CNode_SaveCaller(seL4_CapInitThreadCNode,
+                        accept_slots[sid], seL4_WordBits);
+                    sockets[sid].accept_blocked_cap = accept_slots[sid];
+                    sockets[sid].has_accept_blocked = 1;
+                }
             }
 
         } else if (label == NET_SENDTO) {

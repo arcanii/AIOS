@@ -1323,9 +1323,18 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                     seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                     break;
                 }
+                /* v0.4.164: map the shared xfer page NON-cacheable to match
+                 * the client mapping below (PIPE_MAP_SHM maps the client copy
+                 * with cacheable=0). A mismatch is a real cache-coherency bug
+                 * on hardware: the Cortex-A72 holds the server's cacheable
+                 * write in its D-cache while the client reads straight from RAM
+                 * and sees stale zeros (netconsole returned 10 NUL bytes on the
+                 * RPi4 -- QEMU does not model this). Both ends non-cacheable =
+                 * RAM-coherent. The MR path (fd 0) was unaffected, which is why
+                 * shell pipes worked on HW but the SHM path did not. */
                 void *xm = vspace_map_pages(&vspace,
                     &pipes[pi].xfer_frame.cptr, NULL,
-                    seL4_AllRights, 1, seL4_PageBits, 1);
+                    seL4_AllRights, 1, seL4_PageBits, 0);
                 if (!xm) {
                     vka_free_object(&vka, &pipes[pi].xfer_frame);
                     seL4_SetMR(0, 0);
@@ -1893,6 +1902,9 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             break;
         }
         case PIPE_SHUTDOWN: {
+            /* MR0 = reboot flag (1 = reboot via watchdog, 0 = halt). Capture it
+             * before the reply call overwrites the message registers. */
+            int do_reboot = (int)seL4_GetMR(0);
             /* Only root (badge 0 or uid 0) can shut down */
             int shut_idx = (int)badge - 1;
             int allowed = (badge == 0);
@@ -1908,8 +1920,13 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
             seL4_SetMR(0, 0);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
-            printf("[shutdown] AIOS powering off...\n");
-            aios_system_shutdown();
+            if (do_reboot) {
+                printf("[shutdown] AIOS rebooting...\n");
+                aios_system_reboot();
+            } else {
+                printf("[shutdown] AIOS powering off...\n");
+                aios_system_shutdown();
+            }
             break;
         }
         default:

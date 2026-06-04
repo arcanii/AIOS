@@ -326,6 +326,7 @@ void crypto_server_main(void *arg0, void *arg1, void *ipc_buf);
 
 void boot_load_config(void);
 void aios_system_shutdown(void);
+void aios_system_reboot(void);   /* v0.4.163: BCM2711 watchdog reset (RPi4) */
 
 /* v0.4.121: server health probe (src/servers/serverstats.c) */
 void serverstats_init(void);

@@ -146,6 +146,46 @@ void aios_system_shutdown(void) {
     while (1) { asm volatile("wfi"); }
 }
 
+/* aios_system_reboot -- restart the board (RPi4) via the BCM2711 watchdog.
+ *
+ * The PM block (mapped at dev_pm_vaddr, paddr 0xFE100000) gates every write
+ * with PM_PASSWORD (0x5A << 24). We arm the watchdog with a short timeout,
+ * then set PM_RSTC to full-reset; the SoC resets when the watchdog expires
+ * (~150us later). This is the bcmgenet/bcm2835_wdt reset sequence. PSCI
+ * SYSTEM_RESET is not used -- it is unlikely to work from EL1 under seL4.
+ * On QEMU (no PM block) we fall back to a clean halt. */
+void aios_system_reboot(void) {
+    printf("\n");
+    printf("============================================\n");
+    printf("  AIOS reboot -- resetting board\n");
+    printf("============================================\n");
+#ifdef PLAT_RPI4
+    if (dev_pm_vaddr) {
+        /* Register byte offsets -> 32-bit word indices. */
+        const uint32_t PM_PASSWORD = 0x5A000000u;
+        const uint32_t PM_RSTC = 0x1C / 4;          /* word 7  */
+        const uint32_t PM_WDOG = 0x24 / 4;          /* word 9  */
+        const uint32_t PM_WDOG_TIME = 0x000FFFFFu;  /* timeout mask */
+        const uint32_t PM_RSTC_WRCFG_CLR = 0xFFFFFFCFu;
+        const uint32_t PM_RSTC_WRCFG_FULL_RESET = 0x00000020u;
+        volatile uint32_t *pm = dev_pm_vaddr;
+        pm[PM_WDOG] = PM_PASSWORD | (10u & PM_WDOG_TIME);
+        uint32_t rstc = pm[PM_RSTC];
+        pm[PM_RSTC] = PM_PASSWORD | (rstc & PM_RSTC_WRCFG_CLR)
+                      | PM_RSTC_WRCFG_FULL_RESET;
+        /* The watchdog fires shortly; spin until the board resets. */
+        while (1) { asm volatile("wfi"); }
+    }
+    printf("[reboot] PM block not mapped -- halting instead\n");
+#else
+    printf("[reboot] watchdog reset is RPi4 only -- halting instead\n");
+#endif
+#ifdef CONFIG_DEBUG_BUILD
+    seL4_DebugHalt();
+#endif
+    while (1) { asm volatile("wfi"); }
+}
+
 int main(int argc, char *argv[]) {
     int error;
     (void)argc; (void)argv;
