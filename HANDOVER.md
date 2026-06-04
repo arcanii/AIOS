@@ -10,8 +10,8 @@ latest `docs/NEXT_*.md` for deeper background.
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4
 * **Repo**: `~/Desktop/github_repos/AIOS`
-* **Branch**: `main`, currently at **v0.4.165** (network control + file
-  transfer + redirect fix, all HW-verified; committed `cfead22`. See
+* **Branch**: `main`, currently at **v0.4.166** (fast pull + wall-clock/SNTP +
+  HDMI re-enable; time/get HW-verified, committed `b0c5c04`. See
   `docs/NEXT_20260604c.md`)
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4)
 * **Host**: macOS Apple Silicon, cross-compile to aarch64-linux-gnu
@@ -19,6 +19,31 @@ latest `docs/NEXT_*.md` for deeper background.
   no apostrophes in C comments (zsh copy-paste breaks)
 
 ---
+
+## Where we left off (v0.4.166) -- FAST PULL, WALL-CLOCK/SNTP, HDMI re-enable
+
+Committed `b0c5c04`. time/SNTP/__get HW-verified on the real RPi4; HDMI re-enabled boot-safely
+but not yet lit. Record + next: **`docs/NEXT_20260604c.md`**.
+
+* **netconsole `__get` (fast pull)** -- netconsole reads the file itself and streams it
+  length-framed, bypassing `dash -c cat` (fork + pipe relay + cat's small-chunk writes). HW:
+  ~370 KB/s vs the old ~128 B/s; `pi_filexfer.py pull` uses it. File transfer (push+pull) is
+  now fast both ways.
+* **Wall-clock time + SNTP** -- the RPi4 has no RTC, so time was uptime (~1970). Now: a
+  wall-clock epoch offset in the root task (PIPE_GET/SET_TIME), libc adds it for
+  gettimeofday/CLOCK_REALTIME, `settimeofday` sets it. `src/apps/sntp.c` queries a public NTP
+  server over UDP (net stack routes off-subnet via the gateway -- no DNS); getty auto-runs it
+  at boot. HW: `date` shows the real 2026 date. See `aios-wall-clock-time` memory.
+* **HDMI re-enable** (RPi4) -- removed the v0.4.150 gate, go straight to the VC mailbox
+  (Phase B). **Boot-safe (HW-confirmed)**: graceful -1 on failure, no assert. BUT the mailbox
+  alloc fails on the Pi (Phase B was never HW-tested; old HDMI used Phase A diag-stub).
+  Prime fix lead: the VideoCore BUS address for the DMA tag buffer (try `| 0xC0000000`). See
+  `rpi4-hdmi-phaseb-mailbox` memory. Debug next session.
+* **Bluetooth/HCI plan** -- `docs/DESIGN_BLUETOOTH_HCI.md` (PL011/BT UART is free; needs a
+  proprietary firmware blob + a stack; low priority).
+
+**Next:** debug the HDMI VC mailbox (bus-address lead); optionally write ext2 file mtimes via
+`aios_wall_now()`; flash-over-network (FAT write); scp/sftp (lost mbedTLS). See NEXT_20260604c.
 
 ## Where we left off (v0.4.165) -- FILE TRANSFER + REDIRECT FIX
 
