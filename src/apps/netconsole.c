@@ -195,6 +195,75 @@ static void run_command(int cfd, const char *line, int *client_gone)
         write_all(cfd, "\n[netcon: command timed out, killed]\n", 37);
 }
 
+/* Receive a file: control line is "__put <path> <len>", immediately followed
+ * by exactly <len> raw bytes on the socket (binary-safe -- read_line reads
+ * byte-by-byte so it never over-reads into the data). Writes the bytes to
+ * <path>. Always drains all <len> bytes even on open failure so the stream
+ * stays framed. Replies "__put ok <len>" / "__put err <reason>". Integrity is
+ * verified host-side with a follow-up `sha256sum`. */
+static void handle_put(int cfd, char *args, int *client_gone)
+{
+    char *sp = args;
+    while (*sp && *sp != ' ')
+        sp++;
+    long len = 0;
+    int have_len = 0;
+    if (*sp == ' ') {
+        *sp = 0;
+        for (char *p = sp + 1; *p >= '0' && *p <= '9'; p++) {
+            len = len * 10 + (*p - '0');
+            have_len = 1;
+        }
+    }
+    if (!have_len || len < 0) {
+        write_all(cfd, "__put err badargs\n", 18);
+        return;
+    }
+
+    int fd = open(args, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    char buf[NETCON_BUF];
+    long remaining = len;
+    int werr = 0;
+
+    while (remaining > 0) {
+        int want = remaining < NETCON_IO ? (int)remaining : NETCON_IO;
+        int n = (int)read(cfd, buf, want);
+        if (n <= 0) { *client_gone = 1; break; }
+        if (fd >= 0 && !werr) {
+            int off = 0;
+            while (off < n) {
+                int w = (int)write(fd, buf + off, n - off);
+                if (w <= 0) { werr = 1; break; }
+                off += w;
+            }
+        }
+        remaining -= n;
+    }
+    if (fd >= 0)
+        close(fd);
+    if (*client_gone)
+        return;
+
+    if (fd < 0)
+        write_all(cfd, "__put err open\n", 15);
+    else if (werr)
+        write_all(cfd, "__put err write\n", 16);
+    else {
+        char msg[40];
+        int m = 0;
+        const char *ok = "__put ok ";
+        while (ok[m]) { msg[m] = ok[m]; m++; }
+        char num[16];
+        int ni = 0;
+        long v = len;
+        if (v == 0) num[ni++] = '0';
+        while (v > 0) { num[ni++] = (char)('0' + (v % 10)); v /= 10; }
+        while (ni > 0) msg[m++] = num[--ni];
+        msg[m++] = '\n';
+        write_all(cfd, msg, m);
+    }
+}
+
 /* Serve one connected client: prompt, read a command line, run it, repeat
  * until the client types exit/quit or drops the connection. */
 static void serve_client(int cfd)
@@ -215,6 +284,10 @@ static void serve_client(int cfd)
             continue;                     /* blank line -- re-prompt          */
         if (strcmp(line, "exit") == 0 || strcmp(line, "quit") == 0)
             break;
+        if (strncmp(line, "__put ", 6) == 0) {
+            handle_put(cfd, line + 6, &client_gone);
+            continue;                     /* file upload, not a shell command */
+        }
 
         run_command(cfd, line, &client_gone);
     }

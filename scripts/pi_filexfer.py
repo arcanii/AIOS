@@ -67,7 +67,9 @@ def pull(remote, local, host=DEFAULT_HOST):
     t0 = time.time()
     nc.s.sendall(("cat %s\n" % remote).encode())
     try:
-        data = nc.read_n(n, to=max(30, n // 2000 + 30))
+        # cat reads disk files in small chunks (fs IPC) -- ~100s of B/s on HW,
+        # so scale the timeout generously by size. Fast files return early.
+        data = nc.read_n(n, to=max(30, n // 100 + 30))
     except TimeoutError as e:
         nc.close(); print("pull failed: %s (file too large/slow for netconsole)" % e); return False
     nc.expect(b"aios# "); nc.close()
@@ -80,10 +82,33 @@ def pull(remote, local, host=DEFAULT_HOST):
           (len(data), local, dt, "OK" if ok else "MISMATCH (%s)" % mac))
     return ok
 
+def push(local, remote, host=DEFAULT_HOST):
+    with open(local, "rb") as f:
+        data = f.read()
+    sha = hashlib.sha256(data).hexdigest()
+    nc = NC(host); nc.expect(b"aios# ")
+    t0 = time.time()
+    # control line "__put <remote> <len>" then exactly <len> raw bytes
+    nc.s.sendall(("__put %s %d\n" % (remote, len(data))).encode())
+    nc.s.sendall(data)
+    reply = nc.expect(b"aios# ", to=max(30, len(data) // 1500 + 30))
+    line = reply.split(b"aios# ")[0].decode("utf-8", "replace").strip()
+    if "__put ok" not in line:
+        nc.close(); print("push failed: %r" % line); return False
+    pisha = nc.cmd("sha256sum %s" % remote).split()[0].decode()
+    nc.close()
+    dt = time.time() - t0
+    ok = (pisha == sha)
+    print("pushed %d bytes -> %s in %.1fs   INTEGRITY: %s" %
+          (len(data), remote, dt, "OK" if ok else "MISMATCH (pi %s)" % pisha))
+    return ok
+
 if __name__ == "__main__":
     a = sys.argv
     if len(a) >= 4 and a[1] == "pull":
-        host = a[4] if len(a) > 4 else DEFAULT_HOST
-        sys.exit(0 if pull(a[2], a[3], host) else 1)
-    print(__doc__)
+        sys.exit(0 if pull(a[2], a[3], a[4] if len(a) > 4 else DEFAULT_HOST) else 1)
+    if len(a) >= 4 and a[1] == "push":
+        sys.exit(0 if push(a[2], a[3], a[4] if len(a) > 4 else DEFAULT_HOST) else 1)
+    print("usage: pi_filexfer.py pull <remote> <local> [host]")
+    print("       pi_filexfer.py push <local> <remote> [host]")
     sys.exit(2)

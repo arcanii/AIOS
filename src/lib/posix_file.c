@@ -772,7 +772,15 @@ long aios_sys_close(va_list ap) {
     }
     /* Reset stdin/stdout pipe redirect on close */
     if (fd == 0) { stdin_pipe_id = -1; return 0; }
-    if (fd == 1 || fd == 2) { stdout_pipe_id = -1; return 0; }
+    if (fd == 1) { stdout_pipe_id = -1; return 0; }
+    /* v0.4.165: closing fd 2 (stderr) must NOT reset stdout_pipe_id. fd 1 and
+     * fd 2 share the single stdout_pipe_id (a parent like netconsole dup2's
+     * both to one pipe), so resetting it on close(2) also broke fd 1 routing:
+     * a shell `2>&1` redirect (dash's savefd closes fd 2 before re-duping) sent
+     * all subsequent stdout to the serial console instead of the pipe, so the
+     * reader saw no data and no EOF and hung. Leaving stderr routed to the same
+     * pipe is exactly what 2>&1 wants anyway. */
+    if (fd == 2) { return 0; }
     return -EBADF;
 }
 

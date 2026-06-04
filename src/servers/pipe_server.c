@@ -1323,18 +1323,19 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                     seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                     break;
                 }
-                /* v0.4.164: map the shared xfer page NON-cacheable to match
-                 * the client mapping below (PIPE_MAP_SHM maps the client copy
-                 * with cacheable=0). A mismatch is a real cache-coherency bug
-                 * on hardware: the Cortex-A72 holds the server's cacheable
-                 * write in its D-cache while the client reads straight from RAM
-                 * and sees stale zeros (netconsole returned 10 NUL bytes on the
-                 * RPi4 -- QEMU does not model this). Both ends non-cacheable =
-                 * RAM-coherent. The MR path (fd 0) was unaffected, which is why
-                 * shell pipes worked on HW but the SHM path did not. */
+                /* v0.4.165: map the shared xfer page CACHEABLE, matching the
+                 * client mapping below. Both ends MUST use the same memory type
+                 * or the Cortex-A72 loses coherency (the v0.4.164 bug: server
+                 * cacheable + client non-cacheable -> the server's write sat in
+                 * D-cache while the client read stale zeros from RAM -> all-NUL
+                 * output on the RPi4; QEMU does not model it). v0.4.164 matched
+                 * them as non-cacheable (correct but slow -- every transfer hits
+                 * RAM). Cacheable-on-both is coherent on this single-core PIPT
+                 * A72 (Normal inner-shareable write-back -- the standard for
+                 * shared memory) and far faster for larger transfers. */
                 void *xm = vspace_map_pages(&vspace,
                     &pipes[pi].xfer_frame.cptr, NULL,
-                    seL4_AllRights, 1, seL4_PageBits, 0);
+                    seL4_AllRights, 1, seL4_PageBits, 1);
                 if (!xm) {
                     vka_free_object(&vka, &pipes[pi].xfer_frame);
                     seL4_SetMR(0, 0);
@@ -1360,11 +1361,13 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                 break;
             }
-            /* Map the COPY into child VSpace */
+            /* Map the COPY into child VSpace -- cacheable, matching the server
+             * mapping above (v0.4.165). Same memory type on both ends keeps the
+             * shared page coherent on the A72. */
             void *child_vaddr = vspace_map_pages(
                 &active_procs[ci].proc.vspace,
                 &xdest.capPtr, NULL,
-                seL4_AllRights, 1, seL4_PageBits, 0);
+                seL4_AllRights, 1, seL4_PageBits, 1);
             if (!child_vaddr) {
                 seL4_CNode_Delete(seL4_CapInitThreadCNode,
                     xdest.capPtr, seL4_WordBits);
