@@ -806,26 +806,35 @@ tcc /usr/include/hello.c -o /tmp/h  # native tcc with libc (v0.4.117)
 
 ## Suggested next sessions
 
-**The networking + control + file-transfer + wall-clock arc is COMPLETE and
-HW-verified (v0.4.166): drive the Pi over the LAN, reboot it, auto-recover,
-push/pull files fast, real calendar time. Top picks for next -- pick one:**
+**This session (v0.4.167->171) finished the display arc AND made network deploy real:
+HDMI lit + correct colours + 3D cube, then a robust large-file transfer stack (300KB push
+HW-verified over GENET) + a 32KB rx-ring speed-up. Top picks for next -- pick one:**
 
-1. ~~**Debug HDMI Phase B (VC mailbox)**~~ -- **DONE v0.4.168, HW-verified.** The mailbox
-   tag buffer was landing at ~3.9GB (high mem) so its bus alias was invalid; pinned it to a
-   low device frame at `0x3A000000` and the display lights up (AIOS banner + fb_console). See
-   `rpi4-hdmi-phaseb-mailbox` memory. UNCOMMITTED at handoff. Possible follow-on: USB HID for
-   interactive HDMI (output-only today); `config.txt` mode tuning if a given monitor mis-syncs.
-2. **ext2 file mtimes** -- wall-clock now exists (`aios_wall_now()` in pipe_server.c,
-   set by SNTP at boot). Wire it into `src/ext2.c` create/mkdir so `ls -l` timestamps
-   are real (the inode fields exist but are never written). Small, no flash risk.
-3. **RPi4 SMP bring-up** -- still the main open RPi4 platform item. v0.4.135's SMP=4
-   hangs in the elfloader spin-table bring-up. Make the elfloader print on the RPi4 UART,
-   then per-core boot trace (item E, `docs/SEL4_DEVInvestigation.md`). High-risk, HW-gated.
+1. **Flash v0.4.171 + PROVE the deploy.** `disk/sdcard-rpi4.img` (v0.4.171, the speed bootstrap)
+   is built, awaiting flash. After it: rebuild a userspace tool, `pi_filexfer.py push` it to /bin
+   over the network, run it over netconsole -- no flash. Measure the speedup (was 14.4s for 300KB
+   at the 4KB ring; expect ~2-3s at 32KB). Closes the deploy arc. Low-risk, mostly no-flash.
+2. **ls -l mtimes -- READ path.** v0.4.171 WRITES i_mtime/i_ctime/i_atime on create/mkdir, but the
+   stat path returns only mode+size. Plumb mtime through vfs.h `fs_stat` sig + vfs.c + ext2_vfs_stat
+   + procfs_stat + fs_server FS_STAT (MR3 is reserved=0 -- use it) + libaios_posix
+   fetch_stat/posix_stat (fill st_mtime). Touches libaios_posix -> full sbase/dash/zsh rebuild.
+   QEMU-testable.
+3. **getty netconsole auto-respawn.** A supervisor child was tried in v0.4.171 and REVERTED -- AIOS
+   fork-of-fork fails (a forked process cannot fork again). Needs a getty waitpid(-1) event loop
+   that does not block on serial login-auth (verify waitpid(-1)/PIPE_WAIT "any child" support first).
+4. **kernel-over-network** -- the last flash-elimination piece: write a kernel8.img to the FAT boot
+   partition + reboot. Needs FAT-partition WRITE (AIOS mounts/writes only ext2 today). Meaty.
+5. **hardware 3D (V3D)** -- the real GPU driver per `docs/DESIGN_RPI4_3D.md` (~3-6 weeks to a
+   triangle; minimal custom register-level driver; the IV-vs-VI trap + A72<->V3D cache coherency).
+6. **RPi4 SMP bring-up** -- still open; v0.4.135's SMP=4 hangs in the elfloader spin-table.
+   High-risk, HW-gated. See `docs/SEL4_DEVInvestigation.md` item E.
 
-**Network-control roadmap leftovers (see `docs/NEXT_20260604c.md`):**
+**Lower-priority leftovers:**
 
-* **flash-over-network** -- scp a `kernel8.img` to the FAT boot partition + reboot. Needs
-  FAT-partition write support (AIOS mounts only ext2 today) + the existing reboot/transfer.
+* **netconsole v2 FULL multi-session rewrite** -- `docs/DESIGN_NETCONSOLE_V2.md` recommends a
+  single-process non-blocking MULTI-session event loop + framed protocol; v0.4.170 shipped only the
+  surgical robustness subset (single client, but structurally can't wedge). Do this if concurrent
+  sessions matter.
 * **scp/sftp proper** -- blocked on rebuilding the LOST mbedTLS (the SSH server exists).
 * **Bluetooth/HCI** -- plan in `docs/DESIGN_BLUETOOTH_HCI.md`; low priority (proprietary
   firmware blob + needs a host stack; but the PL011 BT UART is free, so console-safe).
