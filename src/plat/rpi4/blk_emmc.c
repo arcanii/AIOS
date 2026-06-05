@@ -131,14 +131,51 @@ static void emmc_delay(int us) {
 }
 
 /* ----------------------------------------------------------------
+ * Time-based waits (ARM generic timer) -- replace the old fixed
+ * iteration-count poll loops. A fixed count of MMIO reads is NOT a
+ * real timeout: on the 1.5GHz A72 a MISSED status bit (a known reality
+ * of polled SDHCI) burned the whole 10,000,000-count loop ~= 32.6s,
+ * while QEMU finished instantly -- the v0.4.175 netconsole2 relay stall.
+ * A millisecond bound from cntpct_el0 is CPU-speed independent and caps
+ * a missed bit at EMMC_*_MS instead of spinning for half a minute.
+ * ---------------------------------------------------------------- */
+#define EMMC_CMD_MS    1000   /* command response / line-free          */
+#define EMMC_DATA_MS   2000   /* data phase (buffer ready / xfer done)  */
+
+static inline uint64_t emmc_ticks(void) {
+    uint64_t c; __asm__ volatile("mrs %0, cntpct_el0" : "=r"(c)); return c;
+}
+static uint64_t emmc_deadline(int ms) {
+    uint64_t f; __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(f));
+    if (!f) f = 54000000;   /* BCM2711 generic-timer fallback */
+    return emmc_ticks() + (uint64_t)ms * f / 1000;
+}
+/* Poll INT_STATUS until `want` is latched, an error latches, or `ms` elapse.
+ * Returns 1 = want seen, 0 = timed out (the controller has most likely
+ * finished but the latched bit was missed -- callers proceed, matching the
+ * old fall-through), -1 = INT_ERROR latched (caller re-reads REG_INT_STATUS
+ * for the detail, the bit stays latched until cleared). */
+static int emmc_wait_int(uint32_t want, int ms) {
+    uint64_t dl = emmc_deadline(ms);
+    for (;;) {
+        arch_dmb();
+        uint32_t st = EMMC_R(REG_INT_STATUS);
+        if (st & INT_ERROR) return -1;
+        if (st & want) return 1;
+        if (emmc_ticks() >= dl) return 0;
+    }
+}
+
+/* ----------------------------------------------------------------
  * emmc_wait_cmd -- wait for command line free
  * ---------------------------------------------------------------- */
 static int emmc_wait_cmd(void) {
-    for (int t = 0; t < 1000000; t++) {
+    uint64_t dl = emmc_deadline(EMMC_CMD_MS);
+    do {
         arch_dmb();
         if (!(EMMC_R(REG_PRESENT) & PRES_CMD_INHIBIT))
             return 0;
-    }
+    } while (emmc_ticks() < dl);
     printf("[blk] CMD inhibit timeout\n");
     return -1;
 }
@@ -147,11 +184,12 @@ static int emmc_wait_cmd(void) {
  * emmc_wait_dat -- wait for data line free
  * ---------------------------------------------------------------- */
 static int emmc_wait_dat(void) {
-    for (int t = 0; t < 1000000; t++) {
+    uint64_t dl = emmc_deadline(EMMC_DATA_MS);
+    do {
         arch_dmb();
         if (!(EMMC_R(REG_PRESENT) & PRES_DAT_INHIBIT))
             return 0;
-    }
+    } while (emmc_ticks() < dl);
     printf("[blk] DAT inhibit timeout\n");
     return -1;
 }
@@ -172,24 +210,20 @@ static int emmc_send_cmd(uint32_t cmd, uint32_t arg) {
     EMMC_W(REG_ARGUMENT, arg);
     EMMC_W(REG_XFER_CMD, cmd);
 
-    /* Poll for command complete or error */
-    for (int t = 0; t < 10000000; t++) {
-        arch_dmb();
-        uint32_t st = EMMC_R(REG_INT_STATUS);
-        if (st & INT_ERROR) {
-            printf("[blk] CMD%u error: INT=0x%x\n",
-                   (cmd >> 24) & 0x3F, st);
-            EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
-            return -1;
-        }
-        if (st & INT_CMD_DONE) {
-            /* Clear command done bit */
-            EMMC_W(REG_INT_STATUS, INT_CMD_DONE);
-            return 0;
-        }
+    /* Poll for command complete or error (time-bounded) */
+    int r = emmc_wait_int(INT_CMD_DONE, EMMC_CMD_MS);
+    if (r < 0) {
+        printf("[blk] CMD%u error: INT=0x%x\n",
+               (cmd >> 24) & 0x3F, EMMC_R(REG_INT_STATUS));
+        EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
+        return -1;
     }
-    printf("[blk] CMD%u timeout\n", (cmd >> 24) & 0x3F);
-    return -1;
+    if (r == 0) {
+        printf("[blk] CMD%u timeout\n", (cmd >> 24) & 0x3F);
+        return -1;
+    }
+    EMMC_W(REG_INT_STATUS, INT_CMD_DONE);   /* clear command done */
+    return 0;
 }
 
 /* ----------------------------------------------------------------
@@ -280,28 +314,18 @@ static int emmc_read_raw_sector(uint64_t lba, void *buf) {
         CMD_DATA | XFER_READ | XFER_BLKCNT_EN);
 
     /* Wait for command complete */
-    for (int t = 0; t < 10000000; t++) {
-        arch_dmb();
-        uint32_t st = EMMC_R(REG_INT_STATUS);
-        if (st & INT_ERROR) {
-            printf("[blk] Read LBA %u cmd err: 0x%x\n", (uint32_t)lba, st);
-            EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
-            return -1;
-        }
-        if (st & INT_CMD_DONE) break;
+    if (emmc_wait_int(INT_CMD_DONE, EMMC_CMD_MS) < 0) {
+        printf("[blk] Read LBA %u cmd err: 0x%x\n", (uint32_t)lba, EMMC_R(REG_INT_STATUS));
+        EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
+        return -1;
     }
     EMMC_W(REG_INT_STATUS, INT_CMD_DONE);
 
     /* Wait for buffer read ready */
-    for (int t = 0; t < 10000000; t++) {
-        arch_dmb();
-        uint32_t st = EMMC_R(REG_INT_STATUS);
-        if (st & INT_ERROR) {
-            printf("[blk] Read LBA %u data err: 0x%x\n", (uint32_t)lba, st);
-            EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
-            return -1;
-        }
-        if (st & INT_BUF_RD) break;
+    if (emmc_wait_int(INT_BUF_RD, EMMC_DATA_MS) < 0) {
+        printf("[blk] Read LBA %u data err: 0x%x\n", (uint32_t)lba, EMMC_R(REG_INT_STATUS));
+        EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
+        return -1;
     }
     EMMC_W(REG_INT_STATUS, INT_BUF_RD);
 
@@ -312,15 +336,10 @@ static int emmc_read_raw_sector(uint64_t lba, void *buf) {
     }
 
     /* Wait for transfer complete */
-    for (int t = 0; t < 10000000; t++) {
-        arch_dmb();
-        uint32_t st = EMMC_R(REG_INT_STATUS);
-        if (st & INT_ERROR) {
-            printf("[blk] Read LBA %u xfer err: 0x%x\n", (uint32_t)lba, st);
-            EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
-            return -1;
-        }
-        if (st & INT_XFER_DONE) break;
+    if (emmc_wait_int(INT_XFER_DONE, EMMC_DATA_MS) < 0) {
+        printf("[blk] Read LBA %u xfer err: 0x%x\n", (uint32_t)lba, EMMC_R(REG_INT_STATUS));
+        EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
+        return -1;
     }
     EMMC_W(REG_INT_STATUS, INT_XFER_DONE);
 
@@ -582,28 +601,18 @@ static int emmc_write_raw_sector(uint64_t lba, const void *buf) {
         CMD_DATA | XFER_BLKCNT_EN);
 
     /* Wait for command complete */
-    for (int t = 0; t < 10000000; t++) {
-        arch_dmb();
-        uint32_t st = EMMC_R(REG_INT_STATUS);
-        if (st & INT_ERROR) {
-            printf("[blk] Write LBA %u cmd err: 0x%x\n", (uint32_t)lba, st);
-            EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
-            return -1;
-        }
-        if (st & INT_CMD_DONE) break;
+    if (emmc_wait_int(INT_CMD_DONE, EMMC_CMD_MS) < 0) {
+        printf("[blk] Write LBA %u cmd err: 0x%x\n", (uint32_t)lba, EMMC_R(REG_INT_STATUS));
+        EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
+        return -1;
     }
     EMMC_W(REG_INT_STATUS, INT_CMD_DONE);
 
     /* Wait for buffer write ready */
-    for (int t = 0; t < 10000000; t++) {
-        arch_dmb();
-        uint32_t st = EMMC_R(REG_INT_STATUS);
-        if (st & INT_ERROR) {
-            printf("[blk] Write LBA %u buf err: 0x%x\n", (uint32_t)lba, st);
-            EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
-            return -1;
-        }
-        if (st & INT_BUF_WR) break;
+    if (emmc_wait_int(INT_BUF_WR, EMMC_DATA_MS) < 0) {
+        printf("[blk] Write LBA %u buf err: 0x%x\n", (uint32_t)lba, EMMC_R(REG_INT_STATUS));
+        EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
+        return -1;
     }
     EMMC_W(REG_INT_STATUS, INT_BUF_WR);
 
@@ -614,15 +623,10 @@ static int emmc_write_raw_sector(uint64_t lba, const void *buf) {
     }
 
     /* Wait for transfer complete */
-    for (int t = 0; t < 10000000; t++) {
-        arch_dmb();
-        uint32_t st = EMMC_R(REG_INT_STATUS);
-        if (st & INT_ERROR) {
-            printf("[blk] Write LBA %u xfer err: 0x%x\n", (uint32_t)lba, st);
-            EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
-            return -1;
-        }
-        if (st & INT_XFER_DONE) break;
+    if (emmc_wait_int(INT_XFER_DONE, EMMC_DATA_MS) < 0) {
+        printf("[blk] Write LBA %u xfer err: 0x%x\n", (uint32_t)lba, EMMC_R(REG_INT_STATUS));
+        EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
+        return -1;
     }
     EMMC_W(REG_INT_STATUS, INT_XFER_DONE);
 
@@ -651,30 +655,20 @@ static int emmc_write_multi(uint64_t lba, const void *buf, int count) {
         CMD_DATA | XFER_MULTI | XFER_BLKCNT_EN);
 
     /* Wait for command complete */
-    for (int t = 0; t < 10000000; t++) {
-        arch_dmb();
-        uint32_t st = EMMC_R(REG_INT_STATUS);
-        if (st & INT_ERROR) {
-            printf("[blk] WriteM LBA %u cmd err: 0x%x\n", (uint32_t)lba, st);
-            EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
-            return -1;
-        }
-        if (st & INT_CMD_DONE) break;
+    if (emmc_wait_int(INT_CMD_DONE, EMMC_CMD_MS) < 0) {
+        printf("[blk] WriteM LBA %u cmd err: 0x%x\n", (uint32_t)lba, EMMC_R(REG_INT_STATUS));
+        EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
+        return -1;
     }
     EMMC_W(REG_INT_STATUS, INT_CMD_DONE);
 
     /* Transfer each block: wait for buffer-write-ready, push 128 words */
     const uint8_t *p = (const uint8_t *)buf;
     for (int b = 0; b < count; b++) {
-        for (int t = 0; t < 10000000; t++) {
-            arch_dmb();
-            uint32_t st = EMMC_R(REG_INT_STATUS);
-            if (st & INT_ERROR) {
-                printf("[blk] WriteM LBA %u buf err: 0x%x\n", (uint32_t)lba, st);
-                EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
-                return -1;
-            }
-            if (st & INT_BUF_WR) break;
+        if (emmc_wait_int(INT_BUF_WR, EMMC_DATA_MS) < 0) {
+            printf("[blk] WriteM LBA %u buf err: 0x%x\n", (uint32_t)lba, EMMC_R(REG_INT_STATUS));
+            EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
+            return -1;
         }
         EMMC_W(REG_INT_STATUS, INT_BUF_WR);
         memcpy(sector_buf, p + b * 512, 512);
@@ -684,15 +678,10 @@ static int emmc_write_multi(uint64_t lba, const void *buf, int count) {
     }
 
     /* Wait for transfer complete (all blocks accepted) */
-    for (int t = 0; t < 10000000; t++) {
-        arch_dmb();
-        uint32_t st = EMMC_R(REG_INT_STATUS);
-        if (st & INT_ERROR) {
-            printf("[blk] WriteM LBA %u xfer err: 0x%x\n", (uint32_t)lba, st);
-            EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
-            return -1;
-        }
-        if (st & INT_XFER_DONE) break;
+    if (emmc_wait_int(INT_XFER_DONE, EMMC_DATA_MS) < 0) {
+        printf("[blk] WriteM LBA %u xfer err: 0x%x\n", (uint32_t)lba, EMMC_R(REG_INT_STATUS));
+        EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
+        return -1;
     }
     EMMC_W(REG_INT_STATUS, INT_XFER_DONE);
 

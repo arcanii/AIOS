@@ -138,8 +138,12 @@ static int append_num(char *msg, int m, long v)
  * relay stall WITHOUT trusting the possibly-broken 2324 relay or fd-1 routing.
  * Raw write() (no stdio buffering), low volume (no per-EAGAIN spam). Every line
  * ends t=now_ms() so we also confirm the ARM generic timer advances on HW. Set
- * NC2_TRACE 0 to compile it out once the cause is found. */
+ * NC2_TRACE 0 to compile it out once the cause is found. Compile-time
+ * overridable: build with -DNC2_TRACE=0 to disable the disk writes (used to
+ * prove the relay works without the trace-write -> eMMC-flush stall on HW). */
+#ifndef NC2_TRACE
 #define NC2_TRACE 1
+#endif
 #if NC2_TRACE
 #define NC2_TRACE_PATH "/tmp/nc2.trace"
 static int trace_fd = -1;
@@ -479,6 +483,11 @@ int main(int argc, char **argv)
 
     printf("[netcon2] listening on port %d (non-blocking multi-session, LAN only)\n",
            NETCON_PORT);
+    /* Do NOT close/daemonize stdio here: start_command() forks pipes that rely
+     * on fds 0/1/2 staying occupied, so freeing them collides the new pipe fds
+     * onto 0/1/2 and the dup2 redirects scramble dash stdin/stdout. The v1
+     * launch-wedge (netconsole2 inheriting the launcher pipe) is handled at
+     * LAUNCH by redirecting stdio (`netconsole2 >/tmp/x 2>&1 &`), not in here. */
 
     for (;;) {
         int c = accept(lfd, (void *)0, (void *)0);
