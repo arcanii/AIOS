@@ -1,52 +1,45 @@
-/* netconsole.c -- AIOS plaintext TCP remote command shell (LAN only)
+/* netconsole.c -- AIOS plaintext TCP remote command shell (LAN only) -- v2
  *
  * A bare, UNENCRYPTED, UNAUTHENTICATED remote command runner for driving a
  * Raspberry Pi 4 over a private LAN during development. It listens on a TCP
  * port, accepts one client at a time, and runs ONE command per input line:
  * read a line from the socket, run it via "dash -c <line>", stream the
- * command output back to the socket, then prompt for the next line. There is
- * NO crypto and NO login -- anyone who can reach the port gets to run root
- * commands. Use only on a trusted dev network. For anything else, use sshd.
+ * command output back, then prompt for the next line. There is NO crypto and
+ * NO login -- anyone who can reach the port gets to run root commands. Use only
+ * on a trusted dev network. For anything else, use sshd.
  *
- * Why command-per-connection (v2) instead of an interactive "dash -i" relay:
+ * --- v2 robustness (see docs/DESIGN_NETCONSOLE_V2.md) ---
+ *   ALL client-socket I/O is NON-BLOCKING with per-operation deadlines, so no
+ *   single client can wedge the server. v1's __put receive loop did a BLOCKING
+ *   read and treated any short read as "client gone" with no timeout: a large
+ *   or aborted push (the host stops mid-stream without a FIN) parked netconsole
+ *   forever inside the kernel recv, killing port 2323 for EVERY future client.
+ *   v2: the client socket is O_NONBLOCK; every read/write loops on EAGAIN with a
+ *   10ms nap and a deadline. A stalled transfer aborts and DROPS that one
+ *   connection (so leftover unframed bytes can never be run as a command); the
+ *   accept loop survives for the next client. getty supervises + respawns
+ *   netconsole if it ever dies (getty.c).
+ *
+ * Why command-per-connection instead of an interactive "dash -i" relay:
  *   An interactive shell over a plain pipe pair has no tty / line discipline,
- *   so dash -i over a socket relay never flowed I/O on hardware (the v1 design).
- *   "dash -c <line>" RUNS then EXITS, which flushes its stdout and closes the
- *   pipe -- no tty, no buffering games. Each line is a fresh, self-contained
- *   command. The trade-off: shell state does NOT persist between lines (no
- *   carried cwd, env, or variables; a "cd" only affects that one line). Drive
- *   the Pi with absolute paths, e.g. "cat /proc/genet.ip", "ls /bin".
+ *   so dash -i over a socket relay never flowed I/O on hardware. "dash -c <line>"
+ *   RUNS then EXITS, flushing stdout and closing the pipe -- no tty, no buffering
+ *   games. Trade-off: shell state does NOT persist between lines (cwd, env, vars).
+ *   Drive the Pi with absolute paths, e.g. "cat /proc/genet.ip", "ls /bin".
  *
- * EOF discipline (the crux -- AIOS pipe semantics, post-v0.4.143):
- *   In AIOS a pipe read end reports EOF only when the pipe server latches
- *   write_closed, and write_closed latches in exactly ONE place: the exit of
- *   the REGISTERED writer (the process whose stdout was bound to that pipe at
- *   PIPE_EXEC -- here, the dash we exec). A plain close() of an inherited
- *   write-end copy NEVER latches EOF (see pipe_server.c PIPE_CLOSE_WRITE). So
- *   the parent can drop ALL its pipe ends immediately after fork: the output
- *   read end still gets a clean EOF precisely when dash exits -- whether the
- *   command printed anything or not. (This is why v1 / ssh_channel.c deferred
- *   the parent stdout-write close until "first byte"; that dance was for the
- *   OLD pre-143 close-latches-EOF behaviour and is no longer needed.)
+ * EOF discipline (AIOS pipe semantics, post-v0.4.143): a pipe read end reports
+ *   EOF only when the REGISTERED writer (the exec'd dash) exits, never on a
+ *   plain close() of an inherited write-end copy. So the parent can drop ALL its
+ *   pipe ends right after fork; the output read end still EOFs precisely when
+ *   dash exits, whether the command printed anything or not.
  *
- * Why an O_NONBLOCK poll on the output pipe instead of a blocking read:
- *   A blocking read would wedge the whole server if a command never exits --
- *   e.g. a bare "cat" or "read" that reads stdin. The child stdin is a pipe
- *   with no writer (we never forward stdin), so such a read blocks forever.
- *   We poll the output pipe non-blocking with a 10ms idle sleep and a per-
- *   command timeout; on timeout we SIGKILL the child and move on, keeping the
- *   server alive for the next command.
- *
- * Why a stdin PIPE for the child (not /dev/null, not "no redirect"):
- *   /dev/null is libc-level state and does not survive execv into dash. With
- *   NO stdin pipe, a process falls back to TTY_READ on fd 0 -- it would steal
- *   the serial console we use to launch and watch netconsole. A writer-less
- *   pipe keeps a stray stdin read isolated (it blocks on the pipe, bounded by
- *   the command timeout) instead of stealing the console.
+ * Why a writer-less stdin PIPE for the child (not /dev/null, not absent): a
+ *   pipe with no writer keeps a stray stdin read isolated (it blocks on the
+ *   pipe, bounded by the command timeout) instead of stealing the serial
+ *   console (an absent fd 0 falls back to TTY_READ).
  *
  * Build:  ./scripts/aios-cc src/apps/netconsole.c -o build-04/sbase/netconsole
- * Run:    netconsole &
- * Use:    nc <pi-ip> 2323      (from another host on the LAN; keep stdin open)
+ * Use:    nc <pi-ip> 2323   (keep stdin open), or scripts/pi_filexfer.py
  */
 
 #include <stdio.h>
@@ -63,10 +56,15 @@
 #define NETCON_PORT     2323
 #define NETCON_SHELL    "/bin/dash"
 #define NETCON_LINE     1024              /* max command length            */
-#define NETCON_BUF      1024              /* output read buffer            */
+#define NETCON_BUF      1024              /* I/O buffer                    */
 #define NETCON_IO       900               /* AIOS socket/pipe I/O cap      */
-#define NETCON_POLL_NS  (10 * 1000 * 1000)        /* 10ms idle poll        */
-#define NETCON_TIMEOUT_TICKS  3000        /* ~30s of idle -> kill child    */
+#define NETCON_POLL_NS  (10 * 1000 * 1000)        /* 10ms nap on EAGAIN    */
+
+/* Per-operation deadlines, in 10ms ticks (reset on any progress). */
+#define TICKS_IDLE      12000             /* 120s waiting for next command  */
+#define TICKS_STALL     1000              /* 10s no progress on a transfer  */
+#define TICKS_WRITE     1000              /* 10s to flush a socket write    */
+#define TICKS_CMD       3000              /* 30s command output timeout     */
 
 #define NETCON_O_NONBLOCK  0x800          /* AIOS O_NONBLOCK bit           */
 
@@ -74,60 +72,70 @@ static const char NETCON_BANNER[] =
     "AIOS netconsole -- one command per line. Type exit to disconnect.\n";
 static const char NETCON_PROMPT[] = "aios# ";
 
-/* Write all len bytes to fd, looping over short writes. Returns 0 on
- * success, -1 if the peer went away (so the caller can drop the client). */
-static int write_all(int fd, const char *p, int len)
+static void nap(void)
 {
-    int off = 0;
+    struct timespec ts = { 0, NETCON_POLL_NS };
+    nanosleep(&ts, (void *)0);
+}
+
+/* Non-blocking write-all with a flush deadline. The client socket is
+ * O_NONBLOCK, so write() returns <0 (EAGAIN) when the send buffer is full;
+ * we nap and retry, bounded by TICKS_WRITE. Returns 0 on success, -1 if the
+ * peer went away or the flush stalled past the deadline. */
+static int nb_write(int fd, const char *p, int len)
+{
+    int off = 0, idle = 0;
     while (off < len) {
         int w = (int)write(fd, p + off, len - off);
-        if (w <= 0)
-            return -1;
-        off += w;
+        if (w > 0) { off += w; idle = 0; }
+        else if (w == 0) return -1;                 /* peer closed            */
+        else { if (++idle > TICKS_WRITE) return -1; nap(); }   /* EAGAIN      */
     }
     return 0;
 }
 
-/* Read one line (up to '\n') from the socket, blocking. Stores up to
- * max-1 bytes plus a NUL terminator in line, swallowing a trailing CR so
- * CRLF clients (telnet, some nc builds) are handled. Bytes past max-1 are
- * dropped but the line is still drained to its newline. Returns the line
- * length (>= 0), or -1 if the client closed the connection or errored. */
-static int read_line(int cfd, char *line, int max)
+/* Non-blocking read of one line (up to '\n') with an idle deadline. Swallows a
+ * trailing CR (CRLF clients). Bytes past max-1 are dropped but the line is
+ * drained to its newline. Returns the line length (>=0), or -1 if the client
+ * closed or went idle past TICKS_IDLE. */
+static int nb_read_line(int cfd, char *line, int max)
 {
-    int len = 0;
+    int len = 0, idle = 0;
     for (;;) {
         char c;
         int n = (int)read(cfd, &c, 1);
-        if (n <= 0)
-            return -1;                    /* client closed or error        */
-        if (c == '\n')
-            break;
-        if (c == '\r')
-            continue;                     /* swallow CR (CRLF clients)      */
-        if (len < max - 1)
-            line[len++] = c;
-        /* else: overflow -- keep draining to the newline, drop the excess */
+        if (n > 0) {
+            idle = 0;
+            if (c == '\n') break;
+            if (c == '\r') continue;
+            if (len < max - 1) line[len++] = c;
+        } else if (n == 0) {
+            return -1;                              /* client closed (FIN)    */
+        } else {
+            if (++idle > TICKS_IDLE) return -1;     /* idle too long          */
+            nap();
+        }
     }
     line[len] = 0;
     return len;
 }
 
-/* Run a single command line via "dash -c <line>", streaming its stdout and
- * stderr back to the socket until the shell exits. Sets *client_gone if the
- * socket write fails (peer disconnected) so the caller stops the session. */
+/* Run one command line via "dash -c <line>", streaming stdout+stderr back to
+ * the socket until the shell exits. Sets *client_gone if a socket write fails.
+ * The output pipe is polled O_NONBLOCK with a per-command timeout so a command
+ * that never exits (e.g. one that reads its writer-less stdin) is SIGKILLed and
+ * the server moves on. */
 static void run_command(int cfd, const char *line, int *client_gone)
 {
     int in_pipe[2], out_pipe[2];
 
     if (pipe2(in_pipe, 0) < 0) {
-        write_all(cfd, "[netcon: stdin pipe failed]\n", 28);
+        nb_write(cfd, "[netcon: stdin pipe failed]\n", 28);
         return;
     }
     if (pipe2(out_pipe, 0) < 0) {
-        close(in_pipe[0]);
-        close(in_pipe[1]);
-        write_all(cfd, "[netcon: stdout pipe failed]\n", 29);
+        close(in_pipe[0]); close(in_pipe[1]);
+        nb_write(cfd, "[netcon: stdout pipe failed]\n", 29);
         return;
     }
 
@@ -135,15 +143,11 @@ static void run_command(int cfd, const char *line, int *client_gone)
     if (pid < 0) {
         close(in_pipe[0]);  close(in_pipe[1]);
         close(out_pipe[0]); close(out_pipe[1]);
-        write_all(cfd, "[netcon: fork failed]\n", 22);
+        nb_write(cfd, "[netcon: fork failed]\n", 22);
         return;
     }
 
     if (pid == 0) {
-        /* Child: stdin <- in_pipe read end, stdout/stderr -> out_pipe write
-         * end, then exec dash -c. Do NOT close any pipe end here: in AIOS a
-         * close() on a pipe end notifies the pipe server, and exec replaces
-         * the process image via PIPE_EXEC anyway. */
         dup2(in_pipe[0], 0);
         dup2(out_pipe[1], 1);
         dup2(out_pipe[1], 2);
@@ -152,11 +156,7 @@ static void run_command(int cfd, const char *line, int *client_gone)
         _exit(127);
     }
 
-    /* Parent: drop every pipe end we do not read. Post-v0.4.143 none of these
-     * closes latch EOF -- the output read end still reports EOF only when dash
-     * (the registered writer) exits. We never feed the command stdin, so the
-     * child stdin pipe stays writer-less (a stray stdin read blocks, bounded
-     * by the timeout below). */
+    /* Parent: drop every pipe end we do not read (none latch EOF post-v0.4.143). */
     close(in_pipe[0]);
     close(in_pipe[1]);
     close(out_pipe[1]);
@@ -166,103 +166,31 @@ static void run_command(int cfd, const char *line, int *client_gone)
     fcntl(out_rd, F_SETFL, fl | NETCON_O_NONBLOCK);
 
     char buf[NETCON_BUF];
-    int idle = 0;
-    int timed_out = 0;
+    int idle = 0, timed_out = 0;
 
     for (;;) {
         int n = (int)read(out_rd, buf, NETCON_IO);
         if (n > 0) {
             idle = 0;
-            if (!*client_gone && write_all(cfd, buf, n) < 0)
+            if (!*client_gone && nb_write(cfd, buf, n) < 0)
                 *client_gone = 1;
         } else if (n == 0) {
-            break;                        /* dash exited -- authoritative EOF */
+            break;                          /* dash exited -- authoritative EOF */
         } else {
-            /* EAGAIN: command still running (or stuck reading stdin). */
-            if (++idle > NETCON_TIMEOUT_TICKS) {
-                kill(pid, 9);             /* SIGKILL a wedged child           */
+            if (++idle > TICKS_CMD) {       /* EAGAIN: still running / stuck    */
+                kill(pid, 9);
                 timed_out = 1;
                 break;
             }
-            struct timespec ts = { 0, NETCON_POLL_NS };
-            nanosleep(&ts, (void *)0);
+            nap();
         }
     }
 
     close(out_rd);
-    waitpid(pid, (void *)0, 0);           /* reap (already exited / killed)   */
+    waitpid(pid, (void *)0, 0);
 
     if (timed_out && !*client_gone)
-        write_all(cfd, "\n[netcon: command timed out, killed]\n", 37);
-}
-
-/* Receive a file: control line is "__put <path> <len>", immediately followed
- * by exactly <len> raw bytes on the socket (binary-safe -- read_line reads
- * byte-by-byte so it never over-reads into the data). Writes the bytes to
- * <path>. Always drains all <len> bytes even on open failure so the stream
- * stays framed. Replies "__put ok <len>" / "__put err <reason>". Integrity is
- * verified host-side with a follow-up `sha256sum`. */
-static void handle_put(int cfd, char *args, int *client_gone)
-{
-    char *sp = args;
-    while (*sp && *sp != ' ')
-        sp++;
-    long len = 0;
-    int have_len = 0;
-    if (*sp == ' ') {
-        *sp = 0;
-        for (char *p = sp + 1; *p >= '0' && *p <= '9'; p++) {
-            len = len * 10 + (*p - '0');
-            have_len = 1;
-        }
-    }
-    if (!have_len || len < 0) {
-        write_all(cfd, "__put err badargs\n", 18);
-        return;
-    }
-
-    int fd = open(args, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    char buf[NETCON_BUF];
-    long remaining = len;
-    int werr = 0;
-
-    while (remaining > 0) {
-        int want = remaining < NETCON_IO ? (int)remaining : NETCON_IO;
-        int n = (int)read(cfd, buf, want);
-        if (n <= 0) { *client_gone = 1; break; }
-        if (fd >= 0 && !werr) {
-            int off = 0;
-            while (off < n) {
-                int w = (int)write(fd, buf + off, n - off);
-                if (w <= 0) { werr = 1; break; }
-                off += w;
-            }
-        }
-        remaining -= n;
-    }
-    if (fd >= 0)
-        close(fd);
-    if (*client_gone)
-        return;
-
-    if (fd < 0)
-        write_all(cfd, "__put err open\n", 15);
-    else if (werr)
-        write_all(cfd, "__put err write\n", 16);
-    else {
-        char msg[40];
-        int m = 0;
-        const char *ok = "__put ok ";
-        while (ok[m]) { msg[m] = ok[m]; m++; }
-        char num[16];
-        int ni = 0;
-        long v = len;
-        if (v == 0) num[ni++] = '0';
-        while (v > 0) { num[ni++] = (char)('0' + (v % 10)); v /= 10; }
-        while (ni > 0) msg[m++] = num[--ni];
-        msg[m++] = '\n';
-        write_all(cfd, msg, m);
-    }
+        nb_write(cfd, "\n[netcon: command timed out, killed]\n", 37);
 }
 
 /* Append a decimal number to msg at offset m, return the new offset. */
@@ -276,23 +204,95 @@ static int append_num(char *msg, int m, long v)
     return m;
 }
 
-/* Send a file: control line is "__get <path>". We stat for the size, then
- * read the file ourselves in big chunks and stream it straight to the socket
- * -- bypassing `dash -c cat` (fork + the pipe relay + cat's small-chunk
- * writes), which is the real bottleneck for a pull. Reply is
- * "__get ok <len>\n" then exactly <len> raw bytes (binary-safe, length-framed,
- * like __put in reverse), or "__get err <reason>\n". This is the fast pull. */
+/* Receive a file: "__put <path> <len>" then exactly <len> raw bytes. v2: the
+ * socket is O_NONBLOCK, so the receive loop naps on EAGAIN with a STALL
+ * deadline -- a host that stops mid-stream (the v1 wedge) no longer parks the
+ * server; the transfer aborts and the connection is DROPPED (so the unconsumed
+ * tail can never be misread as a command). Replies "__put ok <len>" on success,
+ * "__put err <reason>" otherwise. Integrity is verified host-side via sha256. */
+static void handle_put(int cfd, char *args, int *client_gone)
+{
+    char *sp = args;
+    while (*sp && *sp != ' ') sp++;
+    long len = 0;
+    int have_len = 0;
+    if (*sp == ' ') {
+        *sp = 0;
+        for (char *p = sp + 1; *p >= '0' && *p <= '9'; p++) {
+            len = len * 10 + (*p - '0');
+            have_len = 1;
+        }
+    }
+    if (!have_len || len < 0) {
+        nb_write(cfd, "__put err badargs\n", 18);
+        return;
+    }
+
+    int fd = open(args, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    char buf[NETCON_BUF];
+    long remaining = len;
+    int werr = 0, idle = 0, stalled = 0;
+
+    while (remaining > 0) {
+        int want = remaining < NETCON_IO ? (int)remaining : NETCON_IO;
+        int n = (int)read(cfd, buf, want);
+        if (n > 0) {
+            idle = 0;
+            if (fd >= 0 && !werr) {
+                int off = 0;
+                while (off < n) {
+                    int w = (int)write(fd, buf + off, n - off);
+                    if (w <= 0) { werr = 1; break; }
+                    off += w;
+                }
+            }
+            remaining -= n;
+        } else if (n == 0) {
+            *client_gone = 1; break;        /* peer closed mid-transfer        */
+        } else {
+            if (++idle > TICKS_STALL) { stalled = 1; break; }   /* EAGAIN stall */
+            nap();
+        }
+    }
+    if (fd >= 0) close(fd);
+    if (*client_gone) return;
+
+    if (stalled) {
+        /* Framing is now desynced (the declared length was not fully consumed):
+         * report and DROP the connection rather than risk running the tail. */
+        nb_write(cfd, "__put err timeout\n", 18);
+        *client_gone = 1;
+        return;
+    }
+    if (fd < 0)       nb_write(cfd, "__put err open\n", 15);
+    else if (werr)    nb_write(cfd, "__put err write\n", 16);
+    else {
+        char msg[40];
+        int m = 0;
+        const char *ok = "__put ok ";
+        while (ok[m]) { msg[m] = ok[m]; m++; }
+        m = append_num(msg, m, len);
+        msg[m++] = '\n';
+        nb_write(cfd, msg, m);
+    }
+}
+
+/* Send a file: "__get <path>". We stat for the size, then read the file in big
+ * chunks and stream it straight to the socket (bypassing dash -c cat). v2: the
+ * socket writes go through nb_write, which handles back-pressure (EAGAIN) with a
+ * deadline, so a slow reader cannot wedge the server. Reply "__get ok <len>\n"
+ * then exactly <len> raw bytes, or "__get err <reason>\n". */
 static void handle_get(int cfd, const char *path, int *client_gone)
 {
     struct stat st;
     if (stat(path, &st) < 0) {
-        write_all(cfd, "__get err stat\n", 15);
+        nb_write(cfd, "__get err stat\n", 15);
         return;
     }
     long size = (long)st.st_size;
     int fd = open(path, O_RDONLY);
     if (fd < 0) {
-        write_all(cfd, "__get err open\n", 15);
+        nb_write(cfd, "__get err open\n", 15);
         return;
     }
 
@@ -302,56 +302,42 @@ static void handle_get(int cfd, const char *path, int *client_gone)
     while (ok[m]) { hdr[m] = ok[m]; m++; }
     m = append_num(hdr, m, size);
     hdr[m++] = '\n';
-    if (write_all(cfd, hdr, m) < 0) {
-        *client_gone = 1;
-        close(fd);
-        return;
-    }
+    if (nb_write(cfd, hdr, m) < 0) { *client_gone = 1; close(fd); return; }
 
     char buf[NETCON_BUF];
     long remaining = size;
     while (remaining > 0) {
         int want = remaining < NETCON_IO ? (int)remaining : NETCON_IO;
         int n = (int)read(fd, buf, want);
-        if (n <= 0)
-            break;                        /* short/early EOF -- client sees it via the length */
-        if (write_all(cfd, buf, n) < 0) {
-            *client_gone = 1;
-            break;
-        }
+        if (n <= 0) break;                  /* short/early EOF -- host sees it via len */
+        if (nb_write(cfd, buf, n) < 0) { *client_gone = 1; break; }
         remaining -= n;
     }
     close(fd);
 }
 
-/* Serve one connected client: prompt, read a command line, run it, repeat
- * until the client types exit/quit or drops the connection. */
+/* Serve one connected client until it disconnects, goes idle, or types exit. */
 static void serve_client(int cfd)
 {
     int client_gone = 0;
 
-    write_all(cfd, NETCON_BANNER, (int)sizeof(NETCON_BANNER) - 1);
+    /* Client socket is non-blocking for the whole session (v2). */
+    int fl = fcntl(cfd, F_GETFL, 0);
+    fcntl(cfd, F_SETFL, fl | NETCON_O_NONBLOCK);
+
+    nb_write(cfd, NETCON_BANNER, (int)sizeof(NETCON_BANNER) - 1);
 
     while (!client_gone) {
-        if (write_all(cfd, NETCON_PROMPT, (int)sizeof(NETCON_PROMPT) - 1) < 0)
+        if (nb_write(cfd, NETCON_PROMPT, (int)sizeof(NETCON_PROMPT) - 1) < 0)
             break;
 
         char line[NETCON_LINE];
-        int len = read_line(cfd, line, sizeof(line));
-        if (len < 0)
-            break;                        /* client closed                    */
-        if (len == 0)
-            continue;                     /* blank line -- re-prompt          */
-        if (strcmp(line, "exit") == 0 || strcmp(line, "quit") == 0)
-            break;
-        if (strncmp(line, "__put ", 6) == 0) {
-            handle_put(cfd, line + 6, &client_gone);
-            continue;                     /* file upload, not a shell command */
-        }
-        if (strncmp(line, "__get ", 6) == 0) {
-            handle_get(cfd, line + 6, &client_gone);
-            continue;                     /* fast file download              */
-        }
+        int len = nb_read_line(cfd, line, sizeof(line));
+        if (len < 0) break;                 /* closed or idle timeout           */
+        if (len == 0) continue;             /* blank line -- re-prompt          */
+        if (strcmp(line, "exit") == 0 || strcmp(line, "quit") == 0) break;
+        if (strncmp(line, "__put ", 6) == 0) { handle_put(cfd, line + 6, &client_gone); continue; }
+        if (strncmp(line, "__get ", 6) == 0) { handle_get(cfd, line + 6, &client_gone); continue; }
 
         run_command(cfd, line, &client_gone);
     }
@@ -366,10 +352,7 @@ int main(int argc, char **argv)
     signal(SIGINT, SIG_IGN);  /* a stray Ctrl-C must not kill the server */
 
     int lfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (lfd < 0) {
-        printf("[netcon] socket() failed\n");
-        return 1;
-    }
+    if (lfd < 0) { printf("[netcon] socket() failed\n"); return 1; }
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -379,28 +362,22 @@ int main(int argc, char **argv)
 
     if (bind(lfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         printf("[netcon] bind(%d) failed\n", NETCON_PORT);
-        close(lfd);
-        return 1;
+        close(lfd); return 1;
     }
-
     if (listen(lfd, 1) < 0) {
         printf("[netcon] listen() failed\n");
-        close(lfd);
-        return 1;
+        close(lfd); return 1;
     }
 
-    printf("[netcon] listening on port %d (plaintext command shell, LAN only)\n",
+    printf("[netcon] v2 listening on port %d (plaintext command shell, LAN only)\n",
            NETCON_PORT);
 
+    /* Listening socket stays BLOCKING: accept() blocks while idle (no busy
+     * spin); only the accepted client socket is made non-blocking. */
     for (;;) {
         int cfd = accept(lfd, (void *)0, (void *)0);
-        if (cfd < 0) {
-            printf("[netcon] accept() failed\n");
-            continue;
-        }
-        printf("[netcon] client connected (fd %d)\n", cfd);
+        if (cfd < 0) { printf("[netcon] accept() failed\n"); continue; }
         serve_client(cfd);
-        printf("[netcon] client disconnected\n");
     }
 
     close(lfd);

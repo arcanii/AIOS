@@ -262,7 +262,46 @@ static int ext2_set_block_num(ext2_ctx_t *ctx, struct ext2_inode *inode,
         return 0;
     }
 
-    return -3; /* double indirect write not yet supported */
+    /* Double indirect: 12+ptrs .. 12+ptrs+ptrs^2-1 (v0.4.170: enables files
+     * larger than ~268KB with 1KB blocks -- needed to push 300KB+ binaries). */
+    index -= ptrs_per_block;
+    if (index < ptrs_per_block * ptrs_per_block) {
+        uint8_t zero[1024];
+        if (!inode->i_block[13]) {
+            int db = ext2_alloc_block(ctx);
+            if (db < 0) return -1;
+            for (int i = 0; i < (int)ctx->block_size; i++) zero[i] = 0;
+            write_block(ctx, db, zero);
+            inode->i_block[13] = (uint32_t)db;
+        }
+        uint8_t dind_buf[1024];
+        if (read_block(ctx, inode->i_block[13], dind_buf) != 0) return -2;
+        int outer = index / ptrs_per_block;
+        int inner = index % ptrs_per_block;
+        uint32_t ind_block = rd32(dind_buf + outer * 4);
+        if (!ind_block) {
+            int ib = ext2_alloc_block(ctx);
+            if (ib < 0) return -1;
+            for (int i = 0; i < (int)ctx->block_size; i++) zero[i] = 0;
+            write_block(ctx, ib, zero);
+            ind_block = (uint32_t)ib;
+            dind_buf[outer * 4]     = ind_block & 0xFF;
+            dind_buf[outer * 4 + 1] = (ind_block >> 8) & 0xFF;
+            dind_buf[outer * 4 + 2] = (ind_block >> 16) & 0xFF;
+            dind_buf[outer * 4 + 3] = (ind_block >> 24) & 0xFF;
+            write_block(ctx, inode->i_block[13], dind_buf);
+        }
+        uint8_t ind_buf[1024];
+        if (read_block(ctx, ind_block, ind_buf) != 0) return -2;
+        ind_buf[inner * 4]     = blk_num & 0xFF;
+        ind_buf[inner * 4 + 1] = (blk_num >> 8) & 0xFF;
+        ind_buf[inner * 4 + 2] = (blk_num >> 16) & 0xFF;
+        ind_buf[inner * 4 + 3] = (blk_num >> 24) & 0xFF;
+        write_block(ctx, ind_block, ind_buf);
+        return 0;
+    }
+
+    return -3; /* triple indirect write not supported */
 }
 
 /* Positioned write: write len bytes at offset, allocating blocks as needed */

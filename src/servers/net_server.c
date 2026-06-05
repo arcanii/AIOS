@@ -258,61 +258,71 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
                 return;  /* Out-of-order (seq > rcv_nxt), drop */
             }
         }
-        s->rcv_nxt += data_len;
-
-        /* ACK the data with dynamic window */
+        /* v0.4.170: accept ONLY what we can deliver+buffer, and ACK ONLY that.
+         * The old code did rcv_nxt += data_len unconditionally, then silently
+         * DROPPED any bytes that did not fit the rx ring -- i.e. it ACKed data it
+         * threw away, so the sender never retransmitted it and a multi-window push
+         * stalled with a permanently short stream (worked <=5KB, hung >=20KB). Now
+         * we advance rcv_nxt by the accepted count and advertise the TRUE free
+         * window; the sender retransmits the unACKed tail when the window reopens
+         * (the read-side window update in NET_RECVFROM provides the reopen). */
         {
             int mask = SOCK_RX_BUF_SZ - 1;
-            int used = (s->rx_head - s->rx_tail) & mask;
-            int free_win = SOCK_RX_BUF_SZ - 1 - used - data_len;
-            if (free_win < 0) free_win = 0;
-            tcp_tx_window = (uint16_t)free_win;
-        }
-        net_tcp_send(s->remote_ip, s->remote_mac,
-                     s->local_port, s->remote_port,
-                     s->snd_nxt, s->rcv_nxt, TCP_ACK, NULL, 0);
+            int accepted = 0;
 
-        /* Wake blocked recv or buffer */
-        if (s->has_blocked) {
-            int n = data_len;
-            if (n > s->blocked_max) n = s->blocked_max;
-            seL4_SetMR(0, (seL4_Word)n);
-            seL4_SetMR(1, 0);
-            seL4_SetMR(2, 0);
-            int mr = 3;
-            seL4_Word w = 0;
-            for (int j = 0; j < n; j++) {
-                w |= ((seL4_Word)data[j]) << ((j % 8) * 8);
-                if (j % 8 == 7 || j == n - 1) { seL4_SetMR(mr++, w); w = 0; }
-            }
-            seL4_Send(s->blocked_cap, seL4_MessageInfo_new(0, 0, 0, mr));
-            seL4_CNode_Delete(seL4_CapInitThreadCNode,
-                              s->blocked_cap, seL4_WordBits);
-            s->has_blocked = 0;
-
-            /* Buffer remaining TCP data that did not fit in the read */
-            if (n < data_len) {
-                int remaining = data_len - n;
-                int mask = SOCK_RX_BUF_SZ - 1;
+            if (s->has_blocked) {
+                /* A reader is parked: hand it up to blocked_max bytes now. */
+                int d = data_len;
+                if (d > s->blocked_max) d = s->blocked_max;
+                seL4_SetMR(0, (seL4_Word)d);
+                seL4_SetMR(1, 0);
+                seL4_SetMR(2, 0);
+                int mr = 3;
+                seL4_Word w = 0;
+                for (int j = 0; j < d; j++) {
+                    w |= ((seL4_Word)data[j]) << ((j % 8) * 8);
+                    if (j % 8 == 7 || j == d - 1) { seL4_SetMR(mr++, w); w = 0; }
+                }
+                seL4_Send(s->blocked_cap, seL4_MessageInfo_new(0, 0, 0, mr));
+                seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                                  s->blocked_cap, seL4_WordBits);
+                s->has_blocked = 0;
+                accepted = d;
+                /* Buffer any remainder that fits the ring. */
+                int rest = data_len - d;
+                if (rest > 0) {
+                    int free_sp = SOCK_RX_BUF_SZ - 1 -
+                                  ((s->rx_head - s->rx_tail) & mask);
+                    int b = rest < free_sp ? rest : free_sp;
+                    for (int j = 0; j < b; j++) {
+                        s->rxbuf[s->rx_head & mask] = data[d + j];
+                        s->rx_head++;
+                    }
+                    accepted += b;
+                }
+            } else {
+                /* No reader parked: buffer what fits; the rest is unACKed and
+                 * the sender will retransmit it once the window reopens. */
                 int free_sp = SOCK_RX_BUF_SZ - 1 -
-                    ((s->rx_head - s->rx_tail) & mask);
-                int to_buf = remaining;
-                if (to_buf > free_sp) to_buf = free_sp;
-                for (int j = 0; j < to_buf; j++) {
-                    s->rxbuf[s->rx_head & mask] = data[n + j];
+                              ((s->rx_head - s->rx_tail) & mask);
+                int b = data_len < free_sp ? data_len : free_sp;
+                for (int j = 0; j < b; j++) {
+                    s->rxbuf[s->rx_head & mask] = data[j];
                     s->rx_head++;
                 }
+                accepted = b;
             }
-        } else {
-            /* Append to TCP circular buffer */
-            int mask = SOCK_RX_BUF_SZ - 1;
-            int free_sp = SOCK_RX_BUF_SZ - 1 - ((s->rx_head - s->rx_tail) & mask);
-            int n = data_len;
-            if (n > free_sp) n = free_sp;
-            for (int j = 0; j < n; j++) {
-                s->rxbuf[s->rx_head & mask] = data[j];
-                s->rx_head++;
-            }
+
+            /* Advance rcv_nxt only by the accepted bytes, then ACK with the real
+             * free window so the sender's flow control tracks us exactly. */
+            s->rcv_nxt += (uint32_t)accepted;
+            int used = (s->rx_head - s->rx_tail) & mask;
+            int freew = SOCK_RX_BUF_SZ - 1 - used;
+            if (freew < 0) freew = 0;
+            tcp_tx_window = (uint16_t)freew;
+            net_tcp_send(s->remote_ip, s->remote_mac,
+                         s->local_port, s->remote_port,
+                         s->snd_nxt, s->rcv_nxt, TCP_ACK, NULL, 0);
         }
     }
 
@@ -547,6 +557,22 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                         if (j % 8 == 7 || j == n - 1) { seL4_SetMR(mr2++, w2); w2 = 0; }
                     }
                     seL4_Reply(seL4_MessageInfo_new(0, 0, 0, mr2));
+                    /* v0.4.170: TCP window update on read. Draining the rx ring
+                     * frees receive-window space; advertise it to the sender with
+                     * a pure ACK. Without this, a sustained push that filled the
+                     * small rx window stalls FOREVER: the sender is window-blocked
+                     * and the reader drains but never re-opens the window (the old
+                     * code only ACKed on RECEIVE, never on READ). Standard
+                     * ACK-on-read; the fix that makes large __put complete. */
+                    {
+                        int freew = SOCK_RX_BUF_SZ - 1 -
+                                    ((sk->rx_head - sk->rx_tail) & mask);
+                        if (freew < 0) freew = 0;
+                        tcp_tx_window = (uint16_t)freew;
+                        net_tcp_send(sk->remote_ip, sk->remote_mac,
+                                     sk->local_port, sk->remote_port,
+                                     sk->snd_nxt, sk->rcv_nxt, TCP_ACK, NULL, 0);
+                    }
                 } else if (sk->rx_eof) {
                     seL4_SetMR(0, 0);
                     seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));

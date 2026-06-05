@@ -85,6 +85,7 @@ def push(local, remote, host=DEFAULT_HOST):
         data = f.read()
     sha = hashlib.sha256(data).hexdigest()
     nc = NC(host); nc.expect(b"aios# ")
+    nc.s.settimeout(60)   # large pushes drain over seconds; 2s was the v1 bug
     t0 = time.time()
     # control line "__put <remote> <len>" then exactly <len> raw bytes
     nc.s.sendall(("__put %s %d\n" % (remote, len(data))).encode())
