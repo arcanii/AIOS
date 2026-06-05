@@ -463,6 +463,10 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
 
         } else if (label == NET_ACCEPT) {
             int sid = (int)seL4_GetMR(0);
+            /* v0.4.175: nonblock accept flag in MR1, GUARDED by message length so
+             * old 1-MR callers (v1 netconsole, sshd) keep the blocking behaviour
+             * -- a stale MR1 must never flip them to a spurious EAGAIN. */
+            int acc_nb = (seL4_MessageInfo_get_length(msg) >= 2) ? (int)seL4_GetMR(1) : 0;
             if (sid < 0 || sid >= MAX_NET_SOCKETS || !sockets[sid].in_use ||
                 sockets[sid].state != TCP_LISTEN) {
                 seL4_SetMR(0, (seL4_Word)-1);
@@ -488,6 +492,13 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 if (pending >= 0) {
                     sockets[pending].listen_parent = -1;
                     seL4_SetMR(0, (seL4_Word)pending);
+                    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                } else if (acc_nb) {
+                    /* v0.4.175: non-blocking accept -- no pending connection, so
+                     * reply EAGAIN (-11) instead of parking the caller. Lets a
+                     * single-process event loop (netconsole2) poll accept() while
+                     * it services its other sessions. */
+                    seL4_SetMR(0, (seL4_Word)-11);
                     seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                 } else {
                     seL4_CNode_SaveCaller(seL4_CapInitThreadCNode,
