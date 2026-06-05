@@ -49,7 +49,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (argc < 2) {
-        printf("Usage: fbshow <file.raw> | --info | --clear [RRGGBB]\n");
+        printf("Usage: fbshow <file.raw> | --info | --clear [RRGGBB] | --cube\n");
         return 1;
     }
 
@@ -69,6 +69,12 @@ int main(int argc, char *argv[]) {
         if (argc > 2) color = hex_to_u32(argv[2]);
         seL4_SetMR(0, color);
         seL4_Call(disp_ep, seL4_MessageInfo_new(DISP_CLEAR, 0, 0, 1));
+        return 0;
+    }
+
+    if (streq(argv[1], "--cube")) {
+        /* software 3D: spinning wireframe cube animation on the framebuffer */
+        seL4_Call(disp_ep, seL4_MessageInfo_new(DISP_CUBE, 0, 0, 0));
         return 0;
     }
 

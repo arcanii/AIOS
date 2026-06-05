@@ -330,7 +330,13 @@ static int plat_display_init_mailbox(uint32_t width, uint32_t height) {
     tags[i++] = 4; tags[i++] = 0; tags[i++] = 32;
 
     tags[i++] = TAG_SET_PIXEL_ORD;
-    tags[i++] = 4; tags[i++] = 0; tags[i++] = 1;
+    /* v0.4.169: 0 = BGR byte order. Our software writes pixels as little-endian
+     * 0x00RRGGBB, i.e. memory bytes [B,G,R,X] with Blue at the lowest address. The
+     * VC framebuffer must therefore use BGR byte order to match; with pixel_order=1
+     * (RGB, lowest byte = Red) the hardware read our Blue byte as Red, swapping R
+     * and B on every pixel (blue logo showed as red on HW). QEMU uses a separate
+     * path (display_ramfb.c) and is unaffected. */
+    tags[i++] = 4; tags[i++] = 0; tags[i++] = 0;
 
     int alloc_idx = i;
     tags[i++] = TAG_ALLOC_BUF;

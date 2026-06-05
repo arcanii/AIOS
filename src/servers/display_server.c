@@ -30,6 +30,59 @@ static void ipc_extract_str(char *buf, int len, int mr_start) {
     buf[len] = '\0';
 }
 
+/* ============================================================
+ * Software 3D: spinning wireframe cube (FP-free, fixed point).
+ * Bhaskara I integer sine (Q10) + perspective projection +
+ * Bresenham lines straight to gpu_fb. A CPU 3D demo on the
+ * framebuffer -- no GPU acceleration (see docs/DESIGN_RPI4_3D.md
+ * for how hardware V3D 3D would be done).
+ * ============================================================ */
+static int gfx_isin(int a){ a%=360; if(a<0)a+=360; int s=1; if(a>180){a-=180;s=-1;}
+    int t=a*(180-a); return s*(4*t*1024)/(40500-t); }
+static int gfx_icos(int a){ return gfx_isin(a+90); }
+
+static void gfx_put(int x,int y,uint32_t c){
+    if((unsigned)x<gpu_width && (unsigned)y<gpu_height) gpu_fb[y*gpu_width+x]=c; }
+static void gfx_line(int x0,int y0,int x1,int y1,uint32_t c){
+    int dx=x1-x0,dy=y1-y0; int ax=dx<0?-dx:dx,ay=dy<0?-dy:dy; int sx=dx<0?-1:1,sy=dy<0?-1:1;
+    int err=(ax>ay?ax:-ay)/2,e2;
+    for(;;){ gfx_put(x0,y0,c); if(x0==x1&&y0==y1)break; e2=err;
+        if(e2>-ax){err-=ay;x0+=sx;} if(e2<ay){err+=ax;y0+=sy;} } }
+
+static const int GFX_CV[8][3]={{-1,-1,-1},{1,-1,-1},{1,1,-1},{-1,1,-1},
+                               {-1,-1,1},{1,-1,1},{1,1,1},{-1,1,1}};
+static const int GFX_CE[12][2]={{0,1},{1,2},{2,3},{3,0},{4,5},{5,6},{6,7},{7,4},
+                                {0,4},{1,5},{2,6},{3,7}};
+
+static void gfx_render_cube(int ax,int ay){
+    uint32_t bg=GPU_PIXEL(12,14,32), total=gpu_width*gpu_height;
+    for(uint32_t i=0;i<total;i++) gpu_fb[i]=bg;
+    int cx=(int)gpu_width/2, cy=(int)gpu_height/2;
+    int scale=((int)gpu_height*2)/5, dist=3;
+    int sa=gfx_isin(ay),ca=gfx_icos(ay),sb=gfx_isin(ax),cb=gfx_icos(ax);
+    int sx[8],sy[8];
+    for(int i=0;i<8;i++){
+        int X=GFX_CV[i][0]*1024,Y=GFX_CV[i][1]*1024,Z=GFX_CV[i][2]*1024;   /* Q10 */
+        int Xr=(X*ca+Z*sa)>>10;
+        int Zr=(-X*sa+Z*ca)>>10;
+        int Yr=(Y*cb-Zr*sb)>>10;
+        int Zr2=(Y*sb+Zr*cb)>>10;
+        int zc=Zr2+dist*1024; if(zc<16)zc=16;
+        sx[i]=cx+(Xr*scale)/zc;
+        sy[i]=cy-(Yr*scale)/zc;
+    }
+    uint32_t col=GPU_PIXEL(120,200,255);
+    for(int e=0;e<12;e++)
+        gfx_line(sx[GFX_CE[e][0]],sy[GFX_CE[e][0]],sx[GFX_CE[e][1]],sy[GFX_CE[e][1]],col);
+}
+
+static void gfx_demo_cube(void){
+    for(int t=0;t<200;t++){
+        gfx_render_cube((t*2)%360,(t*3)%360);
+        for(volatile int d=0; d<1500000; d++) __asm__ volatile("":::"memory");
+    }
+}
+
 void display_server_fn(void *arg0, void *arg1, void *ipc_buf) {
     seL4_CPtr ep = (seL4_CPtr)(uintptr_t)arg0;
     (void)arg1; (void)ipc_buf;
@@ -148,6 +201,18 @@ void display_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             uint32_t total = gpu_width * gpu_height;
             for (uint32_t i = 0; i < total; i++)
                 gpu_fb[i] = cc;
+            seL4_SetMR(0, 0);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+
+        case DISP_CUBE: {
+            if (!gpu_available || !gpu_fb) {
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            gfx_demo_cube();
             seL4_SetMR(0, 0);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;

@@ -92,6 +92,7 @@
 #define DISP_TEXT        112
 #define DISP_FILL_RECT   113
 #define DISP_CLEAR       114
+#define DISP_CUBE        115   /* software 3D: spinning wireframe cube demo */
 
 /* ── Limits ── */
 
