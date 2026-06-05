@@ -34,6 +34,9 @@
 
 typedef int (*blk_backend_read_fn)(uint64_t sector, void *buf);
 typedef int (*blk_backend_write_fn)(uint64_t sector, const void *buf);
+/* v0.4.172: optional multi-sector write for fast write-back line flushes. */
+typedef int (*blk_backend_write_multi_fn)(uint64_t sector, const void *buf,
+                                          int count);
 
 /* Initialize cache with up to max_pages 4 KB lines. Must be called
  * after vka is up but before ext2_init. Pass 0 to use the default. */
@@ -44,6 +47,10 @@ void blk_cache_init(int max_pages);
 void blk_cache_register_backend(int drive,
                                 blk_backend_read_fn read_fn,
                                 blk_backend_write_fn write_fn);
+
+/* v0.4.172: register an optional multi-sector write backend for a drive.
+ * When set, a write-back line flush writes all 8 sectors in one call. */
+void blk_cache_register_write_multi(int drive, blk_backend_write_multi_fn fn);
 
 /* The read/write entry points used as the blk_read_fn / blk_write_fn
  * passed to ext2_init / ext2_init_write. drive_id is implicit -- use
@@ -59,8 +66,8 @@ int blk_cache_write1(uint64_t sector, const void *buf);
  * vka_audit_check_headroom under memory pressure. */
 int blk_cache_evict(int n_pages);
 
-/* Force write-back of any dirty lines (no-op in v0.4.112 since cache
- * is write-through, but the symbol is reserved for shutdown). */
+/* Force write-back of all dirty lines (v0.4.172: drive 0 is write-back).
+ * MUST be called before shutdown/reboot or deferred writes are lost. */
 void blk_cache_flush(void);
 
 /* Snapshot stats for /proc/cachestats. */
@@ -71,6 +78,8 @@ typedef struct {
     uint32_t pages_max;      /* configured cap */
     uint32_t evicted;        /* cumulative line evictions */
     uint32_t writes;         /* cumulative writes through cache */
+    uint32_t flushes;        /* v0.4.172: cumulative dirty-line write-backs */
+    uint32_t dirty;          /* v0.4.172: lines currently dirty (live) */
 } blk_cache_stats_t;
 
 void blk_cache_stats(blk_cache_stats_t *out);

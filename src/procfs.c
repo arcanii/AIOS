@@ -1,4 +1,5 @@
 #include "aios/procfs.h"
+#include "aios/version.h"
 #include "aios/root_shared.h"
 #include "aios/vka_audit.h"
 #include "aios/hw_info.h"
@@ -139,9 +140,11 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
             buf[w++] = '\n';
         }
     } else if (path[0] == 'v' && path[1] == 'e') {
-        /* /proc/version -- dynamic CPU info from DTB */
+        /* /proc/version -- real version + build (version.h), dynamic CPU
+         * info from DTB. The version/build/date come from the same macros
+         * uname reports, so the two never drift. */
         {
-            const char *p1 = "AIOS 0.4.x (seL4 15.0.0, ";
+            const char *p1 = AIOS_VERSION_FULL " (seL4 15.0.0, ";
             while (*p1 && w < bufsize - 1) buf[w++] = *p1++;
             const char *cp = hw_info.cpu_compat;
             while (*cp && w < bufsize - 1) buf[w++] = *cp++;
@@ -150,7 +153,7 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
             int nc = hw_info.cpu_count;
             if (nc >= 10) buf[w++] = '0' + nc / 10;
             buf[w++] = '0' + nc % 10;
-            const char *p3 = "-core SMP)\n";
+            const char *p3 = "-core SMP) " AIOS_BUILD_DATE "\n";
             while (*p3 && w < bufsize - 1) buf[w++] = *p3++;
         }
     } else if (path[0] == 'm' && path[1] == 'o') {

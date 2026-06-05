@@ -350,6 +350,18 @@ int plat_blk_write(uint64_t sector, const void *buf) {
     return 0;
 }
 
+/* v0.4.172: multi-sector write. QEMU virtio writes are already fast, so we
+ * just loop single-block writes -- this still exercises the block cache's
+ * write-back line-flush path (it calls the multi backend with count=8) so
+ * the write-back logic is validated on QEMU before flashing. */
+int plat_blk_write_multi(uint64_t sector, const void *buf, int count) {
+    const uint8_t *p = (const uint8_t *)buf;
+    for (int i = 0; i < count; i++) {
+        if (plat_blk_write(sector + i, p + i * 512) != 0) return -1;
+    }
+    return 0;
+}
+
 /* ============================================================
  * Sector I/O -- log device
  * ============================================================ */

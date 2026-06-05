@@ -38,6 +38,8 @@ int boot_fs_init(void) {
      * needing to know anything about caching. */
     blk_cache_init(0);
     blk_cache_register_backend(0, plat_blk_read, plat_blk_write);
+    /* v0.4.172: write-back line flushes use multi-block writes (RPi4 CMD25). */
+    blk_cache_register_write_multi(0, plat_blk_write_multi);
     int fs_err = ext2_init(&ext2, blk_cache_read0, 0);
     if (fs_err == 0) {
         ext2_init_write(&ext2, blk_cache_write0);

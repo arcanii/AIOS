@@ -39,7 +39,7 @@ typedef struct cache_line {
     vka_object_t frame;
     uint32_t lru_tick;
     uint8_t  valid;
-    uint8_t  dirty;           /* unused in v0.4.112 (write-through) */
+    uint8_t  dirty;           /* v0.4.172: line has unflushed writes (drive 0) */
     struct cache_line *hash_next;
     struct cache_line *prev, *next;  /* LRU: head=most recent, tail=oldest */
 } cache_line_t;
@@ -53,6 +53,16 @@ static uint32_t     monotonic_tick = 0;
 
 static blk_backend_read_fn  backend_read[2]  = { NULL, NULL };
 static blk_backend_write_fn backend_write[2] = { NULL, NULL };
+static blk_backend_write_multi_fn backend_write_multi[2] = { NULL, NULL };
+
+/* v0.4.172: write-back policy per drive. Drive 0 (system disk) is write-back
+ * -- the big file-write speedup: it coalesces the inode/bitmap rewrites and
+ * the new-block zero+data double-write that made single-block eMMC writes
+ * ~21KB/s. Drive 1 (log) stays write-through so a crash never loses the most
+ * recent log lines (the whole point of the persistent /var/log). */
+static const int drive_writeback[2] = { 1, 0 };
+static int dirty_count = 0;
+#define BLK_DIRTY_FLUSH_LINES 16   /* flush all dirty once this many accrue */
 
 static blk_cache_stats_t stats;
 
@@ -143,12 +153,41 @@ static void line_free(cache_line_t *l) {
     free(l);
 }
 
+/* v0.4.172: write a dirty line back to its backend. Prefers the multi-block
+ * backend (one CMD25 for the whole 8-sector line on RPi4) when registered,
+ * else falls back to a single-block loop. Clears dirty on success. */
+static int flush_line(cache_line_t *l) {
+    if (!l->valid || !l->dirty) return 0;
+    int rc;
+    blk_backend_write_multi_fn wm = backend_write_multi[l->drive];
+    if (wm) {
+        rc = wm(l->line_sector, l->data, BLK_CACHE_LINE_SECTORS);
+    } else {
+        blk_backend_write_fn wr = backend_write[l->drive];
+        rc = 0;
+        for (int i = 0; i < BLK_CACHE_LINE_SECTORS && rc == 0; i++)
+            rc = wr ? wr(l->line_sector + i, l->data + i * 512) : -1;
+    }
+    if (rc == 0) {
+        l->dirty = 0;
+        if (dirty_count > 0) dirty_count--;
+        stats.flushes++;
+    }
+    return rc;
+}
+
+/* Flush every dirty line (threshold trigger + blk_cache_flush). */
+static void flush_all_dirty(void) {
+    for (cache_line_t *l = lru_head; l; l = l->next)
+        if (l->dirty) flush_line(l);
+}
+
 /* Evict the LRU tail. Returns 1 if a line was freed, 0 if the cache
- * is empty. */
+ * is empty. v0.4.172: write a dirty victim back before discarding it. */
 static int evict_one(void) {
     cache_line_t *victim = lru_tail;
     if (!victim) return 0;
-    /* Write-through means no dirty data to flush. Just unlink. */
+    if (victim->dirty) flush_line(victim);
     lru_unlink(victim);
     hash_remove(victim);
     line_free(victim);
@@ -161,6 +200,7 @@ void blk_cache_init(int max_pages) {
     memset(bucket_head, 0, sizeof(bucket_head));
     lru_head = lru_tail = NULL;
     line_count = 0;
+    dirty_count = 0;
     monotonic_tick = 0;
     line_max = max_pages > 0 ? max_pages : BLK_CACHE_DEFAULT_MAX_PAGES;
     stats.pages_max = (uint32_t)line_max;
@@ -173,6 +213,11 @@ void blk_cache_register_backend(int drive,
     if (drive < 0 || drive > 1) return;
     backend_read[drive]  = read_fn;
     backend_write[drive] = write_fn;
+}
+
+void blk_cache_register_write_multi(int drive, blk_backend_write_multi_fn fn) {
+    if (drive < 0 || drive > 1) return;
+    backend_write_multi[drive] = fn;
 }
 
 /* Ensure a line exists for (drive, line_sector). Reads from backend
@@ -229,10 +274,32 @@ static int cache_read_sector(uint32_t drive, uint64_t sector, void *buf) {
     return 0;
 }
 
-/* Write-through: update the line if cached, then push to backend. */
+/* Write one sector.
+ *
+ * v0.4.172: drive 0 is WRITE-BACK -- read-allocate the line, update it in
+ * place, mark it dirty, and defer the backend write to a threshold / eviction
+ * / shutdown flush. This collapses the inode/bitmap rewrites and the
+ * new-block zero+data double-write into far fewer (multi-block) eMMC writes.
+ * Within a boot, readers hit the same cache, so they see dirty data -- the
+ * write-back is transparent for read-after-write; flush is purely for
+ * crash/reboot durability. Drive 1 (log) stays write-through. */
 static int cache_write_sector(uint32_t drive, uint64_t sector, const void *buf) {
     uint64_t line_sector = sector & ~(uint64_t)(BLK_CACHE_LINE_SECTORS - 1);
     int offset = (int)(sector - line_sector);
+    stats.writes++;
+
+    if (drive <= 1 && drive_writeback[drive]) {
+        cache_line_t *wl = get_line(drive, line_sector);   /* read-allocate */
+        if (wl) {
+            memcpy(wl->data + offset * 512, buf, 512);
+            if (!wl->dirty) { wl->dirty = 1; dirty_count++; }
+            lru_touch(wl);
+            if (dirty_count >= BLK_DIRTY_FLUSH_LINES) flush_all_dirty();
+            return 0;
+        }
+        /* get_line failed under vka pressure -- fall through to write-through */
+    }
+
     cache_line_t *l = lookup(drive, line_sector);
     if (l) {
         memcpy(l->data + offset * 512, buf, 512);
@@ -240,7 +307,6 @@ static int cache_write_sector(uint32_t drive, uint64_t sector, const void *buf) 
     }
     blk_backend_write_fn wr = backend_write[drive];
     if (!wr) return -1;
-    stats.writes++;
     return wr(sector, buf);
 }
 
@@ -256,11 +322,13 @@ int blk_cache_evict(int n_pages) {
 }
 
 void blk_cache_flush(void) {
-    /* Write-through: nothing to flush. Reserved for future write-back. */
+    /* v0.4.172: write back all dirty lines. Called before shutdown/reboot. */
+    flush_all_dirty();
 }
 
 void blk_cache_stats(blk_cache_stats_t *out) {
     *out = stats;
     out->pages = (uint32_t)line_count;
     out->pages_max = (uint32_t)line_max;
+    out->dirty = (uint32_t)dirty_count;
 }

@@ -21,6 +21,7 @@
 #include <vka/capops.h>
 #include "virtio.h"
 #include "aios/ext2.h"
+#include "aios/blk_cache.h"
 #include "aios/vfs.h"
 #include "aios/procfs.h"
 #define LOG_MODULE "root"
@@ -135,6 +136,8 @@ uint32_t gpu_height = 0;
 /* ── File permission check ── */
 /* PSCI shutdown -- seL4_DebugHalt stops QEMU cleanly */
 void aios_system_shutdown(void) {
+    /* v0.4.172: write back any deferred (write-back cache) data before halt. */
+    blk_cache_flush();
     printf("\n");
     printf("============================================\n");
     printf("  AIOS shutdown complete\n");
@@ -155,6 +158,8 @@ void aios_system_shutdown(void) {
  * SYSTEM_RESET is not used -- it is unlikely to work from EL1 under seL4.
  * On QEMU (no PM block) we fall back to a clean halt. */
 void aios_system_reboot(void) {
+    /* v0.4.172: write back any deferred (write-back cache) data before reset. */
+    blk_cache_flush();
     printf("\n");
     printf("============================================\n");
     printf("  AIOS reboot -- resetting board\n");

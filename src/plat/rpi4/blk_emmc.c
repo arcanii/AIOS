@@ -96,6 +96,7 @@
 #define CMD_IDX_EN        (1u << 20)
 #define CMD_DATA          (1u << 21)
 #define XFER_READ         (1u << 4)
+#define XFER_MULTI        (1u << 5)
 #define XFER_BLKCNT_EN    (1u << 1)
 
 /* HOST_CTRL power control bits (byte 1 of register at 0x28) */
@@ -629,11 +630,93 @@ static int emmc_write_raw_sector(uint64_t lba, const void *buf) {
 }
 
 /* ----------------------------------------------------------------
+ * emmc_write_multi -- write `count` contiguous 512-byte sectors via PIO
+ * using CMD25 WRITE_MULTIPLE_BLOCK + CMD12 STOP_TRANSMISSION. One flash
+ * program cycle covers all blocks, so this is far faster per sector than
+ * count separate CMD24 single-block writes (the v0.4.172 write speedup).
+ * Returns 0 on success, -1 on error.
+ * ---------------------------------------------------------------- */
+static int emmc_write_multi(uint64_t lba, const void *buf, int count) {
+    if (count <= 0) return 0;
+    if (count == 1) return emmc_write_raw_sector(lba, buf);
+    if (emmc_wait_dat() != 0) return -1;
+
+    EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
+    EMMC_W(REG_BLKSIZECNT, ((uint32_t)count << 16) | 0x200);
+    uint32_t arg = card_is_sdhc ? (uint32_t)lba : (uint32_t)(lba * 512);
+    EMMC_W(REG_ARGUMENT, arg);
+    /* CMD25: multi-block write (XFER_MULTI, block-count enabled, no READ bit) */
+    EMMC_W(REG_XFER_CMD,
+        CMD_INDEX(25) | CMD_RESP_48 | CMD_CRC_EN | CMD_IDX_EN |
+        CMD_DATA | XFER_MULTI | XFER_BLKCNT_EN);
+
+    /* Wait for command complete */
+    for (int t = 0; t < 10000000; t++) {
+        arch_dmb();
+        uint32_t st = EMMC_R(REG_INT_STATUS);
+        if (st & INT_ERROR) {
+            printf("[blk] WriteM LBA %u cmd err: 0x%x\n", (uint32_t)lba, st);
+            EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
+            return -1;
+        }
+        if (st & INT_CMD_DONE) break;
+    }
+    EMMC_W(REG_INT_STATUS, INT_CMD_DONE);
+
+    /* Transfer each block: wait for buffer-write-ready, push 128 words */
+    const uint8_t *p = (const uint8_t *)buf;
+    for (int b = 0; b < count; b++) {
+        for (int t = 0; t < 10000000; t++) {
+            arch_dmb();
+            uint32_t st = EMMC_R(REG_INT_STATUS);
+            if (st & INT_ERROR) {
+                printf("[blk] WriteM LBA %u buf err: 0x%x\n", (uint32_t)lba, st);
+                EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
+                return -1;
+            }
+            if (st & INT_BUF_WR) break;
+        }
+        EMMC_W(REG_INT_STATUS, INT_BUF_WR);
+        memcpy(sector_buf, p + b * 512, 512);
+        for (int i = 0; i < 128; i++) {
+            EMMC_W(REG_BUFFER, sector_buf[i]);
+        }
+    }
+
+    /* Wait for transfer complete (all blocks accepted) */
+    for (int t = 0; t < 10000000; t++) {
+        arch_dmb();
+        uint32_t st = EMMC_R(REG_INT_STATUS);
+        if (st & INT_ERROR) {
+            printf("[blk] WriteM LBA %u xfer err: 0x%x\n", (uint32_t)lba, st);
+            EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
+            return -1;
+        }
+        if (st & INT_XFER_DONE) break;
+    }
+    EMMC_W(REG_INT_STATUS, INT_XFER_DONE);
+
+    /* CMD12 STOP_TRANSMISSION ends the open-ended multi-block write
+     * (AUTO_CMD12 is not enabled in our XFER encoding). */
+    if (emmc_send_cmd(CMD_INDEX(12) | CMD_RESP_48B | CMD_CRC_EN | CMD_IDX_EN, 0)
+        != 0)
+        return -1;
+
+    return 0;
+}
+
+/* ----------------------------------------------------------------
  * HAL: plat_blk_write -- write sector relative to ext2 partition
  * ---------------------------------------------------------------- */
 int plat_blk_write(uint64_t sector, const void *buf) {
     if (!emmc_initialized) return -1;
     return emmc_write_raw_sector(part_offset + sector, buf);
+}
+
+/* HAL: plat_blk_write_multi -- write `count` contiguous sectors at once. */
+int plat_blk_write_multi(uint64_t sector, const void *buf, int count) {
+    if (!emmc_initialized) return -1;
+    return emmc_write_multi(part_offset + sector, buf, count);
 }
 
 /* ----------------------------------------------------------------
