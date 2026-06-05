@@ -10,7 +10,7 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
 ## Quick orientation
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4.
-* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.174**.
+* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.176**.
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4).
 * **Host**: macOS Apple Silicon, cross-compile to aarch64-linux-gnu.
 * **Developer**: Bryan -- prefers Python patch scripts over sed/heredocs; no
@@ -40,6 +40,40 @@ Honor it; this session learned the hard way what happens when you do not.
   those on the Pi -- but via push-over-net + serial, not reflashes.
 
 ---
+
+## Where we left off (v0.4.175 -> v0.4.176) -- netconsole2 + the eMMC stall RESOLVED
+
+The big result: the HW "relay stall" that killed the reverted netconsole v2 AND stalled the
+v0.4.175 netconsole2 is now understood and FIXED -- it was never a relay bug, it was the RPi4
+eMMC driver. Full lesson: `emmc-completion-timeout-hw` memory.
+
+* **netconsole2 debug sibling (v0.4.175, `f8a92cc`).** Retry of the reverted v2 as a SEPARATE
+  binary on port 2324 (v1 keeps 2323 as the reliable deploy channel) with a serial-INDEPENDENT
+  trace to `/tmp/nc2.trace` (pulled over the v1 channel) -- the instrument that cracked the bug.
+  Plus a length-guarded non-blocking accept in `net_server.c` (old 1-MR callers stay blocking).
+  QEMU smoke 9/9 (`scripts/nc2_qemu_test.py`).
+* **eMMC completion timeout = the root cause (v0.4.176, `eff80dc`, HW-VERIFIED).** `blk_emmc.c`
+  polled every completion with a fixed `for (t < 10000000)` INT_STATUS loop. That is an
+  iteration count, not a timeout: on the A72 a MISSED status bit (normal for polled SDHCI)
+  burned all 10M MMIO reads ~= 32.6s before proceeding (QEMU finished instantly). A write-back
+  CMD25 flush that hit it stalled the whole block layer 32.6s. The netconsole2 trace showed the
+  EXACT, repeated 32632ms gap = the 10M count. Fix: time-based waits (`cntpct_el0`,
+  `emmc_wait_int` + `emmc_deadline`, EMMC_CMD_MS 1s / EMMC_DATA_MS 2s; a missed bit now costs
+  <=2s). HW: netconsole2 commands ~0.5s, ZERO 32s stalls. LESSON: HW poll loops need real-time
+  bounds, never iteration counts.
+* **netconsole2 relay works on HW.** With the eMMC fix the fork/pipe/socket relay runs fast and
+  correct -- the reverted v2 was a victim of the eMMC stall, not broken. OPEN: a robust launch.
+  Launching `netconsole2 >FILE 2>&1` LEAKS the child output to the file (AIOS `dup2` does not
+  re-route fd1 file->pipe; child `dup2(pipe,1)` no-ops the routing). The relay is fine with fd1 =
+  a PIPE (no-redirect launch, proven) or a TTY -- so **getty auto-start (fd1=tty, like the
+  working v1) is the clean deploy path**; that wiring is the next netconsole2 step. Do NOT
+  daemonize netconsole2 by closing 0/1/2 -- `start_command` forks pipes that rely on those fds
+  staying occupied (tried + reverted v0.4.176).
+
+**Current state:** Pi runs **v0.4.176** (eMMC fixed) on the LAN at 192.168.0.8; v1 netconsole on
+2323. Repo at v0.4.176, committed, clean. netconsole2 ships in the disk (traced) but is NOT yet
+getty auto-started. `pkill`/`killall`/`pidof` do NOT exist on AIOS -- to swap a running
+netconsole2, power-cycle.
 
 ## Where we left off (v0.4.172 -> v0.4.174)
 
@@ -336,28 +370,30 @@ tcc /usr/include/hello.c -o /tmp/h  # native tcc with libc (v0.4.117)
 
 ## Suggested next sessions
 
-**This session (v0.4.172->174): write-back cache (HW-verified, 4.5x faster writes),
-`/proc/version`, `ls -l` mtimes (QEMU), and a netconsole-v2 rewrite that FAILED on HW and
-was REVERTED. Top picks for next -- pick one:**
+**This session (v0.4.175->176): the netconsole2 debug sibling (`f8a92cc`) + the eMMC time-bound
+fix (`eff80dc`) RESOLVED the HW relay stall -- it was the eMMC iteration-count completion timeout,
+not a relay bug (see "Where we left off" above + `emmc-completion-timeout-hw`). HW-verified.
+Top picks for next -- pick one:**
 
-1. **netconsole v2 retry -- WITH SERIAL.** The multi-session event-loop rewrite is in git
-   history (`023b5b7`, reverted by `769d634`) + `docs/DESIGN_NETCONSOLE_V2.md`. It is
-   QEMU-clean but stalls EVERY command on HW (the forked-dash -> output-pipe -> socket relay
-   never delivers over GENET/A72). DO NOT flash-iterate. Capture serial on the first boot
-   (`python3 scripts/aios_console.py serial /dev/cu.usbserial-0001 --login --log /tmp/boot.log`
-   -- Pi OFF first, power on ~5s after starting it), trigger ONE command, watch the actual
-   failure (fault? fork? pipe read stuck?). See `netconsole-push-speed-hw` memory. The one bug
-   already found + fixed (the forked child closing fork-shared sockets via NET_CLOSE_SOCK) is
-   correct but insufficient.
+1. **getty auto-start netconsole2 (the clean launch).** netconsole2's relay works on HW now, but
+   its robust LAUNCH is the open piece: a `>FILE` redirect leaks the child output to the file
+   (AIOS `dup2` does not re-route fd1 file->pipe), and a no-redirect `&` launch wedges v1. The
+   relay is fine with fd1 = a PIPE or a TTY, so launch netconsole2 from getty (fd1=tty, exactly
+   like the working v1 netconsole) -- a small `getty.c` change + reflash -- then drive 2324
+   (multi-session, concurrent clients) over the LAN. Optionally fix the AIOS `dup2` file->pipe
+   routing in `posix_file.c` (see [[is-tty-routing]]) so file-redirect launches work too. The
+   reverted big-bang v2 (`023b5b7`/`769d634`) is obsolete -- netconsole2 superseded it.
 2. **Deploy PUSH speed.** Still ~21 KB/s -- the netconsole RECEIVE path (900 B socket reads +
    per-read window-ACK chatter), NEVER solved (write-back fixed the WRITE side; the receive
    side is now the wall). Fix = a `net_server` bulk-receive (shared frame so netconsole reads
    KBs per syscall, mirroring `__get`) and/or throttle the per-900 B window update
    (`net_server.c:572`). HW-only to verify. Needs a WORKING netconsole first (so: after #1).
-3. **Milestone flash.** The Pi runs v0.4.172 (write-back). The next flash should bring mtimes
-   (v0.4.174) + whatever else lands -- batch changes. `ninja -C build-04 && ninja -C build-rpi4`
-   -> rebuild userspace (sbase/dash/zsh/netconsole if libaios changed) -> mkdisk -> mksdcard ->
-   balenaEtcher.
+3. **Milestone flash (procedure reference).** The Pi now runs **v0.4.176** (eMMC fix + mtimes +
+   netconsole2, flashed + HW-verified this session). For future root-task/kernel changes, batch
+   them: `ninja -C build-04 && ninja -C build-rpi4` -> rebuild userspace (sbase/dash/zsh/netconsole
+   if libaios changed; netconsole2 via `./scripts/aios-cc src/apps/netconsole2.c -o
+   build-04/sbase/netconsole2`) -> `mkdisk` -> `mksdcard` (defaults are correct: mem 4096, the
+   build-rpi4 kernel, disk_ext2.img) -> balenaEtcher.
 4. **getty netconsole auto-respawn.** Tried + REVERTED (AIOS fork-of-fork fails). Needs a getty
    `waitpid(-1)` event loop that does not block on serial login-auth.
 5. **kernel-over-network** -- write `kernel8.img` to the FAT boot partition + reboot (the last
