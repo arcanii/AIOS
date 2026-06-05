@@ -463,7 +463,6 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
 
         } else if (label == NET_ACCEPT) {
             int sid = (int)seL4_GetMR(0);
-            int acc_nb = (int)seL4_GetMR(1);   /* v0.4.173: nonblock accept flag */
             if (sid < 0 || sid >= MAX_NET_SOCKETS || !sockets[sid].in_use ||
                 sockets[sid].state != TCP_LISTEN) {
                 seL4_SetMR(0, (seL4_Word)-1);
@@ -489,13 +488,6 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 if (pending >= 0) {
                     sockets[pending].listen_parent = -1;
                     seL4_SetMR(0, (seL4_Word)pending);
-                    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
-                } else if (acc_nb) {
-                    /* v0.4.173: non-blocking accept -- no pending connection,
-                     * reply EAGAIN (-11) instead of parking the caller, so a
-                     * single-process event loop (netconsole v2) can poll accept
-                     * while servicing its other sessions. */
-                    seL4_SetMR(0, (seL4_Word)-11);
                     seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                 } else {
                     seL4_CNode_SaveCaller(seL4_CapInitThreadCNode,

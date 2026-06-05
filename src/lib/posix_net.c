@@ -184,11 +184,9 @@ long aios_sys_accept4(va_list ap) {
     if (!f->active || !f->is_socket || !net_ep) return -ENOTSOCK;
 
     seL4_SetMR(0, (seL4_Word)f->socket_id);
-    seL4_SetMR(1, (seL4_Word)(f->is_nonblock ? 1 : 0));  /* v0.4.173: nonblock accept */
-    seL4_Call(net_ep, seL4_MessageInfo_new(NET_ACCEPT_L, 0, 0, 2));
+    seL4_Call(net_ep, seL4_MessageInfo_new(NET_ACCEPT_L, 0, 0, 1));
 
     int new_sock_id = (int)(long)seL4_GetMR(0);
-    if (new_sock_id == -EAGAIN) return -EAGAIN;  /* nonblock: no pending connection */
     if (new_sock_id < 0) return -ECONNREFUSED;
 
     int idx = aios_fd_alloc();
