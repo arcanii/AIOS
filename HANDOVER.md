@@ -10,15 +10,39 @@ latest `docs/NEXT_*.md` for deeper background.
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4
 * **Repo**: `~/Desktop/github_repos/AIOS`
-* **Branch**: `main`, currently at **v0.4.166** (fast pull + wall-clock/SNTP +
-  HDMI re-enable; time/get HW-verified, committed `b0c5c04`. See
-  `docs/NEXT_20260604c.md`)
+* **Branch**: `main`, currently at **v0.4.168** (RPi4 HDMI Phase B HW-VERIFIED
+  WORKING -- monitor shows the AIOS banner + fb_console boot text. Built on
+  v0.4.166 fast pull + wall-clock/SNTP; v0.4.166 committed `b0c5c04`, v0.4.167-168
+  UNCOMMITTED at handoff. See `docs/NEXT_20260604c.md`)
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4)
 * **Host**: macOS Apple Silicon, cross-compile to aarch64-linux-gnu
 * **Developer**: Bryan -- prefers Python patch scripts over sed/heredocs;
   no apostrophes in C comments (zsh copy-paste breaks)
 
 ---
+
+## Where we left off (v0.4.167 -> v0.4.168) -- RPi4 HDMI DISPLAY WORKING
+
+The RPi4 HDMI display now lights up under AIOS via the VC mailbox (Phase B), HW-verified:
+the monitor shows the AIOS gradient + `AIOS 0.4.168` banner + `[boot] ...` fb_console text,
+replacing the firmware rainbow. UNCOMMITTED at handoff. See `rpi4-hdmi-phaseb-mailbox` memory.
+
+* **Root cause (HW-verified)** -- the v0.4.166 "VC mailbox call failed" was NOT (only) the bus
+  alias the prior memory suspected. v0.4.167 added `dma_pa | 0xC0000000` + diagnostics; the boot
+  serial then showed `[gpu] tag buf: arm_pa=0xfbe3c000` + `bad response 0x0`: the DMA tag buffer
+  (plain `vka_alloc_frame`) landed at ~3.9GB, so `| 0xC0000000` was a no-op and the VideoCore
+  could not read it. The legacy VC mailbox property buffer MUST be in the low 1GB (the bus alias
+  only spans ARM-phys 0-0x3FFFFFFF). genet's mailbox works only because it allocates early/low.
+* **Fix (v0.4.168)** -- allocate the tag buffer at a fixed low address,
+  `sel4platsupport_alloc_frame_at(0x3A000000)` (base of the GPU reserved region, a RAM-backed
+  device untyped < 1GB). Then `0x3A000000 | 0xC0000000 = 0xFA000000` is a valid VC bus alias ->
+  the mailbox returns `FB up`, `map_fb_pages` succeeds, fb_console renders. `src/plat/rpi4/display_vc.c`.
+* **Diagnostics kept** -- the mailbox OUTCOMES now go through `AIOS_LOG_*` so `cat /proc/log |
+  grep gpu` shows PASS/FAIL over netconsole (no lossy serial). v0.4.167 also (re)confirmed
+  netconsole needs the TCP connection HELD OPEN (`printf | nc -w` returns empty; use a python
+  socket that recv-loops until idle). Display is OUTPUT-only; interactive HDMI needs USB HID.
+
+**Next:** commit v0.4.167+168; then an open item below (ext2 mtimes, RPi4 SMP, flash-over-network).
 
 ## Where we left off (v0.4.166) -- FAST PULL, WALL-CLOCK/SNTP, HDMI re-enable
 
@@ -744,12 +768,11 @@ tcc /usr/include/hello.c -o /tmp/h  # native tcc with libc (v0.4.117)
 HW-verified (v0.4.166): drive the Pi over the LAN, reboot it, auto-recover,
 push/pull files fast, real calendar time. Top picks for next -- pick one:**
 
-1. **Debug HDMI Phase B (VC mailbox)** -- `display_vc.c` is re-enabled and boot-safe
-   but the mailbox framebuffer alloc fails on the Pi (`[gpu] VC mailbox call failed`).
-   Phase B was never HW-tested (the old working HDMI used Phase A diag-stub). Prime
-   lead: the DMA tag buffer is passed as ARM-physical, but the VideoCore likely needs
-   the bus alias (`| 0xC0000000`) -- a one-line change + a flash, ideally with a monitor
-   connected. See `rpi4-hdmi-phaseb-mailbox` memory. Closest path to a working display.
+1. ~~**Debug HDMI Phase B (VC mailbox)**~~ -- **DONE v0.4.168, HW-verified.** The mailbox
+   tag buffer was landing at ~3.9GB (high mem) so its bus alias was invalid; pinned it to a
+   low device frame at `0x3A000000` and the display lights up (AIOS banner + fb_console). See
+   `rpi4-hdmi-phaseb-mailbox` memory. UNCOMMITTED at handoff. Possible follow-on: USB HID for
+   interactive HDMI (output-only today); `config.txt` mode tuning if a given monitor mis-syncs.
 2. **ext2 file mtimes** -- wall-clock now exists (`aios_wall_now()` in pipe_server.c,
    set by SNTP at boot). Wire it into `src/ext2.c` create/mkdir so `ls -l` timestamps
    are real (the inode fields exist but are never written). Small, no flash risk.

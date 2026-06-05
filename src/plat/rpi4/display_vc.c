@@ -12,6 +12,8 @@
  *            written by the diagnostic stub before seL4 boot.
  *   Phase B: Fallback to full VC mailbox protocol (re-allocate FB).
  */
+#define LOG_MODULE "gpu"
+#define LOG_LEVEL  LOG_LEVEL_DEBUG
 #include "aios/root_shared.h"
 #include "aios/gpu.h"
 #include "aios/vka_audit.h"
@@ -22,6 +24,7 @@
 #include "arch.h"
 #include "aios/hw_info.h"
 #include "plat/display_hal.h"
+#include "aios/aios_log.h"
 
 /* ---------------------------------------------------------
  * fb_info struct -- must match diag_stub/diag_main.c layout
@@ -37,6 +40,12 @@ struct fb_info {
 };
 
 #define FB_INFO_PADDR  0x3A000000UL
+
+/* v0.4.168: the VC mailbox property buffer must be in the low 1GB so its bus
+ * alias (| 0xC0000000) is a valid 32-bit VC bus address. Place it at the base of
+ * the GPU reserved region [0x3A000000,0x40000000) -- a RAM-backed device untyped
+ * (DTS no-map), below 1GB, and below the firmware FB pool at 0x3C000000+. */
+#define MBOX_TAG_PADDR  0x3A000000UL
 
 /* Maximum framebuffer pages (1024x768x4 = 768 pages) */
 #define GPU_FB_MAX_PAGES  1024
@@ -125,7 +134,11 @@ static int mbox_call(uint64_t buf_pa, volatile uint32_t *buf) {
         uint32_t resp = mbox_regs[MBOX_READ_OFF / 4];
         if (resp == addr_ch) {
             arch_dmb();
-            return (buf[1] == MBOX_RESP_OK) ? 0 : -1;
+            if (buf[1] != MBOX_RESP_OK) {
+                printf("[gpu] VC mailbox bad response 0x%x\n", buf[1]);
+                return -1;
+            }
+            return 0;
         }
     }
 
@@ -255,12 +268,16 @@ static int plat_display_init_mailbox(uint32_t width, uint32_t height) {
     printf("[gpu] VC mailbox mapped at %p (paddr 0x%lx)\n",
            (void *)mbox_regs, (unsigned long)hw_info.vc_mbox_paddr);
 
-    /* Allocate DMA page for tag buffer */
+    /* Allocate the tag buffer as a fixed LOW (<1GB) device frame at MBOX_TAG_PADDR
+     * so its VC bus alias is valid. vka_alloc_frame returned a HIGH frame
+     * (0xFBE3C000 ~3.9GB on the 4GB Pi) whose | 0xC0000000 was a no-op -> the VC
+     * could not reach the buffer -> bad response 0x0 (v0.4.167 HW finding). */
     vka_object_t dma_frame_obj;
-    vka_audit_untyped(VKA_SUB_GPU, 12);
-    error = vka_alloc_frame(&vka, seL4_PageBits, &dma_frame_obj);
+    error = sel4platsupport_alloc_frame_at(&vka, MBOX_TAG_PADDR,
+                                           seL4_PageBits, &dma_frame_obj);
     if (error) {
-        printf("[gpu] DMA alloc fail\n");
+        printf("[gpu] tag-buf alloc at 0x%lx fail: %d\n",
+               (unsigned long)MBOX_TAG_PADDR, error);
         return -1;
     }
 
@@ -278,6 +295,15 @@ static int plat_display_init_mailbox(uint32_t width, uint32_t height) {
         return -1;
     }
     uint64_t dma_pa = ga.paddr;
+
+    /* The VideoCore reads the property buffer at a VC BUS address. OR in
+     * 0xC0000000 to hit the uncached bus alias of low RAM (VC bus 0xC0000000 ==
+     * ARM phys 0, L1/L2 bypassed). This is only valid when dma_pa is below 1GB
+     * (bits 30/31 clear) -- guaranteed now that the buffer is pinned at
+     * MBOX_TAG_PADDR. arm_pa is printed to confirm (expect 0x3a000000). */
+    uint64_t dma_bus = dma_pa | 0xC0000000ULL;
+    printf("[gpu] tag buf: arm_pa=0x%lx vc_bus=0x%lx\n",
+           (unsigned long)dma_pa, (unsigned long)dma_bus);
 
     memset(dma_vaddr, 0, 4096);
 
@@ -319,9 +345,9 @@ static int plat_display_init_mailbox(uint32_t width, uint32_t height) {
 
     arch_dsb();
 
-    /* Execute mailbox call */
-    if (mbox_call(dma_pa, tags) != 0) {
-        printf("[gpu] VC mailbox call failed\n");
+    /* Execute mailbox call (pass the VC bus alias, not raw ARM-phys) */
+    if (mbox_call(dma_bus, tags) != 0) {
+        AIOS_LOG_ERROR("VC mailbox call failed");
         return -1;
     }
 
@@ -330,7 +356,7 @@ static int plat_display_init_mailbox(uint32_t width, uint32_t height) {
     uint32_t fb_pitch     = tags[pitch_idx + 3];
 
     if (fb_bus_addr == 0) {
-        printf("[gpu] VC returned null framebuffer\n");
+        AIOS_LOG_ERROR("VC returned null framebuffer");
         return -1;
     }
 
@@ -347,7 +373,7 @@ static int plat_display_init_mailbox(uint32_t width, uint32_t height) {
 
     void *fb_vaddr = map_fb_pages(fb_arm_phys, fb_pages);
     if (!fb_vaddr) {
-        printf("[gpu] FB map fail -- GPU mem outside device untypeds\n");
+        AIOS_LOG_ERROR("FB map fail (GPU mem outside device untypeds)");
         printf("[gpu] Ensure DTS reserved-memory covers 0x%lx\n",
                (unsigned long)fb_arm_phys);
         return -1;
@@ -359,6 +385,7 @@ static int plat_display_init_mailbox(uint32_t width, uint32_t height) {
     gpu_height    = height;
     gpu_available = 1;
 
+    AIOS_LOG_INFO("RPi4 HDMI mailbox FB up");
     printf("[gpu] RPi4 HDMI (mailbox): %ux%u @ %p (%u pages)\n",
            width, height, fb_vaddr, fb_pages);
     return 0;
