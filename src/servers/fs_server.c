@@ -168,12 +168,12 @@ void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
             st_path[spl] = '\0';
 
-            uint32_t mode, size;
-            if (vfs_stat(st_path, &mode, &size) == 0) {
+            uint32_t mode, size, mtime = 0;
+            if (vfs_stat(st_path, &mode, &size, &mtime) == 0) {
                 seL4_SetMR(0, 1);
                 seL4_SetMR(1, (seL4_Word)mode);
                 seL4_SetMR(2, (seL4_Word)size);
-                seL4_SetMR(3, 0);
+                seL4_SetMR(3, (seL4_Word)mtime);   /* v0.4.173: mtime (was reserved 0) */
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 4));
             } else {
                 seL4_SetMR(0, 0);

@@ -69,8 +69,8 @@ long aios_sys_fstatat(va_list ap) {
                 const char *s = pathname;
                 while (*s && di < 255) dirpath[di++] = *s++;
                 dirpath[di] = 0;
-                uint32_t mode, size;
-                if (fetch_stat(dirpath, &mode, &size) != 0)
+                uint32_t mode, size, mtime = 0;
+                if (fetch_stat_m(dirpath, &mode, &size, &mtime) != 0)
                     return -ENOENT;
                 char *p = (char *)st;
                 for (int i = 0; i < (int)sizeof(struct stat); i++)
@@ -81,6 +81,9 @@ long aios_sys_fstatat(va_list ap) {
                 st->st_size = size;
                 st->st_blksize = 4096;
                 st->st_nlink = 1;
+                st->st_mtim.tv_sec = mtime;
+                st->st_atim.tv_sec = mtime;
+                st->st_ctim.tv_sec = mtime;
                 return 0;
             }
         }
@@ -140,8 +143,8 @@ long aios_sys_fstatat(va_list ap) {
         }
     }
 
-    uint32_t mode, size;
-    if (fetch_stat(lookup, &mode, &size) != 0) return -ENOENT;
+    uint32_t mode, size, mtime = 0;
+    if (fetch_stat_m(lookup, &mode, &size, &mtime) != 0) return -ENOENT;
 
     st->st_dev = 1;
     st->st_ino = path_to_ino(lookup);
@@ -149,6 +152,9 @@ long aios_sys_fstatat(va_list ap) {
     st->st_size = size;
     st->st_blksize = 4096;
     st->st_nlink = 1;
+    st->st_mtim.tv_sec = mtime;
+    st->st_atim.tv_sec = mtime;
+    st->st_ctim.tv_sec = mtime;
     return 0;
 }
 
@@ -230,8 +236,8 @@ long aios_sys_statx(va_list ap) {
         }
     }
 
-    uint32_t mode, size;
-    if (fetch_stat(lookup, &mode, &size) != 0) return -ENOENT;
+    uint32_t mode, size, mtime = 0;
+    if (fetch_stat_m(lookup, &mode, &size, &mtime) != 0) return -ENOENT;
 
     /* Fill struct statx at ABI byte offsets */
     uint8_t *stx = (uint8_t *)buf;
@@ -261,6 +267,12 @@ long aios_sys_statx(va_list ap) {
     stx[48]=blks&0xFF; stx[49]=(blks>>8)&0xFF;
     /* stx_dev_major (offset 136) = 1 */
     stx[136]=1;
+    /* v0.4.173: timestamps (statx_timestamp.tv_sec is s64): stx_atime=64,
+     * stx_ctime=96, stx_mtime=112. mtime is what ls -l shows; stx_mask (0x07FF)
+     * already advertises the time bits as valid. */
+    stx[64]=mtime&0xFF;  stx[65]=(mtime>>8)&0xFF;  stx[66]=(mtime>>16)&0xFF;  stx[67]=(mtime>>24)&0xFF;
+    stx[96]=mtime&0xFF;  stx[97]=(mtime>>8)&0xFF;  stx[98]=(mtime>>16)&0xFF;  stx[99]=(mtime>>24)&0xFF;
+    stx[112]=mtime&0xFF; stx[113]=(mtime>>8)&0xFF; stx[114]=(mtime>>16)&0xFF; stx[115]=(mtime>>24)&0xFF;
 
     return 0;
 }

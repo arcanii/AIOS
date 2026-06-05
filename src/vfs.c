@@ -169,20 +169,20 @@ int vfs_pread(const char *path, int offset, char *buf, int bufsize) {
     return ret;
 }
 
-int vfs_stat(const char *path, uint32_t *mode, uint32_t *size) {
+int vfs_stat(const char *path, uint32_t *mode, uint32_t *size, uint32_t *mtime) {
     const char *remainder;
     mount_entry_t *m = find_mount(path, &remainder);
     if (!m || !m->ops->fs_stat) return -1;
 
     if (m->path_len == 1) {
-        return m->ops->fs_stat(m->ctx, path, mode, size);
+        return m->ops->fs_stat(m->ctx, path, mode, size, mtime);
     } else {
         char sub_path[256];
         sub_path[0] = '/';
         int i = 1;
         while (remainder[i-1] && i < 255) { sub_path[i] = remainder[i-1]; i++; }
         sub_path[i] = '\0';
-        return m->ops->fs_stat(m->ctx, sub_path, mode, size);
+        return m->ops->fs_stat(m->ctx, sub_path, mode, size, mtime);
     }
 }
 

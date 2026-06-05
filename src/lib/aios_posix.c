@@ -153,7 +153,7 @@ int fetch_pwrite(const char *path, int offset, const char *data, int len) {
     return (int)(long)seL4_GetMR(0);
 }
 
-int fetch_stat(const char *path, uint32_t *mode, uint32_t *size) {
+int fetch_stat_m(const char *path, uint32_t *mode, uint32_t *size, uint32_t *mtime) {
     if (!fs_ep_cap) return -1;
     int pl = str_len(path);
     seL4_SetMR(0, (seL4_Word)pl);
@@ -165,10 +165,16 @@ int fetch_stat(const char *path, uint32_t *mode, uint32_t *size) {
     }
     seL4_MessageInfo_t reply = seL4_Call(fs_ep_cap,
         seL4_MessageInfo_new(12 /* FS_STAT */, 0, 0, mr));
+    (void)reply;
     if (seL4_GetMR(0) == 0) return -1;
     *mode = (uint32_t)seL4_GetMR(1);
     *size = (uint32_t)seL4_GetMR(2);
+    if (mtime) *mtime = (uint32_t)seL4_GetMR(3);   /* v0.4.173: mtime in MR3 */
     return 0;
+}
+
+int fetch_stat(const char *path, uint32_t *mode, uint32_t *size) {
+    return fetch_stat_m(path, mode, size, (void *)0);
 }
 
 size_t aios_stdio_write(void *data, size_t count) {

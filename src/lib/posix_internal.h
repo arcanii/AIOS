@@ -238,6 +238,7 @@ int  fetch_file(const char *path, char *buf, int bufsz);
 int  fetch_pread(const char *path, int offset, char *buf, int count);
 int  fetch_pwrite(const char *path, int offset, const char *data, int len);
 int  fetch_stat(const char *path, uint32_t *mode, uint32_t *size);
+int  fetch_stat_m(const char *path, uint32_t *mode, uint32_t *size, uint32_t *mtime);
 int  fetch_dir_as_getdents(const char *path, char *buf, int bufsz);
 size_t aios_stdio_write(void *data, size_t count);
 int  aios_getchar(void);

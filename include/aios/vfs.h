@@ -7,7 +7,8 @@
 typedef struct {
     int (*fs_list)(void *ctx, uint32_t dir_ino, char *buf, int bufsize);
     int (*fs_read)(void *ctx, const char *path, char *buf, int bufsize);
-    int (*fs_stat)(void *ctx, const char *path, uint32_t *mode, uint32_t *size);
+    int (*fs_stat)(void *ctx, const char *path, uint32_t *mode, uint32_t *size,
+                   uint32_t *mtime);
     int (*fs_resolve)(void *ctx, const char *path, uint32_t *ino);
     int (*fs_mkdir)(void *ctx, const char *path);
     int (*fs_create)(void *ctx, const char *path, const void *data, int len);
@@ -37,7 +38,7 @@ int vfs_mount(const char *path, fs_ops_t *ops, void *ctx);
 /* VFS operations — resolve mount, dispatch to correct fs */
 int vfs_list(const char *path, char *buf, int bufsize);
 int vfs_read(const char *path, char *buf, int bufsize);
-int vfs_stat(const char *path, uint32_t *mode, uint32_t *size);
+int vfs_stat(const char *path, uint32_t *mode, uint32_t *size, uint32_t *mtime);
 int vfs_pread(const char *path, int offset, char *buf, int bufsize);
 int vfs_pwrite(const char *path, int offset, const void *data, int len);
 int vfs_mkdir(const char *path);

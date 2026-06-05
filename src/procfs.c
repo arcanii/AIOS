@@ -168,8 +168,8 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         int has_log = 0;
         {
             uint32_t _m, _s;
-            extern int vfs_stat(const char *, uint32_t *, uint32_t *);
-            if (vfs_stat("/var/log", &_m, &_s) == 0) has_log = 1;
+            extern int vfs_stat(const char *, uint32_t *, uint32_t *, uint32_t *);
+            if (vfs_stat("/var/log", &_m, &_s, (void *)0) == 0) has_log = 1;
         }
         for (int mi = 0; lines[mi]; mi++) {
             if (mi == 2 && !has_log) continue;  /* skip /var/log if not mounted */
@@ -468,9 +468,11 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
     return w;
 }
 
-static int procfs_stat(void *ctx, const char *path, uint32_t *mode, uint32_t *size) {
+static int procfs_stat(void *ctx, const char *path, uint32_t *mode, uint32_t *size,
+                       uint32_t *mtime) {
     (void)ctx;
     *size = 0;
+    if (mtime) *mtime = 0;   /* /proc entries have no persistent mtime */
     /* /proc root */
     if (path[0] == '/' && path[1] == '\0') {
         *mode = 040555;

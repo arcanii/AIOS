@@ -466,7 +466,8 @@ static int ext2_vfs_pread(void *ctx, const char *path, int offset, char *buf, in
     return ext2_pread_file(e, ino, offset, buf, bufsize);
 }
 
-static int ext2_vfs_stat(void *ctx, const char *path, uint32_t *mode, uint32_t *size) {
+static int ext2_vfs_stat(void *ctx, const char *path, uint32_t *mode, uint32_t *size,
+                         uint32_t *mtime) {
     ext2_ctx_t *e = (ext2_ctx_t *)ctx;
     uint32_t ino;
     if (path[0] == '/' && path[1] == '\0') ino = 2;
@@ -475,6 +476,7 @@ static int ext2_vfs_stat(void *ctx, const char *path, uint32_t *mode, uint32_t *
     if (ext2_read_inode(e, ino, &inode) != 0) return -1;
     *mode = inode.i_mode;
     *size = inode.i_size;
+    if (mtime) *mtime = inode.i_mtime;   /* v0.4.173: real mtime for ls -l */
     return 0;
 }
 
