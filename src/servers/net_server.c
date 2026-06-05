@@ -10,7 +10,8 @@
 #include <stdio.h>
 
 #define MAX_NET_SOCKETS  8
-#define SOCK_RX_BUF_SZ   4096
+#define SOCK_RX_BUF_SZ   32768   /* v0.4.171: 32KB rx window (was 4KB) -- 8x fewer
+                                  * window-reopen round-trips on a large push */
 
 struct net_socket {
     int      in_use;

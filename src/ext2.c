@@ -2,6 +2,9 @@
 #include "aios/vfs.h"
 #include <stdio.h>
 
+/* v0.4.171: real file timestamps -- wall clock from pipe_server (set by SNTP). */
+extern long aios_wall_now(void);
+
 /* Read uint16/uint32 from raw buffer (little-endian) */
 static uint16_t rd16(const uint8_t *p) { return p[0] | (p[1] << 8); }
 static uint32_t rd32(const uint8_t *p) { return p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24); }
@@ -850,6 +853,7 @@ int ext2_mkdir(ext2_ctx_t *ctx, uint32_t parent_ino, const char *name) {
     inode.i_links_count = 2;
     inode.i_blocks = ctx->block_size / 512;
     inode.i_block[0] = new_blk;
+    inode.i_atime = inode.i_ctime = inode.i_mtime = (uint32_t)aios_wall_now();
     write_inode(ctx, new_ino, &inode);
 
     /* Initialize directory data with . and .. */
@@ -905,6 +909,7 @@ int ext2_create_file(ext2_ctx_t *ctx, uint32_t parent_ino, const char *name,
     inode.i_links_count = 1;
     inode.i_blocks = ctx->block_size / 512;
     inode.i_block[0] = new_blk;
+    inode.i_atime = inode.i_ctime = inode.i_mtime = (uint32_t)aios_wall_now();
     write_inode(ctx, new_ino, &inode);
 
     /* Add to parent directory */

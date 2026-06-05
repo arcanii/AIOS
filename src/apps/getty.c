@@ -282,7 +282,13 @@ int main(int argc, char *argv[]) {
             _exit(127);
         }
         /* Parent: do not waitpid -- netconsole runs in the background for the
-         * whole boot session (orphaned but alive). */
+         * whole boot session (orphaned but alive). v0.4.171: a supervisor-child
+         * respawn was tried and REVERTED -- AIOS fork-of-fork fails (a forked
+         * process cannot fork again), so a supervisor cannot spawn netconsole.
+         * Auto-respawn is deferred; it needs a getty event loop using
+         * waitpid(-1) that does not block on serial login-auth, or fork-of-fork
+         * support. v2 netconsole cannot wedge, so this only loses control on a
+         * hard crash (unlikely). See docs/DESIGN_NETCONSOLE_V2.md. */
         if (nc < 0)
             ser_puts("getty: netconsole spawn failed (network shell off)\n");
     }

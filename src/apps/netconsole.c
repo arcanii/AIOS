@@ -60,7 +60,9 @@
 #define NETCON_IO       900               /* AIOS socket/pipe I/O cap      */
 #define NETCON_POLL_NS  (10 * 1000 * 1000)        /* 10ms nap on EAGAIN    */
 
-/* Per-operation deadlines, in 10ms ticks (reset on any progress). */
+/* Per-operation deadlines, in 10ms ticks (reset on any progress). NOTE: AIOS
+ * nanosleep granularity is ~10ms, so a sub-10ms nap rounds up and buys nothing;
+ * the transfer speed lever is the 32KB rx ring (net_server.c), not the poll. */
 #define TICKS_IDLE      12000             /* 120s waiting for next command  */
 #define TICKS_STALL     1000              /* 10s no progress on a transfer  */
 #define TICKS_WRITE     1000              /* 10s to flush a socket write    */
