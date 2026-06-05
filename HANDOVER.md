@@ -10,16 +10,57 @@ latest `docs/NEXT_*.md` for deeper background.
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4
 * **Repo**: `~/Desktop/github_repos/AIOS`
-* **Branch**: `main`, currently at **v0.4.168** (RPi4 HDMI Phase B HW-VERIFIED
-  WORKING -- monitor shows the AIOS banner + fb_console boot text. Built on
-  v0.4.166 fast pull + wall-clock/SNTP; v0.4.166 committed `b0c5c04`, v0.4.167-168
-  UNCOMMITTED at handoff. See `docs/NEXT_20260604c.md`)
+* **Branch**: `main`, currently at **v0.4.171** (RPi4 HDMI working + robust
+  network deploy). This session: HDMI lit (v0.4.168), correct colours + software
+  3D cube + logo (v0.4.169), robust large-file network transfer (v0.4.170:
+  netconsole v2 + TCP receive fix + ext2 double-indirect write -- 300KB push
+  HW-verified over GENET), and a 32KB rx-ring transfer speed-up (v0.4.171). All
+  committed through `38d1f6c` (+ `4c06d9a` monitor tooling); Bryan pushes via
+  GitHub Desktop. v0.4.170 is the latest HW-VERIFIED flash; v0.4.171 is built +
+  QEMU-validated, awaiting the speed bootstrap flash.
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4)
 * **Host**: macOS Apple Silicon, cross-compile to aarch64-linux-gnu
 * **Developer**: Bryan -- prefers Python patch scripts over sed/heredocs;
   no apostrophes in C comments (zsh copy-paste breaks)
 
 ---
+
+## Where we left off (v0.4.169 -> v0.4.171) -- COLOUR + 3D CUBE + NETWORK DEPLOY
+
+The display arc finished and the "deploy over the network, flash only for checkpoints" goal
+became real. All committed (`811f06f` colour/cube, `81adc2b` transfer, `38d1f6c` speed; `4c06d9a`
+monitor tooling). Drive the Pi over `192.168.0.8:2323` (HELD-OPEN python socket) + `pi_filexfer.py`.
+
+* **Colour fix + 3D cube (v0.4.169, HW-verified perfect).** The Pi framebuffer was R<->B swapped
+  (we write LE 0x00RRGGBB = memory B,G,R,X but asked the VC for RGB byte order); set
+  SET_PIXEL_ORDER=0 (BGR) in display_vc.c. Re-baked splash.raw at 1024x768 (full logo, correct
+  purple/blue). Added a CPU software 3D **spinning wireframe cube** (FP-free fixed-point) in
+  display_server (`fbshow --cube`, DISP_CUBE). QEMU display path (display_ramfb.c) unaffected.
+* **Robust network transfer (v0.4.170, 300KB push HW-verified over GENET, integrity OK).** Three
+  layered fixes: (1) **netconsole v2** -- all client-socket I/O non-blocking + per-op deadlines, so
+  a stalled/aborted transfer aborts+drops one connection instead of wedging port 2323 forever (the
+  v1 killer). (2) **net_server TCP receive** -- the old code did `rcv_nxt += data_len` then dropped
+  bytes that did not fit the rx ring (ACKing data it threw away -> sender never retransmits ->
+  multi-window push stalled, worked <=5KB hung >=20KB); now accept only what we buffer, advance
+  rcv_nxt by that, advertise the true window, + a window-update ACK on read. (3) **ext2
+  double-indirect write** -- files >268KB (1KB blocks) failed `__put err write`; implemented it.
+  See `docs/DESIGN_NETCONSOLE_V2.md` (the doc recommends a fuller multi-session rewrite; v2 is the
+  surgical robustness subset that ships).
+* **Transfer speed-up (v0.4.171, QEMU-validated).** SOCK_RX_BUF_SZ 4KB->32KB (8x fewer window
+  round-trips; HW was ~21KB/s / 14s for 300KB). A sub-10ms netconsole nap was tried + REVERTED
+  (nanosleep granularity ~10ms). ext2 now writes real i_mtime/i_ctime/i_atime on create/mkdir.
+* **Tooling: `aios_console.py monitor`** -- passive read-only serial tap that feeds the `watch`
+  mirror, so you can watch the Pi's serial console while driving it over the network.
+
+**DEFERRED (hit real walls):** (a) **getty netconsole auto-respawn** -- AIOS fork-of-fork fails (a
+forked process cannot fork again), so a supervisor child cannot spawn netconsole; needs a getty
+waitpid(-1) event loop or fork-of-fork support. (b) **ls -l mtimes** -- the inode fields are now
+WRITTEN, but the stat READ path (vfs_stat/fs_server/libaios_posix return only mode+size) must be
+plumbed for `ls -l` to SHOW them -- touches libaios_posix (full sbase/dash/zsh rebuild).
+
+**Next:** flash v0.4.171 (speed bootstrap), then PROVE the deploy (rebuild a userspace tool, push
+it to /bin over the network, run it -- no flash). Then: mtime read-path; kernel-over-network (FAT
+write); hardware V3D 3D (`docs/DESIGN_RPI4_3D.md`).
 
 ## Where we left off (v0.4.167 -> v0.4.168) -- RPi4 HDMI DISPLAY WORKING
 
@@ -42,7 +83,8 @@ replacing the firmware rainbow. UNCOMMITTED at handoff. See `rpi4-hdmi-phaseb-ma
   netconsole needs the TCP connection HELD OPEN (`printf | nc -w` returns empty; use a python
   socket that recv-loops until idle). Display is OUTPUT-only; interactive HDMI needs USB HID.
 
-**Next:** commit v0.4.167+168; then an open item below (ext2 mtimes, RPi4 SMP, flash-over-network).
+**Next:** committed (`38d1f6c`). See the newer `v0.4.169 -> v0.4.171` entry above for the
+colour/3D/deploy/speed arc that followed.
 
 ## Where we left off (v0.4.166) -- FAST PULL, WALL-CLOCK/SNTP, HDMI re-enable
 
