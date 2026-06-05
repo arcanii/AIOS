@@ -450,6 +450,52 @@ def run_watch(args):
     return 0
 
 
+def run_monitor(args):
+    """Passive read-only serial tap. Reads the serial device forever and mirrors
+    every byte to the live transcript file (and echoes to stdout unless --quiet),
+    so a human can `watch` -- or just read this -- the Pi's serial console while
+    another process drives it over the network (netconsole). Never writes to the
+    device, so it cannot disturb the console or a concurrent driver's prompt."""
+    import errno
+    fd = os.open(args.device, os.O_RDWR | os.O_NOCTTY)
+    configure_serial(fd, args.baud)
+    mirf = open_mirror(args)
+    echo = not args.quiet
+    sys.stderr.write("=== serial monitor (read-only) on %s -- Ctrl-C to stop ===\n"
+                     % args.device)
+    sys.stderr.flush()
+    try:
+        while True:
+            try:
+                d = os.read(fd, 4096)
+            except OSError as e:
+                if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                    time.sleep(0.05)
+                    continue
+                time.sleep(0.1)
+                continue
+            if not d:
+                time.sleep(0.02)
+                continue
+            text = d.decode("utf-8", "replace")
+            if mirf:
+                mirf.write(text)
+                mirf.flush()
+            if echo:
+                sys.stdout.write(text)
+                sys.stdout.flush()
+    except KeyboardInterrupt:
+        sys.stderr.write("\n=== serial monitor stopped ===\n")
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        if mirf:
+            mirf.close()
+    return 0
+
+
 def build_parser():
     p = argparse.ArgumentParser(description="Drive AIOS over qemu socket or serial.")
     sub = p.add_subparsers(dest="mode", required=True)
@@ -476,6 +522,17 @@ def build_parser():
     w.add_argument("file", nargs="?", default=None,
                    help="mirror file to watch (default: %s)" % DEFAULT_MIRROR)
     w.add_argument("--no-color", action="store_true", help="disable ANSI color")
+
+    m = sub.add_parser("monitor",
+                       help="passive read-only serial tap -> live mirror (feeds `watch`)")
+    m.add_argument("device", help="serial char device, e.g. /dev/cu.usbserial-0001")
+    m.add_argument("--baud", type=int, default=115200)
+    m.add_argument("--mirror", default=None,
+                   help="mirror file to write (default: %s)" % DEFAULT_MIRROR)
+    m.add_argument("--no-mirror", action="store_true",
+                   help="do not write the mirror (just echo serial to stdout)")
+    m.add_argument("--quiet", action="store_true",
+                   help="do not echo to stdout (only write the mirror)")
 
     for sp in (q, s):
         sp.add_argument("--cmd", action="append", help="command to run (repeatable)")
@@ -507,6 +564,8 @@ def main(argv):
         return run_serial(args)
     if args.mode == "watch":
         return run_watch(args)
+    if args.mode == "monitor":
+        return run_monitor(args)
     return 2
 
 
