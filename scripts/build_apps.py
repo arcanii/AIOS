@@ -74,6 +74,27 @@ def main():
                 "-o", os.path.join(BUILD, "sbase", "dash")]
         run(cmd, "dash (login shell)")
 
+    # 3b. Standalone aios-cc apps. These are NOT in projects/aios/CMakeLists.txt,
+    # so ninja never builds them -- before this step a clean rm -rf build-04 would
+    # silently drop them from the disk. psutil ships under 3 argv[0] command names
+    # (pidof, pkill, killall) as byte-identical copies.
+    apps = [("netconsole.c", "netconsole", []),
+            ("netconsole2.c", "netconsole2", []),
+            ("psutil.c", "pidof", ["pkill", "killall"])]
+    for src, out, aliases in apps:
+        outp = os.path.join(BUILD, "sbase", out)
+        cmd = [os.path.join(AIOS, "scripts", "aios-cc"),
+               os.path.join(AIOS, "src", "apps", src), "-o", outp]
+        if run(cmd, "app: " + out) and aliases:
+            with open(outp, "rb") as f:
+                data = f.read()
+            for a in aliases:
+                ap = os.path.join(BUILD, "sbase", a)
+                with open(ap, "wb") as f:
+                    f.write(data)
+                os.chmod(ap, 0o755)
+            print("  aliases: " + ", ".join(aliases))
+
     # 4. tcc
     if not skip_tcc and os.path.isdir(TCC_SRC):
         cmd = [os.path.join(AIOS, "scripts", "aios-cc"),
