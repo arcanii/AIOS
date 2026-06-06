@@ -12,6 +12,7 @@
 #include <sel4platsupport/device.h>
 #include <stdio.h>
 #include "arch.h"
+#include "aios/mono_wait.h"
 #include "aios/hw_info.h"
 #include "plat/display_hal.h"
 #define LOG_MODULE "gpu"
@@ -191,7 +192,7 @@ int plat_display_init(uint32_t width, uint32_t height) {
     *fw_dma_lo = bswap32((uint32_t)(dma_pa & 0xFFFFFFFF));
     arch_dsb();
 
-    for (int t = 0; t < 10000000; t++) {
+    for (uint64_t dl = mono_deadline_ms(2000); mono_before(dl); ) {
         arch_dmb();
         if (da->control == 0) break;
     }

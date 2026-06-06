@@ -14,6 +14,7 @@
 #include "aios/ext2.h"
 #include <sel4platsupport/device.h>
 #include <stdio.h>
+#include "aios/mono_wait.h"
 #include "arch.h"
 #include "aios/hw_info.h"
 #include "plat/blk_hal.h"
@@ -133,7 +134,7 @@ int plat_blk_init(void) {
 
         uint16_t last_used = 0;
         int probe_ok = 0;
-        for (int t = 0; t < 10000000; t++) {
+        for (uint64_t dl = mono_deadline_ms(2000); mono_before(dl); ) {
             arch_dmb();
             if (used->idx != last_used) { probe_ok = 1; break; }
         }

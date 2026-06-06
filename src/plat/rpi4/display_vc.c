@@ -20,6 +20,7 @@
 #include <sel4platsupport/device.h>
 #include "aios/device_map.h"
 #include <stdio.h>
+#include "aios/mono_wait.h"
 #include <string.h>
 #include "arch.h"
 #include "aios/hw_info.h"
@@ -115,7 +116,7 @@ static int mbox_call(uint64_t buf_pa, volatile uint32_t *buf) {
     uint32_t addr_ch = (uint32_t)(buf_pa & 0xFFFFFFF0U) | MBOX_CH_PROP;
 
     /* Wait for mailbox not full */
-    for (int t = 0; t < 10000000; t++) {
+    for (uint64_t dl = mono_deadline_ms(2000); mono_before(dl); ) {
         arch_dmb();
         if (!(mbox_regs[MBOX_STATUS_OFF / 4] & MBOX_FULL))
             break;
@@ -126,7 +127,7 @@ static int mbox_call(uint64_t buf_pa, volatile uint32_t *buf) {
     arch_dsb();
 
     /* Poll for response on our channel */
-    for (int t = 0; t < 10000000; t++) {
+    for (uint64_t dl = mono_deadline_ms(2000); mono_before(dl); ) {
         arch_dmb();
         if (mbox_regs[MBOX_STATUS_OFF / 4] & MBOX_EMPTY)
             continue;

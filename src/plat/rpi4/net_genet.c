@@ -23,6 +23,7 @@
 #include "aios/vka_audit.h"
 #include <sel4platsupport/device.h>
 #include <stdio.h>
+#include "aios/mono_wait.h"
 #include <string.h>
 #include "arch.h"
 #include "aios/hw_info.h"
@@ -277,7 +278,7 @@ static uint16_t mdio_read(int phy, int reg) {
     GENET_W(UMAC_MDIO_CMD, cmd);
 
     /* Wait for completion */
-    for (int t = 0; t < 1000000; t++) {
+    for (uint64_t dl = mono_deadline_ms(2000); mono_before(dl); ) {
         arch_dmb();
         uint32_t v = GENET_R(UMAC_MDIO_CMD);
         if (!(v & MDIO_START_BUSY))
@@ -294,7 +295,7 @@ static void mdio_write(int phy, int reg, uint16_t val) {
                    (uint32_t)val;
     GENET_W(UMAC_MDIO_CMD, cmd);
 
-    for (int t = 0; t < 1000000; t++) {
+    for (uint64_t dl = mono_deadline_ms(2000); mono_before(dl); ) {
         arch_dmb();
         if (!(GENET_R(UMAC_MDIO_CMD) & MDIO_START_BUSY))
             return;
@@ -522,14 +523,14 @@ static int genet_mbox_call(uint64_t buf_pa, volatile uint32_t *buf) {
     volatile uint32_t *mbox =
         (volatile uint32_t *)((uintptr_t)dev_vcmbox_vaddr + dev_vcmbox_off);
     uint32_t addr_ch = (uint32_t)(buf_pa & 0xFFFFFFF0u) | 8u;
-    for (int t = 0; t < 10000000; t++) {
+    for (uint64_t dl = mono_deadline_ms(2000); mono_before(dl); ) {
         arch_dmb();
         if (!(mbox[0x18 / 4] & 0x80000000u)) break;     /* not FULL */
     }
     arch_dsb();
     mbox[0x20 / 4] = addr_ch;                            /* WRITE */
     arch_dsb();
-    for (int t = 0; t < 10000000; t++) {
+    for (uint64_t dl = mono_deadline_ms(2000); mono_before(dl); ) {
         arch_dmb();
         if (mbox[0x18 / 4] & 0x40000000u) continue;     /* EMPTY */
         arch_dmb();
