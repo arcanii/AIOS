@@ -1027,50 +1027,60 @@ long aios_sys_pread64(va_list ap) {
         aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
         if (!f->active) return -EBADF;
         if (f->is_pipe) return -ESPIPE;
-        if (offset < 0 || offset >= f->size) return 0;
-        int avail = f->size - (int)offset;
-        int n = (int)count < avail ? (int)count : avail;
-        char *dst = (char *)buf;
-        for (int i = 0; i < n; i++) dst[i] = f->data[(int)offset + i];
-        /* file position (f->pos) is NOT modified */
-        return n;
+        if (offset < 0) return -EINVAL;
+        /* v0.4.178: read through fetch_pread (chunked FS_PREAD) so this works
+         * for files larger than the in-memory f->data buffer -- the old
+         * version copied straight out of f->data, which is only valid for
+         * small (<=4 KB) cached files. Does NOT change f->pos. */
+        if (!f->is_dir && f->path[0] && fs_ep_cap) {
+            char *dst = (char *)buf;
+            size_t total = 0;
+            while (total < count) {
+                int chunk = (int)(count - total);
+                if (chunk > 900) chunk = 900;
+                int got = fetch_pread(f->path, (int)(offset + total),
+                                      dst + total, chunk);
+                if (got <= 0) break;
+                total += got;
+                if (got < chunk) break;   /* short read = EOF */
+            }
+            return (long)total;
+        }
+        return 0;
     }
     return -EBADF;
 }
 
-/* v0.4.62: pwrite64 -- positional write, does not change file offset */
+/* pwrite64 -- positional write; does not change the file offset.
+ * v0.4.178: rewritten to honor `offset` and chunk through fetch_pwrite (the
+ * same FS_PWRITE path write() uses). The old version capped at 3000 bytes and
+ * packed them all into MRs -> seL4_MessageInfo_new(>127) asserts and HALTS the
+ * system on any pwrite over ~1 KB; it also ignored the offset entirely. SFTP
+ * uploads exposed both. */
 long aios_sys_pwrite64(va_list ap) {
     int fd = va_arg(ap, int);
     const void *buf = va_arg(ap, const void *);
     size_t count = va_arg(ap, size_t);
     off_t offset = va_arg(ap, off_t);
-    (void)offset;
 
     if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
         aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
         if (!f->active) return -EBADF;
         if (f->is_pipe) return -ESPIPE;
-        /* Write via FS_WRITE_FILE IPC (offset not yet honored by ext2) */
+        if (offset < 0) return -EINVAL;
         if (!f->is_dir && f->path[0] && fs_ep_cap) {
             const char *s = (const char *)buf;
-            int plen = 0; while (f->path[plen]) plen++;
-            seL4_SetMR(0, (seL4_Word)plen);
-            int mr = 1;
-            seL4_Word w = 0;
-            for (int i = 0; i < plen; i++) {
-                w |= ((seL4_Word)(uint8_t)f->path[i]) << ((i % 8) * 8);
-                if (i % 8 == 7 || i == plen - 1) { seL4_SetMR(mr++, w); w = 0; }
+            size_t total = 0;
+            while (total < count) {
+                int chunk = (int)(count - total);
+                if (chunk > 800) chunk = 800;  /* keep MR count under the 127 cap */
+                int wrote = fetch_pwrite(f->path, (int)(offset + total),
+                                         s + total, chunk);
+                if (wrote <= 0) break;
+                total += wrote;
             }
-            int wlen = (int)count;
-            if (wlen > 3000) wlen = 3000;
-            seL4_SetMR(mr++, (seL4_Word)wlen);
-            w = 0;
-            for (int i = 0; i < wlen; i++) {
-                w |= ((seL4_Word)(uint8_t)s[i]) << ((i % 8) * 8);
-                if (i % 8 == 7 || i == wlen - 1) { seL4_SetMR(mr++, w); w = 0; }
-            }
-            seL4_Call(fs_ep_cap, seL4_MessageInfo_new(15, 0, 0, mr));
-            return (long)wlen;
+            if ((int)(offset + total) > f->size) f->size = (int)(offset + total);
+            return (long)total;
         }
         return (long)count;
     }

@@ -24,7 +24,13 @@
 
 /* Channel window sizes */
 #define SSH_CHAN_WINDOW   (64 * 1024)   /* 64KB initial window */
-#define SSH_CHAN_MAX_PKT  (32 * 1024)   /* 32KB max packet */
+/* v0.4.178: max DATA the CLIENT may put in one CHANNEL_DATA. The transport caps
+ * an SSH payload at SSH_MAX_PAYLOAD (2048), and a CHANNEL_DATA payload is
+ * data + 9 (type + recipient channel + length), so data must stay <= 2039.
+ * 2000 leaves margin. The client then chunks larger transfers (e.g. SFTP 32KB
+ * writes) into packets we reassemble. Was 32KB, safe only because the
+ * interactive shell never sent big client->server data; SFTP does. */
+#define SSH_CHAN_MAX_PKT  2000
 
 /* Relay poll interval */
 #define RELAY_POLL_NS    (10 * 1000 * 1000)  /* 10ms */
@@ -350,6 +356,7 @@ static int channel_relay(ssh_session_t *s,
     fcntl(s->sockfd, F_SETFL, sfl | 0x800);
 
     int done = 0;
+    int shell_eof = 0;  /* v0.4.178: set when the shell closes stdout (real exit) */
     uint8_t rbuf[900];
     uint8_t pkt[SSH_BUF_SIZE];
     int plen;
@@ -387,6 +394,7 @@ static int channel_relay(ssh_session_t *s,
              * closed our write end at fork) has exited. No ever_got_output
              * guard needed -- a no-output command now closes cleanly too. */
             SSHLOG("[sshd] shell exited (pipe EOF)\n");
+            shell_eof = 1;
             send_chan_eof(s);
             send_chan_close(s);
             done = 1;
@@ -478,15 +486,33 @@ static int channel_relay(ssh_session_t *s,
     }
 
     /* Cleanup: close write end first (triggers EOF for readers),
-     * then close read end, then reap child. */
+     * then close read end. */
     if (stdin_wr >= 0) close(stdin_wr);
     if (stdout_wr_fd >= 0) close(stdout_wr_fd);
     close(stdout_rd);
 
-    /* Reap child (should be done since pipe EOF) */
+    /* Reap the child -- self-heal (v0.4.178).
+     *
+     * If the loop ended on shell EOF (shell_eof) the shell has already exited
+     * and waitpid returns at once. But if it ended on a client disconnect /
+     * CHANNEL_CLOSE / socket error, the shell may still be running -- and could
+     * be HUNG (e.g. zsh wedged its raw-mode ZLE over the cooked SSH relay). A
+     * plain blocking waitpid would then hang sshd forever, taking the whole
+     * one-connection-at-a-time server down for EVERY future client (the wedge
+     * that needed a netconsole kill / reboot to clear). So when the shell has
+     * not signalled EOF, SIGKILL it first -- pipe_server reaps it via the fault
+     * path and creates the zombie, so the waitpid below returns immediately.
+     * One hung shell can no longer wedge the service.
+     *   (A grandchild the shell itself spawned -- e.g. zsh under dash -- is
+     * orphaned rather than recursively killed; rare leak, tracked in BACKLOG.) */
+    if (!shell_eof) {
+        SSHLOG("[sshd] client gone with shell still alive -- killing pid %d\n",
+               (int)child);
+        kill(child, SIGKILL);
+    }
     int status = 0;
     waitpid(child, &status, 0);
-    SSHLOG("[sshd] shell reaped (status=%d)\n", status);
+    SSHLOG("[sshd] shell reaped (status=%d eof=%d)\n", status, shell_eof);
 
     SSHLOG("[sshd] relay loop ended\n");
     return 0;
@@ -534,9 +560,10 @@ int ssh_do_channel(ssh_session_t *s)
         return -1;
     }
 
-    /* ---- Handle channel requests until "shell" ---- */
+    /* ---- Handle channel requests until "shell" or "subsystem sftp" ---- */
     int shell_requested = 0;
-    while (!shell_requested) {
+    int sftp_requested = 0;
+    while (!shell_requested && !sftp_requested) {
         if (ssh_read_packet(s, pkt, &plen) < 0) return -1;
         if (plen < 1) return -1;
         uint8_t mtype = pkt[0];
@@ -585,6 +612,20 @@ int ssh_do_channel(ssh_session_t *s)
                 if (send_chan_success(s) < 0) return -1;
             }
 
+        } else if (rtype_len == 9 && memcmp(rtype, "subsystem", 9) == 0) {
+            /* v0.4.178: only the "sftp" subsystem is supported. */
+            const uint8_t *sub; uint32_t sublen;
+            if (ssh_get_string(pkt, plen, &off, &sub, &sublen) == 0
+                && sublen == 4 && memcmp(sub, "sftp", 4) == 0) {
+                SSHLOG("[sshd] subsystem: sftp\n");
+                sftp_requested = 1;
+                if (want_reply) { if (send_chan_success(s) < 0) return -1; }
+            } else {
+                SSHLOG("[sshd] unsupported subsystem: %.*s\n",
+                       (int)sublen, (const char *)sub);
+                if (want_reply) send_chan_failure(s);
+            }
+
         } else if (rtype_len == 4 && memcmp(rtype, "exec", 4) == 0) {
             SSHLOG("[sshd] exec not yet supported\n");
             if (want_reply) send_chan_failure(s);
@@ -594,6 +635,14 @@ int ssh_do_channel(ssh_session_t *s)
                    (int)rtype_len, (const char *)rtype);
             if (want_reply) send_chan_failure(s);
         }
+    }
+
+    /* ---- SFTP subsystem: serve files directly over the channel (no shell,
+     * no pipe relay -- so the A72 shell-pipe drain race does not apply). ---- */
+    if (sftp_requested) {
+        int rc = ssh_do_sftp(s);
+        s->channel_open = 0;
+        return rc;
     }
 
     /* ---- Spawn shell and enter relay ---- */

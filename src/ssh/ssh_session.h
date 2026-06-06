@@ -324,6 +324,9 @@ void ssh_auth_logout(uint32_t token);
 /* Run SSH session channel: open, pty-req, shell, data relay (RFC 4254) */
 int  ssh_do_channel(ssh_session_t *s);
 
+/* Run the SFTP (v3) subsystem server on the open channel (ssh_sftp.c) */
+int  ssh_do_sftp(ssh_session_t *s);
+
 /* ----------------------------------------------------------------
  * Function declarations -- ssh_encrypt.c
  * ---------------------------------------------------------------- */

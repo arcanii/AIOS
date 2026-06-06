@@ -113,7 +113,7 @@ def main():
                           os.path.join(BUILD, "libmbedcrypto.a")]
             ssh_srcs = ["sshd_main.c", "ssh_transport.c", "ssh_kex.c",
                         "ssh_crypto.c", "ssh_encrypt.c", "ssh_auth.c",
-                        "ssh_channel.c"]
+                        "ssh_channel.c", "ssh_sftp.c"]
             cmd = [os.path.join(AIOS, "scripts", "aios-cc")]
             cmd += [os.path.join(AIOS, "src", "ssh", s) for s in ssh_srcs]
             cmd += ["-I", os.path.join(AIOS, "src", "ssh")] + mbed_flags
