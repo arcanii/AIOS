@@ -7,6 +7,7 @@
 #include "posix_internal.h"
 #include <arch_stdio.h>
 #include <muslcsys/vsyscall.h>
+#include <string.h>  /* v0.4.178: memset for aios_fd_alloc slot zeroing */
 
 /* ---- Shared global state ---- */
 seL4_CPtr ser_ep = 0;
@@ -74,7 +75,18 @@ int aios_nb_getchar(void) {
 /* ---- fd table operations ---- */
 int aios_fd_alloc(void) {
     for (int i = 0; i < AIOS_MAX_FDS; i++) {
-        if (!aios_fds[i].active) return i;
+        if (!aios_fds[i].active) {
+            /* v0.4.178: zero the slot before handing it out. Reused fd slots
+             * otherwise inherit stale flags from the previous occupant -- the
+             * SSH reconnect bug: channel_relay sets O_NONBLOCK (is_nonblock=1)
+             * on the per-connection socket and never clears it, so when the
+             * next accept()/pipe2() reused that slot the new fd was spuriously
+             * non-blocking and sock_read_exact got EAGAIN -> a false read
+             * error mid-handshake (conn 2+ failed). Callers set the fields they
+             * need right after, so a clean slate here is always correct. */
+            memset(&aios_fds[i], 0, sizeof(aios_fds[i]));
+            return i;
+        }
     }
     return -1;
 }

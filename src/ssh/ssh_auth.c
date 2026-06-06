@@ -15,6 +15,7 @@
 
 /* IPC labels (match getty.c / pipe_server.c) */
 #define AUTH_LOGIN        40
+#define AUTH_LOGOUT       41
 #define PIPE_SET_IDENTITY 74
 
 /* Max login attempts before disconnect */
@@ -82,6 +83,27 @@ static int auth_login(const char *user, int ulen,
     *gid   = (uint32_t)seL4_GetMR(2);
     *token = (uint32_t)seL4_GetMR(3);
     return 0;
+}
+
+/* ----------------------------------------------------------------
+ * Release the auth_server session for this connection.
+ *
+ * v0.4.178: the SSH reconnect fix (part 2). auth_server has only
+ * AIOS_AUTH_MAX_SESSIONS (4) session slots; one is the permanent boot-root
+ * session. sshd took a slot per login via AUTH_LOGIN but never released it,
+ * so after a few connections per boot the table filled and login returned
+ * NOSLOT -> the client saw "Permission denied (password)". Freeing the slot
+ * when the connection ends keeps sequential logins working indefinitely.
+ * token 0 = never authenticated; token 1 = auth-server-less auto-login (no
+ * slot to free). Both are skipped (the latter also via the !auth_ep guard).
+ * ---------------------------------------------------------------- */
+void ssh_auth_logout(uint32_t token)
+{
+    if (token == 0 || token == 1) return;
+    seL4_CPtr auth_ep = aios_get_auth_ep();
+    if (!auth_ep) return;
+    seL4_SetMR(0, (seL4_Word)token);
+    seL4_Call(auth_ep, seL4_MessageInfo_new(AUTH_LOGOUT, 0, 0, 1));
 }
 
 /* ----------------------------------------------------------------

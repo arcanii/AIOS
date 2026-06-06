@@ -314,6 +314,9 @@ void ssh_ecdh_cleanup(void);
 /* Run SSH user authentication (RFC 4252) */
 int  ssh_do_userauth(ssh_session_t *s);
 
+/* Release the auth_server session token when a connection ends (v0.4.178) */
+void ssh_auth_logout(uint32_t token);
+
 /* ----------------------------------------------------------------
  * Function declarations -- ssh_channel.c
  * ---------------------------------------------------------------- */

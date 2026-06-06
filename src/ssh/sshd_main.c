@@ -203,6 +203,9 @@ int main(int argc, char **argv)
         ssh_disconnect(&sess, SSH_DISCONNECT_BY_APPLICATION,
                       "session ended");
         close(cfd);
+        /* v0.4.178: release the auth_server session slot so sequential
+         * reconnects do not exhaust the (4-slot) session table. */
+        ssh_auth_logout(sess.auth_token);
         SSHLOG("[sshd] Connection closed, waiting for next\n\n");
     }
 
