@@ -10,7 +10,7 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
 ## Quick orientation
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4.
-* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.176**.
+* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.177**.
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4).
 * **Host**: macOS Apple Silicon, cross-compile to aarch64-linux-gnu.
 * **Developer**: Bryan -- prefers Python patch scripts over sed/heredocs; no
@@ -40,6 +40,42 @@ Honor it; this session learned the hard way what happens when you do not.
   those on the Pi -- but via push-over-net + serial, not reflashes.
 
 ---
+
+## Where we left off (v0.4.176 -> v0.4.177) -- tools, DNS, Tier-1 hardening
+
+Tools + a hardening sweep + the first network resolver. All committed.
+
+* **pidof / pkill / killall** (psutil, `cd46048`). One source dispatched by argv[0];
+  pure userspace -- reads `/proc/status`, signals via `kill(2)`. QEMU 7/7 + HW-verified
+  (pkill killed a live netconsole2). `kill()` only reaches REGULAR procs (in
+  `active_procs`); boot SERVERS appear in /proc/status but `kill()` returns ESRCH (they
+  are root-task threads) -- the tool honestly reports "FAILED on <pid>".
+* **build_apps fix** (`48ec84f`). `scripts/build_apps.py` (the full orchestrator) was
+  SKIPPING the aios-cc apps -- netconsole, netconsole2, psutil, nslookup -- which are
+  NOT in `projects/aios/CMakeLists.txt`, so a clean `rm -rf build-04` dropped them.
+  Now it builds them before mkdisk.
+* **Tier-1 driver hardening** (v0.4.177, `bbc4dc5`, QEMU-verified). A sweep found the
+  v0.4.176 eMMC iteration-count-timeout anti-pattern in 4 more drivers. 8 poll loops
+  time-bounded via a NEW shared `include/aios/mono_wait.h` (cntpct_el0; one-line
+  for-header swap). `display_vc.c` (VC mailbox, HDMI), `net_genet.c` (MDIO + mailbox
+  MAC read), `blk_virtio.c`, `display_ramfb.c`. display_vc + net_genet are RPi4-only ->
+  a flash confirms HDMI + GENET still init (happy path unchanged). See the
+  `emmc-completion-timeout-hw` memory.
+* **DNS resolver** (`f27bb45`, HW-verified). `src/apps/nslookup.c` -- UDP A-record query,
+  mirrors sntp.c. `nslookup <host> [server]`, default 8.8.8.8. QEMU (SLIRP DNS + public
+  via NAT) AND the real Pi (8.8.8.8 + gateway 192.168.0.1) both resolve. Follow-ons:
+  capture the DHCP DNS server (net_dhcp option 6 + expose via /proc) for a LOCAL default,
+  and wire `gethostbyname()`/`getaddrinfo()` into libc so `ssh user@host` resolves.
+* **Infra survey.** SSH server is fully written but BLOCKED on building `libmbedcrypto.a`
+  (mbedTLS source present, no build script; the cross-build has real gaps -- arm_neon.h,
+  platform config). A dedicated effort -- seed in `docs/NEXT_*ssh*`. RPi4 SMP is DISABLED
+  (MAX_NUM_NODES=1); enabling it hangs in the elfloader secondary-core release (spin-table,
+  v0.4.135) -- HW-gated, defer. Bluetooth/HCI design-only, low priority.
+
+**Current state:** the Pi runs **v0.4.176** on the LAN at 192.168.0.8 (v1 netconsole on
+2323). The repo is at **v0.4.177**; `disk/sdcard-rpi4.img` is STAGED with v0.4.177
+(Tier-1 hardening) + the new tools (psutil, nslookup) -- flash it to verify HDMI/GENET
+and land the tools on disk. After flashing, the Pi is at v0.4.177.
 
 ## Where we left off (v0.4.175 -> v0.4.176) -- netconsole2 + the eMMC stall RESOLVED
 
@@ -208,13 +244,20 @@ DASH=~/Desktop/github_repos/dash/src
 python3 scripts/build_zsh.py
 ```
 
-### pidof / pkill / killall (psutil -- one binary, argv[0] dispatch)
+### aios-cc apps (netconsole, netconsole2, psutil, nslookup)
+
+These use the aios-cc wrapper and are NOT in `projects/aios/CMakeLists.txt`, so ninja
+does not build them. `scripts/build_apps.py` now builds them all (before mkdisk); after
+a clean `rm -rf build-04` run it, or build one manually:
 
 ```
-./scripts/aios-cc src/apps/psutil.c -o build-04/sbase/pidof
-cp build-04/sbase/pidof build-04/sbase/pkill
-cp build-04/sbase/pidof build-04/sbase/killall
+python3 scripts/build_apps.py                                  # all of them + the full build
+./scripts/aios-cc src/apps/psutil.c   -o build-04/sbase/pidof  # + cp to pkill, killall
+./scripts/aios-cc src/apps/nslookup.c -o build-04/sbase/nslookup
 ```
+
+`nslookup <host> [server]` (default 8.8.8.8) -- DNS A-record resolver; QEMU+HW verified
+via `scripts/dns_qemu_test.py`.
 
 Pure userspace (reads `/proc/status`, signals via `kill(2)`). QEMU test:
 `python3 scripts/psutil_qemu_test.py` (7/7). HW-verified (`pkill nsole2` killed
@@ -385,10 +428,10 @@ pidof dash; pkill netconsole2   # process tools: pidof/pkill/killall (v0.4.176)
 
 ## Suggested next sessions
 
-**This session (v0.4.175->176): the netconsole2 debug sibling (`f8a92cc`) + the eMMC time-bound
-fix (`eff80dc`) RESOLVED the HW relay stall -- it was the eMMC iteration-count completion timeout,
-not a relay bug (see "Where we left off" above + `emmc-completion-timeout-hw`). HW-verified.
-Top picks for next -- pick one:**
+**Recent (v0.4.175->177): netconsole2 + the eMMC stall fix, process tools (pidof/pkill/killall),
+the build_apps fix, Tier-1 driver hardening, and a DNS resolver (nslookup) -- all committed (see
+"Where we left off"). The Pi is at v0.4.176; the v0.4.177 SD image is staged for flashing. TOP
+next: SSH over the LAN -- rebuild mbedTLS (seed: `docs/NEXT_20260606a_ssh.md`). Other picks:**
 
 1. **getty auto-start netconsole2 (the clean launch).** netconsole2's relay works on HW now, but
    its robust LAUNCH is the open piece: a `>FILE` redirect leaks the child output to the file

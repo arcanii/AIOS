@@ -19,17 +19,16 @@ Architectures / Hardware Supported
 - :white_medium_square: X86-64 
 
 ## Latest Achievements
-- **RPi4 serial console** -- interactive login on real Raspberry Pi 4 hardware via USB-serial (GPIO 14/15)
-- **Dynamic hardware detection** -- /proc/hw serves CPU, block device, RAM info from DTB at runtime
-- **TCC self-hosting** -- all 12 TCC source files compile natively on AIOS (link step WIP)
-- **Unix pipes working** -- `echo hello | cat`, `ls /tmp | head`, double pipes (`a | b | c`)
-- **Crypto server** -- ChaCha20 CSPRNG, /dev/urandom and getrandom() via dedicated IPC server
-- Two shells: DASH (https://github.com/tklauser/dash) + ZSH (script mode)
-- C compiler: TinyCC (https://github.com/TinyCC/tinycc) -- compiles and runs C programs on AIOS
-- SSH server with encrypted transport (AES-256-CTR, HMAC-SHA-256, password auth)
-- Networking: virtio-net driver, TCP/IP stack, HTTP server
-- Display -- ramfb (QEMU) + VideoCore mailbox (RPi4) framebuffer with splash screen
-- 86+ POSIX syscalls, Linux compat layer, /dev/urandom, /dev/random, /dev/zero
+- **RPi4 networking** -- real GENET Ethernet with DHCP and bidirectional ping on hardware
+- **Network control channel** -- drive the Pi over the LAN (run commands, push/pull files, reboot) via netconsole; no serial needed after flashing
+- **DNS resolver** -- `nslookup` resolves hostnames to IPs (QEMU + real hardware)
+- **Write-back block cache** -- 4.5x faster file writes on real eMMC (CMD25 multi-block, HW-verified)
+- **Hardware-robust drivers** -- time-based (not iteration-count) completion waits across eMMC, GENET, and the VC mailbox -- removes multi-second HW stalls
+- **Wall-clock time** -- SNTP client syncs real date/time at boot
+- **RPi4 HDMI** -- VideoCore framebuffer lit on real hardware (1024x768 + fb_console)
+- **Process tools** -- `pidof` / `pkill` / `killall` via /proc/status + `kill(2)`
+- **TCC self-hosting** -- TinyCC compiles C programs natively on AIOS
+- Two shells: DASH (login) + ZSH (interactive, ZLE)
 
 ## Overview
 
@@ -43,7 +42,7 @@ External AI (Claude) is used as a development tool for code generation
 and review. This project is also a study in AI-assisted systems programming.
 The long-term goal is self-hosted development within AIOS itself.
 
-**Current version:** v0.4.98
+**Current version:** v0.4.177
 
 ## What Works
 
@@ -57,10 +56,12 @@ The long-term goal is self-hosted development within AIOS itself.
 - **Shell operators** (&&, ||, >, >>, <) and environment variables
 - **dash login shell** -- POSIX shell as primary login shell via /etc/passwd pw_shell
 - **zsh script mode** -- alternative shell with arrays, extended globbing, arithmetic (Phase 1)
-- **SSH server** -- interactive shell over SSH (AES-256-CTR, HMAC-SHA-256, password auth, Ctrl-C forwarding)
+- **SSH server** -- written (AES-256-CTR, HMAC-SHA-256, password auth, Ctrl-C forwarding); currently blocked on rebuilding the mbedTLS crypto lib
 - **Graphical display** -- ramfb (QEMU) + VideoCore mailbox (RPi4) framebuffer, 1024x768, fb_console
 - **Display server IPC** -- user programs draw to framebuffer via disp_ep (fbshow command)
-- **Networking** -- virtio-net driver, ARP/ICMP/UDP/TCP stack, HTTP server, POSIX sockets
+- **Networking** -- virtio-net (QEMU) + GENET Ethernet (RPi4), ARP/ICMP/UDP/TCP, DHCP, DNS (`nslookup`), SNTP, HTTP server, POSIX sockets
+- **Network control** -- netconsole: run commands, push/pull files (`pi_filexfer.py`), and reboot the Pi over the LAN
+- **Process tools** -- `pidof` / `pkill` / `killall` (process lookup + signalling via /proc/status)
 - **UART IRQ wakeup** -- PL011 interrupt-driven main loop (seL4_Wait replaces busy-polling)
 - **136+ programs** -- 99 sbase utilities, 30 AIOS programs, dash, zsh, tcc, sshd
 - **TCC self-hosting** -- all 12 TCC source files compile natively on AIOS; tcc2 binary runs
@@ -81,7 +82,7 @@ The long-term goal is self-hosted development within AIOS itself.
 - **PSCI shutdown** -- clean power-off via /bin/aios/shutdown
 - **getconf** -- sysconf, confstr, pathconf, limits (99/99 sbase tools)
 - **VKA allocator audit** -- per-subsystem resource tracking via /proc/vka and debug command
-- **RPi4 SD card** -- BCM2711 EMMC2 SDHCI driver, PIO read, 25MHz 4-bit bus, MBR partition
+- **RPi4 SD card** -- BCM2711 EMMC2 SDHCI driver, PIO read/write, write-back cache + CMD25 multi-block, 25MHz 4-bit bus, MBR partition
 
 ## Architecture
 
@@ -108,7 +109,7 @@ capability-mediated access to servers.
     virtio-blk + virtio-net + ramfb (QEMU)
     BCM2711 EMMC2 + VideoCore mailbox (RPi4)
        |
-    seL4 microkernel (AArch64, 4-core SMP)
+    seL4 microkernel (AArch64, single-core; RPi4 SMP bring-up WIP)
        |
     QEMU virt / Raspberry Pi 4
 
