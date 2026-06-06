@@ -14,7 +14,7 @@
  * netconsole and does not garble the shared serial login. */
 #include <stdio.h>
 extern int g_ssh_verbose;
-#define SSHLOG(...) do { if (g_ssh_verbose) printf(__VA_ARGS__); } while (0)
+#define SSHLOG(...) do { if (g_ssh_verbose) { printf(__VA_ARGS__); fflush(stdout); } } while (0)
 
 /* ----------------------------------------------------------------
  * Constants
