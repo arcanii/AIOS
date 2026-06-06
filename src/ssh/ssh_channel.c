@@ -239,14 +239,23 @@ static int spawn_shell(int *stdin_wr, int *stdout_rd,
         _exit(127);
     }
 
-    /* Parent: close read end of stdin pipe (safe: no server notification).
-     * Keep out_pipe[1] open -- closing it sets writers=0 in pipe_server,
-     * which causes immediate EOF before the child can produce output.
-     * The write end is returned for cleanup after the relay. */
+    /* Parent: drop BOTH ends the child uses -- the stdin read end AND the
+     * stdout write end -- right after fork. This is the post-v0.4.143 pipe
+     * model, the same as netconsole: a pipe read end reports EOF only when
+     * the REGISTERED writer (the exec'd dash, given its own write_ref by
+     * PIPE_EXEC) exits, never on a plain close() of an inherited copy. So the
+     * stdout read end now EOFs precisely when dash exits.
+     *   The OLD code kept out_pipe[1] open and closed it only after the first
+     * shell output (with an ever_got_output guard). On the A72 that later
+     * close raced dash output (pipe-SHM cache lag) -> a spurious read()==0 ->
+     * a false "shell exited" -> the channel was torn down after ONE command.
+     * QEMU has no such lag, so it never reproduced. (stdout_wr_fd kept as a
+     * param but returned -1 so the relay cleanup is a no-op.) */
     close(in_pipe[0]);
+    close(out_pipe[1]);
     *stdin_wr    = in_pipe[1];
     *stdout_rd   = out_pipe[0];
-    *stdout_wr_fd = out_pipe[1];
+    *stdout_wr_fd = -1;
     *child_pid   = pid;
 
     SSHLOG("[sshd] shell spawned pid=%d stdin_wr=%d stdout_rd=%d\n",
@@ -341,7 +350,6 @@ static int channel_relay(ssh_session_t *s,
     fcntl(s->sockfd, F_SETFL, sfl | 0x800);
 
     int done = 0;
-    int ever_got_output = 0;
     uint8_t rbuf[900];
     uint8_t pkt[SSH_BUF_SIZE];
     int plen;
@@ -357,16 +365,7 @@ static int channel_relay(ssh_session_t *s,
         /* 1. Read shell output (non-blocking pipe read) */
         int n = (int)read(stdout_rd, rbuf, sizeof(rbuf));
         if (n > 0) {
-            ever_got_output = 1;
             activity = 1;
-            /* v0.4.87: close parent write end after first output.
-             * By now PIPE_EXEC has given dash its own write_ref.
-             * Cannot close earlier: races with fork+exec (parent
-             * close before PIPE_EXEC would set write_closed=1). */
-            if (stdout_wr_fd >= 0) {
-                close(stdout_wr_fd);
-                stdout_wr_fd = -1;
-            }
             /* Convert LF to CRLF for SSH terminal display */
             uint8_t crbuf[1800];
             int ci = 0;
@@ -383,9 +382,10 @@ static int channel_relay(ssh_session_t *s,
                     break;
                 }
             }
-        } else if (n == 0 && ever_got_output) {
-            /* Real EOF: shell has exited (ignore spurious 0 before
-             * any output -- caused by AIOS pipe SHM race) */
+        } else if (n == 0) {
+            /* Authoritative EOF: dash (the only registered writer, after we
+             * closed our write end at fork) has exited. No ever_got_output
+             * guard needed -- a no-output command now closes cleanly too. */
             SSHLOG("[sshd] shell exited (pipe EOF)\n");
             send_chan_eof(s);
             send_chan_close(s);
