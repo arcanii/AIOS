@@ -48,7 +48,7 @@ int ssh_encrypt_init(ssh_session_t *s)
     mbedtls_aes_init(&g_recv_cipher.aes);
     ret = mbedtls_aes_setkey_enc(&g_recv_cipher.aes, s->key_c2s, 256);
     if (ret != 0) {
-        printf("[sshd] AES recv key setup: -0x%04x\n", (unsigned)-ret);
+        SSHLOG("[sshd] AES recv key setup: -0x%04x\n", (unsigned)-ret);
         return -1;
     }
     memcpy(g_recv_cipher.nonce_counter, s->iv_c2s, 16);
@@ -59,7 +59,7 @@ int ssh_encrypt_init(ssh_session_t *s)
     mbedtls_aes_init(&g_send_cipher.aes);
     ret = mbedtls_aes_setkey_enc(&g_send_cipher.aes, s->key_s2c, 256);
     if (ret != 0) {
-        printf("[sshd] AES send key setup: -0x%04x\n", (unsigned)-ret);
+        SSHLOG("[sshd] AES send key setup: -0x%04x\n", (unsigned)-ret);
         return -1;
     }
     memcpy(g_send_cipher.nonce_counter, s->iv_s2c, 16);
@@ -73,7 +73,7 @@ int ssh_encrypt_init(ssh_session_t *s)
     /* Mark session as encrypted */
     s->encrypted = 1;
 
-    printf("[sshd] Encrypt init OK (AES-256-CTR + HMAC-SHA-256)\n");
+    SSHLOG("[sshd] Encrypt init OK (AES-256-CTR + HMAC-SHA-256)\n");
     return 0;
 }
 

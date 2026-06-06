@@ -43,7 +43,7 @@ int ssh_crypto_init(void)
                                  &g_entropy,
                                  (const uint8_t *)"aios-sshd", 9);
     if (ret != 0) {
-        printf("[sshd] DRBG seed failed: -0x%04x\n", (unsigned)-ret);
+        SSHLOG("[sshd] DRBG seed failed: -0x%04x\n", (unsigned)-ret);
         return -1;
     }
 
@@ -52,11 +52,11 @@ int ssh_crypto_init(void)
     ret = mbedtls_ecdsa_genkey(&g_hostkey, MBEDTLS_ECP_DP_SECP256R1,
                                 mbedtls_ctr_drbg_random, &g_drbg);
     if (ret != 0) {
-        printf("[sshd] Host key gen failed: -0x%04x\n", (unsigned)-ret);
+        SSHLOG("[sshd] Host key gen failed: -0x%04x\n", (unsigned)-ret);
         return -1;
     }
 
-    printf("[sshd] Crypto init OK (ECDSA-P256 host key generated)\n");
+    SSHLOG("[sshd] Crypto init OK (ECDSA-P256 host key generated)\n");
     return 0;
 }
 
@@ -93,7 +93,7 @@ int ssh_hostkey_get_blob(uint8_t *buf, int *len)
         MBEDTLS_ECP_PF_UNCOMPRESSED,
         &plen, point, sizeof(point));
     if (ret != 0 || plen != 65) {
-        printf("[sshd] Host key export failed: %d\n", ret);
+        SSHLOG("[sshd] Host key export failed: %d\n", ret);
         return -1;
     }
 
@@ -131,7 +131,7 @@ int ssh_hostkey_sign(const uint8_t *hash, int hashlen,
                                   digest, 32,
                                   mbedtls_ctr_drbg_random, &g_drbg);
     if (ret != 0) {
-        printf("[sshd] ECDSA sign failed: -0x%04x\n", (unsigned)-ret);
+        SSHLOG("[sshd] ECDSA sign failed: -0x%04x\n", (unsigned)-ret);
         mbedtls_mpi_free(&r);
         mbedtls_mpi_free(&sv);
         return -1;
@@ -182,21 +182,21 @@ int ssh_ecdh_generate(uint8_t pub_out[32])
     int ret = mbedtls_ecp_group_load(&g_ecdh_grp,
                                       MBEDTLS_ECP_DP_CURVE25519);
     if (ret != 0) {
-        printf("[sshd] x25519 group load: -0x%04x\n", (unsigned)-ret);
+        SSHLOG("[sshd] x25519 group load: -0x%04x\n", (unsigned)-ret);
         return -1;
     }
 
     ret = mbedtls_ecp_gen_keypair(&g_ecdh_grp, &g_ecdh_d, &g_ecdh_Q,
                                    mbedtls_ctr_drbg_random, &g_drbg);
     if (ret != 0) {
-        printf("[sshd] x25519 keygen: -0x%04x\n", (unsigned)-ret);
+        SSHLOG("[sshd] x25519 keygen: -0x%04x\n", (unsigned)-ret);
         return -1;
     }
 
     /* Export public key as 32 bytes little-endian (x25519 wire format) */
     ret = mbedtls_mpi_write_binary_le(&g_ecdh_Q.X, pub_out, 32);
     if (ret != 0) {
-        printf("[sshd] x25519 pub export: -0x%04x\n", (unsigned)-ret);
+        SSHLOG("[sshd] x25519 pub export: -0x%04x\n", (unsigned)-ret);
         return -1;
     }
 
@@ -228,7 +228,7 @@ int ssh_ecdh_shared_secret(const uint8_t peer_pub[32],
     ret = mbedtls_ecp_mul(&g_ecdh_grp, &result, &g_ecdh_d, &peer_Q,
                            mbedtls_ctr_drbg_random, &g_drbg);
     if (ret != 0) {
-        printf("[sshd] x25519 mul: -0x%04x\n", (unsigned)-ret);
+        SSHLOG("[sshd] x25519 mul: -0x%04x\n", (unsigned)-ret);
         goto fail;
     }
 
@@ -402,14 +402,14 @@ int ssh_derive_keys(ssh_session_t *s,
     /* C = key c2s (32 bytes), D = key s2c (32 bytes) -- AES-256 */
     /* E = MAC c2s (32 bytes), F = MAC s2c (32 bytes) -- HMAC-SHA-256 */
 
-    printf("[sshd] Session keys derived:\n");
-    printf("[sshd]   IV  c2s: %02x%02x%02x%02x...  IV  s2c: %02x%02x%02x%02x...\n",
+    SSHLOG("[sshd] Session keys derived:\n");
+    SSHLOG("[sshd]   IV  c2s: %02x%02x%02x%02x...  IV  s2c: %02x%02x%02x%02x...\n",
            keys[0][0], keys[0][1], keys[0][2], keys[0][3],
            keys[1][0], keys[1][1], keys[1][2], keys[1][3]);
-    printf("[sshd]   Key c2s: %02x%02x%02x%02x...  Key s2c: %02x%02x%02x%02x...\n",
+    SSHLOG("[sshd]   Key c2s: %02x%02x%02x%02x...  Key s2c: %02x%02x%02x%02x...\n",
            keys[2][0], keys[2][1], keys[2][2], keys[2][3],
            keys[3][0], keys[3][1], keys[3][2], keys[3][3]);
-    printf("[sshd]   MAC c2s: %02x%02x%02x%02x...  MAC s2c: %02x%02x%02x%02x...\n",
+    SSHLOG("[sshd]   MAC c2s: %02x%02x%02x%02x...  MAC s2c: %02x%02x%02x%02x...\n",
            keys[4][0], keys[4][1], keys[4][2], keys[4][3],
            keys[5][0], keys[5][1], keys[5][2], keys[5][3]);
 

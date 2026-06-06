@@ -15,23 +15,27 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 
+int g_ssh_verbose = 0;
+
 int main(int argc, char **argv)
 {
-    (void)argc; (void)argv;
+    int ai;
+    for (ai = 1; ai < argc; ai++)
+        if (argv[ai][0] == '-' && argv[ai][1] == 'v') g_ssh_verbose = 1;
 
     signal(SIGINT, SIG_IGN);  /* v0.4.85: ignore local Ctrl-C */
-    printf("[sshd] AIOS SSH server starting\n");
+    SSHLOG("[sshd] AIOS SSH server starting\n");
 
     /* Initialize crypto (DRBG + host key) */
     if (ssh_crypto_init() < 0) {
-        printf("[sshd] Crypto init failed\n");
+        SSHLOG("[sshd] Crypto init failed\n");
         return 1;
     }
 
     /* Create listening socket */
     int lfd = socket(AF_INET, SOCK_STREAM, 0);
     if (lfd < 0) {
-        printf("[sshd] socket() failed\n");
+        SSHLOG("[sshd] socket() failed\n");
         return 1;
     }
 
@@ -43,28 +47,28 @@ int main(int argc, char **argv)
     addr.sin_addr.s_addr = 0;
 
     if (bind(lfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        printf("[sshd] bind(%d) failed\n", SSHD_PORT);
+        SSHLOG("[sshd] bind(%d) failed\n", SSHD_PORT);
         close(lfd);
         return 1;
     }
 
     if (listen(lfd, 1) < 0) {
-        printf("[sshd] listen() failed\n");
+        SSHLOG("[sshd] listen() failed\n");
         close(lfd);
         return 1;
     }
 
-    printf("[sshd] Listening on port %d\n", SSHD_PORT);
+    SSHLOG("[sshd] Listening on port %d\n", SSHD_PORT);
 
     /* Accept loop (one connection at a time) */
     while (1) {
         int cfd = accept(lfd, NULL, NULL);
         if (cfd < 0) {
-            printf("[sshd] accept() failed\n");
+            SSHLOG("[sshd] accept() failed\n");
             continue;
         }
 
-        printf("[sshd] Client connected (fd %d)\n", cfd);
+        SSHLOG("[sshd] Client connected (fd %d)\n", cfd);
 
         /* Initialize session state */
         ssh_session_t sess;
@@ -73,14 +77,14 @@ int main(int argc, char **argv)
 
         /* Phase 1: Version exchange */
         if (ssh_version_exchange(&sess) < 0) {
-            printf("[sshd] Version exchange failed\n");
+            SSHLOG("[sshd] Version exchange failed\n");
             close(cfd);
             continue;
         }
 
         /* Phase 1: KEXINIT exchange + algorithm negotiation */
         if (ssh_do_kexinit(&sess) < 0) {
-            printf("[sshd] KEXINIT failed\n");
+            SSHLOG("[sshd] KEXINIT failed\n");
             ssh_disconnect(&sess, SSH_DISCONNECT_KEY_EXCHANGE_FAILED,
                           "algorithm negotiation failed");
             close(cfd);
@@ -89,7 +93,7 @@ int main(int argc, char **argv)
 
         /* Phase 2: ECDH key exchange + NEWKEYS */
         if (ssh_do_kex_exchange(&sess) < 0) {
-            printf("[sshd] Key exchange failed\n");
+            SSHLOG("[sshd] Key exchange failed\n");
             ssh_disconnect(&sess, SSH_DISCONNECT_KEY_EXCHANGE_FAILED,
                           "key exchange failed");
             close(cfd);
@@ -98,12 +102,12 @@ int main(int argc, char **argv)
 
         /* Phase 3: Initialize encrypted transport */
         if (ssh_encrypt_init(&sess) < 0) {
-            printf("[sshd] Encryption init failed\n");
+            SSHLOG("[sshd] Encryption init failed\n");
             close(cfd);
             continue;
         }
 
-        printf("[sshd] === Encrypted transport active ===\n");
+        SSHLOG("[sshd] === Encrypted transport active ===\n");
 
         /* Read packets until SERVICE_REQUEST */
         {
@@ -113,22 +117,22 @@ int main(int argc, char **argv)
 
             while (!got_service) {
                 if (ssh_read_packet(&sess, spkt, &splen) < 0) {
-                    printf("[sshd] Encrypted read failed\n");
+                    SSHLOG("[sshd] Encrypted read failed\n");
                     break;
                 }
                 if (splen < 1) break;
 
                 uint8_t mtype = spkt[0];
-                printf("[sshd] Encrypted msg type %d (%d bytes)\n",
+                SSHLOG("[sshd] Encrypted msg type %d (%d bytes)\n",
                        mtype, splen);
 
                 if (mtype == SSH_MSG_EXT_INFO) {
-                    printf("[sshd] EXT_INFO received (skipping)\n");
+                    SSHLOG("[sshd] EXT_INFO received (skipping)\n");
                 } else if (mtype == SSH_MSG_IGNORE ||
                            mtype == SSH_MSG_DEBUG) {
                     /* skip */
                 } else if (mtype == SSH_MSG_DISCONNECT) {
-                    printf("[sshd] Client disconnected\n");
+                    SSHLOG("[sshd] Client disconnected\n");
                     break;
                 } else if (mtype == SSH_MSG_SERVICE_REQUEST) {
                     int soff = 1;
@@ -136,11 +140,11 @@ int main(int argc, char **argv)
                     uint32_t svc_len;
                     if (ssh_get_string(spkt, splen, &soff,
                                        &svc, &svc_len) < 0) {
-                        printf("[sshd] Bad SERVICE_REQUEST\n");
+                        SSHLOG("[sshd] Bad SERVICE_REQUEST\n");
                         break;
                     }
 
-                    printf("[sshd] SERVICE_REQUEST: %.*s\n",
+                    SSHLOG("[sshd] SERVICE_REQUEST: %.*s\n",
                            (int)svc_len, (const char *)svc);
 
                     if (svc_len == 12 &&
@@ -151,55 +155,55 @@ int main(int argc, char **argv)
                         resp[roff++] = SSH_MSG_SERVICE_ACCEPT;
                         ssh_put_namelist(resp, "ssh-userauth", &roff);
                         if (ssh_write_packet(&sess, resp, roff) < 0) {
-                            printf("[sshd] SERVICE_ACCEPT failed\n");
+                            SSHLOG("[sshd] SERVICE_ACCEPT failed\n");
                             break;
                         }
-                        printf("[sshd] SERVICE_ACCEPT sent\n");
+                        SSHLOG("[sshd] SERVICE_ACCEPT sent\n");
                         got_service = 1;
                     } else {
-                        printf("[sshd] Unknown service\n");
+                        SSHLOG("[sshd] Unknown service\n");
                         break;
                     }
                 } else {
-                    printf("[sshd] Unexpected msg %d\n", mtype);
+                    SSHLOG("[sshd] Unexpected msg %d\n", mtype);
                 }
             }
 
             if (!got_service) {
                 close(cfd);
-                printf("[sshd] Service negotiation failed\n\n");
+                SSHLOG("[sshd] Service negotiation failed\n\n");
                 continue;
             }
         }
 
         /* Phase 4: User authentication */
-        printf("[sshd] Phase 3 complete -- starting authentication\n");
+        SSHLOG("[sshd] Phase 3 complete -- starting authentication\n");
 
         if (ssh_do_userauth(&sess) < 0) {
-            printf("[sshd] Authentication failed\n");
+            SSHLOG("[sshd] Authentication failed\n");
             ssh_disconnect(&sess, SSH_DISCONNECT_BY_APPLICATION,
                           "authentication failed");
             close(cfd);
-            printf("[sshd] Connection closed, waiting for next\n\n");
+            SSHLOG("[sshd] Connection closed, waiting for next\n\n");
             continue;
         }
 
-        printf("[sshd] User authenticated (uid=%u)\n",
+        SSHLOG("[sshd] User authenticated (uid=%u)\n",
                (unsigned)sess.uid);
 
         /* Phase 5: Session channel + shell */
-        printf("[sshd] Phase 4 complete -- starting channel\n");
+        SSHLOG("[sshd] Phase 4 complete -- starting channel\n");
 
         if (ssh_do_channel(&sess) < 0) {
-            printf("[sshd] Channel session failed\n");
+            SSHLOG("[sshd] Channel session failed\n");
         } else {
-            printf("[sshd] Channel session ended normally\n");
+            SSHLOG("[sshd] Channel session ended normally\n");
         }
 
         ssh_disconnect(&sess, SSH_DISCONNECT_BY_APPLICATION,
                       "session ended");
         close(cfd);
-        printf("[sshd] Connection closed, waiting for next\n\n");
+        SSHLOG("[sshd] Connection closed, waiting for next\n\n");
     }
 
     close(lfd);

@@ -120,7 +120,7 @@ static int handle_channel_open(ssh_session_t *s,
         return -1;
 
     if (ctype_len != 7 || memcmp(ctype, "session", 7) != 0) {
-        printf("[sshd] Unsupported channel type: %.*s\n",
+        SSHLOG("[sshd] Unsupported channel type: %.*s\n",
                (int)ctype_len, (const char *)ctype);
         /* Send CHANNEL_OPEN_FAILURE */
         uint8_t r[48];
@@ -145,7 +145,7 @@ static int handle_channel_open(ssh_session_t *s,
     s->server_window  = SSH_CHAN_WINDOW;
     s->channel_open   = 1;
 
-    printf("[sshd] CHANNEL_OPEN session (ch=%u win=%u maxpkt=%u)\n",
+    SSHLOG("[sshd] CHANNEL_OPEN session (ch=%u win=%u maxpkt=%u)\n",
            (unsigned)s->client_channel,
            (unsigned)s->client_window,
            (unsigned)s->client_max_pkt);
@@ -176,7 +176,7 @@ static int handle_pty_req(ssh_session_t *s,
     uint32_t modes_len;
     ssh_get_string(pkt, plen, &off, &modes, &modes_len);
 
-    printf("[sshd] pty-req: %.*s %ux%u\n",
+    SSHLOG("[sshd] pty-req: %.*s %ux%u\n",
            (int)(term_len > 31 ? 31 : term_len),
            (const char *)term_str,
            (unsigned)s->term_width,
@@ -203,22 +203,22 @@ static int spawn_shell(int *stdin_wr, int *stdout_rd,
     int in_pipe[2], out_pipe[2];
 
     if (pipe2(in_pipe, 0) < 0) {
-        printf("[sshd] stdin pipe2 failed\n");
+        SSHLOG("[sshd] stdin pipe2 failed\n");
         return -1;
     }
     if (pipe2(out_pipe, 0) < 0) {
-        printf("[sshd] stdout pipe2 failed\n");
+        SSHLOG("[sshd] stdout pipe2 failed\n");
         close(in_pipe[0]);
         close(in_pipe[1]);
         return -1;
     }
 
-    printf("[sshd] pipes: in=[%d,%d] out=[%d,%d]\n",
+    SSHLOG("[sshd] pipes: in=[%d,%d] out=[%d,%d]\n",
            in_pipe[0], in_pipe[1], out_pipe[0], out_pipe[1]);
 
     pid_t pid = fork();
     if (pid < 0) {
-        printf("[sshd] fork failed\n");
+        SSHLOG("[sshd] fork failed\n");
         close(in_pipe[0]); close(in_pipe[1]);
         close(out_pipe[0]); close(out_pipe[1]);
         return -1;
@@ -249,7 +249,7 @@ static int spawn_shell(int *stdin_wr, int *stdout_rd,
     *stdout_wr_fd = out_pipe[1];
     *child_pid   = pid;
 
-    printf("[sshd] shell spawned pid=%d stdin_wr=%d stdout_rd=%d\n",
+    SSHLOG("[sshd] shell spawned pid=%d stdin_wr=%d stdout_rd=%d\n",
            (int)pid, *stdin_wr, *stdout_rd);
     return 0;
 }
@@ -350,7 +350,7 @@ static int channel_relay(ssh_session_t *s,
     uint8_t lbuf[LINE_BUF_SIZE];
     int lpos = 0;
 
-    printf("[sshd] relay loop starting\n");
+    SSHLOG("[sshd] relay loop starting\n");
 
     while (!done) {
         int activity = 0;
@@ -386,7 +386,7 @@ static int channel_relay(ssh_session_t *s,
         } else if (n == 0 && ever_got_output) {
             /* Real EOF: shell has exited (ignore spurious 0 before
              * any output -- caused by AIOS pipe SHM race) */
-            printf("[sshd] shell exited (pipe EOF)\n");
+            SSHLOG("[sshd] shell exited (pipe EOF)\n");
             send_chan_eof(s);
             send_chan_close(s);
             done = 1;
@@ -442,29 +442,29 @@ static int channel_relay(ssh_session_t *s,
                         s->client_window += ssh_get_u32(pkt + woff);
 
                 } else if (mtype == SSH_MSG_CHANNEL_EOF) {
-                    printf("[sshd] client CHANNEL_EOF\n");
+                    SSHLOG("[sshd] client CHANNEL_EOF\n");
                     if (stdin_wr >= 0) {
                         close(stdin_wr);
                         stdin_wr = -1;
                     }
 
                 } else if (mtype == SSH_MSG_CHANNEL_CLOSE) {
-                    printf("[sshd] client CHANNEL_CLOSE\n");
+                    SSHLOG("[sshd] client CHANNEL_CLOSE\n");
                     done = 1;
 
                 } else if (mtype == SSH_MSG_DISCONNECT) {
-                    printf("[sshd] client disconnected\n");
+                    SSHLOG("[sshd] client disconnected\n");
                     done = 1;
 
                 } else if (mtype == SSH_MSG_IGNORE ||
                            mtype == SSH_MSG_DEBUG) {
                     /* skip */
                 } else {
-                    printf("[sshd] relay: unhandled msg %d\n", mtype);
+                    SSHLOG("[sshd] relay: unhandled msg %d\n", mtype);
                 }
 
             } else if (rc < 0) {
-                printf("[sshd] socket read error in relay\n");
+                SSHLOG("[sshd] socket read error in relay\n");
                 done = 1;
             }
         }
@@ -486,9 +486,9 @@ static int channel_relay(ssh_session_t *s,
     /* Reap child (should be done since pipe EOF) */
     int status = 0;
     waitpid(child, &status, 0);
-    printf("[sshd] shell reaped (status=%d)\n", status);
+    SSHLOG("[sshd] shell reaped (status=%d)\n", status);
 
-    printf("[sshd] relay loop ended\n");
+    SSHLOG("[sshd] relay loop ended\n");
     return 0;
 }
 
@@ -516,7 +516,7 @@ int ssh_do_channel(ssh_session_t *s)
         if (mtype == SSH_MSG_IGNORE || mtype == SSH_MSG_DEBUG)
             continue;
         if (mtype == SSH_MSG_DISCONNECT) {
-            printf("[sshd] disconnect before channel open\n");
+            SSHLOG("[sshd] disconnect before channel open\n");
             return -1;
         }
         if (mtype == SSH_MSG_CHANNEL_OPEN) {
@@ -530,7 +530,7 @@ int ssh_do_channel(ssh_session_t *s)
             ssh_write_packet(s, r, 1);
             continue;
         }
-        printf("[sshd] expected CHANNEL_OPEN, got %d\n", mtype);
+        SSHLOG("[sshd] expected CHANNEL_OPEN, got %d\n", mtype);
         return -1;
     }
 
@@ -553,7 +553,7 @@ int ssh_do_channel(ssh_session_t *s)
         }
 
         if (mtype != SSH_MSG_CHANNEL_REQUEST) {
-            printf("[sshd] expected CHANNEL_REQUEST, got %d\n", mtype);
+            SSHLOG("[sshd] expected CHANNEL_REQUEST, got %d\n", mtype);
             continue;
         }
 
@@ -562,13 +562,13 @@ int ssh_do_channel(ssh_session_t *s)
         const uint8_t *rtype;
         uint32_t rtype_len;
         if (ssh_get_string(pkt, plen, &off, &rtype, &rtype_len) < 0) {
-            printf("[sshd] bad CHANNEL_REQUEST format\n");
+            SSHLOG("[sshd] bad CHANNEL_REQUEST format\n");
             return -1;
         }
         int want_reply = 0;
         if (off < plen) want_reply = pkt[off++];
 
-        printf("[sshd] CHANNEL_REQUEST: %.*s (reply=%d)\n",
+        SSHLOG("[sshd] CHANNEL_REQUEST: %.*s (reply=%d)\n",
                (int)rtype_len, (const char *)rtype, want_reply);
 
         if (rtype_len == 7 && memcmp(rtype, "pty-req", 7) == 0) {
@@ -586,11 +586,11 @@ int ssh_do_channel(ssh_session_t *s)
             }
 
         } else if (rtype_len == 4 && memcmp(rtype, "exec", 4) == 0) {
-            printf("[sshd] exec not yet supported\n");
+            SSHLOG("[sshd] exec not yet supported\n");
             if (want_reply) send_chan_failure(s);
 
         } else {
-            printf("[sshd] unknown request: %.*s\n",
+            SSHLOG("[sshd] unknown request: %.*s\n",
                    (int)rtype_len, (const char *)rtype);
             if (want_reply) send_chan_failure(s);
         }
@@ -601,7 +601,7 @@ int ssh_do_channel(ssh_session_t *s)
     pid_t child_pid = -1;
 
     if (spawn_shell(&stdin_wr, &stdout_rd, &stdout_wr_fd, &child_pid) < 0) {
-        printf("[sshd] shell spawn failed\n");
+        SSHLOG("[sshd] shell spawn failed\n");
         send_chan_close(s);
         return -1;
     }

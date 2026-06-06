@@ -62,7 +62,7 @@ int ssh_version_exchange(ssh_session_t *s)
     char vbuf[SSH_MAX_VERSION_LEN + 3]; /* room for \r\n\0 */
     int vlen = snprintf(vbuf, sizeof(vbuf), "%s\r\n", SSH_VERSION_STRING);
     if (sock_write_all(s->sockfd, (const uint8_t *)vbuf, vlen) < 0) {
-        printf("[sshd] version send failed\n");
+        SSHLOG("[sshd] version send failed\n");
         return -1;
     }
 
@@ -82,7 +82,7 @@ int ssh_version_exchange(ssh_session_t *s)
         while (pos < (int)sizeof(line) - 1) {
             uint8_t ch;
             if (sock_read_exact(s->sockfd, &ch, 1) < 0) {
-                printf("[sshd] version read failed\n");
+                SSHLOG("[sshd] version read failed\n");
                 return -1;
             }
             line[pos++] = (char)ch;
@@ -105,13 +105,13 @@ int ssh_version_exchange(ssh_session_t *s)
 
     /* Copy to session (without CRLF) */
     if (pos >= (int)sizeof(s->client_version)) {
-        printf("[sshd] client version too long\n");
+        SSHLOG("[sshd] client version too long\n");
         return -1;
     }
     memcpy(s->client_version, line, pos + 1);
 
-    printf("[sshd] Client: %s\n", s->client_version);
-    printf("[sshd] Server: %s\n", s->server_version);
+    SSHLOG("[sshd] Client: %s\n", s->client_version);
+    SSHLOG("[sshd] Server: %s\n", s->server_version);
     return 0;
 }
 
@@ -135,12 +135,12 @@ static int ssh_read_encrypted(ssh_session_t *s,
         enc_hdr[0] = s->peek_byte;
         s->has_peek = 0;
         if (sock_read_exact(s->sockfd, enc_hdr + 1, 3) < 0) {
-            printf("[sshd] enc-read: header(peek) failed\n");
+            SSHLOG("[sshd] enc-read: header(peek) failed\n");
             return -1;
         }
     } else {
         if (sock_read_exact(s->sockfd, enc_hdr, 4) < 0) {
-            printf("[sshd] enc-read: header failed\n");
+            SSHLOG("[sshd] enc-read: header failed\n");
             return -1;
         }
     }
@@ -148,7 +148,7 @@ static int ssh_read_encrypted(ssh_session_t *s,
 
     uint32_t pkt_len = ssh_get_u32(dec_hdr);
     if (pkt_len < 2 || pkt_len > SSH_BUF_SIZE - 4) {
-        printf("[sshd] enc-read: bad pkt_len %u\n", (unsigned)pkt_len);
+        SSHLOG("[sshd] enc-read: bad pkt_len %u\n", (unsigned)pkt_len);
         return -1;
     }
 
@@ -156,7 +156,7 @@ static int ssh_read_encrypted(ssh_session_t *s,
     uint8_t enc_body[SSH_BUF_SIZE];
     uint8_t dec_body[SSH_BUF_SIZE];
     if (sock_read_exact(s->sockfd, enc_body, (int)pkt_len) < 0) {
-        printf("[sshd] enc-read: body failed\n");
+        SSHLOG("[sshd] enc-read: body failed\n");
         return -1;
     }
     ssh_ctr_decrypt(enc_body, dec_body, (int)pkt_len);
@@ -164,7 +164,7 @@ static int ssh_read_encrypted(ssh_session_t *s,
     /* 3. Read MAC (plaintext, 32 bytes) */
     uint8_t mac_recv[SSH_MAC_LEN];
     if (sock_read_exact(s->sockfd, mac_recv, SSH_MAC_LEN) < 0) {
-        printf("[sshd] enc-read: MAC read failed\n");
+        SSHLOG("[sshd] enc-read: MAC read failed\n");
         return -1;
     }
 
@@ -176,7 +176,7 @@ static int ssh_read_encrypted(ssh_session_t *s,
     memcpy(mac_input + mi, dec_body, pkt_len); mi += (int)pkt_len;
 
     if (ssh_mac_verify_recv(mac_input, mi, mac_recv) < 0) {
-        printf("[sshd] MAC FAILED (seq %u)\n", (unsigned)s->seq_recv);
+        SSHLOG("[sshd] MAC FAILED (seq %u)\n", (unsigned)s->seq_recv);
         return -1;
     }
 
@@ -184,7 +184,7 @@ static int ssh_read_encrypted(ssh_session_t *s,
     uint8_t pad_len = dec_body[0];
     int pload_len = (int)pkt_len - (int)pad_len - 1;
     if (pload_len < 0 || pload_len > SSH_MAX_PAYLOAD) {
-        printf("[sshd] enc-read: bad payload len %d\n", pload_len);
+        SSHLOG("[sshd] enc-read: bad payload len %d\n", pload_len);
         return -1;
     }
 
@@ -238,11 +238,11 @@ static int ssh_write_encrypted(ssh_session_t *s,
 
     /* Send: encrypted packet + MAC */
     if (sock_write_all(s->sockfd, enc, off) < 0) {
-        printf("[sshd] enc-write: data failed\n");
+        SSHLOG("[sshd] enc-write: data failed\n");
         return -1;
     }
     if (sock_write_all(s->sockfd, mac, SSH_MAC_LEN) < 0) {
-        printf("[sshd] enc-write: MAC failed\n");
+        SSHLOG("[sshd] enc-write: MAC failed\n");
         return -1;
     }
 
@@ -280,14 +280,14 @@ int ssh_read_packet(ssh_session_t *s, uint8_t *payload, int *payload_len)
 
     /* Sanity check */
     if (pkt_len < 2 || pkt_len > SSH_BUF_SIZE - 4) {
-        printf("[sshd] bad packet_length: %u\n", (unsigned)pkt_len);
+        SSHLOG("[sshd] bad packet_length: %u\n", (unsigned)pkt_len);
         return -1;
     }
 
     /* Read the rest of the packet (padding_length + payload + padding) */
     uint8_t body[SSH_BUF_SIZE];
     if (sock_read_exact(s->sockfd, body, (int)pkt_len) < 0) {
-        printf("[sshd] packet body read failed\n");
+        SSHLOG("[sshd] packet body read failed\n");
         return -1;
     }
 
@@ -295,7 +295,7 @@ int ssh_read_packet(ssh_session_t *s, uint8_t *payload, int *payload_len)
     int pload_len = (int)pkt_len - (int)pad_len - 1;
 
     if (pload_len < 0 || pload_len > SSH_MAX_PAYLOAD) {
-        printf("[sshd] bad payload length: %d\n", pload_len);
+        SSHLOG("[sshd] bad payload length: %d\n", pload_len);
         return -1;
     }
 
@@ -354,7 +354,7 @@ int ssh_write_packet(ssh_session_t *s, const uint8_t *payload, int payload_len)
 
     /* Write complete packet */
     if (sock_write_all(s->sockfd, pkt, off) < 0) {
-        printf("[sshd] packet write failed\n");
+        SSHLOG("[sshd] packet write failed\n");
         return -1;
     }
 
@@ -434,7 +434,7 @@ int ssh_read_packet_nb(ssh_session_t *s, uint8_t *payload, int *payload_len)
 
     uint8_t *mac_recv = s->inbuf.buf + 4 + (int)s->nb_pkt_len;
     if (ssh_mac_verify_recv(mac_in, mi, mac_recv) < 0) {
-        printf("[sshd] MAC FAILED (nb, seq %u)\n", (unsigned)s->seq_recv);
+        SSHLOG("[sshd] MAC FAILED (nb, seq %u)\n", (unsigned)s->seq_recv);
         return -1;
     }
 

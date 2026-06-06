@@ -101,7 +101,7 @@ int ssh_send_kexinit(ssh_session_t *s)
 
     /* Save a copy of our KEXINIT payload (needed for exchange hash) */
     if (off > (int)sizeof(s->server_kexinit)) {
-        printf("[sshd] KEXINIT too large\n");
+        SSHLOG("[sshd] KEXINIT too large\n");
         return -1;
     }
     memcpy(s->server_kexinit, payload, off);
@@ -109,11 +109,11 @@ int ssh_send_kexinit(ssh_session_t *s)
 
     /* Send as SSH packet */
     if (ssh_write_packet(s, payload, off) < 0) {
-        printf("[sshd] KEXINIT send failed\n");
+        SSHLOG("[sshd] KEXINIT send failed\n");
         return -1;
     }
 
-    printf("[sshd] KEXINIT sent (%d bytes)\n", off);
+    SSHLOG("[sshd] KEXINIT sent (%d bytes)\n", off);
     return 0;
 }
 
@@ -127,25 +127,25 @@ int ssh_recv_kexinit(ssh_session_t *s)
     int plen = 0;
 
     if (ssh_read_packet(s, payload, &plen) < 0) {
-        printf("[sshd] KEXINIT read failed\n");
+        SSHLOG("[sshd] KEXINIT read failed\n");
         return -1;
     }
 
     if (plen < 17 || payload[0] != SSH_MSG_KEXINIT) {
-        printf("[sshd] expected KEXINIT, got msg type %d\n",
+        SSHLOG("[sshd] expected KEXINIT, got msg type %d\n",
                plen > 0 ? payload[0] : -1);
         return -1;
     }
 
     /* Save full payload (needed for exchange hash) */
     if (plen > (int)sizeof(s->client_kexinit)) {
-        printf("[sshd] client KEXINIT too large: %d\n", plen);
+        SSHLOG("[sshd] client KEXINIT too large: %d\n", plen);
         return -1;
     }
     memcpy(s->client_kexinit, payload, plen);
     s->client_kexinit_len = plen;
 
-    printf("[sshd] KEXINIT received (%d bytes)\n", plen);
+    SSHLOG("[sshd] KEXINIT received (%d bytes)\n", plen);
 
     /* Parse the 10 name-lists to display negotiation info */
     int off = 17;   /* skip msg_type(1) + cookie(16) */
@@ -170,7 +170,7 @@ int ssh_recv_kexinit(ssh_session_t *s)
         const uint8_t *list;
         uint32_t listlen;
         if (ssh_get_string(payload, plen, &off, &list, &listlen) < 0) {
-            printf("[sshd] KEXINIT parse error at field %d\n", i);
+            SSHLOG("[sshd] KEXINIT parse error at field %d\n", i);
             return -1;
         }
 
@@ -181,12 +181,12 @@ int ssh_recv_kexinit(ssh_session_t *s)
 
         if (ourlen == 0) {
             /* Empty list on our side (mac with GCM, or languages) */
-            printf("[sshd]   %-12s (not negotiated)\n", names[i]);
+            SSHLOG("[sshd]   %-12s (not negotiated)\n", names[i]);
             continue;
         }
 
         int match = namelist_contains(list, listlen, our);
-        printf("[sshd]   %-12s %s %s\n", names[i], our,
+        SSHLOG("[sshd]   %-12s %s %s\n", names[i], our,
                match ? "OK" : "MISSING");
 
         /* kex, hostkey, cipher_c2s, cipher_s2c, comp must match */
@@ -202,17 +202,17 @@ int ssh_recv_kexinit(ssh_session_t *s)
     }
 
     if (!negotiate_ok) {
-        printf("[sshd] Algorithm negotiation failed\n");
+        SSHLOG("[sshd] Algorithm negotiation failed\n");
         return -1;
     }
 
-    printf("[sshd] Algorithm negotiation OK\n");
+    SSHLOG("[sshd] Algorithm negotiation OK\n");
 
     /* Strict KEX (Terrapin countermeasure): reset sequence numbers
      * after both sides have sent/received KEXINIT */
     s->seq_recv = 0;
     s->seq_send = 0;
-    printf("[sshd] Strict KEX: sequence numbers reset\n");
+    SSHLOG("[sshd] Strict KEX: sequence numbers reset\n");
 
     return 0;
 }
@@ -250,12 +250,12 @@ int ssh_do_kex_exchange(ssh_session_t *s)
 
     /* Step 1: Receive KEX_ECDH_INIT from client */
     if (ssh_read_packet(s, payload, &plen) < 0) {
-        printf("[sshd] KEX_ECDH_INIT read failed\n");
+        SSHLOG("[sshd] KEX_ECDH_INIT read failed\n");
         return -1;
     }
 
     if (plen < 1 || payload[0] != SSH_MSG_KEX_ECDH_INIT) {
-        printf("[sshd] Expected KEX_ECDH_INIT (30), got %d\n",
+        SSHLOG("[sshd] Expected KEX_ECDH_INIT (30), got %d\n",
                plen > 0 ? payload[0] : -1);
         return -1;
     }
@@ -266,33 +266,33 @@ int ssh_do_kex_exchange(ssh_session_t *s)
     uint32_t client_pub_len;
     if (ssh_get_string(payload, plen, &off, &client_pub, &client_pub_len) < 0
         || client_pub_len != 32) {
-        printf("[sshd] Bad client public key (len %u)\n",
+        SSHLOG("[sshd] Bad client public key (len %u)\n",
                (unsigned)client_pub_len);
         return -1;
     }
 
-    printf("[sshd] KEX_ECDH_INIT: client pub %02x%02x%02x%02x...\n",
+    SSHLOG("[sshd] KEX_ECDH_INIT: client pub %02x%02x%02x%02x...\n",
            client_pub[0], client_pub[1], client_pub[2], client_pub[3]);
 
     /* Step 2: Generate server ephemeral x25519 keypair */
     uint8_t server_pub[32];
     if (ssh_ecdh_generate(server_pub) < 0) {
-        printf("[sshd] Server keygen failed\n");
+        SSHLOG("[sshd] Server keygen failed\n");
         return -1;
     }
 
-    printf("[sshd] Server pub: %02x%02x%02x%02x...\n",
+    SSHLOG("[sshd] Server pub: %02x%02x%02x%02x...\n",
            server_pub[0], server_pub[1], server_pub[2], server_pub[3]);
 
     /* Step 3: Compute shared secret K */
     uint8_t shared_secret[32];
     int shared_len = 0;
     if (ssh_ecdh_shared_secret(client_pub, shared_secret, &shared_len) < 0) {
-        printf("[sshd] ECDH shared secret failed\n");
+        SSHLOG("[sshd] ECDH shared secret failed\n");
         return -1;
     }
 
-    printf("[sshd] Shared secret: %02x%02x%02x%02x... (%d bytes)\n",
+    SSHLOG("[sshd] Shared secret: %02x%02x%02x%02x... (%d bytes)\n",
            shared_secret[0], shared_secret[1],
            shared_secret[2], shared_secret[3], shared_len);
 
@@ -300,7 +300,7 @@ int ssh_do_kex_exchange(ssh_session_t *s)
     uint8_t hostkey_blob[256];
     int hostkey_blob_len = 0;
     if (ssh_hostkey_get_blob(hostkey_blob, &hostkey_blob_len) < 0) {
-        printf("[sshd] Host key blob failed\n");
+        SSHLOG("[sshd] Host key blob failed\n");
         return -1;
     }
 
@@ -311,11 +311,11 @@ int ssh_do_kex_exchange(ssh_session_t *s)
             server_pub, 32,
             shared_secret, shared_len,
             s->exchange_hash) < 0) {
-        printf("[sshd] Exchange hash failed\n");
+        SSHLOG("[sshd] Exchange hash failed\n");
         return -1;
     }
 
-    printf("[sshd] Exchange hash H: %02x%02x%02x%02x...\n",
+    SSHLOG("[sshd] Exchange hash H: %02x%02x%02x%02x...\n",
            s->exchange_hash[0], s->exchange_hash[1],
            s->exchange_hash[2], s->exchange_hash[3]);
 
@@ -323,7 +323,7 @@ int ssh_do_kex_exchange(ssh_session_t *s)
     uint8_t sig_blob[256];
     int sig_len = 0;
     if (ssh_hostkey_sign(s->exchange_hash, 32, sig_blob, &sig_len) < 0) {
-        printf("[sshd] Host key sign failed\n");
+        SSHLOG("[sshd] Host key sign failed\n");
         return -1;
     }
 
@@ -344,11 +344,11 @@ int ssh_do_kex_exchange(ssh_session_t *s)
         ssh_put_string(reply, sig_blob, (uint32_t)sig_len, &roff);
 
         if (ssh_write_packet(s, reply, roff) < 0) {
-            printf("[sshd] KEX_ECDH_REPLY send failed\n");
+            SSHLOG("[sshd] KEX_ECDH_REPLY send failed\n");
             return -1;
         }
 
-        printf("[sshd] KEX_ECDH_REPLY sent (%d bytes)\n", roff);
+        SSHLOG("[sshd] KEX_ECDH_REPLY sent (%d bytes)\n", roff);
     }
 
     /* Step 8: Send SSH_MSG_NEWKEYS */
@@ -356,42 +356,42 @@ int ssh_do_kex_exchange(ssh_session_t *s)
         uint8_t nk[1];
         nk[0] = SSH_MSG_NEWKEYS;
         if (ssh_write_packet(s, nk, 1) < 0) {
-            printf("[sshd] NEWKEYS send failed\n");
+            SSHLOG("[sshd] NEWKEYS send failed\n");
             return -1;
         }
-        printf("[sshd] NEWKEYS sent\n");
+        SSHLOG("[sshd] NEWKEYS sent\n");
     }
 
     /* Step 9: Receive SSH_MSG_NEWKEYS from client */
     if (ssh_read_packet(s, payload, &plen) < 0) {
-        printf("[sshd] NEWKEYS read failed\n");
+        SSHLOG("[sshd] NEWKEYS read failed\n");
         return -1;
     }
 
     if (plen < 1 || payload[0] != SSH_MSG_NEWKEYS) {
-        printf("[sshd] Expected NEWKEYS (21), got %d\n",
+        SSHLOG("[sshd] Expected NEWKEYS (21), got %d\n",
                plen > 0 ? payload[0] : -1);
         return -1;
     }
 
-    printf("[sshd] NEWKEYS received -- key exchange complete\n");
+    SSHLOG("[sshd] NEWKEYS received -- key exchange complete\n");
 
     /* Step 10: Derive session keys */
     memcpy(s->shared_secret, shared_secret, shared_len);
     s->shared_secret_len = shared_len;
 
     if (ssh_derive_keys(s, shared_secret, shared_len) < 0) {
-        printf("[sshd] Key derivation failed\n");
+        SSHLOG("[sshd] Key derivation failed\n");
         return -1;
     }
 
     /* Strict KEX: reset sequence numbers after NEWKEYS exchange */
     s->seq_recv = 0;
     s->seq_send = 0;
-    printf("[sshd] Strict KEX: post-NEWKEYS seq reset\n");
+    SSHLOG("[sshd] Strict KEX: post-NEWKEYS seq reset\n");
 
     ssh_ecdh_cleanup();
 
-    printf("[sshd] === Key exchange complete, encryption ready ===\n");
+    SSHLOG("[sshd] === Key exchange complete, encryption ready ===\n");
     return 0;
 }

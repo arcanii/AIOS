@@ -57,7 +57,7 @@ static int auth_login(const char *user, int ulen,
     seL4_CPtr auth_ep = aios_get_auth_ep();
     if (!auth_ep) {
         /* No auth server -- auto-login as root */
-        printf("[sshd] No auth_ep, auto-login as root\n");
+        SSHLOG("[sshd] No auth_ep, auto-login as root\n");
         *uid = 0;
         *gid = 0;
         *token = 1;
@@ -151,7 +151,7 @@ int ssh_do_userauth(ssh_session_t *s)
         int plen = 0;
 
         if (ssh_read_packet(s, pkt, &plen) < 0) {
-            printf("[sshd] Auth packet read failed\n");
+            SSHLOG("[sshd] Auth packet read failed\n");
             return -1;
         }
         if (plen < 1) return -1;
@@ -163,12 +163,12 @@ int ssh_do_userauth(ssh_session_t *s)
             continue;
         }
         if (mtype == SSH_MSG_DISCONNECT) {
-            printf("[sshd] Client disconnected during auth\n");
+            SSHLOG("[sshd] Client disconnected during auth\n");
             return -1;
         }
 
         if (mtype != SSH_MSG_USERAUTH_REQUEST) {
-            printf("[sshd] Expected USERAUTH_REQUEST (50), got %d\n", mtype);
+            SSHLOG("[sshd] Expected USERAUTH_REQUEST (50), got %d\n", mtype);
             return -1;
         }
 
@@ -189,7 +189,7 @@ int ssh_do_userauth(ssh_session_t *s)
         if (ssh_get_string(pkt, plen, &off, &user_data, &user_len) < 0 ||
             ssh_get_string(pkt, plen, &off, &svc_data, &svc_len) < 0 ||
             ssh_get_string(pkt, plen, &off, &method_data, &method_len) < 0) {
-            printf("[sshd] Bad USERAUTH_REQUEST format\n");
+            SSHLOG("[sshd] Bad USERAUTH_REQUEST format\n");
             return -1;
         }
 
@@ -200,13 +200,13 @@ int ssh_do_userauth(ssh_session_t *s)
         memcpy(username, user_data, ulen);
         username[ulen] = '\0';
 
-        printf("[sshd] USERAUTH: user=%s service=%.*s method=%.*s\n",
+        SSHLOG("[sshd] USERAUTH: user=%s service=%.*s method=%.*s\n",
                username, (int)svc_len, (const char *)svc_data,
                (int)method_len, (const char *)method_data);
 
         /* Method: "none" -- probe for available methods */
         if (method_len == 4 && memcmp(method_data, "none", 4) == 0) {
-            printf("[sshd] Auth method 'none' -- sending available methods\n");
+            SSHLOG("[sshd] Auth method 'none' -- sending available methods\n");
             if (send_auth_failure(s) < 0) return -1;
             continue;
         }
@@ -218,7 +218,7 @@ int ssh_do_userauth(ssh_session_t *s)
              *   string   password
              */
             if (off >= plen) {
-                printf("[sshd] Password field missing\n");
+                SSHLOG("[sshd] Password field missing\n");
                 if (send_auth_failure(s) < 0) return -1;
                 attempts++;
                 continue;
@@ -230,7 +230,7 @@ int ssh_do_userauth(ssh_session_t *s)
             const uint8_t *pass_data;
             uint32_t pass_len;
             if (ssh_get_string(pkt, plen, &off, &pass_data, &pass_len) < 0) {
-                printf("[sshd] Bad password string\n");
+                SSHLOG("[sshd] Bad password string\n");
                 if (send_auth_failure(s) < 0) return -1;
                 attempts++;
                 continue;
@@ -252,7 +252,7 @@ int ssh_do_userauth(ssh_session_t *s)
             memset(password, 0, sizeof(password));
 
             if (rc == 0) {
-                printf("[sshd] Auth OK: uid=%u gid=%u token=0x%x\n",
+                SSHLOG("[sshd] Auth OK: uid=%u gid=%u token=0x%x\n",
                        (unsigned)uid, (unsigned)gid, (unsigned)token);
 
                 /* Propagate identity to pipe_server */
@@ -266,11 +266,11 @@ int ssh_do_userauth(ssh_session_t *s)
 
                 if (send_auth_success(s) < 0) return -1;
 
-                printf("[sshd] USERAUTH_SUCCESS sent\n");
+                SSHLOG("[sshd] USERAUTH_SUCCESS sent\n");
                 return 0;
             }
 
-            printf("[sshd] Auth FAILED for user %s (attempt %d)\n",
+            SSHLOG("[sshd] Auth FAILED for user %s (attempt %d)\n",
                    username, attempts + 1);
             if (send_auth_failure(s) < 0) return -1;
             attempts++;
@@ -278,11 +278,11 @@ int ssh_do_userauth(ssh_session_t *s)
         }
 
         /* Unknown method -- respond with available methods */
-        printf("[sshd] Unknown auth method: %.*s\n",
+        SSHLOG("[sshd] Unknown auth method: %.*s\n",
                (int)method_len, (const char *)method_data);
         if (send_auth_failure(s) < 0) return -1;
     }
 
-    printf("[sshd] Too many auth failures, disconnecting\n");
+    SSHLOG("[sshd] Too many auth failures, disconnecting\n");
     return -1;
 }

@@ -9,6 +9,13 @@
 #include <stdint.h>
 #include <stddef.h>
 
+/* Diagnostic logging, gated by g_ssh_verbose (set with "sshd -v").
+ * Default OFF so an auto-started sshd (getty, fd1=tty) stays quiet like
+ * netconsole and does not garble the shared serial login. */
+#include <stdio.h>
+extern int g_ssh_verbose;
+#define SSHLOG(...) do { if (g_ssh_verbose) printf(__VA_ARGS__); } while (0)
+
 /* ----------------------------------------------------------------
  * Constants
  * ---------------------------------------------------------------- */

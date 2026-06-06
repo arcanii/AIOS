@@ -106,7 +106,14 @@ def main():
         sock = ac.connect_qemu_socket(SOCK)
         con = ac.Console(sock.fileno(), echo=True)
         print("=== booting + logging in ===", flush=True)
-        con.ensure_shell("root", "root", 120)
+        # getty forks 3 services at boot (netconsole, sshd, sntp); their
+        # startup output + kernel exec logs interleave with the login/password
+        # prompts. Let the boot quiesce, drain it, then log in on a clean prompt
+        # nudged by a newline (avoids the contiguous-"Password:" match flaking).
+        con.read_until(["AIOS login:"], 120)
+        time.sleep(6)
+        con.read_until(["__quiesce_never__"], 3)  # drain pending boot output
+        con.ensure_shell("root", "root", 60, nudge=True, settle=1.0)
 
         # ---- runtime crypto smoke (validates libmbedcrypto.a on AIOS) ----
         print("\n=== mbedTLS runtime smoke (test_mbedtls) ===", flush=True)
@@ -114,17 +121,29 @@ def main():
         check("mbedtls smoke PASS on AIOS", "mbedtls smoke: PASS" in out,
               repr(out.strip().splitlines()[-1] if out.strip() else ""))
 
-        # ---- start sshd ----
-        print("\n=== starting sshd ===", flush=True)
-        con.sendline("sshd &")
-        pat, _ = con.read_until(["Listening on port %d" % PORT,
-                                 "Crypto init failed", "bind(%d) failed" % PORT],
-                                40)
-        check("sshd listening on %d" % PORT, pat is not None
-              and "Listening" in (pat or ""), repr(pat))
-        if pat is None or "Listening" not in pat:
-            return 1
+        # ---- sshd: getty auto-starts it at boot (v0.4.177). Verify that;
+        #      fall back to a manual launch for an older disk without it. ----
+        print("\n=== sshd (getty auto-start) ===", flush=True)
+        out = con.run("pidof sshd", 15)
+        body = out.replace("pidof sshd", "")
+        auto = any(ch.isdigit() for ch in body)
+        check("sshd auto-started by getty", auto, repr(body.strip()[:60]))
+        if not auto:
+            print("  (not auto-started -- launching manually)", flush=True)
+            con.sendline("sshd &")
+            pat, _ = con.read_until(["Listening on port %d" % PORT,
+                                     "Crypto init failed",
+                                     "bind(%d) failed" % PORT], 40)
+            if pat is None or "Listening" not in (pat or ""):
+                check("sshd listening on %d" % PORT, False, repr(pat))
+                return 1
         time.sleep(1.0)  # let the accept loop settle
+
+        # netconsole must still auto-start too (regression check)
+        out = con.run("pidof netconsole", 15)
+        check("netconsole still auto-started",
+              any(ch.isdigit() for ch in out.replace("pidof netconsole", "")),
+              repr(out.replace("pidof netconsole", "").strip()[:60]))
 
         # ---- connect from the host with real OpenSSH ----
         print("\n=== ssh from host (interactive shell) ===", flush=True)

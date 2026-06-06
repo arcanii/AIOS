@@ -293,6 +293,26 @@ int main(int argc, char *argv[]) {
             ser_puts("getty: netconsole spawn failed (network shell off)\n");
     }
 
+    /* v0.4.177: auto-start sshd (ENCRYPTED + authenticated shell on port 2222),
+     * the same fork+exec pattern as netconsole above. The child inherits the
+     * standard server caps (net, crypto, auth) AND fd1 = the tty -- which the
+     * shell relay needs: spawn_shell does dup2(pipe, 1), and AIOS dup2 routes
+     * tty->pipe fine but NOT file->pipe, so sshd must NOT be launched with a
+     * >FILE / >/dev/null redirect (that would leak the shell output to the file).
+     * sshd generates its ECDSA host key at startup (reads /dev/urandom via the
+     * crypto server). Non-fatal if it fails: login + netconsole still run. This
+     * is the only encrypted remote path (netconsole is plaintext, LAN-only). */
+    {
+        pid_t sd = fork();
+        if (sd == 0) {
+            char *sd_argv[] = { (char *)"sshd", (void *)0 };
+            execv("/bin/sshd", sd_argv);
+            _exit(127);
+        }
+        if (sd < 0)
+            ser_puts("getty: sshd spawn failed (ssh off)\n");
+    }
+
     /* v0.4.166: one-shot SNTP at boot to set the wall clock (the RPi4 has no
      * RTC, so time otherwise starts at the epoch). Fork-and-forget; non-fatal
      * if the network is not up yet -- time just stays uptime-based and sntp
