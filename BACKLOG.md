@@ -112,6 +112,41 @@ the order survives regardless of the scheduler.
 
 ---
 
+## Known bugs (cosmetic / low-priority)
+
+### PTY/SSH: last command before `exit` can lose its output (queued 2026-06-06)
+- **Symptom**: in an interactive PTY session (observed over SSH), the LAST
+  command's stdout immediately before `exit` can be dropped -- the client
+  never receives it. Identical pipelines earlier in the SAME session work.
+- **Repro (automated)**: SSH in and feed one input blob
+  `echo abc | wc -c\nls /bin | wc -l\necho hello | rev\nexit\n`. The first two
+  print (`4`, `114`); the third (`echo hello | rev`, last before `exit`) prints
+  nothing client-side. Reordering it earlier makes it print -- so it is
+  position-before-exit, not `rev`-specific.
+- **Hypothesis**: a relay-teardown drain race. When dash runs the last command
+  then `exit`, it writes output to its stdout pipe and exits ~immediately; the
+  registered-writer EXIT latches the pipe `write_closed`, and the relay's
+  non-blocking `read()==0` (EOF) path in `ssh_channel.c:channel_relay` may fire
+  and tear the channel down before the final buffered bytes are drained +
+  framed to the socket. (Pipe semantics SHOULD return buffered data before EOF,
+  so this needs confirming -- it may instead be a dash exit-flush issue, or a
+  test-capture timing artifact.) Same family as the rc=255 cosmetic (sshd never
+  sends `exit-status` before CHANNEL_CLOSE per RFC 4254 6.10).
+- **Where to look**: `src/ssh/ssh_channel.c` `channel_relay` -- on `read()==0`,
+  do a final drain of any remaining pipe bytes before send_chan_eof/close; and
+  dash's stdout flush on `exit`. Also check the A72 pipe-SHM coherency window
+  (the relay may observe the writer EOF before the last written bytes are
+  coherently visible -- QEMU cannot model it).
+- **CONFIRMED ON HW (v0.4.178 deploy).** Once reconnect was fixed and many
+  sequential SSH sessions ran on the real RPi4, this race became visible:
+  ~35% of short sessions (`echo X; exit`) intermittently disconnect with
+  "session ended" and NO output. QEMU got 6/6 (no cache lag); the Pi got 5/8,
+  failing on conn 3/4/7 but PASSING 5/6 after -- so sshd RECOVERS, it is not a
+  hard limit. This is now the main reconnect-reliability gap on hardware (the
+  two reconnect leaks themselves are fixed). Interactive humans type commands
+  then `exit` separately, so they still see output; the loss only bites the
+  last-command-immediately-before-exit / one-shot pattern. NOT yet investigated.
+
 ## Tooling polish (small but deferred)
 
 ### Smoke-driver flakiness

@@ -41,11 +41,34 @@ Honor it; this session learned the hard way what happens when you do not.
 
 ---
 
-## Where we left off (v0.4.177 -> SSH over the LAN) -- recovered, always-on, 1 open bug
+## Where we left off (v0.4.178 -> SSH reconnect FIXED, fork was a red herring)
 
-SSH is RECOVERED and verified on QEMU + the real RPi4. Six commits, all on main
-(`f0078b4`, `ddb80cb`, `0b21761`, `2cc5c01`, `889caa1`, `60c234b`). See the
-`project_ssh_recovered` memory and `docs/NEXT_20260606b_forkfree_ssh.md`.
+SSH now survives unlimited sequential connections per boot. `scripts/ssh_qemu_reconnect.py`
+(QEMU -smp 4, the repro) = **6/6 PASS**. The fix is **two userspace leak fixes, NOT
+the fork-free spawn** the plan called for -- see below. UNCOMMITTED (commit-when-asked),
+NOT yet pushed to the Pi. See the `project_ssh_recovered` memory.
+
+* **The fork was the THIRD wrong "proven" theory** (after COW and the SMP race). I
+  implemented the full fork-free spawn from `docs/NEXT_20260606b_forkfree_ssh.md`
+  (PIPE_SPAWN_PIPED + aios_spawn_piped) and the reconnect test STILL failed identically.
+  So I reverted it entirely (kept the standard fork+exec) and root-caused the real bug.
+* **Real cause = two pre-existing leaks** (both common to fork & fork-free; found via a
+  verbose serial capture showing conn2 fails at the SOCKET layer, not crypto):
+  1. **O_NONBLOCK fd-slot leak** -- `channel_relay` leaves the socket non-blocking and
+     `aios_fd_alloc` did not zero reused fd slots, so conn2's socket inherited
+     `is_nonblock=1` and `sock_read_exact` got EAGAIN (a fatal read error). FIX:
+     `aios_fd_alloc` memsets the slot (`src/lib/aios_posix.c`) -- helps every app.
+  2. **Auth session leak** -- sshd took an auth_server session per login (4-slot table)
+     but never released it. FIX: sshd calls `AUTH_LOGOUT` on disconnect
+     (`src/ssh/ssh_auth.c` + `ssh_session.h` + `sshd_main.c`).
+* **Userspace-only fix -> NO FLASH needed.** Deploy by `pi_filexfer.py push
+  build-04/sbase/sshd /bin/sshd 192.168.0.8` + `reboot` over netconsole. The same
+  aarch64 sshd runs on QEMU and the Pi; no `build-rpi4`, no reflash. The committed
+  affinity pin (889caa1) is NOT needed for this -- defer it to a future flash milestone.
+
+### Prior SSH work (v0.4.177, still valid) -- recovered, always-on
+SSH was RECOVERED + made always-on earlier this arc. Six commits on main
+(`f0078b4`, `ddb80cb`, `0b21761`, `2cc5c01`, `889caa1`, `60c234b`).
 
 * **SSH recovered** (`f0078b4`). The only blocker was the lost (gitignored)
   `build-04/libmbedcrypto.a`; the SSH server (`src/ssh/`) had ZERO drift v0.4.84->177.
@@ -65,20 +88,17 @@ SSH is RECOVERED and verified on QEMU + the real RPi4. Six commits, all on main
 * **SMP allocator-race hardening** (`889caa1`). Root servers share a lock-free
   allocman/vka with no lock; pinned all root threads to core 0. Latent SMP fix -- it is
   NOT the reconnect bug.
-* **OPEN: reconnect -- one SSH session per boot.** The 2nd+ connection per boot fails.
-  PROVEN cause: the shell `fork()` corrupts a LIVING sshd's server IPC (sshd never
-  reaped). BOTH "expert" analyses were WRONG (COW: `COW_STRIP_PARENT=0` no help; SMP
-  race: the core-0 pin no help AND the single-core Pi fails too). Single-core,
-  fork-triggered; mechanism elusive (AIOS tracing keeps failing). THE FIX is fully
-  designed in **`docs/NEXT_20260606b_forkfree_ssh.md`**: spawn dash FRESH (exec_server,
-  no fork) wired to the relay pipes. Major root-task change + a flash. WORKAROUND:
-  `reboot` (netconsole 2323) for a fresh session.
+* **reconnect -- RESOLVED v0.4.178 (see the top section).** Was NOT the fork. Two
+  userspace leaks (O_NONBLOCK fd-slot reuse + auth session not released). 6/6 on
+  `scripts/ssh_qemu_reconnect.py`. Uncommitted; not yet pushed to the Pi.
 
-**Current state (SSH):** the Pi runs **v0.4.176** + a pushed relay-fixed sshd (one
-session/boot) at 192.168.0.8. Repo at **v0.4.177** + the 6 SSH commits. The affinity pin
-(root-task) and the future fork-free spawn batch into the NEXT milestone flash (bump-patch
-then). Log in: `ssh -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-root@192.168.0.8` (password `root`).
+**Current state (SSH):** the Pi runs **v0.4.176** + a pushed one-session/boot sshd at
+192.168.0.8. The repo working tree has the **v0.4.178 reconnect fix** (4 files,
+uncommitted): `src/lib/aios_posix.c`, `src/ssh/ssh_auth.c`, `src/ssh/ssh_session.h`,
+`src/ssh/sshd_main.c`, plus the new `scripts/ssh_qemu_reconnect.py`. To deploy the fix:
+rebuild apps (`python3 scripts/build_apps.py`), then push the new sshd over netconsole
++ reboot -- no flash. Log in: `ssh -p 2222 -o StrictHostKeyChecking=no
+-o UserKnownHostsFile=/dev/null root@192.168.0.8` (password `root`).
 
 ## Where we left off (v0.4.176 -> v0.4.177) -- tools, DNS, Tier-1 hardening
 

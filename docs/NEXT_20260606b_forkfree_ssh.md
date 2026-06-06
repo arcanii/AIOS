@@ -1,3 +1,12 @@
+> **OBSOLETE / DO NOT IMPLEMENT (v0.4.178).** This whole plan rests on a WRONG
+> premise: the shell `fork()` is NOT what breaks reconnect. The fork-free spawn was
+> fully built (PIPE_SPAWN_PIPED + aios_spawn_piped) and the reconnect test STILL
+> failed identically, so it was reverted. The real cause was two pre-existing leaks
+> -- an O_NONBLOCK fd-slot leak (`aios_fd_alloc` now zeroes reused slots) and sshd
+> never releasing its auth_server session (now calls `AUTH_LOGOUT`). Both fixed
+> v0.4.178, userspace-only, 6/6 on `scripts/ssh_qemu_reconnect.py`. See the
+> `project_ssh_recovered` memory + HANDOVER.md top section. Kept only for history.
+
 # NEXT 2026-06-06b -- fork-free SSH shell spawn (the reconnect fix)
 
 Seed for a focused session. SSH is recovered + always-on (v0.4.177 work, committed:
