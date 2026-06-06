@@ -112,7 +112,7 @@ the order survives regardless of the scheduler.
 
 ---
 
-## Known bugs (cosmetic / low-priority)
+## Known bugs & limitations (low-priority)
 
 ### PTY/SSH: last command before `exit` can lose its output (queued 2026-06-06)
 - **Symptom**: in an interactive PTY session (observed over SSH), the LAST
@@ -146,6 +146,48 @@ the order survives regardless of the scheduler.
   two reconnect leaks themselves are fixed). Interactive humans type commands
   then `exit` separately, so they still see output; the loss only bites the
   last-command-immediately-before-exit / one-shot pattern. NOT yet investigated.
+- **Also makes `scp` return rc=1 on HW (v0.4.178 scp/sftp).** The transfer
+  itself is correct (byte-verified both ways), but the channel `exit-status 0`
+  packet is among the last-bytes-before-close that the A72 drops, so scp (which
+  treats a missing exit-status as failure) exits non-zero. On QEMU it arrives ->
+  scp rc=0. `sftp` is lenient and is rc=0 even on HW. So fixing this race also
+  cleans up scp's exit code on hardware.
+
+### zsh hangs over SSH -- ZLE raw-mode / termios not honored by the relay (queued 2026-06-06)
+- **Symptom**: launching `zsh` inside an SSH session wedges -- typed commands do
+  not run, `Ctrl-C` and `exit` do nothing. dash over SSH is completely
+  unaffected. (Also: zsh emits OSC color / DA terminal queries whose replies the
+  SSH relay echoes back as visible `]11;rgb:.../[?1;2c` noise, and `zsh/compctl`
+  fails to load -- AIOS zsh is static, no loadable modules.)
+- **IMPACT (worse than cosmetic): it takes sshd DOWN for ALL future connections.**
+  sshd is one-connection-at-a-time, and `channel_relay` ends with a BLOCKING
+  `waitpid(shell)`. With zsh hung, the `sshd -> dash -> zsh` chain never exits,
+  so sshd blocks forever and never returns to `accept()` -- every later
+  `ssh` just fails to connect. Client-side `~.` does NOT help (it closes the
+  client; sshd is still stuck in waitpid). **Recovery: over netconsole 2323,
+  kill the shell chain (`kill -9 <zsh-pid> <dash-pid>`, find them in
+  `/proc/status`) -- killing BOTH is required (killing only zsh leaves dash, and
+  sshd still waits on dash); or reboot.** Verified 2026-06-06.
+- **Robustness sub-fix (independent of the termios work)**: sshd should not wedge
+  the whole service on one hung shell -- on client disconnect, kill the shell
+  (and reap) rather than block in `waitpid`; consider `waitpid(WNOHANG)` + a kill
+  escalation in `channel_relay`. Small, high-value: makes sshd self-heal.
+- **Cause**: `ssh_channel.c` (`channel_relay` + `process_input`) implements a
+  FIXED cooked-mode server-side line discipline -- it echoes chars, line-buffers,
+  and sends a whole line to the shell on Enter. dash expects exactly that. zsh
+  drives ZLE, which sets the PTY to RAW mode via termios and wants
+  character-at-a-time input + cursor control; the SSH relay IGNORES the shell's
+  termios request and keeps line-buffering/echoing, so ZLE and the relay fight ->
+  hang (input never reaches zsh as it expects; Ctrl-C/exit included). zsh works
+  on the LOCAL console because that path honors termios via IPC (tty_server,
+  [[is_tty_routing]] / v0.4.99 ZLE) -- only the SSH relay lacks it.
+- **Fix direction**: make the SSH channel termios-aware. When the shell puts the
+  PTY in raw mode, drop the server-side echo + line-buffering and relay raw bytes
+  both directions, letting the shell own echo/line-editing (mirror the local
+  tty_server termios path; sshd would need a termios channel to the shell, or to
+  honor the pty-req modes + a SET_TERMIOS hook). Medium effort; also unlocks any
+  raw-mode / full-screen app over SSH (vi-like editors, pagers, top-like UIs).
+- **Workaround**: use dash (`#`) over SSH; do not launch zsh. Found v0.4.178.
 
 ## Tooling polish (small but deferred)
 

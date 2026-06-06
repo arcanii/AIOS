@@ -41,12 +41,32 @@ Honor it; this session learned the hard way what happens when you do not.
 
 ---
 
-## Where we left off (v0.4.178 -> SSH reconnect FIXED, fork was a red herring)
+## Where we left off (v0.4.178 -> SSH hardened: reconnect + self-heal + scp/sftp)
 
-SSH now survives unlimited sequential connections per boot. `scripts/ssh_qemu_reconnect.py`
-(QEMU -smp 4, the repro) = **6/6 PASS**. The fix is **two userspace leak fixes, NOT
-the fork-free spawn** the plan called for -- see below. UNCOMMITTED (commit-when-asked),
-NOT yet pushed to the Pi. See the `project_ssh_recovered` memory.
+SSH now survives unlimited sequential connections per boot, self-heals a hung
+shell, and supports file transfer (`sftp` + modern `scp`). All committed
+(`654d722`, `ab27f84`, `8df0a58`) and the sshd is deployed to the Pi (push, no
+flash). `scripts/ssh_qemu_reconnect.py` (QEMU -smp 4) = **6/6 PASS**. See the
+`project_ssh_recovered` memory.
+
+* **scp / sftp (commit `8df0a58`, `src/ssh/ssh_sftp.c`).** Minimal SFTP v3
+  subsystem inside sshd (ls/get/put/mkdir/rm/mv...). Does fs<->socket I/O
+  directly, NOT through the shell pipe, so it dodges the A72 drain race. QEMU:
+  sftp+scp byte-verified rc=0. Pi: sftp rc=0 byte-verified; scp transfers
+  byte-verified but rc=1 on HW (the deferred drain race drops the final
+  exit-status packet -- transfer is correct). Also fixed `pwrite64`/`pread64`
+  in libaios_posix: pwrite64 capped at 3000 B and packed all into MRs ->
+  seL4_MessageInfo_new(>127) HALTED the system on any >1 KB pwrite, and ignored
+  the offset; pread64 only worked for <=4 KB cached files. Both now chunk via
+  fetch_pwrite/pread + honor offset.
+* **Relay self-heal (commit `8df0a58`).** On client disconnect the shell relay
+  SIGKILLs the child before waitpid instead of blocking forever -- a hung shell
+  (e.g. `zsh` over the cooked PTY relay) can no longer wedge the
+  one-connection-at-a-time sshd for all future clients. Verified on QEMU (0.8s
+  recovery) + Pi.
+
+The reconnect fix itself (the original v0.4.178 work) was **two userspace leak
+fixes, NOT the fork-free spawn** the plan called for -- detail below.
 
 * **The fork was the THIRD wrong "proven" theory** (after COW and the SMP race). I
   implemented the full fork-free spawn from `docs/NEXT_20260606b_forkfree_ssh.md`
