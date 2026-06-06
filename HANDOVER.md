@@ -208,6 +208,20 @@ DASH=~/Desktop/github_repos/dash/src
 python3 scripts/build_zsh.py
 ```
 
+### pidof / pkill / killall (psutil -- one binary, argv[0] dispatch)
+
+```
+./scripts/aios-cc src/apps/psutil.c -o build-04/sbase/pidof
+cp build-04/sbase/pidof build-04/sbase/pkill
+cp build-04/sbase/pidof build-04/sbase/killall
+```
+
+Pure userspace (reads `/proc/status`, signals via `kill(2)`). QEMU test:
+`python3 scripts/psutil_qemu_test.py` (7/7). HW-verified (`pkill nsole2` killed
+a running netconsole2). Note: kill() only works on REGULAR processes (in
+`active_procs`); boot SERVERS appear in `/proc/status` but kill() returns ESRCH
+for them (root-task threads), and the tool reports "FAILED on <pid>".
+
 ### Boot QEMU (with both drives -- log file persists)
 
 ```
@@ -362,6 +376,7 @@ ftruncate $file $size           # real fs-side truncate (v0.4.130)
 tcc /usr/include/hello.c -o /tmp/h  # native tcc with libc (v0.4.117)
 /tmp/h; echo $?                 # libc programs run
 
+pidof dash; pkill netconsole2   # process tools: pidof/pkill/killall (v0.4.176)
 # kill foreground with Ctrl-C twice (two-stage SIGINT)
 # logout via Ctrl-D from getty
 ```
