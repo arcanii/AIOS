@@ -41,6 +41,45 @@ Honor it; this session learned the hard way what happens when you do not.
 
 ---
 
+## Where we left off (v0.4.177 -> SSH over the LAN) -- recovered, always-on, 1 open bug
+
+SSH is RECOVERED and verified on QEMU + the real RPi4. Six commits, all on main
+(`f0078b4`, `ddb80cb`, `0b21761`, `2cc5c01`, `889caa1`, `60c234b`). See the
+`project_ssh_recovered` memory and `docs/NEXT_20260606b_forkfree_ssh.md`.
+
+* **SSH recovered** (`f0078b4`). The only blocker was the lost (gitignored)
+  `build-04/libmbedcrypto.a`; the SSH server (`src/ssh/`) had ZERO drift v0.4.84->177.
+  NEW `scripts/build_mbedtls.py` rebuilds it (mbedTLS v3.6.3 `src_crypto`, 82 obj,
+  ~1.2 MB, ~1.3s; idempotent config verify/apply). `scripts/build_apps.py` now also
+  links sshd + `test_mbedtls` (same clean-build gap psutil/nslookup had). Verified:
+  QEMU `scripts/ssh_qemu_test.py` 5/5 + real Pi (full KEX + AES-256-CTR/HMAC + password
+  auth + interactive shell on the A72).
+* **A72 relay EOF fix** (`0b21761`). The shell relay closed its pipe write end AFTER
+  first output (pre-v0.4.143 model); on the A72 that raced dash output -> spurious EOF
+  -> channel torn down after ONE command. Now closes at fork (netconsole pattern).
+  LESSON: test the PTY path (`ssh -tt`), not just `-T`.
+* **Always-on sshd** (`ddb80cb`). getty fork+execs `/bin/sshd` at boot (fd1=tty);
+  deployed to the Pi by push+reboot over netconsole (getty is a disk ELF -- NO reflash).
+  sshd is verbose, so its ~140 diagnostics are gated behind `sshd -v` (default OFF) or
+  they garble the shared login console.
+* **SMP allocator-race hardening** (`889caa1`). Root servers share a lock-free
+  allocman/vka with no lock; pinned all root threads to core 0. Latent SMP fix -- it is
+  NOT the reconnect bug.
+* **OPEN: reconnect -- one SSH session per boot.** The 2nd+ connection per boot fails.
+  PROVEN cause: the shell `fork()` corrupts a LIVING sshd's server IPC (sshd never
+  reaped). BOTH "expert" analyses were WRONG (COW: `COW_STRIP_PARENT=0` no help; SMP
+  race: the core-0 pin no help AND the single-core Pi fails too). Single-core,
+  fork-triggered; mechanism elusive (AIOS tracing keeps failing). THE FIX is fully
+  designed in **`docs/NEXT_20260606b_forkfree_ssh.md`**: spawn dash FRESH (exec_server,
+  no fork) wired to the relay pipes. Major root-task change + a flash. WORKAROUND:
+  `reboot` (netconsole 2323) for a fresh session.
+
+**Current state (SSH):** the Pi runs **v0.4.176** + a pushed relay-fixed sshd (one
+session/boot) at 192.168.0.8. Repo at **v0.4.177** + the 6 SSH commits. The affinity pin
+(root-task) and the future fork-free spawn batch into the NEXT milestone flash (bump-patch
+then). Log in: `ssh -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+root@192.168.0.8` (password `root`).
+
 ## Where we left off (v0.4.176 -> v0.4.177) -- tools, DNS, Tier-1 hardening
 
 Tools + a hardening sweep + the first network resolver. All committed.
@@ -428,10 +467,12 @@ pidof dash; pkill netconsole2   # process tools: pidof/pkill/killall (v0.4.176)
 
 ## Suggested next sessions
 
-**Recent (v0.4.175->177): netconsole2 + the eMMC stall fix, process tools (pidof/pkill/killall),
-the build_apps fix, Tier-1 driver hardening, and a DNS resolver (nslookup) -- all committed (see
-"Where we left off"). The Pi is at v0.4.176; the v0.4.177 SD image is staged for flashing. TOP
-next: SSH over the LAN -- rebuild mbedTLS (seed: `docs/NEXT_20260606a_ssh.md`). Other picks:**
+**Recent: SSH RECOVERED + always-on (6 commits this session, see "Where we left off"). The Pi
+runs v0.4.176 + a pushed sshd (works, one session per boot). TOP NEXT: fix SSH reconnect via the
+FORK-FREE SHELL SPAWN -- the cause is PROVEN (the shell `fork()` corrupts a living sshd; COW and
+the SMP race are both DISPROVEN, do not re-chase), and the complete fix design is in
+`docs/NEXT_20260606b_forkfree_ssh.md`. It is a root-task change + a milestone flash (which also
+lands the committed affinity pin -> bump-patch then). Other picks:**
 
 1. **getty auto-start netconsole2 (the clean launch).** netconsole2's relay works on HW now, but
    its robust LAUNCH is the open piece: a `>FILE` redirect leaks the child output to the file
