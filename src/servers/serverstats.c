@@ -127,6 +127,9 @@ void serverstats_init(void) {
     if (p_err) {
         AIOS_LOG_WARN_V("serverstats: SetPriority err=", (unsigned long)p_err);
     }
+    /* v0.4.178: pin to core 0 like every other root thread -- it shares the
+     * global lock-free allocman/vka (see boot_services start_server_thread). */
+    seL4_TCB_SetAffinity(thread.tcb.cptr, 0);
     err = sel4utils_start_thread(&thread, probe_thread_fn, NULL, NULL, 1);
     if (err) {
         AIOS_LOG_WARN_V("serverstats: thread start failed err=", (unsigned long)err);

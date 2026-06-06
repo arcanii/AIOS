@@ -17,7 +17,24 @@
 #include "aios/aios_log.h"
 #include <stdio.h>
 
-/* Start an internal server thread at priority 200 */
+/* v0.4.178: pin every root-task thread to core 0.
+ * The root servers (pipe/net/fs/exec/thread/crypto/display) plus do_fork all
+ * share ONE global allocman/vka (aios_root.c) with NO lock. On an SMP kernel
+ * (QEMU KernelMaxNumNodes=4) they run on different cores concurrently, so the
+ * lock-free CSpace-slot bitmap RMW in libsel4allocman tears: do_fork's ~49
+ * cap-slot ops race net_server's SaveCaller, two callers get the SAME root
+ * slot, and a saved reply cap (or minted cap) is silently clobbered -> a live
+ * server's next IPC returns garbage. That was the QEMU "second SSH connection
+ * fails (key exchange failed)" bug -- sshd stays alive but its server IPC
+ * breaks. Pinning all root threads to core 0 serializes every allocator access
+ * (the servers are IPC handlers, mostly blocked on Recv, so one core is fine;
+ * user processes still use the other cores). RPi4 is uniprocessor
+ * (KernelMaxNumNodes=1) so it never hit this -- consistent with the bug being
+ * QEMU-only. A finer fix would be a lock around the allocator; pinning is the
+ * smallest correct change. */
+#define ROOT_CORE 0
+
+/* Start an internal server thread at priority 200, pinned to ROOT_CORE */
 static int start_server_thread(sel4utils_thread_entry_fn fn,
                                seL4_CPtr ep_cap) {
     sel4utils_thread_t thread;
@@ -25,12 +42,17 @@ static int start_server_thread(sel4utils_thread_entry_fn fn,
         simple_get_cnode(&simple), seL4_NilData, &thread);
     if (error) return error;
     seL4_TCB_SetPriority(thread.tcb.cptr, simple_get_tcb(&simple), 200);
+    seL4_TCB_SetAffinity(thread.tcb.cptr, ROOT_CORE);
     return sel4utils_start_thread(&thread, fn,
         (void *)(uintptr_t)ep_cap, NULL, 1);
 }
 
 void boot_start_services(vka_object_t *fault_ep) {
     int error;
+
+    /* v0.4.178: pin the root task's own init thread to core 0 too -- it shares
+     * the same global allocman/vka as the servers (see start_server_thread). */
+    seL4_TCB_SetAffinity(simple_get_tcb(&simple), ROOT_CORE);
 
     /* v0.4.80: load configuration from /etc/ before starting servers */
     boot_load_config();
@@ -89,6 +111,7 @@ void boot_start_services(vka_object_t *fault_ep) {
             if (!error) {
                 seL4_TCB_SetPriority(net_srv.tcb.cptr,
                     simple_get_tcb(&simple), 200);
+                seL4_TCB_SetAffinity(net_srv.tcb.cptr, ROOT_CORE);
                 int bind_err = seL4_TCB_BindNotification(
                     net_srv.tcb.cptr, net_srv_ntfn_cap);
                 AIOS_LOG_INFO_V("net srv ntfn bind err=", bind_err);
