@@ -18,6 +18,7 @@ AIOS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD = os.path.join(AIOS, "build-04")
 DASH_SRC = os.path.expanduser("~/Desktop/github_repos/dash/src")
 TCC_SRC = os.path.expanduser("~/Desktop/github_repos/tcc")
+MBEDTLS_SRC = os.path.expanduser("~/Desktop/github_repos/mbedtls")
 
 def run(cmd, label, cwd=None, tail=3):
     print(f"\n--- {label} ---")
@@ -95,6 +96,36 @@ def main():
                     f.write(data)
                 os.chmod(ap, 0o755)
             print("  aliases: " + ", ".join(aliases))
+
+    # 3c. sshd -- the SSH server (src/ssh/*.c) links against libmbedcrypto.a,
+    # which is gitignored and NOT in projects/aios/CMakeLists.txt, so a clean
+    # rm -rf build-04 drops it (same gap netconsole/psutil/nslookup had). We
+    # rebuild the crypto archive (build_mbedtls.py, ~1.3s) then link sshd with
+    # the mbedTLS include path + the arm_neon.h -isystem fix. Skipped cleanly if
+    # the mbedTLS source is not checked out.
+    if os.path.isdir(MBEDTLS_SRC):
+        if run([sys.executable, os.path.join(AIOS, "scripts", "build_mbedtls.py")],
+               "libmbedcrypto.a (mbedTLS crypto)", tail=4):
+            gcc_inc = subprocess.check_output(
+                ["aarch64-linux-gnu-gcc", "-print-file-name=include"]).decode().strip()
+            mbed_flags = ["-I", os.path.join(MBEDTLS_SRC, "include"),
+                          "-isystem", gcc_inc, "-DMBEDTLS_ALLOW_PRIVATE_ACCESS",
+                          os.path.join(BUILD, "libmbedcrypto.a")]
+            ssh_srcs = ["sshd_main.c", "ssh_transport.c", "ssh_kex.c",
+                        "ssh_crypto.c", "ssh_encrypt.c", "ssh_auth.c",
+                        "ssh_channel.c"]
+            cmd = [os.path.join(AIOS, "scripts", "aios-cc")]
+            cmd += [os.path.join(AIOS, "src", "ssh", s) for s in ssh_srcs]
+            cmd += ["-I", os.path.join(AIOS, "src", "ssh")] + mbed_flags
+            cmd += ["-o", os.path.join(BUILD, "sbase", "sshd")]
+            run(cmd, "app: sshd (SSH server)")
+            # runtime crypto smoke (scripts/ssh_qemu_test.py runs it pre-SSH)
+            cmd = [os.path.join(AIOS, "scripts", "aios-cc"),
+                   os.path.join(AIOS, "src", "apps", "test_mbedtls.c")] + mbed_flags
+            cmd += ["-o", os.path.join(BUILD, "sbase", "test_mbedtls")]
+            run(cmd, "app: test_mbedtls (crypto smoke)")
+    else:
+        print("\n--- app: sshd ---\n  SKIP (no mbedTLS source at %s)" % MBEDTLS_SRC)
 
     # 4. tcc
     if not skip_tcc and os.path.isdir(TCC_SRC):
