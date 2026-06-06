@@ -80,7 +80,8 @@ def main():
     # (pidof, pkill, killall) as byte-identical copies.
     apps = [("netconsole.c", "netconsole", []),
             ("netconsole2.c", "netconsole2", []),
-            ("psutil.c", "pidof", ["pkill", "killall"])]
+            ("psutil.c", "pidof", ["pkill", "killall"]),
+            ("nslookup.c", "nslookup", [])]
     for src, out, aliases in apps:
         outp = os.path.join(BUILD, "sbase", out)
         cmd = [os.path.join(AIOS, "scripts", "aios-cc"),
