@@ -25,5 +25,6 @@ extern volatile uint32_t *dev_genet_vaddr;   /* GENET, 16 pages (64KB) */
 extern volatile uint32_t *dev_vcmbox_vaddr;  /* VC mailbox, page base */
 extern uint32_t dev_vcmbox_off;              /* mailbox reg byte offset in page */
 extern volatile uint32_t *dev_pm_vaddr;      /* 0xFE100000, 1 page (PM/watchdog) */
+extern volatile uint32_t *dev_pcie_vaddr;    /* 0xFD500000, 10 pages (brcmstb PCIe regs) */
 
 #endif /* AIOS_DEVICE_MAP_H */

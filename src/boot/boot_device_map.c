@@ -20,6 +20,7 @@ volatile uint32_t *dev_genet_vaddr;
 volatile uint32_t *dev_vcmbox_vaddr;
 uint32_t dev_vcmbox_off;
 volatile uint32_t *dev_pm_vaddr;
+volatile uint32_t *dev_pcie_vaddr;
 
 #ifdef PLAT_RPI4
 
@@ -57,7 +58,7 @@ static void *map_dev(uint64_t paddr, int npages)
 
 void prealloc_rpi4_devices(void)
 {
-    struct dev_req reqs[6];
+    struct dev_req reqs[8];
     int n = 0;
 
     reqs[n++] = (struct dev_req){ RPI4_GPIO_PADDR,  1, &dev_gpio_vaddr, "gpio" };
@@ -77,6 +78,13 @@ void prealloc_rpi4_devices(void)
         reqs[n++] = (struct dev_req){ hw_info.vc_mbox_paddr & ~0xFFFUL, 1,
                                       &dev_vcmbox_vaddr, "vcmbox" };
     }
+    /* brcmstb PCIe controller regs (0xFD500000, ~0x9310 -> 10 pages). Sits BELOW
+     * GENET (0xFD580000), so the ascending sort claims it first -- USB HID Phase
+     * D (link bring-up + VL805 detect). NOT the MMIO window (0x6_00000000), which
+     * seL4 does not expose; see docs/DESIGN_USB_HID.md "Phase D findings". */
+    if (hw_info.has_pcie)
+        reqs[n++] = (struct dev_req){ hw_info.pcie_ecam_paddr & ~0xFFFUL, 10,
+                                      &dev_pcie_vaddr, "pcie" };
 
     /* Insertion sort ascending by paddr (n <= 6). This ordering is the whole
      * point -- claim low addresses before the watermark passes them. */
