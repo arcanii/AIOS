@@ -457,6 +457,242 @@ int handle_file_mmap_fault(int ci, seL4_Word fault_addr) {
     return 1;
 }
 
+/* v0.4.183: SHARED read-only .text cache -- Phase 2 of the per-proc footprint
+ * work (Phase 1 = v0.4.181/182 demand-text). Same-binary processes (a pipeline
+ * storm of seq/wc/cat/dash) each kept their OWN copy of identical read-only
+ * code. This root-side cache loads each binary's read-only (R+X) ELF segment
+ * ONCE -- frames filled from the file + I-cache-unified once -- then maps those
+ * SHARED frames read-only into every later process of the same binary: one
+ * physical copy for N procs instead of N. Read-only code is the ideal thing to
+ * share (immutable, no COW). This REPLACES demand-text for the RO segment (a
+ * proc shares OR demand-pages, never both); demand-BSS + writable .data are
+ * untouched. EXEC PATH ONLY -- do_fork eager-reloads, and the boot servers load
+ * from the CPIO (spawn_util.c), so neither is affected.
+ *
+ * Memory model: a bump allocator (text_frames[]) backs every entry; master
+ * frames live for the boot (reboot clears the cache). When the entry table or
+ * the frame pool fills, exec falls back to demand-text -- purely an optimisation
+ * path, NEVER a correctness gate. The masters are kept (the design's accepted
+ * "just keep it" option), so refcount is observational only and a stale count
+ * can never cause a use-after-free.
+ *
+ * Staleness: a binary updated by a live push-deploy would leave a stale entry.
+ * The normal deploy flow (push + reboot) sidesteps this; the per-boot cache is
+ * rebuilt every boot. A defensive vaddr/npages layout check below rejects a
+ * gross mismatch (then that proc demand-pages instead). */
+#define TEXT_CACHE_ENTRIES 24
+#define TEXT_FRAME_POOL    1024   /* total cached text pages across all binaries (4 MB cap) */
+typedef struct {
+    int       used;
+    char      path[128];
+    uintptr_t vaddr;        /* page-aligned start of the RO text segment */
+    long      offset;       /* file offset corresponding to vaddr */
+    int       frame_base;   /* index into text_frames[] */
+    int       npages;
+    int       refcount;     /* observational: live procs mapping these frames */
+} text_entry_t;
+static text_entry_t text_cache[TEXT_CACHE_ENTRIES];
+static vka_object_t text_frames[TEXT_FRAME_POOL];
+static int          text_frames_used = 0;              /* bump allocator high-water */
+static int          text_share_slot[MAX_ACTIVE_PROCS]; /* 0 = none, else cache idx+1 */
+
+static int text_path_eq(const char *a, const char *b) {
+    for (int p = 0; p < 128; p++) {
+        if (a[p] != b[p]) return 0;
+        if (!a[p]) return 1;
+    }
+    return 1;
+}
+
+static text_entry_t *text_cache_find(const char *path) {
+    for (int i = 0; i < TEXT_CACHE_ENTRIES; i++)
+        if (text_cache[i].used && text_path_eq(text_cache[i].path, path))
+            return &text_cache[i];
+    return NULL;
+}
+
+/* Build a new cache entry from the executable file: allocate npages frames, fill
+ * each from the file (vfs_pread, exactly like handle_file_mmap_fault), and unify
+ * the I-cache ONCE per master frame. The v0.4.182 lesson: code loaded via DATA
+ * writes MUST be Unify_Instruction'd (it cleans D-cache to PoU), and QEMU (a53)
+ * will NOT catch a missing one -- only the real A72 will. Because every sharer
+ * maps these frames read-only at the SAME link vaddr, the fill-time unify is
+ * sufficient: a later proc fetches from PoU (its I-cache for that vaddr is cold,
+ * or hits the identical physical line) with NO per-proc unify. Returns the entry,
+ * or NULL if the cache is full / alloc fails (caller falls back to demand-text). */
+static text_entry_t *text_cache_fill(const char *path, uintptr_t vaddr,
+                                     long offset, int npages) {
+    if (npages <= 0 || npages > TEXT_FRAME_POOL) return NULL;
+    int slot = -1;
+    for (int i = 0; i < TEXT_CACHE_ENTRIES; i++)
+        if (!text_cache[i].used) { slot = i; break; }
+    if (slot < 0) return NULL;                              /* entry table full */
+    if (text_frames_used + npages > TEXT_FRAME_POOL) return NULL;  /* frame pool full */
+    if (vka_audit_check_headroom(npages) < 0) return NULL;
+    int base = text_frames_used;
+    int got = 0;
+    for (; got < npages; got++) {
+        vka_object_t *fr = &text_frames[base + got];
+        if (vka_alloc_frame(&vka, seL4_PageBits, fr)) break;
+        vka_audit_frame(VKA_SUB_OTHER, 1);
+        /* Map the master frame into the root vspace, fill it from the file,
+         * unify the I-cache, then unmap KEEPING the cap (NULL vka = do not free
+         * the object). The cap owns the physical frame for the boot. */
+        void *r = vspace_map_pages(&vspace, &fr->cptr, NULL,
+                                   seL4_AllRights, 1, seL4_PageBits, 1);
+        if (!r) { vka_free_object(&vka, fr); break; }
+        long foff = offset + (long)got * PAGE_SIZE;
+        vfs_pread(path, (int)foff, (char *)r, PAGE_SIZE);
+        seL4_ARM_Page_Unify_Instruction(fr->cptr, 0, PAGE_SIZE);
+        vspace_unmap_pages(&vspace, r, 1, seL4_PageBits, NULL);
+    }
+    if (got != npages) {                                   /* roll back partial fill */
+        for (int j = 0; j < got; j++) vka_free_object(&vka, &text_frames[base + j]);
+        return NULL;
+    }
+    text_frames_used = base + npages;
+    text_entry_t *e = &text_cache[slot];
+    e->used = 1;
+    int p = 0;
+    for (; path[p] && p < 127; p++) e->path[p] = path[p];
+    e->path[p] = 0;
+    e->vaddr = vaddr;
+    e->offset = offset;
+    e->frame_base = base;
+    e->npages = npages;
+    e->refcount = 0;
+    AIOS_LOG_INFO_V("text cached pages=", (unsigned long)npages);
+    return e;
+}
+
+/* Release ci's shared-text mapping + reference on teardown / slot reuse. MUST be
+ * called while the child vspace is still ALIVE (before sel4utils_destroy_process),
+ * exactly like cow_release_proc -- and at the same call sites.
+ *
+ * Why the explicit unmap is REQUIRED (not optional): the shared pages were mapped
+ * with cookie=NULL (so the master frame is not co-owned by this vspace). At
+ * tear-down, sel4utils free_page() no-ops every cookie==0 entry -- it does NOT
+ * delete the cap or free the cslot. So WITHOUT this unmap each shared page leaks
+ * a root cslot per proc, exhausting the cspace under storms ("Cannot fork").
+ * vspace_unmap_pages(&vka) deletes the cap + frees the cslot, and because the
+ * cookie is NULL it does NOT free the master frame (sel4utils_unmap_pages only
+ * vka_utspace_free's when the cookie is set). This mirrors cow_release_proc,
+ * which reclaims its cookie=NULL shared dups the same way.
+ *
+ * Idempotent (zeroes the share slot, so it cannot double-decrement / double-
+ * unmap) and a safe no-op on a non-sharing slot or an already-dead vspace. */
+void clear_shared_text(int ci) {
+    if (ci < 0 || ci >= MAX_ACTIVE_PROCS) return;
+    int s = text_share_slot[ci];
+    if (!s) return;
+    text_share_slot[ci] = 0;
+    text_entry_t *e = &text_cache[s - 1];
+    if (e->refcount > 0) e->refcount--;
+    if (!active_procs[ci].active) return;   /* vspace already gone -> nothing to unmap */
+    vspace_t *vs = &active_procs[ci].proc.vspace;
+    for (int pg = 0; pg < e->npages; pg++) {
+        void *va = (void *)(e->vaddr + (uintptr_t)pg * PAGE_SIZE);
+        if (vspace_get_cap(vs, va) == seL4_CapNull) continue;  /* RESERVED/EMPTY */
+        vspace_unmap_pages(vs, va, 1, seL4_PageBits, &vka);
+    }
+}
+
+/* v0.4.183: map a binary's shared read-only .text into a freshly elf_load'd
+ * child, REPLACING its private eager copy (and replacing setup_demand_text for
+ * the RO segment). Returns the number of pages handled (>0) on success, or 0 if
+ * sharing was skipped/failed WITH the child's eager pages still intact -- in
+ * which case the caller falls back to setup_demand_text. EXEC PATH ONLY. */
+int setup_shared_text(int ci, elf_t *elf, const char *path) {
+    if (ci < 0 || ci >= MAX_ACTIVE_PROCS || !active_procs[ci].active || !path) return 0;
+    sel4utils_process_t *proc = &active_procs[ci].proc;
+    int nph = elf_getNumProgramHeaders(elf);
+    for (int i = 0; i < nph; i++) {
+        if (elf_getProgramHeaderType(elf, i) != 1 /* PT_LOAD */) continue;
+        uint32_t fl = (uint32_t)elf_getProgramHeaderFlags(elf, i);
+        if ((fl & 2) || !(fl & 1)) continue;        /* want R+X, NOT writable (PF_W=2,PF_X=1) */
+        uintptr_t v  = (uintptr_t)elf_getProgramHeaderVaddr(elf, i);
+        size_t    fz = (size_t)elf_getProgramHeaderFileSize(elf, i);
+        long      fo = (long)elf_getProgramHeaderOffset(elf, i);
+        if (fz < (size_t)(8 * PAGE_SIZE)) return 0; /* tiny text: not worth sharing */
+        uintptr_t s = v & ~(uintptr_t)0xFFF;
+        uintptr_t e = (v + fz + 0xFFF) & ~(uintptr_t)0xFFF;
+        long off0 = fo - (long)(v - s);             /* file offset at page-aligned s */
+        if (off0 < 0 || e <= s) return 0;
+        int pages = (int)((e - s) / PAGE_SIZE);
+
+        /* Look up or build the per-binary cache entry (no child mutation yet). */
+        text_entry_t *ent = text_cache_find(path);
+        if (ent && (ent->vaddr != s || ent->npages != pages)) return 0; /* stale layout */
+        if (!ent) ent = text_cache_fill(path, s, off0, pages);
+        if (!ent) return 0;   /* cache/pool full or alloc failed -> demand-text */
+
+        /* Swap the child's private eager RO pages for the shared frames. Free
+         * the eager frames (&vka) -- that reclaim is the whole point. */
+        vspace_unmap_pages(&proc->vspace, (void *)s, pages, seL4_PageBits, &vka);
+        sel4utils_res_t *tres = &aios_text_res[ci];
+        if (sel4utils_reserve_range_at_no_alloc(&proc->vspace, tres,
+                (void *)s, (size_t)pages * PAGE_SIZE, seL4_AllRights, 1)) {
+            /* no_alloc reserve is deterministic bookkeeping and essentially
+             * never fails; if it does, the eager pages are gone -- return 0 so
+             * the caller's demand-text re-reserves the (now unmapped) range. */
+            AIOS_LOG_WARN("shared-text: reserve failed");
+            return 0;
+        }
+        reservation_t rsv = { .res = tres };
+        /* read-only cap (executable via Default_VMAttributes, which excludes
+         * ExecuteNever); a writable mapping of shared code would let one proc
+         * corrupt all. cookie=NULL so vspace_tear_down deletes the child cap but
+         * does NOT free the shared master frame (the cow_setup pattern). */
+        seL4_CapRights_t ro = seL4_CapRights_new(0, 0, 1, 0);
+        int mapped = 0, failed = 0;
+        for (int pg = 0; pg < pages; pg++) {
+            void *va = (void *)(s + (uintptr_t)pg * PAGE_SIZE);
+            seL4_CPtr master = text_frames[ent->frame_base + pg].cptr;
+            cspacepath_t src, dup;
+            vka_cspace_make_path(&vka, master, &src);
+            if (vka_cspace_alloc_path(&vka, &dup)) { failed++; continue; }
+            vka_audit_cslot(VKA_SUB_OTHER);
+            if (seL4_CNode_Copy(dup.root, dup.capPtr, dup.capDepth,
+                                src.root, src.capPtr, src.capDepth, ro)) {
+                vka_cspace_free(&vka, dup.capPtr); failed++; continue;
+            }
+            if (vspace_map_pages_at_vaddr(&proc->vspace, &dup.capPtr, NULL,
+                    va, 1, seL4_PageBits, rsv)) {
+                seL4_CNode_Delete(dup.root, dup.capPtr, dup.capDepth);
+                vka_cspace_free(&vka, dup.capPtr); failed++; continue;
+            }
+            mapped++;
+        }
+        if (failed) {
+            /* Demand-load any holes: register a file_vma over the segment so the
+             * unmapped pages fault into handle_file_mmap_fault (the shared pages
+             * are present and never fault). Belt-and-suspenders -- near
+             * impossible once the entry is filled (the loop above is pure cap
+             * ops). The whole range is already reserved into tres. */
+            int vslot = -1;
+            for (int k = 0; k < MAX_FILE_VMAS; k++)
+                if (!file_vmas[k].active) { vslot = k; break; }
+            if (vslot >= 0) {
+                file_vmas[vslot].active = 1;
+                file_vmas[vslot].ci = ci;
+                file_vmas[vslot].va_start = s;
+                file_vmas[vslot].va_end = e;
+                file_vmas[vslot].offset = off0;
+                file_vmas[vslot].reservation = tres;
+                int q = 0;
+                for (; path[q] && q < 127; q++) file_vmas[vslot].path[q] = path[q];
+                file_vmas[vslot].path[q] = 0;
+            }
+            AIOS_LOG_WARN_V("shared-text: holes demand-paged=", (unsigned long)failed);
+        }
+        ent->refcount++;
+        text_share_slot[ci] = (int)(ent - text_cache) + 1;
+        AIOS_LOG_INFO_V("text shared pages=", (unsigned long)mapped);
+        return pages;   /* whole RO segment now handled (shared + any holes) */
+    }
+    return 0;
+}
+
 /* v0.4.181: demand-page the read-only executable segment(s) of a freshly
  * elf_load'd process from the executable file, mirroring demand-BSS. Unmaps the
  * eagerly-loaded code pages and registers a file_vma so the first instruction
@@ -1082,6 +1318,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             cow_release_proc(ci);
             cow_clear_proc(ci);
             clear_file_vmas(ci);  /* v0.4.146: drop stale file-mmap descriptors */
+            clear_shared_text(ci);  /* v0.4.183: release old shared-text ref before destroy */
             sel4utils_destroy_process(&ap->proc, &vka);
 
             /* Free old fault ep -- minted cap vs allocated endpoint */
@@ -1179,8 +1416,11 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 }
             }
 
-            /* v0.4.181: demand-page the read-only text segment from the file. */
-            setup_demand_text(ci, &elf, elf_path);
+            /* v0.4.183: share the read-only text segment across same-binary
+             * procs; fall back to per-proc demand-text (v0.4.181) only when
+             * sharing is skipped (cache full / tiny text), eager pages intact. */
+            if (setup_shared_text(ci, &elf, elf_path) <= 0)
+                setup_demand_text(ci, &elf, elf_path);
 
             seL4_CPtr cs = sel4utils_copy_cap_to_process(proc, &vka, serial_ep.cptr);
             ap->child_ser_slot = cs;
@@ -1281,6 +1521,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             err = sel4utils_spawn_process_v(proc, &vka, &vspace,
                                             spawn_argc, spawn_argv, 1);
             if (err) {
+                clear_shared_text(ci);  /* v0.4.183: release shared-text before destroy */
                 sel4utils_destroy_process(proc, &vka);
                 ap->active = 0;
                 proc_remove(old_pid);

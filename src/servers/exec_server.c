@@ -285,9 +285,13 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
                     AIOS_LOG_WARN("BSS reservation failed, BSS will fault-fail");
                 }
             }
-            /* v0.4.181: demand-page the read-only text segment from the file. */
+            /* v0.4.183: share the read-only text segment across same-binary
+             * procs; fall back to per-proc demand-text (v0.4.181) only when
+             * sharing is skipped (cache full / tiny text), eager pages intact. */
             extern int setup_demand_text(int ci, elf_t *elf, const char *path);
-            setup_demand_text(ap_idx, &elf, elf_path);
+            extern int setup_shared_text(int ci, elf_t *elf, const char *path);
+            if (setup_shared_text(ap_idx, &elf, elf_path) <= 0)
+                setup_demand_text(ap_idx, &elf, elf_path);
         }
 
         seL4_CPtr child_ser = sel4utils_copy_cap_to_process(proc, &vka, serial_ep.cptr);
@@ -542,6 +546,13 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         /* Clear foreground tracking */
         fg_pid = -1;
         fg_fault_ep = 0;
+
+        /* v0.4.183: release this foreground proc's shared-text mapping while its
+         * vspace is still ALIVE (normal exit destroys it below; the Ctrl-C branch
+         * was already reaped via handle_child_fault, which cleared the share slot
+         * + active flag, so this is then a guarded no-op). MUST precede the
+         * sel4utils_destroy_process below -- see clear_shared_text for why. */
+        { extern void clear_shared_text(int ci); clear_shared_text(ap_idx); }
 
         /* Check if child was killed by Ctrl-C */
         int was_killed = fg_killed;

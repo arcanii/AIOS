@@ -44,6 +44,10 @@ void reap_forked_child(int child_idx) {
     vka_audit_release_proc_pages(&child->audit_pages_allocated);
     /* v0.4.111: unmap COW R/O dup pages before vspace tear-down */
     cow_release_proc(child_idx);
+    /* v0.4.183: release this proc's shared-text ref + clear its share slot so a
+     * future occupant of this index does not inherit it. The child's frame-cap
+     * copies are deleted by the vspace tear-down below; the master frames stay. */
+    { extern void clear_shared_text(int ci); clear_shared_text(child_idx); }
     /* Destroy the process */
     sel4utils_destroy_process(&child->proc, &vka);
     /* Free fault endpoint: minted cap vs allocated endpoint */
