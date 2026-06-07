@@ -120,12 +120,14 @@ if(AIOS_PLATFORM STREQUAL "PLAT_QEMU_VIRT")
         ${AIOS_ROOT}/src/plat/qemu-virt/blk_virtio.c
         ${AIOS_ROOT}/src/plat/qemu-virt/net_virtio.c
         ${AIOS_ROOT}/src/plat/qemu-virt/display_ramfb.c
+        ${AIOS_ROOT}/src/plat/qemu-virt/pcie_ecam.c
     )
 elseif(AIOS_PLATFORM STREQUAL "PLAT_RPI4")
     set(PLAT_SOURCES
         ${AIOS_ROOT}/src/plat/rpi4/blk_emmc.c
         ${AIOS_ROOT}/src/plat/rpi4/net_genet.c
         ${AIOS_ROOT}/src/plat/rpi4/display_vc.c
+        ${AIOS_ROOT}/src/plat/rpi4/pcie_brcmstb.c
     )
 else()
     message(FATAL_ERROR "Unknown AIOS_PLATFORM: ${AIOS_PLATFORM}")

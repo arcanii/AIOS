@@ -221,6 +221,57 @@ static void parse_vc_mbox(const void *fdt) {
     if (hw_info.vc_mbox_paddr) hw_info.has_vc_mbox = 1;
 }
 
+static void parse_pcie(const void *fdt) {
+    /* QEMU virt: "pci-host-ecam-generic"; RPi4 (Phase D): "brcm,bcm2711-pcie". */
+    int node = fdt_node_offset_by_compatible(fdt, -1, "pci-host-ecam-generic");
+    if (node < 0)
+        node = fdt_node_offset_by_compatible(fdt, -1, "brcm,bcm2711-pcie");
+    if (node < 0) return;
+
+    int len;
+    /* reg = ECAM base + size. Root parent is #address-cells=2/#size-cells=2 on
+     * virt, so this is base(2 cells) + size(2 cells). */
+    const void *reg = fdt_getprop(fdt, node, "reg", &len);
+    if (reg && len >= 16) {
+        const fdt32_t *c = (const fdt32_t *)reg;
+        hw_info.pcie_ecam_paddr = ((uint64_t)fdt32_ld(&c[0]) << 32) | fdt32_ld(&c[1]);
+        hw_info.pcie_ecam_size  = ((uint64_t)fdt32_ld(&c[2]) << 32) | fdt32_ld(&c[3]);
+    }
+    if (!hw_info.pcie_ecam_paddr) return;
+
+    /* bus-range = <start end> */
+    const void *br = fdt_getprop(fdt, node, "bus-range", &len);
+    if (br && len >= 8) {
+        const fdt32_t *b = (const fdt32_t *)br;
+        hw_info.pcie_bus_start = fdt32_ld(&b[0]);
+        hw_info.pcie_bus_end   = fdt32_ld(&b[1]);
+    }
+
+    /* ranges entries: pci_addr(3 cells) cpu_addr(2 cells) size(2 cells) = 7.
+     * pci_addr high cell bits [25:24] = space: 1=IO, 2=MMIO32, 3=MMIO64.
+     * We want the 32-bit MMIO window -- that is where the xHCI BAR is placed. */
+    const void *rg = fdt_getprop(fdt, node, "ranges", &len);
+    if (rg) {
+        const fdt32_t *r = (const fdt32_t *)rg;
+        int cells = len / 4;
+        for (int i = 0; i + 7 <= cells; i += 7) {
+            uint32_t phys_hi = fdt32_ld(&r[i]);
+            uint32_t space = (phys_hi >> 24) & 0x3;
+            uint64_t pci_addr = ((uint64_t)fdt32_ld(&r[i + 1]) << 32) | fdt32_ld(&r[i + 2]);
+            uint64_t cpu_addr = ((uint64_t)fdt32_ld(&r[i + 3]) << 32) | fdt32_ld(&r[i + 4]);
+            uint64_t size     = ((uint64_t)fdt32_ld(&r[i + 5]) << 32) | fdt32_ld(&r[i + 6]);
+            if (space == 0x2) {
+                hw_info.pcie_mmio_pci  = pci_addr;
+                hw_info.pcie_mmio_cpu  = cpu_addr;
+                hw_info.pcie_mmio_size = size;
+            }
+        }
+    }
+
+    if (hw_info.pcie_ecam_paddr && hw_info.pcie_mmio_size)
+        hw_info.has_pcie = 1;
+}
+
 static void parse_memory(const void *fdt) {
     int node = fdt_path_offset(fdt, "/memory");
     if (node < 0) {
@@ -308,6 +359,7 @@ void boot_dtb_init(void) {
     parse_emmc(fdt);
     parse_genet(fdt);
     parse_vc_mbox(fdt);
+    parse_pcie(fdt);
     parse_cpus(fdt);
     parse_memory(fdt);
 }
@@ -336,4 +388,10 @@ void boot_hw_report(void) {
     if (hw_info.has_vc_mbox)
         printf("[hw] VC mbox: 0x%lx\n",
                (unsigned long)hw_info.vc_mbox_paddr);
+    if (hw_info.has_pcie)
+        printf("[hw] PCIe: ECAM 0x%lx, MMIO32 0x%lx (size 0x%lx), bus %u-%u\n",
+               (unsigned long)hw_info.pcie_ecam_paddr,
+               (unsigned long)hw_info.pcie_mmio_cpu,
+               (unsigned long)hw_info.pcie_mmio_size,
+               hw_info.pcie_bus_start, hw_info.pcie_bus_end);
 }

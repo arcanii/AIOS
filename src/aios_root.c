@@ -29,6 +29,7 @@
 #include "aios/aios_log.h"
 #include "aios/root_shared.h"
 #include "aios/hw_info.h"
+#include "aios/pcie.h"
 #include "aios/vka_audit.h"
 #include "aios/fb_console.h"
 #include "aios/net.h"
@@ -317,6 +318,12 @@ int main(int argc, char *argv[]) {
 
     /* Phase 2c: Display (optional framebuffer) */
     boot_display_init();
+
+    /* Phase 2d: PCIe enumeration -- finds the xHCI controller for USB HID input.
+     * QEMU: generic ECAM (works now, for developing the USB stack). RPi4: brcmstb
+     * stub until Phase D. Harmless if absent (returns -1). See DESIGN_USB_HID.md. */
+    if (hw_info.has_pcie)
+        plat_pcie_init();
 
     /* Boot status on HDMI console (for RPi4 without serial adapter) */
     fb_console_printf("AIOS %s\n", AIOS_VERSION_STR);

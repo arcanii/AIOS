@@ -36,6 +36,16 @@ typedef struct {
     uint64_t vc_mbox_paddr;     /* ARM-to-VC mailbox base */
     int      has_vc_mbox;
 
+    /* PCIe host bridge (QEMU virt: pci-host-ecam-generic; RPi4: brcmstb) */
+    uint64_t pcie_ecam_paddr;   /* ECAM config-space base */
+    uint64_t pcie_ecam_size;
+    uint64_t pcie_mmio_cpu;     /* CPU-side base of the 32-bit MMIO window (map BARs here) */
+    uint64_t pcie_mmio_pci;     /* PCI-side base of that window (value written into BARs) */
+    uint64_t pcie_mmio_size;
+    uint32_t pcie_bus_start;
+    uint32_t pcie_bus_end;
+    int      has_pcie;
+
     /* CPU */
     int      cpu_count;
     char     cpu_compat[32];    /* e.g. "arm,cortex-a53" */
