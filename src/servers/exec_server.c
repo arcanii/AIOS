@@ -285,6 +285,9 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
                     AIOS_LOG_WARN("BSS reservation failed, BSS will fault-fail");
                 }
             }
+            /* v0.4.181: demand-page the read-only text segment from the file. */
+            extern int setup_demand_text(int ci, elf_t *elf, const char *path);
+            setup_demand_text(ap_idx, &elf, elf_path);
         }
 
         seL4_CPtr child_ser = sel4utils_copy_cap_to_process(proc, &vka, serial_ep.cptr);

@@ -96,19 +96,22 @@
 
 /* ── Limits ── */
 
-/* Concurrent-process limits. Sweet spot below the VKA/allocman wall (~70-80
- * procs on the 32 MB allocman pool, measured 2026-06-07): 48 gives ~22 parallel
- * pipelines (3.6x the old 16) and fails as a clean "Cannot fork" at the table,
- * NOT as messy VKA allocation errors. Going higher needs per-proc footprint work
- * (the 4096-slot CNode is the big cost) -- see BACKLOG "harden under load". */
-#define MAX_ACTIVE_PROCS     48
+/* Concurrent-process limits. v0.4.181 demand-pages the read-only ELF text
+ * (pipe_server.c setup_demand_text): a process keeps resident only the code it
+ * actually executes, not the whole statically-linked binary -- which lifts the
+ * VKA/allocman wall and lets the table go to 64 (~30 parallel pipelines, up from
+ * 16->48->22). On RPi4 (4 GB) the TABLE, not RAM, is the limit; on QEMU (458 MB,
+ * old wall ~80 procs) the wall is now above 64. The next lever for going much
+ * higher is .text SHARING across same-binary procs (one copy for N) -- BACKLOG
+ * "harden under load" Phase 2. */
+#define MAX_ACTIVE_PROCS     64
 #define MAX_THREADS_PER_PROC 8
 #define THREAD_STACK_PAGES   4
 #define MAX_ELF_SEGS         6
-#define MAX_PIPES            48   /* each pipeline consumes a pipe */
+#define MAX_PIPES            64   /* each pipeline consumes a pipe */
 #define PIPE_BUF_SIZE        4096
-#define MAX_WAIT_PENDING     16
-#define MAX_ZOMBIES          48
+#define MAX_WAIT_PENDING     24
+#define MAX_ZOMBIES          64
 #define MAX_EXEC_ARGS        12
 #define MAX_PIPE_READ_BLOCKED 4
 

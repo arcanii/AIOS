@@ -42,6 +42,20 @@ the order survives regardless of the scheduler.
      binding limit at 48 is still the `active_procs` table (W=24 = 48 procs +
      system overflows it). See the ceiling investigation in HANDOVER for how high
      it can go and the next wall (VKA pool / per-proc footprint).
+   - **UPDATE v0.4.181 (footprint -- ELF demand-text DONE, Phase 1):** the wall
+     above the table is per-proc resident footprint (NOT eager morecore -- that
+     is already demand-paged: `BSS lazy pages=1580`). `pipe_server.c`
+     `setup_demand_text` now demand-pages the read-only ELF text from the
+     executable file (reusing the v0.4.146 file-fault engine), so a proc keeps
+     resident only the code it executes (`text lazy pages=75` per storm proc),
+     not the whole statically-linked binary. Boots clean, executes correctly
+     (executability via Default_VMAttributes). Table raised 48->64 (ceiling ~30;
+     W=24 now fully clean). **Phase 2 (bigger win, not yet done): SHARE one
+     read-only `.text` copy across same-binary procs** (root keeps a {binary ->
+     text frames} cache) -- one 75-page copy for N procs instead of N. Also still
+     open: the netconsole relay stall caps how WIDE you can drive (separate item
+     above), and a per-proc resource leak under sustained storms (the Race-B
+     cascade in `scripts/smp_qemu_test.py`).
 
 **Netconsole relay stalls under heavy concurrent output** (debug transport, LOW
 priority; found 2026-06-07 building the SMP test). Driving a `>~8`-wide

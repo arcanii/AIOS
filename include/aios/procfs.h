@@ -6,7 +6,7 @@
 extern fs_ops_t procfs_ops;
 
 /* Process table entry */
-#define PROC_MAX 80   /* must stay > MAX_ACTIVE_PROCS(48) + ~12 server threads */
+#define PROC_MAX 96   /* must stay > MAX_ACTIVE_PROCS(64) + ~12 server threads */
 typedef struct {
     int active;
     int pid;

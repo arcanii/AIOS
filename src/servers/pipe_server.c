@@ -386,7 +386,7 @@ static void file_bounce_unmap(file_bounce_t *b) {
  * and exec_server.c) -- a fault address inside a registered range allocates a
  * frame into the reservation and fills it from the file with vfs_pread (direct
  * MMIO block read, no nested IPC, so the fault reply cap is safe). */
-#define MAX_FILE_VMAS 16
+#define MAX_FILE_VMAS 64   /* v0.4.181: 16->64 -- one demand-text VMA per proc + mmap slack */
 typedef struct {
     int       active;
     int       ci;
@@ -397,6 +397,9 @@ typedef struct {
     char      path[128];
 } file_vma_t;
 static file_vma_t file_vmas[MAX_FILE_VMAS];
+/* v0.4.181: per-proc reservation storage for the demand-paged read-only text
+ * segment (mirrors aios_bss_res). One RO code segment per proc is the norm. */
+static sel4utils_res_t aios_text_res[MAX_ACTIVE_PROCS];
 
 static file_vma_t *file_vma_find(int ci, uintptr_t va) {
     for (int i = 0; i < MAX_FILE_VMAS; i++) {
@@ -440,6 +443,59 @@ int handle_file_mmap_fault(int ci, seL4_Word fault_addr) {
         file_bounce_unmap(&fb);
     }
     return 1;
+}
+
+/* v0.4.181: demand-page the read-only executable segment(s) of a freshly
+ * elf_load'd process from the executable file, mirroring demand-BSS. Unmaps the
+ * eagerly-loaded code pages and registers a file_vma so the first instruction
+ * fetch into each page faults into handle_file_mmap_fault, which reads the page
+ * from the executable and maps it (executable via Default_VMAttributes, which
+ * excludes ExecuteNever). Cuts the resident footprint from the whole binary to
+ * the pages actually executed. EXEC PATH ONLY -- do_fork eager-reloads, so a
+ * forked child's transient code stays mapped (no fork-lazy hazard); and the
+ * boot servers load from the CPIO (spawn_util.c), not here, so they are
+ * unaffected. Returns the number of pages made lazy (0 if none / skipped). */
+int setup_demand_text(int ci, elf_t *elf, const char *path) {
+    if (ci < 0 || ci >= MAX_ACTIVE_PROCS || !active_procs[ci].active || !path) return 0;
+    sel4utils_process_t *proc = &active_procs[ci].proc;
+    int nph = elf_getNumProgramHeaders(elf);
+    for (int i = 0; i < nph; i++) {
+        if (elf_getProgramHeaderType(elf, i) != 1 /* PT_LOAD */) continue;
+        uint32_t fl = (uint32_t)elf_getProgramHeaderFlags(elf, i);
+        if ((fl & 2) || !(fl & 1)) continue;        /* want R+X, NOT writable (PF_W=2,PF_X=1) */
+        uintptr_t v  = (uintptr_t)elf_getProgramHeaderVaddr(elf, i);
+        size_t    fz = (size_t)elf_getProgramHeaderFileSize(elf, i);
+        long      fo = (long)elf_getProgramHeaderOffset(elf, i);
+        if (fz < (size_t)(8 * PAGE_SIZE)) continue; /* not worth the faults for tiny text */
+        uintptr_t s = v & ~(uintptr_t)0xFFF;
+        uintptr_t e = (v + fz + 0xFFF) & ~(uintptr_t)0xFFF;
+        long off0 = fo - (long)(v - s);             /* file offset at page-aligned s */
+        if (off0 < 0 || e <= s) continue;
+        int slot = -1;
+        for (int k = 0; k < MAX_FILE_VMAS; k++)
+            if (!file_vmas[k].active) { slot = k; break; }
+        if (slot < 0) { AIOS_LOG_WARN("demand-text: no free vma slot"); return 0; }
+        size_t pages = (e - s) / PAGE_SIZE;
+        vspace_unmap_pages(&proc->vspace, (void *)s, pages, seL4_PageBits, &vka);
+        sel4utils_res_t *tres = &aios_text_res[ci];
+        if (sel4utils_reserve_range_at_no_alloc(&proc->vspace, tres,
+                (void *)s, pages * PAGE_SIZE, seL4_AllRights, 1)) {
+            AIOS_LOG_WARN("demand-text: reserve failed");
+            return 0;
+        }
+        file_vmas[slot].active = 1;
+        file_vmas[slot].ci = ci;
+        file_vmas[slot].va_start = s;
+        file_vmas[slot].va_end = e;
+        file_vmas[slot].offset = off0;
+        file_vmas[slot].reservation = tres;
+        int p = 0;
+        for (; path[p] && p < 127; p++) file_vmas[slot].path[p] = path[p];
+        file_vmas[slot].path[p] = 0;
+        AIOS_LOG_INFO_V("text lazy pages=", (unsigned long)pages);
+        return (int)pages;   /* one RO code segment is the norm */
+    }
+    return 0;
 }
 
 void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
@@ -1110,6 +1166,9 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                     }
                 }
             }
+
+            /* v0.4.181: demand-page the read-only text segment from the file. */
+            setup_demand_text(ci, &elf, elf_path);
 
             seL4_CPtr cs = sel4utils_copy_cap_to_process(proc, &vka, serial_ep.cptr);
             ap->child_ser_slot = cs;
