@@ -325,6 +325,13 @@ int main(int argc, char *argv[]) {
     if (hw_info.has_pcie)
         plat_pcie_init();
 
+    /* Phase 2e: xHCI host controller bring-up (only if a controller was found).
+     * Layer 2 of the USB HID stack -- see DESIGN_USB_HID.md. */
+    if (pcie_xhci_present) {
+        extern int xhci_init(void);
+        xhci_init();
+    }
+
     /* Boot status on HDMI console (for RPi4 without serial adapter) */
     fb_console_printf("AIOS %s\n", AIOS_VERSION_STR);
     fb_console_printf("[boot] RAM: %lu MB, CPU: %s\n",
