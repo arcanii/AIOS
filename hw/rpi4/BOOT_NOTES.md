@@ -94,9 +94,15 @@ To verify on the next physical-hardware session:
 - ext2 superblock verified (magic 0xEF53) during init
 
 ### SMP
-- KernelMaxNumNodes MUST be 1 (single core)
-- Setting to 4 causes silent boot failure (secondary cores not properly parked)
-- Requires elfloader secondary core wakeup support before re-enabling
+- KernelMaxNumNodes=4 -- HW-VERIFIED v0.4.179 (2026-06-07). All 4 A72 cores boot
+  via the elfloader spin-table. The earlier "MUST be 1 / silent boot failure" was
+  a GHOST: the elfloader had no registered console (every printf no-op'd) so the
+  bring-up was invisible, and a dtoverlay=disable-bt debug attempt disconnected
+  the console AND broke the kernel boot.
+- The elfloader trace prints on the mini-UART (serial1 = the DTB stdout-path) at
+  115200 -- the SAME cable as the kernel + login. It is visible only because the
+  aux-uart driver (gitignored deps bcm-uart.c) now calls uart_set_out(dev) to
+  register the console. NO disable-bt (keep the known-good mini-UART config).
 
 ### Disabled Drivers (v0.4.98)
 - GENET Ethernet (src/plat/rpi4/net_genet.c): crashes during 64KB MMIO mapping
@@ -201,15 +207,14 @@ No dtoverlay=disable-bt (need mini UART on GPIO 14/15).
 ## Remaining Issues
 - GENET Ethernet disabled (MMIO mapping crash)
 - VideoCore display disabled (VKA allocator assertion)
-- SMP build enabled v0.4.134 (`KernelMaxNumNodes=4`); secondary cores
-  via spin-table driver (`elfloader-tool/src/arch-arm/drivers/smp-spin-table.c`).
-  Untested on hardware. Verify on first boot:
-  * "Boot cpu id = ..., index=0" then "Core N is up with logic id N"
-    for cores 1..3 in the elfloader log.
-  * "/proc/hw" shows 4 cores (qemu-virt logs this; should match).
-  * If only one core comes up, suspect cpu-release-addr mismatch in
-    DTB or kernel jump-after-MMU race; fall back is `KernelMaxNumNodes=1`
-    in `settings-rpi4.cmake`.
+- SMP `KernelMaxNumNodes=4` via the spin-table driver
+  (`elfloader-tool/src/arch-arm/drivers/smp-spin-table.c`). HW-VERIFIED v0.4.179
+  (2026-06-07). First-boot signature on the mini-UART @115200:
+  * "Boot cpu id = 0x0, index=0" then "Core 1/2/3 is up with logic id N".
+  * "Bootstrapping kernel" -> "dropped to user space" -> "[hw] CPU: 4 core(s)".
+  * `/proc/hw` cores=4, `/proc/version` "4-core SMP", ping 192.168.0.8 0% loss.
+  * The trace is visible only because deps `bcm-uart.c` now registers the
+    mini-UART console (`uart_set_out`). Fall back: `KernelMaxNumNodes=1`.
 
 ## Recent Fixes
 - v0.4.132: mksdcard.py FAT32 now uses macOS newfs_msdos (via hdiutil

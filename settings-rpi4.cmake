@@ -15,19 +15,19 @@ set(AIOS_PLATFORM "PLAT_RPI4" CACHE STRING "" FORCE)
 # RPi4 memory (1024, 2048, 4096, 8192)
 set(RPI4_MEMORY "4096" CACHE STRING "" FORCE)
 
-# SMP: RPi4 has 4 Cortex-A72 cores. v0.4.134 enabled all 4, but the first
-# real-hardware boot (v0.4.134, build 1691) hung at the firmware-to-kernel
-# handoff: kernel8.img loads and relocates to 0x80000, then the boot goes
-# silent and never reaches "Bootstrapping kernel". The only stage that runs
-# there and differs from the known-good v0.4.98 (single-core) build is the
-# elfloader spin-table secondary-core bring-up
-# (deps/seL4_tools/elfloader-tool/src/arch-arm/drivers/smp-spin-table.c).
-# The elfloader is silent on this UART, so the hang is invisible but parked
-# in that bring-up loop. v0.4.135 falls back to single-core so the full
-# v0.4.99-134 feature set boots on hardware. Re-enable (set to 4) once the
-# spin-table hang is understood -- see hw/rpi4/HARDWARE_TEST.md and the
-# per-core boot-trace plan (item E) in docs/SEL4_DEVInvestigation.md.
-set(KernelMaxNumNodes 1 CACHE STRING "" FORCE)
+# SMP: RPi4 has 4 Cortex-A72 cores -- all 4 boot. HW-VERIFIED v0.4.179
+# (2026-06-07): the elfloader spin-table brings up the 3 secondaries
+# ("Boot cpu id = 0x0" -> "Core 1/2/3 is up"), the kernel bootstraps 4-core SMP,
+# AIOS boots and /proc reports cores=4 (ping 192.168.0.8 0% loss). The
+# v0.4.134/178 "hang at smp_boot.c:119" was a GHOST: the elfloader was SILENT
+# (its aux-uart driver skipped console registration -> every printf no-op'd) so
+# the bring-up was invisible, and the v0.4.178 dtoverlay=disable-bt "make it
+# visible on PL011" attempt only DISCONNECTED the mini-UART console from the
+# cable AND broke the kernel boot (root task drives the mini-UART). Real fix:
+# register the elfloader mini-UART console (deps bcm-uart.c uart_set_out, the
+# putchar is bounded) and keep the known-good mini-UART config (no disable-bt,
+# core_freq=250). See the project_rpi4_smp memory + hw/rpi4/BOOT_NOTES.md.
+set(KernelMaxNumNodes 4 CACHE STRING "" FORCE)
 
 # Debug
 set(KernelVerificationBuild OFF CACHE BOOL "" FORCE)

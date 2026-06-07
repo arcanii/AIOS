@@ -41,13 +41,25 @@ the order survives regardless of the scheduler.
 3. **COW Step 3 -- wc/shutdown post-promotion EPERM** -- efficiency win; see
    the Medium-risk entry below. One focused session, ~30 LOC + tracing.
 
-4. **RPi4 SMP bring-up** -- re-enable SMP=4 (`settings-rpi4.cmake`
-   `KernelMaxNumNodes` 1 -> 4). v0.4.135 fell back to single-core because the
-   elfloader spin-table secondary-core bring-up hangs at the firmware->kernel
-   handoff. First make the elfloader print on the RPi4 UART, then per-core
-   boot trace. Highest risk, hardware-gated (needs the Pi + serial). See
-   `docs/SEL4_DEVInvestigation.md` item E and `feedback_rpi4_boot`; also
-   tracked in HANDOVER's active table.
+4. **RPi4 SMP bring-up -- DONE v0.4.179 (2026-06-07, HW-VERIFIED).** SMP=4
+   (`settings-rpi4.cmake KernelMaxNumNodes=4`) boots all 4 A72 cores via the
+   elfloader spin-table (`Boot cpu id = 0x0` -> `Core 1/2/3 is up`); the kernel
+   bootstraps 4-core SMP, AIOS boots, DHCP 192.168.0.8, ping 0% loss; `/proc/hw`
+   cores=4, `/proc/version` says "4-core SMP".
+   - The long-blamed `smp_boot.c:119` `while (!is_core_up(num_cpus))` hang was a
+     **GHOST -- never an SMP bug.** The bring-up was INVISIBLE: the elfloader
+     aux-uart driver (`bcm-uart.c` `bcm2835_uart_init`) skipped
+     `uart_set_out(dev)`, so `plat_console_putchar` stayed NULL and every
+     elfloader printf no-op'd. The v0.4.178 `dtoverlay=disable-bt` "make it
+     visible on PL011" attempt made it WORSE: the elfloader console is
+     serial1=the mini-UART (build-time DTB stdout-path), so disable-bt only
+     disconnected the trace from the cable AND broke the kernel boot (root task
+     drives the mini-UART) -> Pi unreachable, masquerading as a SMP hang.
+   - **Fix:** register the elfloader mini-UART console (gitignored deps
+     `bcm-uart.c` `uart_set_out`; its putchar is already bounded) + revert
+     disable-bt -> known-good mini-UART @115200, `core_freq=250` (`mksdcard.py`
+     + `hw/rpi4/config.txt`). Then elfloader + kernel + login all land on the
+     same cable. See the `project_rpi4_smp` memory + `hw/rpi4/BOOT_NOTES.md`.
 
 ---
 

@@ -196,7 +196,17 @@ def create_config_txt(path, mem_mb, kernel_addr=None):
     # Relocator stub handles placement
     config += "enable_uart=1\n"
     config += "uart_2ndstage=1\n"
-    # dtoverlay=disable-bt removed: GPIO 14/15 must be mini UART
+    # Mini UART on GPIO 14/15 at 115200 -- the known-good console. The elfloader,
+    # kernel and root-task all share this one UART (DTB stdout-path = serial1 =
+    # the mini-UART), so the elfloader SMP bring-up trace, the kernel boot and
+    # the login prompt all land on the SAME cable. core_freq is pinned because
+    # the mini-UART baud tracks it; pinning keeps a stable 115200.
+    #
+    # v0.4.178 briefly tried dtoverlay=disable-bt + init_uart_clock to expose the
+    # elfloader trace on the PL011, but the elfloader console is serial1 (the
+    # mini-UART) per the build-time DTB, so disable-bt only DISCONNECTED it from
+    # the cable (and skewed the PL011 baud to 103448). Reverted: the elfloader
+    # aux-uart driver now registers + prints on the mini-UART directly.
     config += "core_freq=250\n"
     config += "core_freq_min=250\n"
     config += "disable_overscan=1\n"

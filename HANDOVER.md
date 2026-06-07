@@ -41,6 +41,37 @@ Honor it; this session learned the hard way what happens when you do not.
 
 ---
 
+## DONE: RPi4 4-core SMP -- HW-VERIFIED v0.4.179 (2026-06-07)
+
+4-core SMP works on real hardware. `settings-rpi4.cmake KernelMaxNumNodes=4`: the
+elfloader spin-table brings up all 3 secondaries (`Boot cpu id = 0x0` ->
+`Core 1/2/3 is up with logic id N`), the kernel bootstraps 4-core SMP, AIOS boots,
+DHCP 192.168.0.8, ping 0% loss; `/proc/hw` cores=4, `/proc/version` "4-core SMP".
+
+The long-blamed `smp_boot.c:119` "hang" was NEVER an SMP bug -- it was invisible
+and conflated with an unrelated boot break. Two causes, now fixed:
+1. The elfloader had **no registered console**: `bcm-uart.c bcm2835_uart_init`
+   skipped `uart_set_out(dev)`, so `plat_console_putchar` was NULL and every
+   elfloader printf no-op'd. Removing the `common.c` printf gate was necessary
+   but not sufficient.
+2. The v0.4.178 `dtoverlay=disable-bt` "make-it-visible-on-PL011" attempt only
+   DISCONNECTED the mini-UART console from the cable (the elfloader console is
+   serial1=mini-UART per the build-time DTB) AND broke the kernel boot (root task
+   drives the mini-UART at 0xFE215000) -> Pi unreachable, looking like a SMP hang.
+
+**Fix (committed v0.4.179):** the TRACKED commit is `settings-rpi4.cmake`
+(MAX_NUM_NODES=4) + `version.h` 0.4.179 + `mksdcard.py`/`hw/rpi4/config.txt`
+reverted to the known-good mini-UART config (no disable-bt, `core_freq=250`,
+115200) + docs. The elfloader fix lives in **gitignored `deps/`** (re-apply if a
+deps reset wipes them): `bcm-uart.c` now calls `uart_set_out(dev)` (registers the
+mini-UART console; putchar already bounded `for t<100000`), `common.c` printf gate
+removed, `pl011-uart.c` bounded putchar (now unused -- the mini-UART is the
+console). Capture the trace at 115200: `scripts/aios_console.py monitor
+/dev/cu.usbserial-0001`. Details: `project_rpi4_smp` memory +
+`docs/NEXT_20260607_rpi4_smp.md`. NOTE: the running Pi still reports v0.4.177
+(verified pre-bump); reflash `disk/sdcard-rpi4.img` to make it report 0.4.179
+(functionally identical -- the bump is cosmetic).
+
 ## Where we left off (v0.4.178 -> SSH hardened: reconnect + self-heal + scp/sftp)
 
 SSH now survives unlimited sequential connections per boot, self-heals a hung
