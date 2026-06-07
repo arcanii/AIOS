@@ -14,11 +14,14 @@ A research microkernel operating system built on seL4
 
 Architectures / Hardware Supported
 - :white_check_mark: AArch64 (QEMU virt)
-- :white_check_mark: AArch64 (Raspberry Pi 4 Model B) -- boots to interactive login (serial : TXD : GPIO14, RXD : GPIO15)
+- :white_check_mark: AArch64 (Raspberry Pi 4 Model B) -- 4-core SMP, GENET networking, HDMI, SSH + netconsole over LAN (serial : TXD : GPIO14, RXD : GPIO15)
 - :white_medium_square: AArch64 (Raspberry Pi 5)
 - :white_medium_square: X86-64 
 
 ## Latest Achievements
+- **RPi4 4-core SMP** -- all four Cortex-A72 cores brought up via spin-table, HW-verified (`/proc/hw` cores=4, 0% ping loss)
+- **Concurrent-process scaling** -- parallel-pipeline ceiling raised ~5x via higher process limits + demand-paged ELF .text (each process keeps resident only the code it runs)
+- **SSH over LAN** -- always-on (getty auto-starts sshd): AES-256-CTR + HMAC-SHA-256, password auth, sequential reconnect with shell self-heal, sftp + scp
 - **RPi4 networking** -- real GENET Ethernet with DHCP and bidirectional ping on hardware
 - **Network control channel** -- drive the Pi over the LAN (run commands, push/pull files, reboot) via netconsole; no serial needed after flashing
 - **DNS resolver** -- `nslookup` resolves hostnames to IPs (QEMU + real hardware)
@@ -42,21 +45,22 @@ External AI (Claude) is used as a development tool for code generation
 and review. This project is also a study in AI-assisted systems programming.
 The long-term goal is self-hosted development within AIOS itself.
 
-**Current version:** v0.4.177
+**Current version:** v0.4.183
 
 ## What Works
 
-- **seL4 microkernel** on AArch64/QEMU (Cortex-A53) and Raspberry Pi 4 (Cortex-A72)
+- **seL4 microkernel** on AArch64/QEMU (Cortex-A53) and Raspberry Pi 4 (Cortex-A72), both 4-core SMP
 - **ext2 filesystem** with read/write, indirect blocks, multi-group allocation, block/inode freeing on unlink
 - **VFS layer** with ext2 root mount and procfs at /proc
 - **86+ POSIX syscalls** via musllibc shim (open, read, write, fork, exec, pipe, dup2, statx, getrandom, futex, poll, ...)
 - **fork+exec+waitpid** process model with full ELF loading from disk
+- **Low per-process footprint** -- demand-paged ELF .text + BSS (resident = executed code only); read-only .text shared across same-binary processes to lift the concurrent-process ceiling
 - **POSIX signals** (sigaction, kill, sigprocmask) with cooperative handler dispatch
 - **Unix pipelines** (echo hello | cat | wc -c, ls /tmp | head) with error recovery
 - **Shell operators** (&&, ||, >, >>, <) and environment variables
 - **dash login shell** -- POSIX shell as primary login shell via /etc/passwd pw_shell
 - **zsh script mode** -- alternative shell with arrays, extended globbing, arithmetic (Phase 1)
-- **SSH server** -- written (AES-256-CTR, HMAC-SHA-256, password auth, Ctrl-C forwarding); currently blocked on rebuilding the mbedTLS crypto lib
+- **SSH server** -- AES-256-CTR + HMAC-SHA-256, password auth, Ctrl-C forwarding, sftp + scp file transfer; always-on (getty auto-starts sshd), survives sequential reconnects with shell self-heal
 - **Graphical display** -- ramfb (QEMU) + VideoCore mailbox (RPi4) framebuffer, 1024x768, fb_console
 - **Display server IPC** -- user programs draw to framebuffer via disp_ep (fbshow command)
 - **Networking** -- virtio-net (QEMU) + GENET Ethernet (RPi4), ARP/ICMP/UDP/TCP, DHCP, DNS (`nslookup`), SNTP, HTTP server, POSIX sockets
@@ -92,7 +96,7 @@ capability-mediated access to servers.
 
     User programs (dash, sbase tools, test programs)
             |
-       aios_posix.c  (POSIX shim: 81+ syscalls, signals, pthreads, statx)
+       aios_posix.c  (POSIX shim: 86+ syscalls, signals, pthreads, statx)
             |
        +--------+--------+--------+--------+--------+---------+---------+
        |        |        |        |        |        |         |         |
@@ -109,7 +113,7 @@ capability-mediated access to servers.
     virtio-blk + virtio-net + ramfb (QEMU)
     BCM2711 EMMC2 + VideoCore mailbox (RPi4)
        |
-    seL4 microkernel (AArch64, single-core; RPi4 SMP bring-up WIP)
+    seL4 microkernel (AArch64, 4-core SMP -- QEMU + RPi4, HW-verified)
        |
     QEMU virt / Raspberry Pi 4
 
