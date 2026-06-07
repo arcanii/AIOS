@@ -34,6 +34,26 @@ the order survives regardless of the scheduler.
    limit raising) -- large, low payoff for real use. See docs/NEXT_20260603b.md.
    Repro: 2-3 concurrent QEMU `--smp 4` on separate disk copies (`--no-mirror`);
    an unclean QEMU kill corrupts `disk_ext2.img` -- regenerate via mkdisk.py.
+   - **UPDATE 2026-06-07 (ceiling RAISED):** bumped `MAX_ACTIVE_PROCS` 16->48,
+     `MAX_PIPES`/`MAX_ZOMBIES` 16->48, `PROC_MAX` 32->80, `MAX_WAIT_PENDING` 8->16.
+     The feared "BSS-shift hazard" did NOT materialize -- QEMU -smp 4 boots clean
+     and the parallel-pipeline ceiling went 6 -> 22 (verified by
+     `scripts/smp_qemu_test.py`: fork-width probe clean to W=22, races exact). The
+     binding limit at 48 is still the `active_procs` table (W=24 = 48 procs +
+     system overflows it). See the ceiling investigation in HANDOVER for how high
+     it can go and the next wall (VKA pool / per-proc footprint).
+
+**Netconsole relay stalls under heavy concurrent output** (debug transport, LOW
+priority; found 2026-06-07 building the SMP test). Driving a `>~8`-wide
+`seq | wc -l &` storm THROUGH netconsole: every wc output arrives CORRECTLY, but
+the trailing `aios# ` prompt never comes (the relay does not deliver the prompt /
+detect the `dash -c` exit under the burst). NOT a fork/SMP bug -- the fork-width
+probe runs clean to W=22 and the outputs are correct; only netconsole's prompt
+framing stalls. Likely the relay's EOF/drain handling under a burst of concurrent
+writers (same family as the netconsole receive bottleneck, [[feedback_netconsole_push_speed]]).
+Test workaround: drive repeated rounds at width<=8 with a settle. Real fix:
+harden the netconsole relay (bulk drain + reliable end-of-command framing) --
+`src/apps/netconsole*.c` + the pipe relay.
 
 2. **file-backed mmap** -- new POSIX VM feature; see the Medium-risk entry
    below. Self-contained, QEMU-testable, no hardware. ~300 LOC.
