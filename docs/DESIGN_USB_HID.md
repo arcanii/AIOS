@@ -257,6 +257,66 @@ Phase D is the only hardware-only part: the brcmstb PCIe backend. Boot QEMU with
 | Keymap + integration | 200-400 | 1-2 | Low |
 | **Total** | **4000-6000** | **11-17** | |
 
+## Phase D findings (brcmstb bring-up + the seL4 device-window BLOCKER)
+
+Research done 2026-06-07 (U-Boot/Linux pcie-brcmstb + the RPi4 DTB + the seL4
+bcm2711 device map). Two things to know before writing the driver:
+
+### BLOCKER: the PCIe MMIO window is outside seL4's physical address space
+The RPi4 DTB routes the PCIe outbound window at **CPU 0x6_00000000 -> PCI
+0xC0000000, 1 GB** (`ranges = <0x2000000 0 0xc0000000 0x06 0 0 0x40000000>`). The
+xHCI BAR lives in that window, so AIOS must map CPU ~0x6_00000000 to touch the
+controller. BUT seL4's bcm2711 kernel (`build-rpi4/kernel/gen_headers/plat/
+machine/devices_gen.h`) only knows RAM `[0x200000,0x3a000000)` + `[0x40000000,
+0xfc000000)` and a few device frames (UART 0xfe215000, GIC 0xff84_xxxx, ARM-local
+0xff800000) -- **nothing above 0x1_00000000**. So `sel4platsupport_alloc_frame_at`
+cannot allocate a frame at 0x6_00000000: the window is outside seL4's universe.
+The controller REGISTERS (0xFD500000, in `[0xfc000000,0x100000000)`) ARE mappable,
+and config access goes through them (EXT_CFG), so the link bring-up + VL805
+config detect work WITHOUT the window. Only the xHCI BAR (MMIO) is blocked.
+Relocating the window into `[0xfc000000,0x100000000)` is NOT viable -- that range
+is real BCM2711 peripherals (GENET 0xfd58, eMMC 0xfe34, ...).
+**RESOLUTION: extend the seL4 bcm2711 kernel to expose the PCIe window above 4 GB**
+-- add the region to the kernel hardware spec / `deps/kernel/src/plat/bcm2711/
+overlay-rpi4.dts` so it lands in devices_gen.h as user-available device memory,
+and ensure the kernel's max paddr covers it. Kernel change (gitignored deps/,
+re-apply on reset), kernel rebuild, HW-iterated. THEN AIOS can claim the window
+(prealloc_rpi4_devices, ascending order) + the xHCI BAR.
+
+### Controller-register claim ordering
+The controller regs (0xFD500000, ~10 pages) sit BELOW GENET (0xFD580000), so they
+must be claimed in `prealloc_rpi4_devices` BEFORE GENET (the ascending-paddr
+watermark, [[feedback_sel4_device_untyped_order]]). Add `dev_pcie_vaddr` there.
+
+### Bring-up sequence (U-Boot pcie_brcmstb, exact offsets from base 0xFD500000)
+RGR1_SW_INIT_1=0x9210 (PERST=bit0: 0=assert/1=deassert; bridge INIT_GENERIC=bit1:
+1=assert/0=deassert). HARD_DEBUG=0x4204 (SERDES_IDDQ=BIT(27)). MISC_CTRL=0x4008
+(SCB_ACCESS_EN=0x1000, CFG_READ_UR_MODE=0x2000, MAX_BURST_MASK=0x300000 [128=0 on
+2711], SCB0_SIZE_MASK=0xf8000000). PCIE_STATUS=0x4068 (PORT=0x80, DL_ACTIVE=0x20,
+PHYLINKUP=0x10). Outbound win0: MEM_WIN0_LO=0x400c, _HI=0x4010, BASE_LIMIT=0x4070
+(base[31:20]+limit[15:4], MB units), BASE_HI=0x4080, LIMIT_HI=0x4084 (>>12).
+Inbound RC_BAR2_CONFIG_LO=0x4034/_HI=0x4038 (size enc = log2(roundup)-15; 3GB->17),
+RC_BAR1_LO=0x402c + RC_BAR3_LO=0x403c disable (clear low 5 bits). EXT_CFG_INDEX=
+0x9000, EXT_CFG_DATA=0x8000 (cfg: bus0 = base+off direct; bus>=1 = write
+(bus<<20|dev<<15|fn<<12) to INDEX then base+0x8000+off). RC class code reg
+PRIV1_ID_VAL3=0x043c (set 0x060400), endian VENDOR_SPECIFIC_REG1=0x0188, ASPM
+PRIV1_LINK_CAPABILITY=0x04dc. Sequence: bridge-reset+PERST assert -> 1ms ->
+bridge-reset deassert -> SERDES_IDDQ off -> ~0.2ms -> MISC_CTRL + inbound window +
+disable BAR1/3 + mask MSI -> PERST deassert -> 100ms -> poll PCIE_STATUS until
+DL_ACTIVE&PHYLINKUP (100ms) -> outbound window -> RC class/endian/ASPM -> scan
+bus 1 for the VL805 xHCI (class 0x0C0330), size+assign BAR0 in the PCI window,
+enable. pcie_xhci_bar (CPU side for xhci.c) = 0x6_00000000 + (bar_pci-0xC0000000).
+PERST polarity + the MB window encoding are the most error-prone -- log every
+step. DMA inbound is identity (PCI==CPU via RC_BAR2), so xhci.c GetAddress paddrs
+work directly as the controller's DMA addresses.
+
+### Other HW unknown: VL805 firmware
+The RPi firmware loads VL805 xHCI firmware at boot. A full controller reset MAY
+require it to reload (board-revision dependent: early boards loaded it over PCIe,
+later boards have a VL805 SPI EEPROM). If the link comes up but the VL805 does not
+enumerate, suspect the firmware load -- a gentler re-init (no full reset) that
+relies on the RPi-firmware PCIe state may be needed instead.
+
 ## References
 
 - USB xHCI 1.2 specification (usb.org)
