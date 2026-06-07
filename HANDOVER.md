@@ -10,7 +10,7 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
 ## Quick orientation
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4.
-* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.177**.
+* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.182**.
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4).
 * **Host**: macOS Apple Silicon, cross-compile to aarch64-linux-gnu.
 * **Developer**: Bryan -- prefers Python patch scripts over sed/heredocs; no
@@ -68,9 +68,46 @@ mini-UART console; putchar already bounded `for t<100000`), `common.c` printf ga
 removed, `pl011-uart.c` bounded putchar (now unused -- the mini-UART is the
 console). Capture the trace at 115200: `scripts/aios_console.py monitor
 /dev/cu.usbserial-0001`. Details: `project_rpi4_smp` memory +
-`docs/NEXT_20260607_rpi4_smp.md`. NOTE: the running Pi still reports v0.4.177
-(verified pre-bump); reflash `disk/sdcard-rpi4.img` to make it report 0.4.179
-(functionally identical -- the bump is cosmetic).
+`docs/NEXT_20260607_rpi4_smp.md`.
+
+---
+
+## DONE: process capacity + ELF demand-text -- v0.4.180-182 (2026-06-07)
+
+Built on top of SMP, same session. **The Pi now runs v0.4.182** (HW-verified;
+currently at 192.168.0.127 -- see the MAC note), 4-core SMP, demand-text working.
+
+- **v0.4.180** -- parallel-pipeline ceiling 6 -> 22: `MAX_ACTIVE_PROCS` 16 -> 48
+  (+ `MAX_PIPES`/`MAX_ZOMBIES`/`PROC_MAX`/`MAX_WAIT_PENDING`, all coupled). New
+  regression harness `scripts/smp_qemu_test.py` (boots SMP-4 QEMU, drives over
+  netconsole to dodge the sntp serial-login spam, fork-width probe + race tests).
+  The feared "BSS-shift hazard" was a myth.
+- **v0.4.181** -- ELF DEMAND-TEXT: each disk-exec'd proc keeps resident only the
+  code it executes, not the whole statically-linked binary (seq=455 KB=114 pages).
+  `pipe_server.c setup_demand_text` unmaps the read-only (R+X) ELF segment +
+  registers a file_vma, so the first instruction fetch pages it in from the
+  executable via the v0.4.146 file-fault engine. Table raised 48 -> 64 (ceiling
+  ~30). morecore was ALREADY demand-paged (`BSS lazy pages=1580`); do NOT re-fix.
+- **v0.4.182** -- I-CACHE FIX (HW-critical): v0.4.181 booted on QEMU but killed
+  every disk-exec'd proc on the real A72 -- demand-text loaded code via DATA writes
+  without invalidating the I-cache -> stale instructions -> crash. Added
+  `seL4_ARM_Page_Unify_Instruction` (both the write + the exec mapping) in
+  `handle_file_mmap_fault`. HW-VERIFIED: netconsole + sshd come up, pipelines
+  correct. **LESSON: any path that loads code via data writes (demand-text, JIT,
+  COW-of-text) MUST Unify_Instruction; QEMU's a53 model cannot catch a missing
+  one.** Full detail: the `project_proc_capacity` memory.
+
+**Pre-existing flake (NOT this work):** the Pi sometimes takes the GENET fallback
+MAC `dc:a6:32:01:02:03` (mailbox MAC read intermittently fails) -> DHCP gives
+**.127 instead of .8**. Harmless -- the Pi works either way; check both IPs. Small
+future item (net_genet mailbox MAC retry).
+
+## ACTIVE NEXT: Phase 2 -- share read-only `.text` across same-binary procs
+
+The bigger footprint win, not started. Demand-text (v0.4.181) gives each proc its
+OWN touched-code copy; SHARING gives ONE read-only `.text` copy for ALL procs of
+the same binary (8 `seq` -> one 75-page copy, not 8 x 75). Seed + design:
+**`docs/NEXT_20260607b_text_sharing.md`** + the `project_proc_capacity` memory.
 
 ## Where we left off (v0.4.178 -> SSH hardened: reconnect + self-heal + scp/sftp)
 
