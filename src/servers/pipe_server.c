@@ -440,8 +440,20 @@ int handle_file_mmap_fault(int ci, seL4_Word fault_addr) {
     file_bounce_t fb = file_bounce_map(ci, page_va);
     if (fb.ok) {
         vfs_pread(v->path, (int)foff, (char *)fb.rptr, PAGE_SIZE);
+        /* v0.4.182: A72 I-cache coherency for demand-paged CODE. The page was
+         * just loaded via DATA writes (the fb.dup root mapping), so clean it to
+         * PoU here and invalidate the child's I-cache below -- otherwise the
+         * real A72 fetches stale instructions and the process crashes. Mirrors
+         * sel4utils_elf_load, which unifies BOTH the loader and loadee frames.
+         * Harmless for data mmap. QEMU's a53 model does not enforce this, which
+         * is why v0.4.181 demand-text booted on QEMU but killed every
+         * disk-exec'd proc (getty/netconsole/sshd) on real hardware. */
+        seL4_ARM_Page_Unify_Instruction(fb.dup.capPtr, 0, PAGE_SIZE);
         file_bounce_unmap(&fb);
     }
+    seL4_CPtr ccap = vspace_get_cap(&active_procs[ci].proc.vspace, (void *)page_va);
+    if (ccap != seL4_CapNull)
+        seL4_ARM_Page_Unify_Instruction(ccap, 0, PAGE_SIZE);
     return 1;
 }
 
