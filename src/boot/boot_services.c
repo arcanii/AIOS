@@ -91,6 +91,15 @@ void boot_start_services(vka_object_t *fault_ep) {
     start_server_thread((sel4utils_thread_entry_fn)pipe_server_fn, pipe_ep_cap);
     proc_add("pipe_server", 200);
 
+    /* USB HID keyboard driver thread (if xhci_init enumerated a keyboard).
+     * Polls the xHCI event ring for interrupt-transfer completions. */
+    {
+        extern int xhci_kbd_ok;
+        extern void xhci_kbd_driver_fn(void *, void *, void *);
+        if (xhci_kbd_ok)
+            start_server_thread((sel4utils_thread_entry_fn)xhci_kbd_driver_fn, 0);
+    }
+
     /* Start network threads (if virtio-net detected) */
     if (net_available) {
         vka_object_t net_ep_obj;

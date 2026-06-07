@@ -123,18 +123,22 @@ static inline void doorbell(uint32_t n, uint32_t target) {
 static uint32_t cmd_enq = 0, cmd_cycle = 1;   /* command ring (producer) */
 static uint32_t evt_deq = 0, evt_cycle = 1;   /* event ring (consumer) */
 
-/* Poll the event ring for the next event (time-bounded). Copies the 4 dwords
- * into out[] and advances ERDP. Returns 0 on an event, -1 on timeout. */
+/* Non-blocking: if the next event ring TRB has been produced, copy it into out[]
+ * and advance ERDP. Returns 0 on an event, -1 if none pending. */
+static int evt_poll_once(uint32_t out[4]) {
+    volatile uint32_t *trb = (volatile uint32_t *)(evt_ring + evt_deq * 16);
+    uint32_t ctrl = trb[3];
+    if ((ctrl & TRB_CYCLE) != evt_cycle) return -1;   /* not yet produced */
+    out[0] = trb[0]; out[1] = trb[1]; out[2] = trb[2]; out[3] = ctrl;
+    if (++evt_deq == EVT_RING_TRBS) { evt_deq = 0; evt_cycle ^= 1; }
+    ir0_w64(IR0_ERDP, (evt_ring_pa + evt_deq * 16) | (1u << 3) /* EHB */);
+    return 0;
+}
+
+/* Time-bounded blocking poll for the next event. */
 static int evt_poll(uint32_t out[4], int timeout_ms) {
-    for (uint64_t dl = mono_deadline_ms(timeout_ms); mono_before(dl); ) {
-        volatile uint32_t *trb = (volatile uint32_t *)(evt_ring + evt_deq * 16);
-        uint32_t ctrl = trb[3];
-        if ((ctrl & TRB_CYCLE) != evt_cycle) continue;   /* not yet produced */
-        out[0] = trb[0]; out[1] = trb[1]; out[2] = trb[2]; out[3] = ctrl;
-        if (++evt_deq == EVT_RING_TRBS) { evt_deq = 0; evt_cycle ^= 1; }
-        ir0_w64(IR0_ERDP, (evt_ring_pa + evt_deq * 16) | (1u << 3) /* EHB */);
-        return 0;
-    }
+    for (uint64_t dl = mono_deadline_ms(timeout_ms); mono_before(dl); )
+        if (evt_poll_once(out) == 0) return 0;
     return -1;
 }
 
@@ -264,6 +268,168 @@ static int control_transfer(uint8_t bmReqType, uint8_t bReq, uint16_t wVal,
     return -1;
 }
 
+/* ---- HID keyboard (Layer 4/5) ---- */
+extern vka_object_t serial_ep;   /* tty input endpoint (defined in aios_root.c) */
+
+static volatile uint8_t *int_ring; static uint64_t int_ring_pa;
+static uint32_t int_enq, int_cycle;
+static volatile uint8_t *rpt;      static uint64_t rpt_pa;   /* 8-byte boot report buffer */
+static uint32_t kbd_dci, kbd_mps;
+static int      kbd_iface;
+static uint8_t  prev_keys[6];
+int xhci_kbd_ok = 0;               /* read by boot_services to spawn the driver thread */
+
+/* HID usage id -> ASCII for the non-letter keys (letters handled arithmetically). */
+static const char hid_map[128] = {
+    [0x1e]='1',[0x1f]='2',[0x20]='3',[0x21]='4',[0x22]='5',[0x23]='6',[0x24]='7',
+    [0x25]='8',[0x26]='9',[0x27]='0',[0x28]='\n',[0x29]=0x1b,[0x2a]='\b',[0x2b]='\t',
+    [0x2c]=' ',[0x2d]='-',[0x2e]='=',[0x2f]='[',[0x30]=']',[0x31]='\\',[0x33]=';',
+    [0x34]='\'',[0x35]='`',[0x36]=',',[0x37]='.',[0x38]='/',
+};
+static const char hid_map_shift[128] = {
+    [0x1e]='!',[0x1f]='@',[0x20]='#',[0x21]='$',[0x22]='%',[0x23]='^',[0x24]='&',
+    [0x25]='*',[0x26]='(',[0x27]=')',[0x28]='\n',[0x29]=0x1b,[0x2a]='\b',[0x2b]='\t',
+    [0x2c]=' ',[0x2d]='_',[0x2e]='+',[0x2f]='{',[0x30]='}',[0x31]='|',[0x33]=':',
+    [0x34]='"',[0x35]='~',[0x36]='<',[0x37]='>',[0x38]='?',
+};
+static char hid_to_ascii(uint8_t kc, int shift) {
+    if (kc >= 0x04 && kc <= 0x1d) { char c = 'a' + (kc - 0x04); return shift ? c - 32 : c; }
+    if (kc >= 128) return 0;
+    return shift ? hid_map_shift[kc] : hid_map[kc];
+}
+
+/* Re-arm one interrupt-IN transfer for the keyboard's report. */
+static void arm_int(void) {
+    volatile uint32_t *trb = (volatile uint32_t *)(int_ring + int_enq * 16);
+    trb[0] = (uint32_t)rpt_pa;
+    trb[1] = (uint32_t)(rpt_pa >> 32);
+    trb[2] = 8;                                   /* boot report = 8 bytes */
+    trb[3] = TRB_SET_TYPE(TRB_NORMAL) | (1u << 5) /* IOC */ | int_cycle;
+    /* Wrap via a Link TRB at the last slot so the ring cycles indefinitely
+     * (a keyboard runs forever -- without this it breaks after ~255 reports). */
+    if (++int_enq == 255) {
+        volatile uint32_t *link = (volatile uint32_t *)(int_ring + 255 * 16);
+        link[0] = (uint32_t)int_ring_pa;
+        link[1] = (uint32_t)(int_ring_pa >> 32);
+        link[2] = 0;
+        link[3] = TRB_SET_TYPE(TRB_LINK) | (1u << 1) /* Toggle Cycle */ | int_cycle;
+        int_enq = 0;
+        int_cycle ^= 1;
+    }
+    arch_dsb();
+    doorbell(dev_slot, kbd_dci);
+    arch_dsb();
+}
+
+/* Decode an 8-byte boot report and feed newly-pressed keys to the tty. */
+static void process_report(void) {
+    int shift = (rpt[0] & 0x22) != 0;             /* L/R Shift modifier bits */
+    for (int i = 2; i < 8; i++) {
+        uint8_t kc = rpt[i];
+        if (!kc) continue;
+        int was = 0;
+        for (int j = 0; j < 6; j++) if (prev_keys[j] == kc) was = 1;
+        if (was) continue;                        /* still held -- not a new press */
+        char ch = hid_to_ascii(kc, shift);
+        if (!ch) continue;
+        printf("[xhci-kbd] key=0x%02x '%c'\n", kc, (ch >= 32 && ch < 127) ? ch : '?');
+        seL4_SetMR(0, (seL4_Word)(unsigned char)ch);
+        seL4_Call(serial_ep.cptr, seL4_MessageInfo_new(SER_KEY_PUSH, 0, 0, 1));
+    }
+    for (int i = 0; i < 6; i++) prev_keys[i] = rpt[i + 2];
+}
+
+/* Read the config descriptor, find the HID boot-keyboard interrupt-IN endpoint,
+ * SET_CONFIGURATION, Configure Endpoint, SET_PROTOCOL/SET_IDLE, and arm the first
+ * interrupt transfer. Returns 0 with xhci_kbd_ok set on success. */
+static int setup_keyboard(void) {
+    uint64_t buf_pa;
+    volatile uint8_t *buf = (volatile uint8_t *)dma_page(&buf_pa);
+    if (!buf) return -1;
+    int cc = control_transfer(0x80, 6, (2u << 8), 0, 9, buf_pa, 1);    /* config hdr */
+    if (cc != CC_SUCCESS) return -1;
+    uint16_t total = buf[2] | (buf[3] << 8);
+    uint8_t cfg_val = buf[5];
+    if (total > 4096) total = 4096;
+    cc = control_transfer(0x80, 6, (2u << 8), 0, total, buf_pa, 1);    /* full config */
+    if (cc != CC_SUCCESS) return -1;
+
+    int iface = -1, ep_addr = -1, ep_mps = 8, ep_interval = 0, in_hid = 0;
+    for (int i = 0; i + 2 <= total; ) {
+        uint8_t len = buf[i], type = buf[i + 1];
+        if (len == 0) break;
+        if (type == 4) {                          /* interface descriptor */
+            in_hid = (buf[i + 5] == 3 && buf[i + 6] == 1 && buf[i + 7] == 1);
+            if (in_hid) iface = buf[i + 2];
+        } else if (type == 5 && in_hid) {         /* endpoint descriptor */
+            uint8_t addr = buf[i + 2], attr = buf[i + 3];
+            if ((addr & 0x80) && (attr & 0x3) == 3) {   /* interrupt IN */
+                ep_addr = addr;
+                ep_mps = buf[i + 4] | (buf[i + 5] << 8);
+                ep_interval = buf[i + 6];
+                break;
+            }
+        }
+        i += len;
+    }
+    if (ep_addr < 0) { AIOS_LOG_WARN("no HID keyboard endpoint"); return -1; }
+    kbd_iface = iface;
+    kbd_mps = (uint32_t)ep_mps;
+    kbd_dci = (uint32_t)((ep_addr & 0xF) * 2 + 1);   /* IN endpoint DCI */
+    printf("[xhci] HID keyboard: iface=%d ep=0x%02x mps=%u interval=%d dci=%u\n",
+           iface, ep_addr, kbd_mps, ep_interval, kbd_dci);
+
+    cc = control_transfer(0x00, 9 /* SET_CONFIGURATION */, cfg_val, 0, 0, 0, 0);
+    if (cc != CC_SUCCESS) { AIOS_LOG_WARN_V("SET_CONFIG cc=", (unsigned long)cc); return -1; }
+
+    int_ring = (volatile uint8_t *)dma_page(&int_ring_pa);
+    rpt = (volatile uint8_t *)dma_page(&rpt_pa);
+    if (!int_ring || !rpt) return -1;
+    int_enq = 0; int_cycle = 1;
+
+    /* Configure Endpoint: add slot ctx (A0) + the interrupt EP ctx (A[dci]). */
+    volatile uint32_t *icc      = (volatile uint32_t *)(in_ctx + 0);
+    volatile uint32_t *slot_ctx = (volatile uint32_t *)(in_ctx + CTX_SZ);
+    volatile uint32_t *ep_ctx   = (volatile uint32_t *)(in_ctx + (1 + kbd_dci) * CTX_SZ);
+    icc[0] = 0;
+    icc[1] = (1u << 0) | (1u << kbd_dci);
+    slot_ctx[0] = (slot_ctx[0] & ~(0x1Fu << 27)) | (kbd_dci << 27);  /* context entries */
+    ep_ctx[0] = (uint32_t)(ep_interval & 0xFF) << 16;
+    ep_ctx[1] = (7u << 3) | (3u << 1) | (kbd_mps << 16);   /* Interrupt IN, CErr=3, MPS */
+    ep_ctx[2] = (uint32_t)(int_ring_pa | 1);               /* TR dequeue | DCS */
+    ep_ctx[3] = (uint32_t)(int_ring_pa >> 32);
+    ep_ctx[4] = 8 | (kbd_mps << 16);                       /* avg TRB len | max ESIT */
+    arch_dsb();
+    uint32_t evt[4];
+    cc = cmd_submit(in_ctx_pa, 0, TRB_CONFIG_EP, dev_slot, evt);
+    if (cc != CC_SUCCESS) { AIOS_LOG_WARN_V("Configure EP cc=", (unsigned long)cc); return -1; }
+
+    control_transfer(0x21, 0x0B /* SET_PROTOCOL */, 0 /* boot */, kbd_iface, 0, 0, 0);
+    control_transfer(0x21, 0x0A /* SET_IDLE */, 0, kbd_iface, 0, 0, 0);
+
+    arm_int();
+    xhci_kbd_ok = 1;
+    printf("[xhci] HID keyboard ready (polling)\n");
+    return 0;
+}
+
+/* Keyboard driver thread: poll the event ring for interrupt-transfer completions,
+ * decode each report, and re-arm. Yields when idle (IRQ delivery is a follow-up). */
+void xhci_kbd_driver_fn(void *a, void *b, void *c) {
+    (void)a; (void)b; (void)c;
+    uint32_t e[4];
+    while (1) {
+        if (evt_poll_once(e) == 0) {
+            if (TRB_TYPE(e[3]) == TRB_TRANSFER_EVT) {
+                process_report();
+                arm_int();
+            }
+        } else {
+            seL4_Yield();
+        }
+    }
+}
+
 /* Enable a slot, reset + address the device on port p, and read its device
  * descriptor. Returns 0 with dev_slot set on success. */
 static int setup_device(uint32_t p) {
@@ -310,7 +476,9 @@ static int setup_device(uint32_t p) {
     uint16_t pid = buf[10] | (buf[11] << 8);
     printf("[xhci] device descriptor: VID=%04x PID=%04x class=%u mps0=%u\n",
            vid, pid, buf[4], buf[7]);
-    return 0;
+
+    /* C4: config descriptor -> HID keyboard endpoint -> arm interrupt transfers. */
+    return setup_keyboard();
 }
 
 int xhci_init(void) {
