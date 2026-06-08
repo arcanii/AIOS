@@ -10,7 +10,7 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
 ## Quick orientation
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4.
-* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.182**.
+* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.183**.
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4).
 * **Host**: macOS Apple Silicon, cross-compile to aarch64-linux-gnu.
 * **Developer**: Bryan -- prefers Python patch scripts over sed/heredocs; no
@@ -102,12 +102,40 @@ MAC `dc:a6:32:01:02:03` (mailbox MAC read intermittently fails) -> DHCP gives
 **.127 instead of .8**. Harmless -- the Pi works either way; check both IPs. Small
 future item (net_genet mailbox MAC retry).
 
-## ACTIVE NEXT: Phase 2 -- share read-only `.text` across same-binary procs
+## DONE: Phase 2 shared `.text` (HW-verified) + USB HID stack (QEMU) -- v0.4.183 (2026-06-08)
 
-The bigger footprint win, not started. Demand-text (v0.4.181) gives each proc its
-OWN touched-code copy; SHARING gives ONE read-only `.text` copy for ALL procs of
-the same binary (8 `seq` -> one 75-page copy, not 8 x 75). Seed + design:
-**`docs/NEXT_20260607b_text_sharing.md`** + the `project_proc_capacity` memory.
+**Phase 2 shared read-only `.text` -- HW-VERIFIED.** Root keeps a per-boot
+`{binary -> RO .text frames}` cache (`setup_shared_text`/`clear_shared_text` in
+pipe_server.c): ONE ~75-page copy for N same-binary procs instead of N. Flashed +
+verified on the Pi -- netconsole/sshd come up, pipelines run, /proc/version
+v0.4.183 (the I-cache fill-unify reasoning holds on the A72). QEMU smp test 7/7.
+Bug fixed in-session: cookie=NULL shared pages MUST be explicitly unmapped before
+destroy (sel4utils `free_page` no-ops them) or each leaks a root cslot per proc ->
+"Cannot fork" under storms; mirrors `cow_release_proc`. See `project_proc_capacity`.
+
+**USB HID keyboard (HCI) -- A/B/C QEMU-complete; D HW-blocked.** A USB keyboard
+types into the AIOS shell on QEMU: PCIe ECAM -> xHCI -> enumeration -> HID ->
+keymap -> SER_KEY_PUSH. Phases A (`src/plat/qemu-virt/pcie_ecam.c`),
+B (`src/usb/xhci.c`), C (enumeration + HID + polling driver thread) all committed
++ QEMU-verified (`scripts/xhci_key_qemu_test.py` PASS). QEMU-first: Layers 2-5 are
+platform-independent; only Layer 1 (PCIe) differs. **Phase D (RPi4 real HW) is
+BLOCKED on two gates found by HW testing:** (1) the firmware POWER-GATES the PCIe
+controller (VL805 init fails -> reading `0xFD500000` SErrors -> kernel halt) --
+needs a VC-mailbox power-on (`RPI_POWER_DOMAIN_USB=6`, `SET_DOMAIN_STATE`) BEFORE
+any controller access; (2) the PCIe MMIO window (CPU `0x6_00000000`) is above seL4
+bcm2711's 4GB device-untyped top -- needs a kernel device-region extension for the
+xHCI BAR. Design + findings: `docs/DESIGN_USB_HID.md` +
+`docs/NEXT_20260607c_usb_hid.md` + the `project_usb_hid` memory. The brcmstb path
+is HW-only (QEMU has no brcmstb). **NEVER touch a power-gated BCM2711 peripheral
+without a mailbox power-on first** (SError -> halt -> unreachable Pi, reflash to
+recover).
+
+### Next-up options (USB HID Phase D, both HW-iterated)
+1. VC-mailbox power-on (`RPI_POWER_DOMAIN_USB=6`) before `plat_pcie_init`, then
+   re-enable the fixed-address PCIe path -- a gamble (USB domain may gate DWC2,
+   not PCIe); make it crash-safe (GET_DOMAIN_STATE confirm before any access).
+2. The seL4 bcm2711 >4GB-window device-region extension (D.0) for the xHCI BAR.
+Both are flash-risky; serial capture (USB-serial GPIO14/15) is essential.
 
 ## Where we left off (v0.4.178 -> SSH hardened: reconnect + self-heal + scp/sftp)
 
