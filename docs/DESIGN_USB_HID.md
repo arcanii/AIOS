@@ -338,6 +338,98 @@ VL805/PCIe. So Phase D needs, BEFORE any controller MMIO access, ONE of:
 Then the brcmstb bring-up, then D.0 (the >4GB-window seL4 kernel change) for the
 xHCI BAR. NEVER read a power-gated peripheral first -- it SErrors -> kernel halt.
 
+### Gate-1 implementation (2026-06-08) -- crash-safe power confirm + opt-in probe
+
+Implemented in `src/plat/rpi4/pcie_brcmstb.c` + `src/boot/boot_dtb.c` (HW-PENDING,
+QEMU cannot exercise the brcmstb path). Two corrections to the earlier plan came
+out of reading the Linux/RPi sources:
+
+1. **`NOTIFY_XHCI_RESET` does NOT power the root complex.** Raspberry Pi firmware
+   engineer (forums.raspberrypi.com t=365719): *"There is no VL805 reload
+   sequence from the firmware and it expects the kernel to have done the PCI setup
+   first."* The brcmstb RC is powered by the FIRMWARE AT BOOT, gated by the
+   bootloader EEPROM (`VL805=1`); there is no reliable OS-side RC power-on.
+   `NOTIFY_XHCI_RESET` (tag `0x00030058`, payload one u32 `dev_addr=0x100000` for
+   the hardwired bus1/dev0/fn0) is the post-link call to RELOAD the VL805 device
+   firmware after a PCI reset -- so it now lives on the reset path, after the link
+   comes back up, NOT as a power-on.
+2. **Therefore the only honest crash-safety is a real gate, not a magic mailbox.**
+   AIOS cannot power the RC, so it (a) issues a best-effort VC-mailbox power request
+   (`SET_DOMAIN_STATE` USB=6 on) + CONFIRM (`GET_DOMAIN_STATE` USB) -- mailbox +
+   RAM only, so these CANNOT SError -- and (b) gates the actual controller MMIO
+   behind a compile-time opt-in `PCIE_PROBE_LEVEL` (default 0).
+
+What shipped:
+- `boot_dtb.c parse_pcie`: re-enabled the BCM2711 fixed-address fallback (regs
+  `0xFD500000`, window CPU `0x6_00000000` / PCI `0xC0000000`, bus 0-1) so
+  `has_pcie=1` on RPi4 and `plat_pcie_init` runs. `#ifdef PLAT_RPI4` -> QEMU
+  untouched.
+- `pcie_brcmstb.c`: a self-contained VC-mailbox helper (own property buffer pinned
+  LOW at `0x3A001000`, the page after display's `0x3A000000`, so the GPU-region
+  device-untyped watermark stays ascending; it reuses the pre-mapped
+  `dev_vcmbox_vaddr`). `pcie_power_confirm()` does SET+GET_DOMAIN_STATE and returns
+  whether the firmware reports USB powered. `PCIE_PROBE_LEVEL`:
+  - **0 (default, cannot brick):** mailbox request + confirm + serial log, then
+    RETURN -- no controller read. The level-0 boot tells you (serial) the USB
+    domain state before you ever risk `0xFD500000`.
+  - **1 (opt-in):** after a positive confirm, read the controller and run the D.1
+    link bring-up + VL805 config detect (`bus1 dev0` VID/PID/class; "VL805 xHCI
+    DETECTED" when class==0x0C0330). On the reset path it issues NOTIFY_XHCI_RESET.
+    Still returns -1 (no usable xHCI BAR -- that is D.2 / gate 2).
+
+The USB power domain is a PROXY (it is not the RC power rail), so a level-1 boot
+can still SError if the firmware left the RC gated and the domain proxy is a
+false-positive -- which is why the controller read is a deliberate opt-in and the
+recovery image (`disk/sdcard-rpi4.img`) must stay on hand. HW test order:
+1. Flash the level-0 image (`disk/sdcard-rpi4-phaseD.img`), capture serial
+   (`aios_console.py monitor /dev/cu.usbserial-0001 --baud 115200`), read the
+   `[pcie] mbox GET_DOMAIN_STATE(USB) -> on=?` line. Cannot brick.
+2. Set `VL805=1` in the EEPROM (`rpi-eeprom-config` on Raspberry Pi OS).
+3. Rebuild `build-rpi4` with `-DPCIE_PROBE_LEVEL=1` (or edit the `#define`), remake
+   the image, flash, and look for `link=UP` + `VL805 xHCI DETECTED`. If it SErrors
+   ("halting... Kernel entry via Unknown"), reflash `disk/sdcard-rpi4.img`.
+
+### Level-0 HW result (2026-06-08, serial-captured)
+The level-0 image booted SAFE to login (DHCP .8, ping, SNTP, HDMI all up -- no
+crash), confirming the diagnostic path. Two findings changed the design:
+- **The controller IS power-gated.** The firmware boot-ROM log shows `[sdcard]
+  vl805.bin not found` -> `XHCI-STOP` -> `PCI0 reset`. So a controller read now
+  would SError -- EEPROM `VL805=1` is required first (as expected).
+- **The VC power-domain mailbox tags are UNRELIABLE.** `SET_DOMAIN_STATE(USB,on)`
+  just echoed `state=1`; `GET_DOMAIN_STATE(USB)` returned garbage (`0x3edd2d0`, not
+  0/1). The original plan to GATE the controller read on a `GET_DOMAIN_STATE`
+  confirm is therefore unsafe -- a garbage-nonzero value falsely reads as
+  "powered". **Revised design:** the mailbox calls are INFORMATIONAL ONLY (logged
+  raw); the sole gate is the deliberate `PCIE_PROBE_LEVEL=1` opt-in, set only after
+  `VL805=1` makes the `XHCI-STOP` line disappear. There is no reliable OS-side
+  runtime power check on this firmware.
+
+### RE-DIAGNOSIS 2026-06-08 -- it was a reset-ORDERING bug, not a power-gate
+Reading Circle (a working bare-metal Pi4 USB stack, `lib/bcmpciehostbridge.cpp`)
+plus the RPi docs overturned the power-gate theory:
+- **Circle does NO mailbox / clock / power call** -- it runs the brcmstb reset
+  sequence and THEN reads `PCIE_MISC_REVISION`. So the core is normally readable
+  bare-metal; nothing needs powering.
+- **The real v0.4.183 bug:** AIOS read the PCIe-CORE registers (`MISC_REVISION`
+  0x406c, `PCIE_STATUS` 0x4068) in its opening printf, BEFORE the reset sequence.
+  The MISC/core block (0x4xxx) is only clocked AFTER the bridge reset is deasserted
+  + SERDES IDDQ cleared. `RGR1_SW_INIT_1` (0x9210) is the always-on reset
+  controller. U-Boot/Linux/Circle do the RGR1 reset dance FIRST, then read core.
+  AIOS read core first -> SError. (The crash log "first read of MISC_REVISION/
+  PCIE_STATUS faulted" matches exactly.)
+- **`VL805=1` is COMPUTE MODULE 4 ONLY** (RPi docs, verbatim "Compute Module 4
+  only") -- it does nothing on a Pi 4B and can panic if misapplied. This board (rev
+  1.1, boardrev c03111) also has a DEDICATED VL805 SPI EEPROM, so the VL805 reloads
+  its own firmware after our PCI reset. So the original path (a) was a dead end.
+
+**Fix shipped:** `pcie_brcmstb.c` rewritten -- `bringup()` (RGR1 reset -> deassert
+-> SERDES IDDQ) runs FIRST, then the core is read; removed the premature opening
+read, the "skip reset if link up" path, and ALL the (debunked) VC-mailbox code.
+`PCIE_PROBE_LEVEL` stays the opt-in gate (default 0 = no controller MMIO). NEXT HW
+test (NO EEPROM change): flash the LEVEL-1 `disk/sdcard-rpi4-phaseD.img`, expect
+`brcmstb ... link=UP` + `VID=1106 PID=3483 ... VL805 xHCI DETECTED`; if it SErrors,
+reflash `disk/sdcard-rpi4.img`. Then gate 2 / D.2 (seL4 >4GB window + xHCI BAR).
+
 ## References
 
 - USB xHCI 1.2 specification (usb.org)

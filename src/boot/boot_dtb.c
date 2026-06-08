@@ -264,15 +264,29 @@ static void parse_pcie(const void *fdt) {
             hw_info.has_pcie = 1;
     }
 
-    /* RPi4/BCM2711: do NOT force has_pcie on here. The fixed-address fallback was
-     * tried (2026-06-08) and CRASHED the boot ("halting... Kernel entry via
-     * Unknown") -- the firmware POWER-GATES the PCIe controller when the VL805
-     * fails to init ("vl805.bin not found / XHCI-STOP"), so the very first MMIO
-     * read of 0xFD500000 faults (SError) even though the vaddr maps fine. Phase D
-     * therefore needs AIOS to POWER ON the PCIe domain via the VC mailbox BEFORE
-     * touching the controller (see DESIGN_USB_HID.md). Until then, leave has_pcie
-     * as parsed (false on RPi4) so plat_pcie_init is skipped and the boot is
-     * safe. QEMU is unaffected (generic-ECAM parse above sets has_pcie there). */
+#ifdef PLAT_RPI4
+    /* RPi4/BCM2711 fixed-address fallback (USB HID Phase D). The firmware-modified
+     * runtime DTB does NOT expose a usable brcmstb PCIe MMIO window, so the parse
+     * above leaves has_pcie=0. Force the known BCM2711 PCIe addresses so
+     * plat_pcie_init runs. The earlier crash (2026-06-08, "halting... Kernel entry
+     * via Unknown") was an UNGUARDED first read of a POWER-GATED controller; that
+     * guard now exists -- pcie_brcmstb.c confirms power via the VC mailbox before
+     * any MMIO and gates the controller read behind PCIE_PROBE_LEVEL (default
+     * diagnostic-only, no read). So setting has_pcie here is now SAFE. See
+     * docs/DESIGN_USB_HID.md "HW RESULT". QEMU is unaffected (compiled out). */
+    if (!hw_info.has_pcie) {
+        hw_info.pcie_ecam_paddr = 0xFD500000UL;   /* brcmstb controller registers */
+        hw_info.pcie_ecam_size  = 0x0000A000UL;   /* 10 pages (covers up to 0x9310) */
+        hw_info.pcie_mmio_pci   = 0xC0000000UL;    /* PCI side of the outbound window */
+        hw_info.pcie_mmio_cpu   = 0x600000000UL;   /* CPU side (needs D.2 kernel window) */
+        hw_info.pcie_mmio_size  = 0x40000000UL;    /* 1 GB outbound window */
+        hw_info.pcie_bus_start  = 0;
+        hw_info.pcie_bus_end    = 1;
+        hw_info.has_pcie        = 1;
+        printf("[hw] pcie: BCM2711 fixed-address fallback (regs 0x%lx) -- Phase D\n",
+               (unsigned long)hw_info.pcie_ecam_paddr);
+    }
+#endif
 }
 
 static void parse_memory(const void *fdt) {

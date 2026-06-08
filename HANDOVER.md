@@ -113,29 +113,37 @@ Bug fixed in-session: cookie=NULL shared pages MUST be explicitly unmapped befor
 destroy (sel4utils `free_page` no-ops them) or each leaks a root cslot per proc ->
 "Cannot fork" under storms; mirrors `cow_release_proc`. See `project_proc_capacity`.
 
-**USB HID keyboard (HCI) -- A/B/C QEMU-complete; D HW-blocked.** A USB keyboard
-types into the AIOS shell on QEMU: PCIe ECAM -> xHCI -> enumeration -> HID ->
-keymap -> SER_KEY_PUSH. Phases A (`src/plat/qemu-virt/pcie_ecam.c`),
-B (`src/usb/xhci.c`), C (enumeration + HID + polling driver thread) all committed
-+ QEMU-verified (`scripts/xhci_key_qemu_test.py` PASS). QEMU-first: Layers 2-5 are
-platform-independent; only Layer 1 (PCIe) differs. **Phase D (RPi4 real HW) is
-BLOCKED on two gates found by HW testing:** (1) the firmware POWER-GATES the PCIe
-controller (VL805 init fails -> reading `0xFD500000` SErrors -> kernel halt) --
-needs a VC-mailbox power-on (`RPI_POWER_DOMAIN_USB=6`, `SET_DOMAIN_STATE`) BEFORE
-any controller access; (2) the PCIe MMIO window (CPU `0x6_00000000`) is above seL4
-bcm2711's 4GB device-untyped top -- needs a kernel device-region extension for the
-xHCI BAR. Design + findings: `docs/DESIGN_USB_HID.md` +
-`docs/NEXT_20260607c_usb_hid.md` + the `project_usb_hid` memory. The brcmstb path
-is HW-only (QEMU has no brcmstb). **NEVER touch a power-gated BCM2711 peripheral
-without a mailbox power-on first** (SError -> halt -> unreachable Pi, reflash to
-recover).
+**USB HID keyboard (HCI) -- A/B/C QEMU-complete; D.1 (PCIe + VL805 detection)
+COMPLETE ON REAL HW.** A USB keyboard types into the AIOS shell on QEMU: PCIe ECAM ->
+xHCI -> enumeration -> HID -> keymap -> SER_KEY_PUSH (Phases A
+`src/plat/qemu-virt/pcie_ecam.c`, B `src/usb/xhci.c`, C enum+HID+driver --
+QEMU-verified, `scripts/xhci_key_qemu_test.py` PASS). Layers 2-5 are platform-
+independent; only Layer 1 (PCIe) differs.
 
-### Next-up options (USB HID Phase D, both HW-iterated)
-1. VC-mailbox power-on (`RPI_POWER_DOMAIN_USB=6`) before `plat_pcie_init`, then
-   re-enable the fixed-address PCIe path -- a gamble (USB domain may gate DWC2,
-   not PCIe); make it crash-safe (GET_DOMAIN_STATE confirm before any access).
-2. The seL4 bcm2711 >4GB-window device-region extension (D.0) for the xHCI BAR.
-Both are flash-risky; serial capture (USB-serial GPIO14/15) is essential.
+**Phase D.1 (RPi4 real HW), 2026-06-08 -- DONE.** The brcmstb PCIe link trains AND
+the VL805 xHCI ENUMERATES on real hardware:
+`[pcie] bus1 dev0: VID=1106 PID=3483 class=0c0330` + `VL805 xHCI DETECTED`. Seven
+bugs fixed across ~16 HW boots: reset-ordering SError (NOT a power-gate -- the early
+theory was wrong), PERST polarity inverted, CRS retry, NOTIFY-is-a-reset-not-a-loader,
+outbound MEM window, SSC via the internal MDIO bus (link now 5.0 Gbps x1, matches
+U-Boot), and **the final fix: RC bridge BUS-NUMBER forwarding** (set RC sec=1/sub=1 at
+base+0x18 so the RC forwards config to bus 1 -- U-Boot's generic PCI core does this,
+the driver probe does not). Proved the chip works by running the user's local U-Boot
+(`../u-boot`, prebuilt `u-boot.bin`: `Bus xhci_pci: 2 USB Device(s) found`), then made
+our driver match. `src/plat/rpi4/pcie_brcmstb.c`; src default PROBE_LEVEL=0 (safe, no
+controller MMIO); `disk/kernel8.img` = PROBE_LEVEL=1 (detects). Flash-free kernel
+updates: `scripts/mkkernel8.py` ([[feedback_flashfree_kernel]]). Full saga + all 7
+fixes: **`docs/NEXT_20260608_usb_phase_d.md` "FINAL STATUS"** + `project_usb_hid`
+memory. Uncommitted; version stays 0.4.183 (bump at the keyboard, D.2).
+
+### Next step (USB HID) -- D.2: the actual keyboard
+D.1 (detection) is done. For a key to type: in `pcie_bringup_and_detect` program the
+VL805 BAR0 in the PCI window + set `pcie_xhci_present`; then the seL4 bcm2711 kernel
+change to expose the PCIe outbound window >4GB (the BAR is at CPU 0x6_00000000, above
+the 4GB device-untyped top) so `xhci_init()` (`src/usb/xhci.c`, Layers 2-5, already
+QEMU-verified) can map it; the existing polling driver feeds keys via SER_KEY_PUSH.
+Then bump version.h -> 0.4.184 + commit. Steps in `docs/NEXT_20260608_usb_phase_d.md`
+"REMAINING -> D.2". The brcmstb path is HW-only (QEMU has no brcmstb).
 
 ## Where we left off (v0.4.178 -> SSH hardened: reconnect + self-heal + scp/sftp)
 
