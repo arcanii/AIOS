@@ -14,11 +14,17 @@ A research microkernel operating system built on seL4
 
 Architectures / Hardware Supported
 - :white_check_mark: AArch64 (QEMU virt)
-- :white_check_mark: AArch64 (Raspberry Pi 4 Model B) -- 4-core SMP, GENET networking, HDMI, SSH + netconsole over LAN (serial : TXD : GPIO14, RXD : GPIO15)
+- :white_check_mark: AArch64 (Raspberry Pi 4 Model B) -- 4-core SMP, GENET networking, HDMI console, USB keyboard (xHCI over PCIe), SSH + netconsole over LAN (serial : TXD : GPIO14, RXD : GPIO15)
 - :white_medium_square: AArch64 (Raspberry Pi 5)
 - :white_medium_square: X86-64 
 
 ## Latest Achievements
+- **USB keyboard on real RPi4** -- a USB HID keyboard drives the AIOS shell. Full stack
+  brought up on real hardware: brcmstb PCIe root complex -> VIA VL805 xHCI controller ->
+  USB hub enumeration -> HID boot keyboard, all over the BCM2711 PCIe (link trains 5.0 GT/s).
+  The interactive shell now mirrors to the HDMI framebuffer console, so the Pi runs
+  fully standalone: **USB keyboard in, HDMI monitor out, no serial cable or laptop**.
+  (QEMU-verified end to end via `scripts/xhci_key_qemu_test.py` + the hub variant.)
 - **RPi4 4-core SMP** -- all four Cortex-A72 cores brought up via spin-table, HW-verified (`/proc/hw` cores=4, 0% ping loss)
 - **Concurrent-process scaling** -- parallel-pipeline ceiling raised ~5x via higher process limits + demand-paged ELF .text (each process keeps resident only the code it runs)
 - **SSH over LAN** -- always-on (getty auto-starts sshd): AES-256-CTR + HMAC-SHA-256, password auth, sequential reconnect with shell self-heal, sftp + scp
@@ -45,7 +51,43 @@ External AI (Claude) is used as a development tool for code generation
 and review. This project is also a study in AI-assisted systems programming.
 The long-term goal is self-hosted development within AIOS itself.
 
-**Current version:** v0.4.183
+**Current version:** v0.4.184
+
+## Quick Start
+
+**First-time setup** (one-time): work through [Prerequisites](#prerequisites) and
+[Setting Up Dependencies](#setting-up-dependencies) below -- those install the
+cross-toolchain and the gitignored seL4 / sbase / dash sources.
+
+Once the toolchain and `deps/` are in place, the fastest path to a running system on
+**QEMU**:
+
+```bash
+cd AIOS
+
+# 1. Configure the build (once):
+mkdir -p build-04 && cd build-04
+cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=../deps/kernel/gcc.cmake \
+    -DCROSS_COMPILER_PREFIX=aarch64-linux-gnu- ..
+cd ..
+
+# 2. Build EVERYTHING in one command (kernel + root task + sbase + dash + tcc + disk):
+python3 scripts/build_apps.py
+
+# 3. Boot in QEMU:
+qemu-system-aarch64 -machine virt,virtualization=on -cpu cortex-a53 -smp 4 -m 2G \
+    -serial mon:stdio -device ramfb \
+    -drive file=disk/disk_ext2.img,format=raw,if=none,id=hd0 \
+    -device virtio-blk-device,drive=hd0 \
+    -kernel build-04/images/aios_root-image-arm-qemu-arm-virt
+```
+
+Log in as `root` / `root` (the login shell is dash). `scripts/build_apps.py` is the
+one-command rebuild for everyday work -- it runs ninja, sbase, dash, tcc, and remakes
+the disk image. The detailed per-component steps are under [Building](#building).
+
+To run on a **real Raspberry Pi 4**, see
+[Running on Raspberry Pi 4](#running-on-raspberry-pi-4-real-hardware).
 
 ## What Works
 
@@ -63,6 +105,8 @@ The long-term goal is self-hosted development within AIOS itself.
 - **SSH server** -- AES-256-CTR + HMAC-SHA-256, password auth, Ctrl-C forwarding, sftp + scp file transfer; always-on (getty auto-starts sshd), survives sequential reconnects with shell self-heal
 - **Graphical display** -- ramfb (QEMU) + VideoCore mailbox (RPi4) framebuffer, 1024x768, fb_console
 - **Display server IPC** -- user programs draw to framebuffer via disp_ep (fbshow command)
+- **HDMI console** -- the interactive shell mirrors to the framebuffer (`tty_server` -> `display_server` -> `fb_console`), so a monitor + USB keyboard is a full standalone console (no serial)
+- **USB HID keyboard** -- xHCI host controller driver with USB hub enumeration + HID boot-protocol keymap; generic ECAM (QEMU) and brcmstb PCIe (RPi4 VL805); keystrokes feed the tty like serial input
 - **Networking** -- virtio-net (QEMU) + GENET Ethernet (RPi4), ARP/ICMP/UDP/TCP, DHCP, DNS (`nslookup`), SNTP, HTTP server, POSIX sockets
 - **Network control** -- netconsole: run commands, push/pull files (`pi_filexfer.py`), and reboot the Pi over the LAN
 - **Process tools** -- `pidof` / `pkill` / `killall` (process lookup + signalling via /proc/status)
@@ -212,6 +256,10 @@ cc -o mksignames mksignames.c && ./mksignames
 
 ## Building
 
+> **Tip:** after the one-time `cmake` configure in step 1, `python3 scripts/build_apps.py`
+> runs every step below in a single command (ninja + sbase + dash + tcc + disk image).
+> The manual steps are kept here for reference and first-time setup.
+
 ### 1. Build kernel + root task + all AIOS programs
 
 ```bash
@@ -337,6 +385,65 @@ python3 scripts/mkdisk.py disk/disk_ext2.img \
 # Disk rebuild IS needed -- apps load from ext2
 ```
 
+## Running on Raspberry Pi 4 (real hardware)
+
+AIOS boots on a stock Raspberry Pi 4 Model B from an SD card. The RPi4 target builds
+into a separate `build-rpi4/` tree (BCM2711 / Cortex-A72, 4-core SMP) selected by
+`settings-rpi4.cmake`.
+
+### 1. Configure + build the RPi4 image (once)
+
+```bash
+cd AIOS
+mkdir -p build-rpi4 && cd build-rpi4
+cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=../deps/kernel/gcc.cmake \
+    -DCROSS_COMPILER_PREFIX=aarch64-linux-gnu- \
+    -DAIOS_SETTINGS=settings-rpi4.cmake ..
+ninja
+cd ..
+```
+
+(Build the userspace disk first if you have not already -- `python3 scripts/build_apps.py`
+produces `disk/disk_ext2.img`, which the SD image embeds.)
+
+### 2. Build the bootable SD-card image
+
+```bash
+python3 scripts/mksdcard.py --mem 4096 --output disk/sdcard-rpi4.img
+```
+
+This writes a ~193 MB image with a **FAT32** partition (Raspberry Pi firmware +
+`config.txt` + `kernel8.img`) and an **ext2** partition (the AIOS system disk).
+
+### 3. Flash the SD card
+
+Easiest is [balenaEtcher](https://etcher.balena.io/): select `disk/sdcard-rpi4.img`,
+your SD card, then Flash. (macOS CLI helper: `scripts/flash-rpi4.sh /dev/diskN`.)
+
+### 4. Boot
+
+Insert the card and power on. AIOS boots to a login prompt on the **HDMI monitor** --
+log in with a **USB keyboard** (`root` / `root`); the Pi runs standalone, no serial
+needed. Optionally a USB-serial adapter on GPIO14/15 (115200 8N1) gives the same
+console over serial. After DHCP the Pi is on the LAN for SSH (port 2222) and netconsole.
+
+### Fast iteration: flash-free updates
+
+Re-flashing 193 MB per change is slow. Most development does not need it:
+
+```bash
+# KERNEL / root-task changes -> swap just kernel8.img on the FAT partition:
+ninja -C build-rpi4
+python3 scripts/mkkernel8.py                        # -> disk/kernel8.img
+cp disk/kernel8.img /Volumes/AIOSBOOT/kernel8.img   # FAT partition mounts on macOS
+diskutil eject AIOSBOOT                              # reinsert + power on
+
+# USERSPACE / app changes -> push over the LAN, no reflash:
+python3 scripts/pi_filexfer.py push build-04/sbase/<tool> /bin/<tool> <pi-ip>
+```
+
+See `hw/rpi4/BOOT_NOTES.md` for the firmware `config.txt` and boot details.
+
 ## Hardware Targets
 
 - **Development:** QEMU virt (AArch64) -- current platform
@@ -362,6 +469,7 @@ python3 scripts/mkdisk.py disk/disk_ext2.img \
 - [DESIGN_NET.md](docs/DESIGN_NET.md) -- Networking subsystem design (virtio-net)
 - [DESIGN_TCC.md](docs/DESIGN_TCC.md) -- tcc self-hosted compilation design
 - [DESIGN_ZSH.md](docs/DESIGN_ZSH.md) -- zsh shell port design
+- [DESIGN_USB_HID.md](docs/DESIGN_USB_HID.md) -- USB HID keyboard: PCIe + xHCI + hub + HID
 
 ## Project Status
 

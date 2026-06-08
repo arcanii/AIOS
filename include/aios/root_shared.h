@@ -93,6 +93,7 @@
 #define DISP_FILL_RECT   113
 #define DISP_CLEAR       114
 #define DISP_CUBE        115   /* software 3D: spinning wireframe cube demo */
+#define DISP_CONSOLE     116   /* mirror tty output to the HDMI fb_console (len in MR0, chars MR1+) */
 
 /* ── Limits ── */
 

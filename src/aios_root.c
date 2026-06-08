@@ -289,6 +289,36 @@ int main(int argc, char *argv[]) {
     printf("[boot] RAM: %lu MB, UART: %s\n",
            (unsigned long)(total_mem / (1024 * 1024)), uart ? "OK" : "no");
     AIOS_LOG_INFO_V("RAM available: ", total_mem / (1024 * 1024));
+
+#ifdef PLAT_RPI4
+    /* USB HID Phase D.2 probe (SAFE -- bootinfo read only, no MMIO). The VL805
+     * xHCI BAR lives in the PCIe outbound window at CPU 0x6_00000000, above the
+     * 4GB top of RAM. seL4 creates DEVICE untypeds up to CONFIG_PADDR_USER_DEVICE_TOP
+     * (2^44), low->high, so this window SHOULD already be mappable WITHOUT a kernel
+     * change. Confirm it from the serial log before any controller MMIO. */
+    {
+        uint64_t want = 0x600000000ULL;   /* hw_info.pcie_mmio_cpu (VL805 BAR base) */
+        int covered = 0;
+        for (seL4_Word i = info->untyped.start; i < info->untyped.end; i++) {
+            seL4_UntypedDesc *ut = &info->untypedList[i - info->untyped.start];
+            if (!ut->isDevice) continue;
+            uint64_t s = ut->paddr, e = s + (1ULL << ut->sizeBits);
+            if (want >= s && want < e) {
+                printf("[pcie] D.2 window 0x%lx IS a device untyped [0x%lx..0x%lx) "
+                       "bits=%u -- BAR mappable, NO kernel change needed\n",
+                       (unsigned long)want, (unsigned long)s, (unsigned long)e,
+                       ut->sizeBits);
+                covered = 1;
+                break;
+            }
+        }
+        if (!covered)
+            printf("[pcie] D.2 window 0x%lx NOT in any device untyped -- the seL4 "
+                   ">4GB device-window kernel change IS needed (D.2b)\n",
+                   (unsigned long)want);
+    }
+#endif
+
     AIOS_LOG_INFO("All subsystems OK");
     printf("[boot] All subsystems OK\n\n");
 
@@ -301,6 +331,18 @@ int main(int argc, char *argv[]) {
     }
     seL4_TCB_SetPriority(seL4_CapInitThreadTCB,
                          seL4_CapInitThreadTCB, 200);
+
+#ifdef PLAT_RPI4
+    /* Reserve the USB xHCI DMA pool NOW, while low memory (<3GB, the RPi4 brcmstb
+     * inbound DMA window) is still plentiful. By the time xhci_init runs (after the
+     * fs cache, display FB, and warmup consume the low frames) the allocator only
+     * hands back pages above 3GB, which the controller cannot DMA to. has_pcie => an
+     * xHCI controller may be present. Idempotent; xhci_init falls back to it. */
+    if (hw_info.has_pcie) {
+        extern int xhci_dma_reserve(void);
+        xhci_dma_reserve();
+    }
+#endif
 
     /* Phase 2: Filesystem (virtio-blk + ext2 + VFS)
      * v0.4.102: returns status -- if disk fs mount fails, system enters

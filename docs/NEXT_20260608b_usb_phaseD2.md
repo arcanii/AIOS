@@ -3,6 +3,39 @@
 Seed for a fresh session. Read with `HANDOVER.md`, the `project_usb_hid` memory, and
 `docs/NEXT_20260608_usb_phase_d.md` ("FINAL STATUS" -- the D.1 saga + all 7 fixes).
 
+## STATUS 2026-06-08 -- D.2 IMPLEMENTED + build-clean (HW test PENDING, UNCOMMITTED)
+
+Code done; needs a Pi + serial. THREE files, all additive + crash-safe (version
+stays 0.4.183 -- bump at the first keypress):
+- **D.2a** `src/plat/rpi4/pcie_brcmstb.c`: `cfg_wr` + `program_xhci_bar()` -- sizes
+  the VL805 BAR0 (64-bit aware), places it at PCI 0xC0000000 / CPU 0x6_00000000
+  (the outbound window), enables EP mem+busmaster, sets `pcie_xhci_*`. Safe config ops.
+- **D.2b is very likely NOT NEEDED (the big finding).** The "BAR is above the 4GB
+  device-untyped top" was inferred from devices_gen.h, NOT the real ceiling.
+  `CONFIG_PADDR_USER_DEVICE_TOP` = **2^44** (hyp OFF), and `create_untypeds`
+  (deps/kernel boot.c:811) makes DEVICE untypeds up to 2^44 low->high before the 230
+  cap -- 0x6_00000000 lands ~5 aligned splits past end-of-RAM (0xfc000000), well
+  inside the cap. So `sel4platsupport_alloc_frame_at(0x600000000)` should already work
+  with NO deps/kernel edit. A SAFE always-on diagnostic in `src/aios_root.c`
+  (PLAT_RPI4, bootinfo read, no MMIO) prints whether the window IS a device untyped --
+  it answers this from one serial boot. Only do the kernel edit if it says NOT COVERED.
+- **Staged `PCIE_PROBE_LEVEL`** (pcie_brcmstb.c): 0 safe default; **1** = D.1 + D.2a
+  BAR program + diagnostic (NO BAR read -> crash-safe; the working-tree default + the
+  built `disk/kernel8.img`); **2** = also set `pcie_xhci_present` -> `xhci_init()` maps
+  + drives the BAR (the keyboard; the BAR read is the one SError risk). `src/usb/xhci.c`
+  map_bar cap 8->64 pages (VL805 BAR up to 64KB). Reset the #define to 0 before commit.
+- **Verified:** build-rpi4 + build-04 clean; `xhci_key_qemu_test` PASS; `smp_qemu_test`
+  7/7. `disk/kernel8.img` = level-1 confirm build (flash-free).
+- **HW test (Bryan):** flash `disk/kernel8.img` (lvl 1, crash-safe), serial-capture.
+  Expect `VL805 xHCI DETECTED` + `VL805 BAR0 -> PCI 0xc0000000 / CPU 0x600000000` +
+  `[pcie] D.2 window 0x600000000 IS a device untyped ... NO kernel change needed`. If
+  so -> set `PCIE_PROBE_LEVEL` 1->2, `ninja -C build-rpi4 && python3
+  scripts/mkkernel8.py`, FAT-copy, boot -> a USB keyboard types -> bump 0.4.184 +
+  commit. If "NOT COVERED" -> deps/kernel bcm2711 device-region edit first, then lvl 2.
+
+---
+
+
 ## Where things are (D.1 DONE on real HW)
 Phase D.1 is COMPLETE on the real RPi4: the brcmstb PCIe link trains AND the VL805
 xHCI enumerates. Serial (PROBE_LEVEL=1, `src/plat/rpi4/pcie_brcmstb.c`):

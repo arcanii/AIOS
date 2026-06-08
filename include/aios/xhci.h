@@ -14,4 +14,10 @@
  */
 int xhci_init(void);
 
+/* Reserve the controller DMA pool. MUST be called EARLY in boot (before fs/display
+ * consume the low RAM) so the rings land below the RPi4 3GB inbound DMA window;
+ * xhci_init() calls it again as an idempotent fallback. Harmless where there is no
+ * DMA-window limit (e.g. QEMU). */
+int xhci_dma_reserve(void);
+
 #endif /* AIOS_XHCI_H */

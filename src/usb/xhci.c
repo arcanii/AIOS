@@ -70,6 +70,7 @@
 #define CRCR_RCS          (1u << 0)   /* ring cycle state */
 
 static volatile uint8_t *xhci_base;   /* mapped BAR0 */
+static uint32_t xhci_bar_bytes;       /* bytes actually mapped (bounds-check rt/db off) */
 static uint32_t cap_len, rt_off, db_off;
 static uint32_t max_slots, max_ports;
 static int      ctx_csz64;            /* HCCPARAMS1.CSZ: 1 => 64-byte contexts */
@@ -108,6 +109,7 @@ static inline void doorbell(uint32_t n, uint32_t target) {
 #define TRB_ENABLE_SLOT   9
 #define TRB_ADDRESS_DEV   11
 #define TRB_CONFIG_EP     12
+#define TRB_EVAL_CONTEXT  13
 #define TRB_NOOP_CMD      23
 #define TRB_TRANSFER_EVT  32
 #define TRB_CMD_COMP_EVT  33
@@ -171,31 +173,86 @@ static int cmd_submit(uint64_t param, uint32_t status, uint32_t type, uint32_t s
     return -1;
 }
 
-/* Allocate one zeroed, non-cacheable DMA page; returns vaddr + paddr. */
-static void *dma_page(uint64_t *pa_out) {
+/* ---- low DMA pool (one 2 MB frame, carved into 4 KB pages) ----
+ * The controller DMAs to the PADDRs we hand it. On the RPi4 the brcmstb inbound DMA
+ * window is the low 3 GB (PCI [0, 0xC0000000)); the outbound window owns [0xC0000000,..).
+ * A vka_alloc_frame run LATE returns pages ABOVE 3 GB (observed 0xfb940000) that the
+ * controller cannot reach -> every command times out (cc=-1, no event). The fix:
+ * reserve ONE 2 MB frame and REQUIRE it below 3 GB, then carve the rings/contexts from
+ * it. Reserved EARLY (xhci_dma_reserve from aios_root, before fs/display eat low RAM)
+ * so a low frame is available; a 2 MB frame also lets us read its paddr directly
+ * (GetAddress) and cleanly retry-for-low. QEMU DMA is unrestricted, so any address works. */
+#define DMA_LIMIT      0xC0000000ULL            /* top of the RPi4 inbound DMA window */
+#define DMA_POOL_PAGES 512                       /* 2 MB / 4 KB */
+static uint8_t  *dma_pool_va;                   /* contiguous mapped base (2 MB) */
+static uint64_t  dma_pool_pa;                   /* contiguous base paddr (2 MB aligned) */
+static uint32_t  dma_pool_used;
+
+/* Reserve the xHCI DMA pool. Idempotent. Call EARLY (low RAM still plentiful) so the
+ * 2 MB frame lands below 3 GB; a later call is a no-op. Retries a few times for a low
+ * frame, releasing any high rejects. Returns 0 on success. */
+int xhci_dma_reserve(void) {
+    if (dma_pool_va) return 0;
+    vka_object_t rejects[8];
+    int nrej = 0, have = 0;
     vka_object_t fr;
-    if (vka_alloc_frame(&vka, seL4_PageBits, &fr)) return NULL;
-    void *va = vspace_map_pages(&vspace, &fr.cptr, NULL,
-                                seL4_AllRights, 1, seL4_PageBits, 0 /* non-cacheable */);
-    if (!va) { vka_free_object(&vka, &fr); return NULL; }
-    seL4_ARM_Page_GetAddress_t ga = seL4_ARM_Page_GetAddress(fr.cptr);
-    if (ga.error) { return NULL; }
-    for (int i = 0; i < 4096; i++) ((volatile uint8_t *)va)[i] = 0;
-    *pa_out = ga.paddr;
+    for (int t = 0; t < 8 && !have; t++) {
+        if (vka_alloc_frame(&vka, seL4_LargePageBits, &fr)) break;   /* 2 MB frame */
+        seL4_ARM_Page_GetAddress_t ga = seL4_ARM_Page_GetAddress(fr.cptr);
+        if (!ga.error && ga.paddr + 0x200000ULL <= DMA_LIMIT) {
+            dma_pool_pa = ga.paddr; have = 1; break;
+        }
+        if (nrej < 8) rejects[nrej++] = fr; else vka_free_object(&vka, &fr);  /* keep -> next differs */
+    }
+    for (int i = 0; i < nrej; i++) vka_free_object(&vka, &rejects[i]);        /* release high rejects */
+    if (!have) {
+        /* No low frame -- accept whatever is left (QEMU is fine; the log flags RPi4). */
+        if (vka_alloc_frame(&vka, seL4_LargePageBits, &fr)) {
+            AIOS_LOG_ERROR("xHCI DMA pool: 2MB frame alloc failed"); return -1;
+        }
+        seL4_ARM_Page_GetAddress_t ga = seL4_ARM_Page_GetAddress(fr.cptr);
+        dma_pool_pa = ga.error ? 0 : ga.paddr;
+    }
+    dma_pool_va = (uint8_t *)vspace_map_pages(&vspace, &fr.cptr, NULL, seL4_AllRights,
+                                1, seL4_LargePageBits, 0 /* non-cacheable */);
+    if (!dma_pool_va) { AIOS_LOG_ERROR("xHCI DMA pool map failed"); return -1; }
+    dma_pool_used = 0;
+    int low = (dma_pool_pa + 0x200000ULL <= DMA_LIMIT);
+    printf("[xhci] DMA pool: 2MB @ phys 0x%lx%s\n", (unsigned long)dma_pool_pa,
+           low ? " (DMA-reachable)" : " (>3GB -- RPi4 DMA WILL FAIL)");
+    return 0;
+}
+
+/* Carve one zeroed page from the low DMA pool; returns vaddr + paddr. */
+static void *dma_page(uint64_t *pa_out) {
+    if (!dma_pool_va || dma_pool_used >= DMA_POOL_PAGES) {
+        AIOS_LOG_ERROR("xHCI DMA pool exhausted"); return NULL;
+    }
+    uint32_t i = dma_pool_used++;
+    void *va = dma_pool_va + (uint64_t)i * 0x1000;
+    for (int k = 0; k < 4096; k++) ((volatile uint8_t *)va)[k] = 0;
+    *pa_out = dma_pool_pa + (uint64_t)i * 0x1000;
     return va;
 }
 
-/* Map the controller's BAR0 register space (non-cacheable device memory). */
+/* Map the controller BAR0 register space (non-cacheable device memory).
+ * Capped at 64 pages (256 KB): the QEMU qemu-xhci BAR is 16 KB, the RPi4 VL805 BAR is
+ * up to 64 KB -- both well under the cap, which guards against a bogus huge size. On
+ * the RPi4 the alloc at CPU 0x6_00000000 is also the live test that the PCIe outbound
+ * window is backed by a device untyped (the D.2b question -- see aios_root.c). */
+#define XHCI_BAR_MAX_PAGES 64
 static int map_bar(void) {
     uint32_t pages = (uint32_t)((pcie_xhci_bar_size + 0xFFF) / 0x1000);
     if (pages == 0) pages = 1;
-    if (pages > 8) pages = 8;   /* xHCI register space is small; cap defensively */
-    seL4_CPtr caps[8];
+    if (pages > XHCI_BAR_MAX_PAGES) pages = XHCI_BAR_MAX_PAGES;
+    seL4_CPtr caps[XHCI_BAR_MAX_PAGES];
     for (uint32_t i = 0; i < pages; i++) {
         vka_object_t fr;
         if (sel4platsupport_alloc_frame_at(&vka, pcie_xhci_bar + (uint64_t)i * 0x1000,
                                             seL4_PageBits, &fr)) {
-            AIOS_LOG_ERROR("xHCI BAR frame alloc failed");
+            printf("[xhci] BAR frame alloc FAILED at CPU 0x%lx (page %u) -- the PCIe "
+                   "window is not a mappable device untyped (needs D.2b kernel change)\n",
+                   (unsigned long)(pcie_xhci_bar + (uint64_t)i * 0x1000), i);
             return -1;
         }
         caps[i] = fr.cptr;
@@ -203,6 +260,10 @@ static int map_bar(void) {
     xhci_base = (volatile uint8_t *)vspace_map_pages(&vspace, caps, NULL,
                     seL4_AllRights, pages, seL4_PageBits, 0 /* non-cacheable */);
     if (!xhci_base) { AIOS_LOG_ERROR("xHCI BAR map failed"); return -1; }
+    xhci_bar_bytes = pages * 0x1000u;
+    printf("[xhci] BAR mapped: CPU 0x%lx size 0x%lx (%u pages) -> %p\n",
+           (unsigned long)pcie_xhci_bar, (unsigned long)pcie_xhci_bar_size,
+           pages, (void *)xhci_base);
     return 0;
 }
 
@@ -430,15 +491,28 @@ void xhci_kbd_driver_fn(void *a, void *b, void *c) {
     }
 }
 
-/* Enable a slot, reset + address the device on port p, and read its device
- * descriptor. Returns 0 with dev_slot set on success. */
-static int setup_device(uint32_t p) {
-    if (port_reset(p)) return -1;
-    uint32_t speed = PORTSC_SPEED(op_r32(XHCI_PORTSC(p)));
+static void xhci_mdelay(int ms) { for (uint64_t dl = mono_deadline_ms(ms); mono_before(dl); ) {} }
 
+/* Enable a slot, set up its slot + EP0 contexts, Address Device, and read the 18-byte
+ * device descriptor into desc[]. Handles a device behind a hub: route = the path
+ * through the hub (the downstream port number for a single tier), root_port = the root
+ * hub port the topology hangs off, and parent_slot/parent_port give the xHC the TT
+ * info it needs for a LS/FS device behind a HS hub. route=0, parent_slot=0 for a device
+ * directly on a root port. Repurposes the single-device globals (dev_slot/ep0_ring/...).
+ * Returns the device class (desc[4]) or -1. */
+static int address_and_describe(uint32_t route, uint32_t root_port, uint32_t speed,
+                                uint32_t parent_slot, uint32_t parent_port,
+                                uint8_t desc[18]) {
     uint32_t evt[4];
     int cc = cmd_submit(0, 0, TRB_ENABLE_SLOT, 0, evt);
-    if (cc != CC_SUCCESS) { AIOS_LOG_WARN("Enable Slot failed"); return -1; }
+    if (cc != CC_SUCCESS) {
+        /* cc=-1 = no Command Completion Event (doorbell/ring/DMA path); cc>0 = a
+         * completion code. USBSTS HSE(bit2)/HCE(bit12) flags a host/DMA fault. */
+        printf("[xhci] Enable Slot FAILED cc=%d USBSTS=0x%x (HSE=%d HCE=%d)\n",
+               cc, op_r32(XHCI_USBSTS), (op_r32(XHCI_USBSTS) >> 2) & 1,
+               (op_r32(XHCI_USBSTS) >> 12) & 1);
+        return -1;
+    }
     dev_slot = EVT_SLOT(evt[3]);
 
     dev_ctx  = (volatile uint8_t *)dma_page(&dev_ctx_pa);
@@ -448,14 +522,17 @@ static int setup_device(uint32_t p) {
     ep0_enq = 0; ep0_cycle = 1;
     dcbaa[dev_slot] = dev_ctx_pa;
 
-    /* Input context: Input Control (Add A0|A1) + Slot + EP0 contexts. */
-    uint32_t mps = (speed == 4) ? 512 : (speed == 3 || speed == 1) ? 64 : 8;
+    /* EP0 max packet: SS=512, HS=64 are fixed; LS=8; FS is unknown until we read the
+     * descriptor, so start at 8 (the safe minimum) and correct it below. */
+    uint32_t mps = (speed == 4) ? 512 : (speed == 3) ? 64 : 8;
     volatile uint32_t *icc      = (volatile uint32_t *)(in_ctx + 0);
     volatile uint32_t *slot_ctx = (volatile uint32_t *)(in_ctx + CTX_SZ);
     volatile uint32_t *ep0_ctx  = (volatile uint32_t *)(in_ctx + 2 * CTX_SZ);
     icc[1] = 0x3;                                  /* Add slot ctx + EP0 ctx */
-    slot_ctx[0] = (1u << 27) | (speed << 20);      /* context entries=1, speed */
-    slot_ctx[1] = (p + 1) << 16;                   /* root hub port number (1-based) */
+    slot_ctx[0] = (1u << 27) | (speed << 20) | (route & 0xFFFFF);  /* entries=1, speed, route */
+    slot_ctx[1] = (root_port & 0xFF) << 16;        /* root hub port number (1-based) */
+    if (parent_slot && (speed == 1 || speed == 2))  /* LS/FS behind a HS hub -> TT info */
+        slot_ctx[2] = (parent_slot & 0xFF) | ((parent_port & 0xFF) << 8);
     ep0_ctx[1] = (4u << 3) | (3u << 1) | (mps << 16); /* EP type=Control, CErr=3, MPS */
     ep0_ctx[2] = (uint32_t)(ep0_ring_pa | 1);      /* TR dequeue ptr lo | DCS */
     ep0_ctx[3] = (uint32_t)(ep0_ring_pa >> 32);
@@ -464,20 +541,125 @@ static int setup_device(uint32_t p) {
 
     cc = cmd_submit(in_ctx_pa, 0, TRB_ADDRESS_DEV, dev_slot, evt);
     if (cc != CC_SUCCESS) { AIOS_LOG_WARN_V("Address Device cc=", (unsigned long)cc); return -1; }
-    printf("[xhci] device addressed: slot=%u speed=%u mps0=%u\n", dev_slot, speed, mps);
 
-    /* GET_DESCRIPTOR(device, 18 bytes) -- proves the control path end to end. */
     uint64_t buf_pa;
     volatile uint8_t *buf = (volatile uint8_t *)dma_page(&buf_pa);
     if (!buf) return -1;
-    cc = control_transfer(0x80, 6 /* GET_DESCRIPTOR */, (1u << 8) /* DEVICE */, 0, 18, buf_pa, 1);
-    if (cc != CC_SUCCESS) { AIOS_LOG_WARN_V("GET_DESCRIPTOR cc=", (unsigned long)cc); return -1; }
-    uint16_t vid = buf[8] | (buf[9] << 8);
-    uint16_t pid = buf[10] | (buf[11] << 8);
-    printf("[xhci] device descriptor: VID=%04x PID=%04x class=%u mps0=%u\n",
-           vid, pid, buf[4], buf[7]);
+    /* Read the first 8 bytes to learn the real EP0 max packet (FS devices vary 8..64),
+     * then correct the EP0 context via Evaluate Context before the full read. */
+    cc = control_transfer(0x80, 6, (1u << 8), 0, 8, buf_pa, 1);
+    if (cc != CC_SUCCESS) { AIOS_LOG_WARN_V("GET_DESCRIPTOR(8) cc=", (unsigned long)cc); return -1; }
+    uint32_t real_mps = buf[7];
+    if (speed == 1 && real_mps && real_mps != mps) {  /* FS: fix EP0 MPS */
+        icc[0] = 0; icc[1] = (1u << 1);               /* A1 = EP0 */
+        ep0_ctx[1] = (4u << 3) | (3u << 1) | (real_mps << 16);
+        arch_dsb();
+        cmd_submit(in_ctx_pa, 0, TRB_EVAL_CONTEXT, dev_slot, evt);
+        mps = real_mps;
+    }
+    cc = control_transfer(0x80, 6, (1u << 8), 0, 18, buf_pa, 1);
+    if (cc != CC_SUCCESS) { AIOS_LOG_WARN_V("GET_DESCRIPTOR(18) cc=", (unsigned long)cc); return -1; }
+    for (int i = 0; i < 18; i++) desc[i] = buf[i];
+    printf("[xhci] device: slot=%u speed=%u mps0=%u VID=%04x PID=%04x class=%u\n",
+           dev_slot, speed, mps, desc[8] | (desc[9] << 8), desc[10] | (desc[11] << 8), desc[4]);
+    return desc[4];
+}
 
-    /* C4: config descriptor -> HID keyboard endpoint -> arm interrupt transfers. */
+/* USB hub (the device on the root port is a hub, class 9 -- e.g. the VL805 internal
+ * USB 2.0 hub on the RPi4, behind which every Pi USB-A port hangs). Configure it,
+ * power + scan its downstream ports, reset the one with a device, and enumerate that
+ * device THROUGH the hub (route string + parent-hub TT). The single-device globals are
+ * repurposed for the downstream slot once the hub is set up. */
+static int setup_hub(uint32_t hub_root_port, uint32_t hub_speed) {
+    (void)hub_speed;
+    uint32_t hub_slot = dev_slot;
+    uint64_t buf_pa;
+    volatile uint8_t *buf = (volatile uint8_t *)dma_page(&buf_pa);
+    if (!buf) return -1;
+
+    /* Configure the hub: read the config header, SET_CONFIGURATION. */
+    int cc = control_transfer(0x80, 6, (2u << 8), 0, 9, buf_pa, 1);
+    if (cc != CC_SUCCESS) return -1;
+    uint8_t cfg_val = buf[5];
+    cc = control_transfer(0x00, 9 /* SET_CONFIGURATION */, cfg_val, 0, 0, 0, 0);
+    if (cc != CC_SUCCESS) { AIOS_LOG_WARN("hub SET_CONFIG failed"); return -1; }
+
+    /* Hub descriptor (class type 0x29) -> number of downstream ports + power-on time. */
+    cc = control_transfer(0xA0, 6, (0x29u << 8), 0, 8, buf_pa, 1);
+    if (cc != CC_SUCCESS) { AIOS_LOG_WARN("hub descriptor failed"); return -1; }
+    uint32_t nports = buf[2];
+    uint32_t pwr_good = buf[5];                      /* in 2 ms units */
+    printf("[xhci] hub: %u downstream ports\n", nports);
+
+    /* Mark the slot a hub (Hub bit + Number of Ports) so the xHC allocates the TT for
+     * LS/FS downstream devices. Evaluate Context with the slot context (A0). */
+    volatile uint32_t *icc      = (volatile uint32_t *)(in_ctx + 0);
+    volatile uint32_t *slot_ctx = (volatile uint32_t *)(in_ctx + CTX_SZ);
+    icc[0] = 0; icc[1] = (1u << 0);                  /* A0 = slot */
+    slot_ctx[0] |= (1u << 26);                       /* Hub = 1 */
+    slot_ctx[1] = (slot_ctx[1] & 0x00FFFFFF) | (nports << 24); /* Number of Ports */
+    arch_dsb();
+    uint32_t evt[4];
+    cmd_submit(in_ctx_pa, 0, TRB_EVAL_CONTEXT, hub_slot, evt);  /* best effort */
+
+    /* Power every downstream port, then wait power-on-to-power-good. */
+    for (uint32_t port = 1; port <= nports; port++)
+        control_transfer(0x23, 3 /* SET_FEATURE */, 8 /* PORT_POWER */, port, 0, 0, 0);
+    xhci_mdelay((int)pwr_good * 2 + 100);
+
+    /* Poll the downstream ports for a connected device. Real USB connect-debounce
+     * takes ~100s of ms after power-on (QEMU is instant), so scan for up to ~2.5s,
+     * trying each connected port once (a port may appear over time, and there may be
+     * more than one device). */
+    uint32_t tried = 0;
+    for (uint64_t scan = mono_deadline_ms(2500); mono_before(scan); ) {
+        for (uint32_t port = 1; port <= nports; port++) {
+            if (tried & (1u << port)) continue;
+            if (control_transfer(0xA3 /* GET_STATUS (other) */, 0, 0, port, 4, buf_pa, 1) != CC_SUCCESS)
+                continue;
+            uint32_t pstat = buf[0] | (buf[1] << 8);
+            if (!(pstat & 0x1)) continue;            /* PORT_CONNECTION: no device yet */
+            tried |= (1u << port);
+            printf("[xhci] hub port %u: device connected (status=0x%x)\n", port, pstat);
+
+            control_transfer(0x23, 3, 4 /* PORT_RESET */, port, 0, 0, 0);
+            for (uint64_t dl = mono_deadline_ms(800); mono_before(dl); ) {
+                if (control_transfer(0xA3, 0, 0, port, 4, buf_pa, 1) != CC_SUCCESS) break;
+                if ((buf[2] | (buf[3] << 8)) & 0x10) break;   /* C_PORT_RESET */
+                xhci_mdelay(10);
+            }
+            pstat = buf[0] | (buf[1] << 8);
+            control_transfer(0x23, 1 /* CLEAR_FEATURE */, 20 /* C_PORT_RESET */, port, 0, 0, 0);
+            if (!(pstat & 0x2)) { AIOS_LOG_WARN("hub port not enabled after reset"); continue; }
+            uint32_t kspeed = (pstat & (1u << 9)) ? 2 /* LS */
+                            : (pstat & (1u << 10)) ? 3 /* HS */ : 1 /* FS */;
+
+            uint8_t kdesc[18];
+            int kcls = address_and_describe(port, hub_root_port, kspeed, hub_slot, port, kdesc);
+            if (kcls < 0) { AIOS_LOG_WARN("downstream device enum failed"); continue; }
+            if (setup_keyboard() == 0) return 0;     /* keyboard armed -- done */
+        }
+        xhci_mdelay(50);
+    }
+    /* Nothing usable: dump each port's final status (PP bit8 = powered, CCS bit0 =
+     * connected) to tell "not plugged into this hub" from a power/timing problem. */
+    for (uint32_t port = 1; port <= nports; port++) {
+        if (control_transfer(0xA3, 0, 0, port, 4, buf_pa, 1) == CC_SUCCESS)
+            printf("[xhci] hub port %u: final status=0x%x\n", port, buf[0] | (buf[1] << 8));
+    }
+    AIOS_LOG_WARN("no HID keyboard found behind hub");
+    return -1;
+}
+
+/* Reset the root port, address the device on it, and either arm it (HID keyboard) or
+ * recurse into it (USB hub -- the RPi4 path: the keyboard is behind the VL805 hub). */
+static int setup_device(uint32_t p) {
+    if (port_reset(p)) return -1;
+    uint32_t speed = PORTSC_SPEED(op_r32(XHCI_PORTSC(p)));
+    uint8_t desc[18];
+    int cls = address_and_describe(0, p + 1, speed, 0, 0, desc);
+    if (cls < 0) return -1;
+    if (cls == 9) return setup_hub(p + 1, speed);   /* hub -> enumerate downstream */
     return setup_keyboard();
 }
 
@@ -503,6 +685,18 @@ int xhci_init(void) {
            version >> 8, version & 0xFF, cap_len, max_slots, max_ports,
            ctx_csz64 ? 64 : 32, rt_off, db_off);
 
+    /* Defensive: the runtime + doorbell register windows MUST lie inside the mapped
+     * BAR. A conformant controller guarantees this, but bail gracefully (rather than
+     * fault on an unmapped access) if a mis-sized BAR put them out of range -- this
+     * is the first real test of the RPi4 outbound-window MMIO path. */
+    uint32_t rt_end = rt_off + IR0_BASE + 0x20;
+    uint32_t db_end = db_off + (max_slots + 1) * 4;
+    if (rt_end > xhci_bar_bytes || db_end > xhci_bar_bytes) {
+        printf("[xhci] register offsets exceed mapped BAR (rt_end=0x%x db_end=0x%x "
+               "mapped=0x%x) -- aborting\n", rt_end, db_end, xhci_bar_bytes);
+        return -1;
+    }
+
     /* ---- wait for CNR=0 (controller ready) ---- */
     for (uint64_t dl = mono_deadline_ms(1000); (op_r32(XHCI_USBSTS) & USBSTS_CNR); ) {
         if (!mono_before(dl)) { AIOS_LOG_ERROR("xHCI not ready (CNR)"); return -1; }
@@ -521,18 +715,28 @@ int xhci_init(void) {
 
     /* ---- B2: DMA structures ----
      * DCBAA + ERST share one page (DCBAA at +0, ERST at +2048, both 64-aligned).
-     * Command ring and event ring each get their own page. */
+     * Command ring and event ring each get their own page. All carved from the low
+     * DMA pool so the controller (RPi4 3GB inbound window) can reach them. Normally
+     * reserved early (aios_root); this is the idempotent fallback. */
+    if (xhci_dma_reserve()) return -1;
     dcbaa = (volatile uint64_t *)dma_page(&dcbaa_pa);
     cmd_ring = (volatile uint8_t *)dma_page(&cmd_ring_pa);
     evt_ring = (volatile uint8_t *)dma_page(&evt_ring_pa);
     if (!dcbaa || !cmd_ring || !evt_ring) { AIOS_LOG_ERROR("xHCI DMA alloc failed"); return -1; }
     erst    = (volatile uint8_t *)dcbaa + 2048;
     erst_pa = dcbaa_pa + 2048;
+    /* The controller DMAs to these PADDRs via the inbound window (RC_BAR2, identity).
+     * On the RPi4 they must lie inside that window (<4GB RAM) -- log them so a DMA
+     * failure (Enable Slot timeout) can be told apart from an out-of-window ring. */
+    printf("[xhci] rings (paddr): dcbaa=0x%lx cmd=0x%lx evt=0x%lx\n",
+           (unsigned long)dcbaa_pa, (unsigned long)cmd_ring_pa, (unsigned long)evt_ring_pa);
 
     /* Scratchpad buffers: DCBAA[0] points at the scratchpad-buffer-array.
-     * QEMU reports 0, so DCBAA[0] stays 0; handle a nonzero count minimally. */
+     * HCSPARAMS2 Max Scratchpad Bufs = (Hi[25:21] << 5) | Lo[31:27] (xHCI 5.3.4 /
+     * Linux HCS_MAX_SCRATCHPAD). QEMU reports 0; the VL805 reports 31. (An earlier
+     * Hi/Lo swap here computed 992 -> a malformed array = undefined HC behaviour.) */
     uint32_t hcs2 = r32(XHCI_HCSPARAMS2);
-    uint32_t spb = ((hcs2 >> 27) & 0x1F) << 5 | ((hcs2 >> 21) & 0x1F);
+    uint32_t spb = (((hcs2 >> 21) & 0x1F) << 5) | ((hcs2 >> 27) & 0x1F);
     if (spb > 0) {
         uint64_t arr_pa;
         volatile uint64_t *arr = (volatile uint64_t *)dma_page(&arr_pa);
@@ -566,6 +770,8 @@ int xhci_init(void) {
     op_w32(XHCI_USBCMD, USBCMD_RS);
     for (uint64_t dl = mono_deadline_ms(1000); (op_r32(XHCI_USBSTS) & USBSTS_HCH); )
         if (!mono_before(dl)) { AIOS_LOG_ERROR("xHCI run timeout (still halted)"); return -1; }
+    printf("[xhci] running: USBSTS=0x%x USBCMD=0x%x\n",
+           op_r32(XHCI_USBSTS), op_r32(XHCI_USBCMD));
 
     /* ---- detect connected ports ---- */
     int connected = 0;

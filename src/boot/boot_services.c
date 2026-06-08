@@ -163,12 +163,16 @@ void boot_start_services(vka_object_t *fault_ep) {
     serverstats_init();
     proc_add("serverstats", 180);
 
-    /* Spawn tty_server (CPIO, isolated process) */
+    /* Spawn tty_server (CPIO, isolated process). Pass the display_server endpoint as
+     * a 2nd cap (argv[1]) so tty output mirrors to the HDMI fb_console -- the shell is
+     * then visible on HDMI for standalone USB-keyboard use. Omitted if no display. */
     sel4utils_process_t serial_proc;
-    seL4_CPtr caps[1], slots[1];
+    seL4_CPtr caps[2], slots[2];
     caps[0] = serial_ep.cptr;
+    int tty_ncaps = 1;
+    if (disp_ep_cap && gpu_available) { caps[1] = disp_ep_cap; tty_ncaps = 2; }
     error = spawn_with_args("tty_server", 200, &serial_proc,
-                            fault_ep, 1, caps, slots);
+                            fault_ep, tty_ncaps, caps, slots);
     if (error) { AIOS_LOG_ERROR_V("tty_server spawn FAILED err=", error); return; }
     proc_add("tty_server", 200);
 

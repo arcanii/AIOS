@@ -62,7 +62,16 @@
  * ordering is HW-unverified, so this stays opt-in; if level 1 SErrors, reflash the
  * recovery image. Build -DPCIE_PROBE_LEVEL=1 (or edit this line) to probe. */
 #ifndef PCIE_PROBE_LEVEL
-#define PCIE_PROBE_LEVEL 0
+/* Probe depth (RPi4 only; QEMU uses pcie_ecam.c, unaffected):
+ *   0 = no controller MMIO at all (a boot that cannot SError -- recovery default).
+ *   1 = D.1 link bring-up + VL805 detect + D.2a BAR program (no BAR read).
+ *   2 = D.2: also set pcie_xhci_present -> xhci_init() maps + drives the BAR -> a USB
+ *       keyboard types into the shell.
+ * Level 2 is HW-VERIFIED (v0.4.184: keyboard works on a real Pi 4) and is the default
+ * so a fresh build gets USB input. The bring-up degrades gracefully (link down / no
+ * device / unmappable BAR all return -1, no crash); the v0.4.183 SError was the now-
+ * fixed reset-ordering bug. Build -DPCIE_PROBE_LEVEL=0 for a guaranteed-no-MMIO image. */
+#define PCIE_PROBE_LEVEL 2
 #endif
 
 /* Discovered xHCI controller (set only when fully usable -- D.2). */
@@ -107,6 +116,11 @@ int      pcie_xhci_present = 0;
  * (bridge) header: the bridge must forward config to its secondary bus. */
 #define RC_COMMAND              0x04        /* PCI_COMMAND (mem + bus master) */
 #define RC_PRIMARY_BUS          0x18        /* pri[7:0]|sec[15:8]|sub[23:16] */
+/* VL805 endpoint (Type-0) config header, accessed on bus 1 via EXT_CFG. */
+#define EP_COMMAND              0x04        /* PCI_COMMAND (mem-space + bus master) */
+#define EP_BAR0                 0x10        /* BAR0 -- xHCI MMIO (may be 64-bit) */
+#define PCI_CMD_MEM             0x2
+#define PCI_CMD_MASTER          0x4
 /* Outbound MEM window 0 (CPU->PCI). base in BASE_LIMIT[15:4] (mask 0xfff0),
  * limit in BASE_LIMIT[31:20] (mask 0xfff00000), high bits >> 12 in BASE_HI/
  * LIMIT_HI[7:0] -- exact masks from Linux pcie-brcmstb brcm_pcie_set_outbound_win. */
@@ -176,6 +190,17 @@ static uint32_t cfg_rd(uint32_t bus, uint32_t dev, uint32_t fn, uint32_t off) {
     wr(EXT_CFG_INDEX, (bus << 20) | (dev << 15) | (fn << 12));
     arch_dsb();
     return *(volatile uint32_t *)(reg + EXT_CFG_DATA + off);
+}
+
+/* Config write: bus 0 = RC registers direct; bus >= 1 = EXT_CFG index/data window
+ * (same addressing as cfg_rd). Used by D.2a to size + place the VL805 BAR. Writes
+ * on a live link cannot SError -- same safety as the config reads in D.1. */
+static void cfg_wr(uint32_t bus, uint32_t dev, uint32_t fn, uint32_t off, uint32_t val) {
+    if (bus == 0) { wr(off, val); return; }
+    wr(EXT_CFG_INDEX, (bus << 20) | (dev << 15) | (fn << 12));
+    arch_dsb();
+    *(volatile uint32_t *)(reg + EXT_CFG_DATA + off) = val;
+    arch_dsb();
 }
 
 /* --- VC property mailbox (for NOTIFY_XHCI_RESET, the VL805 fw load) --- */
@@ -358,6 +383,58 @@ static void set_outbound_win(void) {
            (unsigned long)cpu, (unsigned long)pci);
 }
 
+/* D.2a: size the VL805 xHCI BAR0, place it at the base of the outbound window
+ * (PCI hw_info.pcie_mmio_pci -> CPU hw_info.pcie_mmio_cpu), enable mem-space +
+ * bus-master, and record pcie_xhci_* for the shared xHCI driver (src/usb/xhci.c).
+ * Mirrors the QEMU pcie_ecam.c BAR sizing (handles a 64-bit BAR). All config-space
+ * ops on a live link -- cannot SError. Returns 0 on success. */
+static int program_xhci_bar(uint32_t bus, uint32_t dev, uint32_t fn) {
+    uint32_t bar0 = cfg_rd(bus, dev, fn, EP_BAR0);
+    int is_io = bar0 & 0x1;
+    int is64  = !is_io && (((bar0 >> 1) & 0x3) == 0x2);
+    if (is_io) { AIOS_LOG_WARN("VL805 BAR0 is I/O space?"); return -1; }
+
+    /* Size: write all-ones, read back, decode (clear low type bits, invert, +1). */
+    cfg_wr(bus, dev, fn, EP_BAR0, 0xFFFFFFFF);
+    uint32_t szlo = cfg_rd(bus, dev, fn, EP_BAR0);
+    uint32_t szhi = 0xFFFFFFFF;
+    if (is64) {
+        cfg_wr(bus, dev, fn, EP_BAR0 + 4, 0xFFFFFFFF);
+        szhi = cfg_rd(bus, dev, fn, EP_BAR0 + 4);
+    }
+    uint64_t mask = ((uint64_t)szhi << 32) | (uint64_t)(szlo & ~0xFU);
+    uint64_t size = ~mask + 1;
+    if (size == 0 || size > hw_info.pcie_mmio_size) {
+        printf("[pcie] VL805 BAR0 size 0x%lx invalid (window 0x%lx)\n",
+               (unsigned long)size, (unsigned long)hw_info.pcie_mmio_size);
+        return -1;
+    }
+
+    /* Place at the base of the outbound window, naturally aligned. The window CPU
+     * base (0x6_00000000) is already 1GB-aligned, so for any xHCI-sized BAR cpu ==
+     * the window base and pci == hw_info.pcie_mmio_pci (0xC0000000). */
+    uint64_t cpu = (hw_info.pcie_mmio_cpu + (size - 1)) & ~(size - 1);
+    uint64_t pci = hw_info.pcie_mmio_pci + (cpu - hw_info.pcie_mmio_cpu);
+    cfg_wr(bus, dev, fn, EP_BAR0, (uint32_t)(pci & 0xFFFFFFF0) | (bar0 & 0xF));
+    if (is64) cfg_wr(bus, dev, fn, EP_BAR0 + 4, (uint32_t)(pci >> 32));
+
+    /* Enable memory-space decode + bus master. Write 0 to the status half [31:16]
+     * (W1C bits ignore a 0 write, so no status is cleared). */
+    uint32_t cmd = cfg_rd(bus, dev, fn, EP_COMMAND);
+    cfg_wr(bus, dev, fn, EP_COMMAND, (cmd & 0xFFFFu) | PCI_CMD_MEM | PCI_CMD_MASTER);
+    arch_dsb();
+
+    pcie_xhci_bar      = cpu;
+    pcie_xhci_bar_size = size;
+    pcie_xhci_bus = (uint8_t)bus;
+    pcie_xhci_dev = (uint8_t)dev;
+    pcie_xhci_fn  = (uint8_t)fn;
+    printf("[pcie] VL805 BAR0 -> PCI 0x%lx / CPU 0x%lx size 0x%lx%s\n",
+           (unsigned long)pci, (unsigned long)cpu, (unsigned long)size,
+           is64 ? " (64-bit)" : "");
+    return 0;
+}
+
 /* Bring up the core + link, program the outbound window, then detect the VL805.
  * bringup() runs the RGR1 reset dance FIRST so the MISC/core regs are clocked
  * before we read them (the v0.4.183 SError was reading them too early). Returns -1
@@ -415,14 +492,37 @@ static int pcie_bringup_and_detect(void) {
     uint32_t cls = cfg_rd(1, 0, 0, 0x08) >> 8;
     printf("[pcie] bus1 dev0: VID=%04x PID=%04x class=%06x\n", vendor, device, cls);
 
-    if (cls == 0x0C0330) {
-        printf("[pcie] VL805 xHCI DETECTED -- Phase D.1 link OK.\n");
-        printf("[pcie] xHCI BAR/window deferred to D.2 (needs seL4 >4GB MMIO window).\n");
-        /* D.2: program BAR0 in the PCI window (0xC0000000+), map CPU side
-         * (0x6_00000000+), set pcie_xhci_* + pcie_xhci_present so xhci_init runs.
-         * Blocked until seL4 exposes the window. */
+    if (cls != 0x0C0330) {
+        printf("[pcie] bus1 dev0 is not an xHCI controller (class 0x%06x)\n", cls);
+        return -1;
     }
-    return -1;   /* D.1: link + device verified; no usable xHCI BAR yet (D.2). */
+    printf("[pcie] VL805 xHCI DETECTED -- Phase D.1 link OK.\n");
+
+    /* D.2a: program the VL805 BAR0 in the outbound window (safe config ops). */
+    if (program_xhci_bar(1, 0, 0) != 0) {
+        AIOS_LOG_WARN("VL805 BAR0 programming failed");
+        return -1;
+    }
+
+#if PCIE_PROBE_LEVEL >= 2
+    /* D.2: hand the BAR to the shared xHCI driver. aios_root sees pcie_xhci_present
+     * and calls xhci_init(), which MAPS the BAR (CPU 0x6_00000000, non-cacheable)
+     * and drives the controller. The first BAR read is the one inherent SError risk
+     * (the outbound window + link are D.1-proven, so it should complete) -- hence
+     * this is gated above level 1. The boot-time device-untyped diagnostic in
+     * aios_root.c (always on) confirms the BAR is mappable before we get here. */
+    pcie_xhci_present = 1;
+    printf("[pcie] D.2: pcie_xhci_present=1 -> xhci_init() will map + drive the BAR.\n");
+    return 0;
+#else
+    /* D.2a done (BAR programmed) but xhci_init NOT triggered: the BAR READ is the
+     * only remaining SError risk, so it stays opt-in. Flip PCIE_PROBE_LEVEL to 2
+     * (or build -DPCIE_PROBE_LEVEL=2) once the device-untyped diagnostic confirms
+     * CPU 0x6_00000000 is mappable -- that boot types a key. */
+    printf("[pcie] D.2a complete (BAR programmed). xhci_init() GATED at "
+           "PCIE_PROBE_LEVEL>=2 (set it to type a key).\n");
+    return -1;
+#endif
 }
 #endif /* PCIE_PROBE_LEVEL >= 1 */
 
@@ -431,8 +531,10 @@ int plat_pcie_init(void) {
     if (!dev_pcie_vaddr) { AIOS_LOG_WARN("PCIe regs not pre-mapped (prealloc)"); return -1; }
 
 #if PCIE_PROBE_LEVEL >= 1
-    printf("[pcie] PROBE_LEVEL=1: brcmstb reset-first bring-up (corrected ordering, "
-           "no EEPROM change). If this SErrors -> reflash disk/sdcard-rpi4.img.\n");
+    printf("[pcie] PROBE_LEVEL=%d: brcmstb reset-first bring-up + VL805 detect"
+           "%s. If this SErrors -> reflash disk/sdcard-rpi4.img.\n",
+           PCIE_PROBE_LEVEL,
+           PCIE_PROBE_LEVEL >= 2 ? " + D.2 xhci_init (keyboard)" : " + D.2a BAR program");
     return pcie_bringup_and_detect();
 #else
     printf("[pcie] PCIe present (regs 0x%lx) but controller read DISABLED "

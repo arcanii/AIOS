@@ -31,6 +31,8 @@
 #define TTY_INPUT       75
 #define TTY_POLL        76   /* v0.4.99: check if input available */
 
+#define DISP_CONSOLE    116  /* mirror output to the HDMI fb_console (root_shared.h) */
+
 #define TTY_IOCTL_SET_RAW       1
 #define TTY_IOCTL_SET_COOKED    2
 #define TTY_IOCTL_ECHO_ON       3
@@ -142,13 +144,43 @@ static void termios_sync(void) {
     tty_icrnl = (ts_iflag & T_ICRNL) ? 1 : 0;
 }
 
-/* -- Output helper -- */
+/* -- Output: mini-UART (seL4_DebugPutChar) always, plus the HDMI fb_console via the
+ * root-task display server when its endpoint was passed (argv[1]). This is what makes
+ * the shell visible on HDMI for standalone USB-keyboard use. -- */
+static seL4_CPtr disp_ep = 0;   /* display_server endpoint (DISP_CONSOLE), or 0 */
+
+/* Send a run of chars to the HDMI console (chars packed 8-per-word from MR1).
+ * NOTE: this clobbers the IPC message registers, so callers that still need the
+ * incoming message's MRs must copy them out BEFORE calling any output helper. */
+static void disp_write(const char *buf, int len) {
+    if (!disp_ep || len <= 0) return;
+    while (len > 0) {
+        int n = len > 120 ? 120 : len;            /* fits in MR0(len) + 15 data MRs */
+        seL4_SetMR(0, (seL4_Word)n);
+        for (int i = 0; i < n; i += 8) {
+            seL4_Word w = 0;
+            for (int j = 0; j < 8 && i + j < n; j++)
+                w |= (seL4_Word)(unsigned char)buf[i + j] << (j * 8);
+            seL4_SetMR(1 + i / 8, w);
+        }
+        seL4_Call(disp_ep, seL4_MessageInfo_new(DISP_CONSOLE, 0, 0, 1 + (n + 7) / 8));
+        buf += n; len -= n;
+    }
+}
+
+/* Write a buffer to BOTH outputs (serial char-by-char, HDMI batched). */
+static void tty_write_buf(const char *buf, int len) {
+    for (int i = 0; i < len; i++) seL4_DebugPutChar(buf[i]);
+    disp_write(buf, len);
+}
+
 static void tty_putc(char c) {
-    seL4_DebugPutChar(c);
+    tty_write_buf(&c, 1);
 }
 
 static void tty_puts(const char *s) {
-    while (*s) tty_putc(*s++);
+    int n = 0; while (s[n]) n++;
+    tty_write_buf(s, n);
 }
 
 /* -- Line discipline: process one input character -- */
@@ -277,6 +309,7 @@ static long parse_num(const char *s) {
 int main(int argc, char *argv[]) {
     seL4_CPtr ep = 0;
     if (argc > 0) ep = (seL4_CPtr)parse_num(argv[0]);
+    if (argc > 1) disp_ep = (seL4_CPtr)parse_num(argv[1]);   /* HDMI fb_console mirror */
 
     while (1) {
         seL4_Word badge;
@@ -300,11 +333,15 @@ int main(int argc, char *argv[]) {
             break;
         }
 
-        case SER_PUTS:
-            for (seL4_Word i = 0; i < len; i++)
-                tty_putc((char)seL4_GetMR(i));
+        case SER_PUTS: {
+            /* Copy chars OUT of the MRs before output -- disp_write clobbers them. */
+            char sbuf[128];
+            int n = (int)len; if (n > 128) n = 128;
+            for (int i = 0; i < n; i++) sbuf[i] = (char)seL4_GetMR(i);
+            tty_write_buf(sbuf, n);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
             break;
+        }
 
         case SER_KEY_PUSH:
             line_discipline((char)seL4_GetMR(0));
@@ -319,13 +356,14 @@ int main(int argc, char *argv[]) {
             break;
 
         case TTY_WRITE: {
+            /* Copy the payload OUT of the MRs before output -- disp_write reuses the
+             * MRs for the HDMI mirror, so reading them mid-loop would corrupt output. */
             int wlen = (int)seL4_GetMR(0);
-            int mr = 1;
-            for (int i = 0; i < wlen; i++) {
-                if (i > 0 && i % 8 == 0) mr++;
-                char c = (char)((seL4_GetMR(mr) >> ((i % 8) * 8)) & 0xFF);
-                tty_putc(c);
-            }
+            char wbuf[1024];
+            if (wlen > 1024) wlen = 1024;
+            for (int i = 0; i < wlen; i++)
+                wbuf[i] = (char)((seL4_GetMR(1 + i / 8) >> ((i % 8) * 8)) & 0xFF);
+            tty_write_buf(wbuf, wlen);
             seL4_SetMR(0, (seL4_Word)wlen);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;

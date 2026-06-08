@@ -7,6 +7,7 @@
 #include "aios/root_shared.h"
 #include "aios/gpu.h"
 #include "aios/vfs.h"
+#include "aios/fb_console.h"
 #define LOG_MODULE "disp"
 #define LOG_LEVEL LOG_LEVEL_DEBUG
 #include "aios/aios_log.h"
@@ -95,6 +96,20 @@ void display_server_fn(void *arg0, void *arg1, void *ipc_buf) {
         seL4_Word label = seL4_MessageInfo_get_label(msg);
 
         switch (label) {
+
+        case DISP_CONSOLE: {
+            /* Mirror tty output to the scrolling HDMI fb_console -- the boot console
+             * continues straight into the interactive shell. len chars are packed
+             * 8-per-word from MR1; fb_console_putc handles control chars + scrolling. */
+            int len = (int)seL4_GetMR(0);
+            if (len > 127) len = 127;
+            for (int i = 0; i < len; i++) {
+                seL4_Word w = seL4_GetMR(1 + i / 8);
+                fb_console_putc((char)((w >> ((i % 8) * 8)) & 0xFF));
+            }
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
+            break;
+        }
 
         case DISP_FB_INFO: {
             seL4_SetMR(0, gpu_width);
