@@ -310,12 +310,33 @@ PERST polarity + the MB window encoding are the most error-prone -- log every
 step. DMA inbound is identity (PCI==CPU via RC_BAR2), so xhci.c GetAddress paddrs
 work directly as the controller's DMA addresses.
 
-### Other HW unknown: VL805 firmware
-The RPi firmware loads VL805 xHCI firmware at boot. A full controller reset MAY
-require it to reload (board-revision dependent: early boards loaded it over PCIe,
-later boards have a VL805 SPI EEPROM). If the link comes up but the VL805 does not
-enumerate, suspect the firmware load -- a gentler re-init (no full reset) that
-relies on the RPi-firmware PCIe state may be needed instead.
+### HW RESULT (2026-06-08) + the VL805/PCIe power-on mechanism
+Flashed + serial-tested on a real RPi4. The pcie node IS in AIOS's DTB
+("[hw] pcie DTB node: present") but the firmware-modified runtime `ranges` does
+not parse into a usable MMIO window, so has_pcie stayed false (plat_pcie_init
+skipped). Forcing has_pcie via the fixed BCM2711 addresses so plat_pcie_init ran
+**CRASHED the boot**: "[boot] Display: 1024x768" -> "halting... Kernel entry via
+Unknown (0)", with NO [pcie] printf -- the FIRST controller MMIO read
+(rd(MISC_REVISION/PCIE_STATUS)) SError'd. The PCIe controller is POWERED DOWN at
+OS handoff. (Reverted the fallback -> safe boot.)
+
+**vl805.bin is NOT the fix and is NOT needed.** The VL805 firmware lives in the
+bootloader SPI EEPROM (merged into the main boot EEPROM on Pi4B rev 1.4+);
+vl805.bin on SD is only an EEPROM-update blob (and 404 in the firmware repo).
+Per the rpi-eeprom docs, the VL805 firmware is "loaded ON REQUEST FROM THE KERNEL
+if VL805=1 in the EEPROM config" -- the OS must ask the firmware to bring up the
+VL805/PCIe. So Phase D needs, BEFORE any controller MMIO access, ONE of:
+1. **EEPROM config (no AIOS code):** set `VL805=1` via `rpi-eeprom-config` (from
+   Raspberry Pi OS) so the firmware brings PCIe up at boot; AIOS then sees the
+   controller already powered. Quickest test.
+2. **AIOS mailbox request:** issue `RPI_FIRMWARE_NOTIFY_XHCI_RESET` (tag
+   `0x00030058`, the call Linux makes on RPi4 to load the VL805 fw + bring up
+   PCIe), possibly with `SET_DOMAIN_STATE(RPI_POWER_DOMAIN_USB=6, on)`, via the
+   existing `mbox_call` (display_vc.c, channel 8) BEFORE plat_pcie_init. Confirm
+   with GET_DOMAIN_STATE / a status read so a wrong call skips the controller
+   access instead of crashing.
+Then the brcmstb bring-up, then D.0 (the >4GB-window seL4 kernel change) for the
+xHCI BAR. NEVER read a power-gated peripheral first -- it SErrors -> kernel halt.
 
 ## References
 
