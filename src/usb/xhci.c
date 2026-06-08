@@ -338,6 +338,7 @@ static volatile uint8_t *rpt;      static uint64_t rpt_pa;   /* 8-byte boot repo
 static uint32_t kbd_dci, kbd_mps;
 static int      kbd_iface;
 static uint8_t  prev_keys[6];
+static int      num_lock = 1, caps_lock = 0;   /* Num Lock on by default (numpad -> digits) */
 int xhci_kbd_ok = 0;               /* read by boot_services to spawn the driver thread */
 
 /* HID usage id -> ASCII for the non-letter keys (letters handled arithmetically). */
@@ -354,10 +355,42 @@ static const char hid_map_shift[128] = {
     [0x34]='"',[0x35]='~',[0x36]='<',[0x37]='>',[0x38]='?',
 };
 static char hid_to_ascii(uint8_t kc, int shift) {
-    if (kc >= 0x04 && kc <= 0x1d) { char c = 'a' + (kc - 0x04); return shift ? c - 32 : c; }
+    /* Letters a-z: Caps Lock inverts the shift. */
+    if (kc >= 0x04 && kc <= 0x1d) {
+        char c = 'a' + (kc - 0x04);
+        return (shift ^ caps_lock) ? c - 32 : c;
+    }
+    /* Keypad (0x54-0x63). Operators + Enter are independent of Num Lock; the digit
+     * and '.' keys type only when Num Lock is on (otherwise they are navigation keys
+     * we do not map yet). */
+    switch (kc) {
+        case 0x54: return '/';
+        case 0x55: return '*';
+        case 0x56: return '-';
+        case 0x57: return '+';
+        case 0x58: return '\n';                       /* Keypad Enter */
+        case 0x59: return num_lock ? '1' : 0;
+        case 0x5a: return num_lock ? '2' : 0;
+        case 0x5b: return num_lock ? '3' : 0;
+        case 0x5c: return num_lock ? '4' : 0;
+        case 0x5d: return num_lock ? '5' : 0;
+        case 0x5e: return num_lock ? '6' : 0;
+        case 0x5f: return num_lock ? '7' : 0;
+        case 0x60: return num_lock ? '8' : 0;
+        case 0x61: return num_lock ? '9' : 0;
+        case 0x62: return num_lock ? '0' : 0;
+        case 0x63: return num_lock ? '.' : 0;
+    }
     if (kc >= 128) return 0;
     return shift ? hid_map_shift[kc] : hid_map[kc];
 }
+
+/* NOTE: keyboard LEDs (Num/Caps/Scroll Lock) need a SET_REPORT control transfer back
+ * to the device. Sending it at enumeration was fine, but sending it at RUNTIME from
+ * this polling driver thread (on a lock-key press) destabilised a real LS keyboard
+ * behind the VL805 TT -- the input stopped. The lock state is tracked in software
+ * (numpad + Caps Lock work); the physical LED is deferred until the control path is
+ * made endpoint-aware so a runtime SET_REPORT cannot disrupt the interrupt-IN stream. */
 
 /* Re-arm one interrupt-IN transfer for the keyboard's report. */
 static void arm_int(void) {
@@ -391,6 +424,10 @@ static void process_report(void) {
         int was = 0;
         for (int j = 0; j < 6; j++) if (prev_keys[j] == kc) was = 1;
         if (was) continue;                        /* still held -- not a new press */
+        /* Lock keys toggle software state only (no LED -- see the note above); they
+         * emit no character. Num Lock gates the numpad digits, Caps Lock the letter case. */
+        if (kc == 0x53) { num_lock = !num_lock; continue; }    /* Num Lock toggles the numpad */
+        if (kc == 0x39) { caps_lock = !caps_lock; continue; }  /* Caps Lock */
         char ch = hid_to_ascii(kc, shift);
         if (!ch) continue;
         printf("[xhci-kbd] key=0x%02x '%c'\n", kc, (ch >= 32 && ch < 127) ? ch : '?');

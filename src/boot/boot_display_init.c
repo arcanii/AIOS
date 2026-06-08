@@ -122,6 +122,28 @@ const uint8_t font8x8[95][8] = {
  {0x00,0x00,0x32,0x4C,0x00,0x00,0x00,0x00}, /* ~ */
 };
 
+/* Clean a framebuffer byte range from the D-cache to the point of coherency so the
+ * display controller (which reads physical memory) sees the cached writes. The FB is
+ * mapped cacheable for speed; seL4_CapInitThreadVSpace is the root-task vspace that
+ * display_server + fb_console run in. */
+void gpu_fb_flush(void *start, uint32_t bytes) {
+    if (!gpu_fb || !bytes) return;
+    /* seL4_ARM_VSpace_Clean_Data must NOT cross a page boundary -- clean one page
+     * (or sub-page tail) at a time across the range. */
+    seL4_Word s = (seL4_Word)start, end = s + bytes;
+    while (s < end) {
+        seL4_Word page_end = (s & ~(seL4_Word)0xFFF) + 0x1000;
+        seL4_Word chunk_end = page_end < end ? page_end : end;
+        seL4_ARM_VSpace_Clean_Data(seL4_CapInitThreadVSpace, s, chunk_end);
+        s = chunk_end;
+    }
+}
+
+void gpu_fb_flush_all(void) {
+    if (!gpu_fb) return;
+    gpu_fb_flush(gpu_fb, gpu_width * gpu_height * 4);
+}
+
 /* ---- Text rendering ---- */
 
 void gpu_draw_char(int x, int y, char ch,
@@ -153,6 +175,7 @@ void gpu_draw_text(int x, int y, const char *str,
         x += 8 * scale;
         str++;
     }
+    gpu_fb_flush_all();   /* push the cached glyph writes to the display */
 }
 
 /* ---- Gradient background ---- */
@@ -166,6 +189,7 @@ static void gpu_draw_background(void) {
             uint32_t b = 60 + (x * 30) / w;
             gpu_fb[y * w + x] = GPU_PIXEL(r, g, b);
         }
+    gpu_fb_flush_all();
 }
 
 /* ---- Splash image loader ---- */
@@ -192,6 +216,7 @@ static void gpu_load_splash(void) {
     for (uint32_t y = 0; y < ch; y++)
         for (uint32_t x = 0; x < cw; x++)
             gpu_fb[(oy + y) * gpu_width + (ox + x)] = pixels[y * iw + x];
+    gpu_fb_flush_all();
 
     printf("[gpu] Splash: %ux%u\n", iw, ih);
 }

@@ -275,6 +275,14 @@ extern uint32_t gpu_width;
 extern uint32_t gpu_height;
 extern seL4_CPtr disp_ep_cap;
 
+/* The framebuffer is mapped CACHEABLE (writes are ~10x faster than non-cacheable,
+ * which matters for the scrolling HDMI console). After writing gpu_fb, the dirty
+ * region MUST be cleaned to the point of coherency so the display controller (which
+ * reads physical memory) sees the update -- these do that. gpu_fb_flush cleans a byte
+ * range; gpu_fb_flush_all cleans the whole framebuffer. */
+void gpu_fb_flush(void *start, uint32_t bytes);
+void gpu_fb_flush_all(void);
+
 /* Crypto server endpoint (crypto_server thread) */
 extern seL4_CPtr crypto_ep_cap;
 

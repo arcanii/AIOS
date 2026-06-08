@@ -80,6 +80,7 @@ static void gfx_render_cube(int ax,int ay){
 static void gfx_demo_cube(void){
     for(int t=0;t<200;t++){
         gfx_render_cube((t*2)%360,(t*3)%360);
+        gpu_fb_flush_all();   /* make each frame visible (cacheable FB) */
         for(volatile int d=0; d<1500000; d++) __asm__ volatile("":::"memory");
     }
 }
@@ -107,6 +108,7 @@ void display_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 seL4_Word w = seL4_GetMR(1 + i / 8);
                 fb_console_putc((char)((w >> ((i % 8) * 8)) & 0xFF));
             }
+            fb_console_flush();   /* one cache clean for the whole batch */
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
             break;
         }
@@ -157,6 +159,7 @@ void display_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 for (uint32_t x = 0; x < cw; x++)
                     gpu_fb[(oy + y) * gpu_width + (ox + x)] =
                         pixels[y * iw + x];
+            gpu_fb_flush_all();
 
             printf("[disp] Displayed %s (%ux%u)\n", path, iw, ih);
             seL4_SetMR(0, 0);
@@ -201,6 +204,7 @@ void display_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             for (uint32_t y = ry; y < ry + rh; y++)
                 for (uint32_t x = rx; x < rx + rw; x++)
                     gpu_fb[y * gpu_width + x] = rc;
+            gpu_fb_flush_all();
             seL4_SetMR(0, 0);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
@@ -216,6 +220,7 @@ void display_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             uint32_t total = gpu_width * gpu_height;
             for (uint32_t i = 0; i < total; i++)
                 gpu_fb[i] = cc;
+            gpu_fb_flush_all();
             seL4_SetMR(0, 0);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;

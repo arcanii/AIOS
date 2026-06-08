@@ -101,8 +101,11 @@ static void *map_fb_pages(uint64_t phys_base, uint32_t n_pages) {
         fb_caps[p] = frame.cptr;
     }
 
+    /* CACHEABLE (1): the HDMI console writes + scrolls this buffer heavily, and
+     * cached writes are ~10x faster than non-cacheable. Writers MUST gpu_fb_flush()
+     * the dirty region so the VideoCore (reading physical memory) sees the update. */
     void *vaddr = vspace_map_pages(&vspace, fb_caps, NULL,
-        seL4_AllRights, n_pages, seL4_PageBits, 0);
+        seL4_AllRights, n_pages, seL4_PageBits, 1);
     if (!vaddr) {
         printf("[gpu] vspace_map_pages failed (%u pages)\n", n_pages);
     }

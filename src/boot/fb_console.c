@@ -32,6 +32,21 @@ static int con_cols;        /* actual columns for current resolution */
 static int con_rows;        /* actual rows for current resolution */
 static int fb_con_active;
 
+/* Dirty pixel-row range [y0, y1) accumulated since the last flush. The framebuffer
+ * is cacheable, so writes must be cleaned to PoC for the display to see them --
+ * fb_console_flush() cleans exactly the dirty rows (called once per output batch). */
+static int con_dirty;
+static uint32_t con_dirty_y0, con_dirty_y1;
+static void con_mark(uint32_t y0, uint32_t y1) {
+    if (y1 > gpu_height) y1 = gpu_height;
+    if (y0 >= y1) return;
+    if (!con_dirty) { con_dirty_y0 = y0; con_dirty_y1 = y1; con_dirty = 1; }
+    else {
+        if (y0 < con_dirty_y0) con_dirty_y0 = y0;
+        if (y1 > con_dirty_y1) con_dirty_y1 = y1;
+    }
+}
+
 /* Colors */
 static const uint32_t CON_FG = 0x00CCCCCC;  /* light gray */
 static const uint32_t CON_BG = 0x00101820;  /* dark blue-black */
@@ -65,6 +80,7 @@ static void render_cell(int col, int row, char c, uint32_t fg) {
             row_ptr[b] = CON_BG;
         }
     }
+    con_mark((uint32_t)py, (uint32_t)py + FB_CELL_H);
 }
 
 /* ---- Scroll up by one row ---- */
@@ -84,6 +100,8 @@ static void scroll_up(void) {
     uint32_t clear_count = row_pixels;
     for (uint32_t i = 0; i < clear_count; i++)
         bottom[i] = CON_BG;
+
+    con_mark(0, gpu_height);   /* the whole console area moved */
 }
 
 /* ---- Advance to next line, scroll if needed ---- */
@@ -116,8 +134,20 @@ void fb_console_init(void) {
     for (uint32_t y = start_y; y < gpu_height; y++)
         for (uint32_t x = 0; x < gpu_width; x++)
             gpu_fb[y * gpu_width + x] = CON_BG;
+    gpu_fb_flush_all();
 
     fb_con_active = 1;
+}
+
+/* Clean the dirty rows to the framebuffer. Called once per output batch (by
+ * fb_console_puts and by the display server after a DISP_CONSOLE batch) so the
+ * cached cell writes become visible without a clean-per-character cost. */
+void fb_console_flush(void) {
+    if (!con_dirty || !gpu_fb) { con_dirty = 0; return; }
+    uint32_t w = gpu_width;
+    gpu_fb_flush((uint8_t *)gpu_fb + (uint64_t)con_dirty_y0 * w * 4,
+                 (con_dirty_y1 - con_dirty_y0) * w * 4);
+    con_dirty = 0;
 }
 
 void fb_console_putc(char c) {
@@ -155,6 +185,7 @@ void fb_console_puts(const char *s) {
     if (!fb_con_active) return;
     while (*s)
         fb_console_putc(*s++);
+    fb_console_flush();
 }
 
 void fb_console_printf(const char *fmt, ...) {
@@ -175,6 +206,7 @@ void fb_console_clear(void) {
     uint32_t total = gpu_width * gpu_height;
     for (uint32_t i = 0; i < total; i++)
         gpu_fb[i] = CON_BG;
+    gpu_fb_flush_all();
 
     con_col = 0;
     con_row = 0;
