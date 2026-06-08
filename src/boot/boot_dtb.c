@@ -226,50 +226,53 @@ static void parse_pcie(const void *fdt) {
     int node = fdt_node_offset_by_compatible(fdt, -1, "pci-host-ecam-generic");
     if (node < 0)
         node = fdt_node_offset_by_compatible(fdt, -1, "brcm,bcm2711-pcie");
-    if (node < 0) return;
+    printf("[hw] pcie DTB node: %s\n", node < 0 ? "ABSENT" : "present");
 
-    int len;
-    /* reg = ECAM base + size. Root parent is #address-cells=2/#size-cells=2 on
-     * virt, so this is base(2 cells) + size(2 cells). */
-    const void *reg = fdt_getprop(fdt, node, "reg", &len);
-    if (reg && len >= 16) {
-        const fdt32_t *c = (const fdt32_t *)reg;
-        hw_info.pcie_ecam_paddr = ((uint64_t)fdt32_ld(&c[0]) << 32) | fdt32_ld(&c[1]);
-        hw_info.pcie_ecam_size  = ((uint64_t)fdt32_ld(&c[2]) << 32) | fdt32_ld(&c[3]);
-    }
-    if (!hw_info.pcie_ecam_paddr) return;
-
-    /* bus-range = <start end> */
-    const void *br = fdt_getprop(fdt, node, "bus-range", &len);
-    if (br && len >= 8) {
-        const fdt32_t *b = (const fdt32_t *)br;
-        hw_info.pcie_bus_start = fdt32_ld(&b[0]);
-        hw_info.pcie_bus_end   = fdt32_ld(&b[1]);
-    }
-
-    /* ranges entries: pci_addr(3 cells) cpu_addr(2 cells) size(2 cells) = 7.
-     * pci_addr high cell bits [25:24] = space: 1=IO, 2=MMIO32, 3=MMIO64.
-     * We want the 32-bit MMIO window -- that is where the xHCI BAR is placed. */
-    const void *rg = fdt_getprop(fdt, node, "ranges", &len);
-    if (rg) {
-        const fdt32_t *r = (const fdt32_t *)rg;
-        int cells = len / 4;
-        for (int i = 0; i + 7 <= cells; i += 7) {
-            uint32_t phys_hi = fdt32_ld(&r[i]);
-            uint32_t space = (phys_hi >> 24) & 0x3;
-            uint64_t pci_addr = ((uint64_t)fdt32_ld(&r[i + 1]) << 32) | fdt32_ld(&r[i + 2]);
-            uint64_t cpu_addr = ((uint64_t)fdt32_ld(&r[i + 3]) << 32) | fdt32_ld(&r[i + 4]);
-            uint64_t size     = ((uint64_t)fdt32_ld(&r[i + 5]) << 32) | fdt32_ld(&r[i + 6]);
-            if (space == 0x2) {
-                hw_info.pcie_mmio_pci  = pci_addr;
-                hw_info.pcie_mmio_cpu  = cpu_addr;
-                hw_info.pcie_mmio_size = size;
+    if (node >= 0) {
+        int len;
+        /* reg = controller/ECAM base + size (base 2 cells + size 2 cells). */
+        const void *reg = fdt_getprop(fdt, node, "reg", &len);
+        if (reg && len >= 16) {
+            const fdt32_t *c = (const fdt32_t *)reg;
+            uint64_t base = ((uint64_t)fdt32_ld(&c[0]) << 32) | fdt32_ld(&c[1]);
+            /* BCM2711: VC bus 0x7Dxx/0x7Exx -> ARM 0xFDxx/0xFExx (+0x80000000). */
+            if (base >= 0x7C000000UL && base <= 0x7FFFFFFFUL) base += 0x80000000UL;
+            hw_info.pcie_ecam_paddr = base;
+            hw_info.pcie_ecam_size  = ((uint64_t)fdt32_ld(&c[2]) << 32) | fdt32_ld(&c[3]);
+        }
+        const void *br = fdt_getprop(fdt, node, "bus-range", &len);
+        if (br && len >= 8) {
+            const fdt32_t *b = (const fdt32_t *)br;
+            hw_info.pcie_bus_start = fdt32_ld(&b[0]);
+            hw_info.pcie_bus_end   = fdt32_ld(&b[1]);
+        }
+        /* ranges: pci_addr(3) cpu_addr(2) size(2). space bits[25:24]: 2=MMIO32. */
+        const void *rg = fdt_getprop(fdt, node, "ranges", &len);
+        if (rg) {
+            const fdt32_t *r = (const fdt32_t *)rg;
+            int cells = len / 4;
+            for (int i = 0; i + 7 <= cells; i += 7) {
+                uint32_t space = (fdt32_ld(&r[i]) >> 24) & 0x3;
+                if (space == 0x2) {
+                    hw_info.pcie_mmio_pci  = ((uint64_t)fdt32_ld(&r[i + 1]) << 32) | fdt32_ld(&r[i + 2]);
+                    hw_info.pcie_mmio_cpu  = ((uint64_t)fdt32_ld(&r[i + 3]) << 32) | fdt32_ld(&r[i + 4]);
+                    hw_info.pcie_mmio_size = ((uint64_t)fdt32_ld(&r[i + 5]) << 32) | fdt32_ld(&r[i + 6]);
+                }
             }
         }
+        if (hw_info.pcie_ecam_paddr && hw_info.pcie_mmio_size)
+            hw_info.has_pcie = 1;
     }
 
-    if (hw_info.pcie_ecam_paddr && hw_info.pcie_mmio_size)
-        hw_info.has_pcie = 1;
+    /* RPi4/BCM2711: do NOT force has_pcie on here. The fixed-address fallback was
+     * tried (2026-06-08) and CRASHED the boot ("halting... Kernel entry via
+     * Unknown") -- the firmware POWER-GATES the PCIe controller when the VL805
+     * fails to init ("vl805.bin not found / XHCI-STOP"), so the very first MMIO
+     * read of 0xFD500000 faults (SError) even though the vaddr maps fine. Phase D
+     * therefore needs AIOS to POWER ON the PCIe domain via the VC mailbox BEFORE
+     * touching the controller (see DESIGN_USB_HID.md). Until then, leave has_pcie
+     * as parsed (false on RPi4) so plat_pcie_init is skipped and the boot is
+     * safe. QEMU is unaffected (generic-ECAM parse above sets has_pcie there). */
 }
 
 static void parse_memory(const void *fdt) {

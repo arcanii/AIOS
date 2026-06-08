@@ -31,6 +31,9 @@ FIRMWARE_FILES = [
     "start4.elf", "fixup4.dat",
     "start.elf", "fixup.dat",          # fallback for older EEPROM
     "bcm2711-rpi-4-b.dtb",
+    # NOTE: vl805.bin is NOT a normal boot file (it is an optional VL805 EEPROM
+    # UPDATE blob, not published at boot/vl805.bin -> 404). The firmware log
+    # "vl805.bin not found" is benign; the VL805 runs from its SPI EEPROM.
 ]
 
 # Sizes
