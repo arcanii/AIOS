@@ -126,16 +126,24 @@ const uint8_t font8x8[95][8] = {
  * display controller (which reads physical memory) sees the cached writes. The FB is
  * mapped cacheable for speed; seL4_CapInitThreadVSpace is the root-task vspace that
  * display_server + fb_console run in. */
+/* Flush progress counters (read via /proc/fbcon). If display_server freezes during a
+ * cacheable-FB scroll, fbflush_pages_done < fbflush_pages_total pinpoints the page. */
+volatile uint32_t fbflush_seq, fbflush_pages_done, fbflush_pages_total;
+
 void gpu_fb_flush(void *start, uint32_t bytes) {
     if (!gpu_fb || !bytes) return;
     /* seL4_ARM_VSpace_Clean_Data must NOT cross a page boundary -- clean one page
      * (or sub-page tail) at a time across the range. */
     seL4_Word s = (seL4_Word)start, end = s + bytes;
+    fbflush_seq++;
+    fbflush_pages_total = (uint32_t)((end - (s & ~(seL4_Word)0xFFF) + 0xFFF) / 0x1000);
+    fbflush_pages_done = 0;
     while (s < end) {
         seL4_Word page_end = (s & ~(seL4_Word)0xFFF) + 0x1000;
         seL4_Word chunk_end = page_end < end ? page_end : end;
         seL4_ARM_VSpace_Clean_Data(seL4_CapInitThreadVSpace, s, chunk_end);
         s = chunk_end;
+        fbflush_pages_done++;
     }
 }
 

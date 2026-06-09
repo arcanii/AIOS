@@ -18,6 +18,8 @@ int genet_diag_cmd(const char *args, char *buf, int bufsize);
 int xhci_diag_cmd(const char *args, char *buf, int bufsize);
 /* System mouse state at /proc/mouse (impl in src/usb/xhci.c). */
 int xhci_mouse_state(char *buf, int bufsize);
+/* fb_console scroll/flush diagnostics at /proc/fbcon (impl in src/boot/fb_console.c). */
+int fb_console_diag(char *buf, int bufsize);
 
 proc_entry_t proc_table[PROC_MAX];
 static int next_pid = 1;
@@ -82,7 +84,7 @@ static int procfs_list(void *ctx, uint32_t ino, char *buf, int bufsize) {
     (void)ctx; (void)ino;
     int w = 0;
     /* List virtual files */
-    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- filehits\n", "- serverstats\n", "- cow\n", "- cmdline\n", "- xhci\n", "- mouse\n",
+    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- filehits\n", "- serverstats\n", "- cow\n", "- cmdline\n", "- xhci\n", "- mouse\n", "- fbcon\n",
 #if defined(PLAT_RPI4)
         "- genet\n",
 #endif
@@ -404,6 +406,9 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         w += snprintf(buf + w, bufsize - w,
             "alloc_total: %u\nlive: %d\npeak: %d\n",
             total, vka_live_frames, vka_peak_frames);
+    } else if (path[0] == 'f' && path[1] == 'b') {
+        /* /proc/fbcon -- fb_console scroll/flush diagnostics (HW scroll-freeze debug). */
+        w = fb_console_diag(buf, bufsize);
     } else if (path[0] == 'f' && path[1] == 'i' && path[2] == 'l'
             && path[3] == 'e' && path[4] == 'h' && path[5] == 'i'
             && path[6] == 't' && path[7] == 's') {

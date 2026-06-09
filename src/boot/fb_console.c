@@ -47,6 +47,14 @@ static void con_mark(uint32_t y0, uint32_t y1) {
     }
 }
 
+/* Scroll/flush diagnostics, read via /proc/fbcon. A real-HW freeze on the first scroll
+ * (cacheable framebuffer) pins to one of these phases: read /proc/fbcon over netconsole
+ * after a freeze (the net threads stay alive) to see exactly where display_server hung --
+ * the scroll memmove, the per-page cache clean (and which page), or neither (IPC). */
+volatile uint32_t fbcon_scroll_seq;    /* scrolls started */
+volatile int      fbcon_phase;         /* 0 idle, 1 memmove, 2 clear, 3 mark, 4 flush, 5 done */
+extern volatile uint32_t fbflush_seq, fbflush_pages_done, fbflush_pages_total;
+
 /* Colors */
 static const uint32_t CON_FG = 0x00CCCCCC;  /* light gray */
 static const uint32_t CON_BG = 0x00101820;  /* dark blue-black */
@@ -86,6 +94,7 @@ static void render_cell(int col, int row, char c, uint32_t fg) {
 /* ---- Scroll up by one row ---- */
 static void scroll_up(void) {
     if (!gpu_fb) return;
+    fbcon_scroll_seq++;
 
     uint32_t w = gpu_width;
     uint32_t shift_rows = (uint32_t)((con_rows - 1) * FB_CELL_H);
@@ -93,15 +102,18 @@ static void scroll_up(void) {
     uint32_t row_pixels = (uint32_t)(FB_CELL_H * w);
 
     /* Shift framebuffer pixels up by one cell row */
+    fbcon_phase = 1;   /* memmove */
     memmove(gpu_fb, gpu_fb + row_pixels, shift_pixels * 4);
 
     /* Clear bottom row */
+    fbcon_phase = 2;   /* clear bottom */
     uint32_t *bottom = gpu_fb + shift_pixels;
     uint32_t clear_count = row_pixels;
     for (uint32_t i = 0; i < clear_count; i++)
         bottom[i] = CON_BG;
 
-    con_mark(0, gpu_height);   /* the whole console area moved */
+    fbcon_phase = 3;   /* mark */
+    con_mark(0, (uint32_t)(con_rows * FB_CELL_H));   /* only the console area moved */
 }
 
 /* ---- Advance to next line, scroll if needed ---- */
@@ -145,9 +157,24 @@ void fb_console_init(void) {
 void fb_console_flush(void) {
     if (!con_dirty || !gpu_fb) { con_dirty = 0; return; }
     uint32_t w = gpu_width;
+    fbcon_phase = 4;   /* flush (per-page clean; fbflush_pages_done shows progress) */
     gpu_fb_flush((uint8_t *)gpu_fb + (uint64_t)con_dirty_y0 * w * 4,
                  (con_dirty_y1 - con_dirty_y0) * w * 4);
     con_dirty = 0;
+    fbcon_phase = 5;   /* done */
+}
+
+/* /proc/fbcon -- scroll/flush diagnostics for the HW freeze (see the counters above). */
+int fb_console_diag(char *buf, int bufsize) {
+    const char *ph[] = {"idle", "memmove", "clear", "mark", "flush", "done"};
+    int p = (fbcon_phase >= 0 && fbcon_phase <= 5) ? fbcon_phase : 0;
+    return snprintf(buf, bufsize,
+        "active=%d %dx%d row=%d/%d col=%d\n"
+        "scrolls=%u phase=%d(%s)\n"
+        "flush: seq=%u pages=%u/%u\n",
+        fb_con_active, con_cols, con_rows, con_row, con_rows, con_col,
+        fbcon_scroll_seq, fbcon_phase, ph[p],
+        fbflush_seq, fbflush_pages_done, fbflush_pages_total);
 }
 
 void fb_console_putc(char c) {

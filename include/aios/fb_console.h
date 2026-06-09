@@ -18,4 +18,8 @@ void fb_console_clear(void);
  * many fb_console_putc then call this once. */
 void fb_console_flush(void);
 
+/* /proc/fbcon -- scroll/flush diagnostics (phase + flush page progress) for debugging the
+ * cacheable-framebuffer scroll freeze on real HW. Writes a snapshot into buf. */
+int fb_console_diag(char *buf, int bufsize);
+
 #endif /* AIOS_FB_CONSOLE_H */
