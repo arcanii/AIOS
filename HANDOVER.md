@@ -10,7 +10,7 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
 ## Quick orientation
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4.
-* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.183**.
+* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.186**.
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4).
 * **Host**: macOS Apple Silicon, cross-compile to aarch64-linux-gnu.
 * **Developer**: Bryan -- prefers Python patch scripts over sed/heredocs; no
@@ -38,6 +38,34 @@ Honor it; this session learned the hard way what happens when you do not.
 * **QEMU cannot model:** RPi4 cache attributes, the VC mailbox, eMMC single-block
   write latency, GENET timing, and the fork/pipe/socket event-loop path. Verify
   those on the Pi -- but via push-over-net + serial, not reflashes.
+
+---
+
+## DONE: USB HID follow-ups + scroll diagnostic -- v0.4.186 (2026-06-10)
+
+Four additive follow-ups on the standalone USB keyboard (`docs/NEXT_20260609_usb_followups.md`),
+all on the shared tree, both trees build, QEMU suite 9/9. Default HW behaviour unchanged
+(polling, single keyboard). Full handover + open items: **`docs/NEXT_20260610_usb_followups_status.md`**.
+
+- **Lock LEDs** (Task 1) -- **HW-VERIFIED** (Num+Caps lights work on the Pi). Made event
+  consumption endpoint-aware (`evt_dispatch` routes interrupt-IN reports by slot+ep), fixed a
+  latent EP0-ring wrap bug, added STALL recovery. `/proc/xhci` live diagnostic + `.led.N` poke.
+- **Ctrl modifier** -- Left Ctrl + C now sends 0x03 (was plain 'c'); `ctrl_char()` folds
+  Ctrl+letter/`@[\]^_?` to control codes. QEMU-verified; HW confirm pending.
+- **Multi-device** (Task 3) -- single-device globals -> `struct usb_dev g_devs[8]`; enumerate
+  all hub + root ports; dispatch by slot+endpoint. QEMU kbd+mouse verified; HW = single kbd.
+- **Mouse** (Task 4) -- boot-report decode + `/proc/mouse` consumer. QEMU-verified.
+- **IRQ-driven xHCI** (Task 2) -- opt-in `/proc/xhci.irq.1`, default polling. QEMU INTx path
+  verified end-to-end (GIC IRQ 37). RPi4 brcmstb MSI is HW-pending (`plat_pcie_xhci_irq()`
+  returns -1 -> stays polling, safe).
+
+**OPEN (priority): the HDMI console FREEZES on the first scroll on real HW** -- the cacheable
+framebuffer scroll (3 MB memmove + per-page clean) wedges `display_server`, cascading through
+`tty_server` to the USB driver (keyboard dead, screen frozen, net still pings). QEMU (ramfb)
+runs the same `fb_console.c` scroll fine (182 scrolls), so it is HW-cacheable-specific, NOT a
+logic bug, and PRE-EXISTING (unrelated to the USB code -- the keyboard just made it reachable).
+Diagnostic shipped: `cat /proc/fbcon` over netconsole after a freeze pinpoints the phase
+(memmove vs which flush page vs IPC). See the NEXT doc for the repro + fix plan.
 
 ---
 
