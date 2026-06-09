@@ -20,4 +20,14 @@ int xhci_init(void);
  * DMA-window limit (e.g. QEMU). */
 int xhci_dma_reserve(void);
 
+/* Live diagnostic exposed at /proc/xhci (wired in src/procfs.c). args is the path
+ * suffix after "xhci" (e.g. ".led.7", ".lock", or ""). Writes a human-readable
+ * snapshot / command result into buf; returns the byte count. Lets the controller +
+ * keyboard be inspected and the lock LEDs poked from the shell without reflashing. */
+int xhci_diag_cmd(const char *args, char *buf, int bufsize);
+
+/* /proc/mouse -- the system mouse state (x, y, buttons, event count) accumulated from
+ * USB mouse reports. Writes a human-readable line into buf; returns the byte count. */
+int xhci_mouse_state(char *buf, int bufsize);
+
 #endif /* AIOS_XHCI_H */

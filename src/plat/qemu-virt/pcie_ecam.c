@@ -156,3 +156,32 @@ int plat_pcie_init(void) {
     AIOS_LOG_WARN("no xHCI controller on PCIe bus");
     return -1;
 }
+
+/* PCI config: Interrupt Pin (1=INTA..4=INTD) and the Command "Interrupt Disable" bit. */
+#define PCI_INT_PIN      0x3D
+#define PCI_CMD_INTX_DIS (1u << 10)
+/* QEMU virt routes the four PCIe INTx lines to GIC SPIs starting at SPI 3
+ * (irqmap[VIRT_PCIE] in hw/arm/virt.c), swizzled per device: GSI = (slot + pin) % 4 with
+ * pin 0-indexed (INTA=0). The full GIC IRQ is 32 + 3 + GSI. (See docs/NEXT note: confirm
+ * against the virt PCIe node interrupt-map if a controller lands on a different slot.) */
+#define VIRT_PCIE_SPI_BASE 3
+
+int plat_pcie_xhci_irq(void) {
+    if (!pcie_xhci_present) return -1;
+    vka_object_t fr;
+    volatile uint8_t *c = cfg_map(pcie_xhci_bus, pcie_xhci_dev, pcie_xhci_fn, &fr);
+    if (!c) return -1;
+    uint8_t pin = c[PCI_INT_PIN];                  /* 1=INTA .. 4=INTD, 0=none */
+    /* AIOS uses neither MSI nor MSI-X, so qemu-xhci asserts legacy INTx; make sure the
+     * Command register Interrupt Disable bit is clear so the line is delivered. */
+    uint16_t cmd = cfg_r16(c, PCI_COMMAND);
+    cfg_w16(c, PCI_COMMAND, cmd & ~PCI_CMD_INTX_DIS);
+    arch_dsb();
+    cfg_unmap(c, &fr);
+    if (pin == 0 || pin > 4) { AIOS_LOG_WARN("xHCI has no INTx pin"); return -1; }
+    int gsi = ((int)pcie_xhci_dev + (int)(pin - 1)) % 4;
+    int irq = 32 + VIRT_PCIE_SPI_BASE + gsi;
+    printf("[pcie] xHCI INTx pin=%u dev=%u -> GIC IRQ %d (SPI %d)\n",
+           pin, pcie_xhci_dev, irq, VIRT_PCIE_SPI_BASE + gsi);
+    return irq;
+}

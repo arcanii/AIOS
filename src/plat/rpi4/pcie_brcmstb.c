@@ -544,3 +544,19 @@ int plat_pcie_init(void) {
     return -1;
 #endif
 }
+
+/* Route the VL805 xHCI interrupt to the GIC (Task 2). HW-PENDING: returns -1 so the
+ * driver stays in the proven polling mode on real hardware. The VL805 raises MSI (AIOS
+ * does not program its MSI capability), and the brcmstb root complex has an INTERNAL MSI
+ * controller -- the MSI_INTR2 registers at 0x4500-0x4514 are currently MASKED in
+ * pcie_bringup. Enabling IRQ delivery requires, on the Pi: (1) program the RC MSI target
+ * address (PCIE_MISC_MSI_BAR_CONFIG_LO/HI) + data (PCIE_MISC_MSI_DATA_CONFIG); (2) program
+ * the VL805 MSI capability to that target/data; (3) unmask the relevant MSI_INTR2 bit
+ * (MSI_INTR2_MASK_CLR) instead of masking it; (4) find the GIC SPI the RC raises from the
+ * pcie node msi-parent/interrupts in the DTB and bind it. Develop + verify on the Pi --
+ * QEMU cannot model the brcmstb MSI controller. Until then, polling drives the keyboard. */
+int plat_pcie_xhci_irq(void) {
+    if (!pcie_xhci_present) return -1;
+    AIOS_LOG_INFO("xHCI IRQ: brcmstb MSI not yet wired -- polling (HW bring-up pending)");
+    return -1;
+}

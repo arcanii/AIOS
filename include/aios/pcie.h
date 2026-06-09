@@ -16,6 +16,14 @@
  */
 int plat_pcie_init(void);
 
+/* Route the xHCI controller's interrupt to the GIC and return the seL4 IRQ number
+ * (the full GIC number, i.e. 32 + SPI), or -1 if IRQ delivery is not available (the
+ * driver then stays in polling mode). Called once after plat_pcie_init() succeeds.
+ *   - QEMU virt: the xHCI INTx line through the gpex host bridge to a GIC SPI.
+ *   - RPi4 brcmstb: the VL805 MSI into the root-complex MSI controller (HW-pending).
+ * Used by the xHCI driver for IRQ-driven operation (Task 2, opt-in via /proc/xhci.irq). */
+int plat_pcie_xhci_irq(void);
+
 /* Discovered xHCI controller (valid after plat_pcie_init() returns 0). */
 extern uint64_t pcie_xhci_bar;   /* CPU-side MMIO base of the xHCI BAR0 */
 extern uint64_t pcie_xhci_bar_size;

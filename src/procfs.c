@@ -13,6 +13,11 @@
 /* v0.4.156: live GENET probe exposed at /proc/genet (impl in net_genet.c). */
 int genet_diag_cmd(const char *args, char *buf, int bufsize);
 #endif
+/* Live xHCI/USB-keyboard probe + lock-LED poke at /proc/xhci (impl in src/usb/xhci.c).
+ * Works on QEMU + RPi4, so unguarded. */
+int xhci_diag_cmd(const char *args, char *buf, int bufsize);
+/* System mouse state at /proc/mouse (impl in src/usb/xhci.c). */
+int xhci_mouse_state(char *buf, int bufsize);
 
 proc_entry_t proc_table[PROC_MAX];
 static int next_pid = 1;
@@ -77,7 +82,7 @@ static int procfs_list(void *ctx, uint32_t ino, char *buf, int bufsize) {
     (void)ctx; (void)ino;
     int w = 0;
     /* List virtual files */
-    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- filehits\n", "- serverstats\n", "- cow\n", "- cmdline\n",
+    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- filehits\n", "- serverstats\n", "- cow\n", "- cmdline\n", "- xhci\n", "- mouse\n",
 #if defined(PLAT_RPI4)
         "- genet\n",
 #endif
@@ -156,6 +161,10 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
             const char *p3 = "-core SMP) " AIOS_BUILD_DATE "\n";
             while (*p3 && w < bufsize - 1) buf[w++] = *p3++;
         }
+    } else if (path[0] == 'm' && path[1] == 'o' && path[2] == 'u' && path[3] == 's') {
+        /* /proc/mouse -- USB mouse state (impl src/usb/xhci.c). Checked before
+         * /proc/mounts since both start with "mo". */
+        w = xhci_mouse_state(buf, bufsize);
     } else if (path[0] == 'm' && path[1] == 'o') {
         /* /proc/mounts -- v0.4.80: list actual VFS mounts */
         const char *lines[] = {
@@ -451,6 +460,13 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         extern volatile uint32_t blk_poll_renotifies;
         w += snprintf(buf + w, bufsize - w,
             "blk_read_renotifies: %u\n", (unsigned)blk_poll_renotifies);
+    } else if (path[0] == 'x' && path[1] == 'h' && path[2] == 'c'
+            && path[3] == 'i') {
+        /* /proc/xhci -- live USB xHCI + keyboard probe and lock-LED poke
+         * (impl src/usb/xhci.c). cat /proc/xhci[.led.N|.lock]. Works on QEMU + RPi4. */
+        int xw = xhci_diag_cmd(path + 4, buf, bufsize);
+        if (xw < 0) return -1;
+        w = xw;
 #if defined(PLAT_RPI4)
     } else if (path[0] == 'g' && path[1] == 'e' && path[2] == 'n'
             && path[3] == 'e' && path[4] == 't') {
