@@ -558,10 +558,23 @@ static void arm_int(struct usb_dev *d) {
     arch_dsb();
 }
 
+/* Apply the Ctrl modifier to a decoded character, producing the terminal control code:
+ * Ctrl-A..Z -> 0x01..0x1a (so Ctrl-C = 0x03 ETX, the tty's VINTR), Ctrl-@/[/\/]/^/_ ->
+ * 0x00..0x1f, Ctrl-Space -> NUL, Ctrl-? -> DEL (0x7f). Other keys pass through. */
+static char ctrl_char(char c) {
+    unsigned char u = (unsigned char)c;
+    if (u >= 'a' && u <= 'z') u -= 32;                  /* fold to the uppercase range */
+    if (u >= '@' && u <= '_') return (char)(u & 0x1f);  /* @A..Z[\]^_ -> 0x00..0x1f */
+    if (u == ' ')  return 0;                            /* Ctrl-Space = NUL */
+    if (u == '?')  return 0x7f;                         /* Ctrl-? = DEL */
+    return c;
+}
+
 /* Decode a keyboard boot report and feed newly-pressed keys to the tty. */
 static void process_kbd_report(struct usb_dev *d) {
     volatile uint8_t *rpt = d->rpt;
     int shift = (rpt[0] & 0x22) != 0;             /* L/R Shift modifier bits */
+    int ctrl  = (rpt[0] & 0x11) != 0;             /* L/R Ctrl modifier bits */
     for (int i = 2; i < 8; i++) {
         uint8_t kc = rpt[i];
         if (!kc) continue;
@@ -577,7 +590,9 @@ static void process_kbd_report(struct usb_dev *d) {
         if (kc == 0x47) { d->scroll_lock = !d->scroll_lock; set_leds_current(d); continue; } /* Scroll Lock */
         char ch = hid_to_ascii(d, kc, shift);
         if (!ch) continue;
-        printf("[xhci-kbd] key=0x%02x '%c'\n", kc, (ch >= 32 && ch < 127) ? ch : '?');
+        if (ctrl) ch = ctrl_char(ch);             /* Ctrl-C -> 0x03, etc. */
+        printf("[xhci-kbd] key=0x%02x '%c' (0x%02x)\n", kc,
+               (ch >= 32 && ch < 127) ? ch : '?', (unsigned char)ch);
         seL4_SetMR(0, (seL4_Word)(unsigned char)ch);
         seL4_Call(serial_ep.cptr, seL4_MessageInfo_new(SER_KEY_PUSH, 0, 0, 1));
     }
