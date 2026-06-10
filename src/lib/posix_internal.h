@@ -254,6 +254,9 @@ long aios_sys_lseek(va_list ap);
 long aios_sys_writev(va_list ap);
 long aios_sys_readv(va_list ap);
 long aios_sys_ftruncate(va_list ap);
+long aios_sys_sync(va_list ap);
+long aios_sys_fsync(va_list ap);
+long aios_sys_fdatasync(va_list ap);
 
 /* ---- Syscall handlers: posix_stat.c ---- */
 long aios_sys_fstat(va_list ap);

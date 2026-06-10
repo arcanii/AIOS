@@ -86,6 +86,7 @@ struct __attribute__((packed)) ext2_dir_entry {
 #define FS_APPEND 19
 #define FS_PWRITE 20
 #define FS_TRUNCATE 21  /* v0.4.130 */
+#define FS_SYNC 22      /* v0.4.188: flush write-back block cache (fsync/sync) */
 
 /* Block read function type (provided by caller) */
 typedef int (*blk_read_fn)(uint64_t sector, void *buf);

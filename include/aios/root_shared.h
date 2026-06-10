@@ -358,4 +358,8 @@ long aios_wall_now(void);
 void serverstats_init(void);
 int  serverstats_format(char *buf, int bufsize);
 
+/* v0.4.188: periodic write-back flusher (src/servers/flush_server.c) */
+void flush_server_init(void);
+int  flush_server_format(char *buf, int bufsize);
+
 #endif /* AIOS_ROOT_SHARED_H */

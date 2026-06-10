@@ -163,6 +163,11 @@ void boot_start_services(vka_object_t *fault_ep) {
     serverstats_init();
     proc_add("serverstats", 180);
 
+    /* v0.4.188: periodic write-back flusher -- bounds the data-loss window of
+     * the drive-0 write-back cache by issuing FS_SYNC every 30s. */
+    flush_server_init();
+    proc_add("flush", 200);
+
     /* Spawn tty_server (CPIO, isolated process). Pass the display_server endpoint as
      * a 2nd cap (argv[1]) so tty output mirrors to the HDMI fb_console -- the shell is
      * then visible on HDMI for standalone USB-keyboard use. Omitted if no display. */

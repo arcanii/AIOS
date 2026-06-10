@@ -742,6 +742,11 @@ void aios_init(seL4_CPtr serial_ep, seL4_CPtr fs_endpoint) {
     muslcsys_install_syscall(__NR_setitimer, aios_sys_setitimer);
     muslcsys_install_syscall(__NR_getitimer, aios_sys_getitimer);
 
+    /* v0.4.188: durability -- flush the write-back block cache (FS_SYNC) */
+    muslcsys_install_syscall(__NR_sync, aios_sys_sync);
+    muslcsys_install_syscall(__NR_fsync, aios_sys_fsync);
+    muslcsys_install_syscall(__NR_fdatasync, aios_sys_fdatasync);
+
 
 #endif
 }

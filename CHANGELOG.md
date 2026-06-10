@@ -4,6 +4,17 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.188 (2026-06-10)
+- Durability: implemented POSIX `sync(2)`/`fsync(2)`/`fdatasync(2)`, wired to a
+  new `FS_SYNC` IPC that flushes the write-back block cache on the fs_thread
+  (the only thread that may touch the unlocked cache + DMA ring).
+- Periodic write-back flusher: a dedicated root thread (`flush_server.c`,
+  modelled on `serverstats`) issues `FS_SYNC` every 30s, bounding the data-loss
+  window of drive 0's write-back policy to the last half-minute. Stats at
+  `/proc/flush`; `/proc/cachestats` now also reports `flushes` and live
+  `dirty`. Test: `scripts/sync_qemu_test.py` (5/5: flusher live, sync returns,
+  data survives, periodic count advances, dirty settles to 0).
+
 ## v0.4.187 (2026-06-10)
 - SSH failed-login backoff: escalating delay before each counted failed
   password attempt (2s/5s/8s across the three attempts of a first connection;

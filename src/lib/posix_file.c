@@ -1016,6 +1016,44 @@ long aios_sys_ftruncate(va_list ap) {
 }
 
 
+/* v0.4.188: fsync/fdatasync/sync -- flush the write-back block cache to disk.
+ *
+ * The block cache (drive 0) is write-back, so without an explicit flush a
+ * power cut can lose recently-written data that has not yet hit the threshold
+ * or been evicted. These route to FS_SYNC, which runs blk_cache_flush() on the
+ * fs_thread (the only safe place -- the backend DMA ring is unlocked). The
+ * flush is whole-cache (the cache keys on block numbers, not inodes), which is
+ * a valid superset for a per-fd fsync; fdatasync maps to the same flush. */
+static long do_fs_sync(void) {
+    if (!fs_ep_cap) return 0;   /* no disk -> nothing to sync */
+    seL4_Call(fs_ep_cap, seL4_MessageInfo_new(22 /* FS_SYNC */, 0, 0, 0));
+    return (long)seL4_GetMR(0);
+}
+
+long aios_sys_sync(va_list ap) {
+    (void)ap;
+    do_fs_sync();
+    return 0;   /* sync(2) returns void; the syscall returns 0 */
+}
+
+long aios_sys_fsync(va_list ap) {
+    int fd = va_arg(ap, int);
+    /* Standard fds (0/1/2) and any in-range aios fd: only real disk-backed
+     * files need a flush; pipes, sockets, ttys and /dev are no-op success. */
+    if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
+        aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
+        if (!f->active) return -EBADF;
+        if (f->is_pipe || f->is_socket || f->is_tty || f->is_devnull) return 0;
+        return do_fs_sync();
+    }
+    if (fd >= 0 && fd < AIOS_FD_BASE) return 0;   /* stdio etc. */
+    return -EBADF;
+}
+
+long aios_sys_fdatasync(va_list ap) {
+    return aios_sys_fsync(ap);   /* same whole-cache flush */
+}
+
 /* v0.4.62: pread64 -- positional read, does not change file offset */
 long aios_sys_pread64(va_list ap) {
     int fd = va_arg(ap, int);

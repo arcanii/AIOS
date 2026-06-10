@@ -10,6 +10,7 @@
 #include "aios/version.h"
 #include "aios/vfs.h"
 #include "aios/ext2.h"
+#include "aios/blk_cache.h"
 #include "aios/procfs.h"
 #define LOG_MODULE "fs"
 #define LOG_LEVEL LOG_LEVEL_INFO
@@ -428,6 +429,18 @@ void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
             int ret = vfs_truncate(tr_path, (uint32_t)tr_size);
             seL4_SetMR(0, (seL4_Word)(ret >= 0 ? 0 : -1));
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        case FS_SYNC: {
+            /* v0.4.188: flush the write-back block cache to disk. Runs IN the
+             * fs_thread so it is serialized with all other block IO (the
+             * backend DMA ring is unlocked -- see blk_cache.c). Backs POSIX
+             * sync/fsync/fdatasync and the periodic flusher thread. Whole-cache
+             * flush (the cache tracks block numbers, not inodes), which is a
+             * valid superset for a single-fd fsync. Replies 0. */
+            blk_cache_flush();
+            seL4_SetMR(0, 0);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }

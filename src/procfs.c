@@ -84,7 +84,7 @@ static int procfs_list(void *ctx, uint32_t ino, char *buf, int bufsize) {
     (void)ctx; (void)ino;
     int w = 0;
     /* List virtual files */
-    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- filehits\n", "- serverstats\n", "- cow\n", "- cmdline\n", "- xhci\n", "- mouse\n", "- fbcon\n",
+    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- filehits\n", "- serverstats\n", "- flush\n", "- cow\n", "- cmdline\n", "- xhci\n", "- mouse\n", "- fbcon\n",
 #if defined(PLAT_RPI4)
         "- genet\n",
 #endif
@@ -420,6 +420,10 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
             && path[9] == 't' && path[10] == 's') {
         /* v0.4.121: /proc/serverstats -- in-process server health probe */
         w = serverstats_format(buf, bufsize);
+    } else if (path[0] == 'f' && path[1] == 'l' && path[2] == 'u'
+            && path[3] == 's' && path[4] == 'h' && path[5] == '\0') {
+        /* v0.4.188: /proc/flush -- periodic write-back flusher stats */
+        w = flush_server_format(buf, bufsize);
     } else if (path[0] == 'c' && path[1] == 'o' && path[2] == 'w'
             && path[3] == '\0') {
         /* v0.4.122: /proc/cow -- COW per-frame refcount stats (Phase 2 Step 2) */
@@ -458,10 +462,10 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         w += snprintf(buf + w, bufsize - w,
             "hits: %u\nmisses: %u\nhit_rate_pct: %u\n"
             "pages: %u\npages_max: %u\n"
-            "evicted: %u\nwrites: %u\n",
+            "evicted: %u\nwrites: %u\nflushes: %u\ndirty: %u\n",
             s.hits, s.misses, hit_pct,
             s.pages, s.pages_max,
-            s.evicted, s.writes);
+            s.evicted, s.writes, s.flushes, s.dirty);
         extern volatile uint32_t blk_poll_renotifies;
         w += snprintf(buf + w, bufsize - w,
             "blk_read_renotifies: %u\n", (unsigned)blk_poll_renotifies);
