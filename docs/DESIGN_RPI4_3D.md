@@ -4,6 +4,18 @@ Status: research / planning only (no code yet). Target: BCM2711, V3D revision 4.
 seL4 AArch64, AIOS single root task. Date: 2026-06-05. (Produced by a research agent;
 see `rpi4-hdmi-phaseb-mailbox` memory for the 2D framebuffer we already drive.)
 
+> **2026-06-11 -- PARTIALLY SUPERSEDED.** Adversarial fact-checking found several
+> load-bearing errors in this doc. The implementation design with the corrected
+> facts is `DESIGN_V3D_IMPLEMENTATION.md` (see its Corrections table). Headlines:
+> V3D power-on is direct PM_GRAFX + RPiVid-ASB MMIO (NOT mailbox tags; 0x00028001
+> has no V3D ID and ENABLE_QPU does nothing on Pi 4); there is NO NV-shader path on
+> V3D 4.2 (vc4-only -- v42 needs GL Shader State with three QPU shaders); there is
+> NO <1GB GPU-memory constraint (V3D addresses 36-40 bit physical; <1GB applies
+> only to VC-mailbox allocations); the tile-state address moved out of the bin
+> config packet into register CT0QTS; CT0QMA/QMS is the initial tile-alloc pool,
+> not overflow; and Mesa's simulator core is Broadcom-NDA-only (use Random06457 +
+> macoy's v3d-toolkit instead). Sections 1 and 3-6 remain useful background.
+
 ## 0. TL;DR
 
 - The Pi 4's 3D engine is **V3D 4.2**, a tile-based deferred renderer architecturally
