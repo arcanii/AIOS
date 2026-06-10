@@ -204,7 +204,8 @@ static int handle_pty_req(ssh_session_t *s,
  * ---------------------------------------------------------------- */
 
 static int spawn_shell(int *stdin_wr, int *stdout_rd,
-                       int *stdout_wr_fd, pid_t *child_pid)
+                       int *stdout_wr_fd, pid_t *child_pid,
+                       uint32_t uid, uint32_t gid)
 {
     int in_pipe[2], out_pipe[2];
 
@@ -231,6 +232,12 @@ static int spawn_shell(int *stdin_wr, int *stdout_rd,
     }
 
     if (pid == 0) {
+        /* Child is root (inherited from sshd, which stays root); drop to the
+         * authenticated session identity before exec. The exec'd shell keeps
+         * this uid (pipe_server preserves the slot uid across PIPE_EXEC), and
+         * sshd itself stays root so every session sets identity correctly
+         * (v0.4.190 -- mirrors the getty restructure). */
+        ssh_drop_identity(uid, gid);
         /* Child: redirect stdin/stdout/stderr to pipes */
         dup2(in_pipe[0], 0);
         dup2(out_pipe[1], 1);
@@ -649,7 +656,8 @@ int ssh_do_channel(ssh_session_t *s)
     int stdin_wr = -1, stdout_rd = -1, stdout_wr_fd = -1;
     pid_t child_pid = -1;
 
-    if (spawn_shell(&stdin_wr, &stdout_rd, &stdout_wr_fd, &child_pid) < 0) {
+    if (spawn_shell(&stdin_wr, &stdout_rd, &stdout_wr_fd, &child_pid,
+                    s->uid, s->gid) < 0) {
         SSHLOG("[sshd] shell spawn failed\n");
         send_chan_close(s);
         return -1;

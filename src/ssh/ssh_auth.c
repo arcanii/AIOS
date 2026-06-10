@@ -135,10 +135,17 @@ void ssh_auth_logout(uint32_t token)
 }
 
 /* ----------------------------------------------------------------
- * Call PIPE_SET_IDENTITY to propagate uid/gid
+ * Drop to the session identity via PIPE_SET_IDENTITY.
+ *
+ * v0.4.190: pipe_server now only honours PIPE_SET_IDENTITY from a root caller.
+ * sshd must therefore stay root and drop privilege in the FORKED SHELL CHILD
+ * (root at fork) before exec -- NOT on the long-lived sshd process. Otherwise
+ * after the first non-root login sshd's own slot would be a user, and a second
+ * session's set-identity would be denied, leaving it with a stale identity.
+ * Called from ssh_channel.c spawn_shell's child branch. Non-static for that.
  * ---------------------------------------------------------------- */
 
-static void set_identity(uint32_t uid, uint32_t gid)
+void ssh_drop_identity(uint32_t uid, uint32_t gid)
 {
     seL4_CPtr pipe_ep = aios_get_pipe_ep();
     if (!pipe_ep) return;
@@ -321,8 +328,12 @@ int ssh_do_userauth(ssh_session_t *s)
                 SSHLOG("[sshd] Auth OK: uid=%u gid=%u token=0x%x\n",
                        (unsigned)uid, (unsigned)gid, (unsigned)token);
 
-                /* Propagate identity to pipe_server */
-                set_identity(uid, gid);
+                /* v0.4.190: do NOT drop sshd's own identity here -- sshd stays
+                 * root and the privilege drop happens in the forked shell child
+                 * (ssh_channel spawn_shell), so multi-session logins as
+                 * different/non-root users each get the correct identity and
+                 * the root-gated PIPE_SET_IDENTITY always succeeds (root child).
+                 * The session uid/gid are stored below for that child. */
 
                 /* Store in session */
                 s->uid = uid;

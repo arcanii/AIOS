@@ -2109,10 +2109,17 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             break;
         }
         case PIPE_SET_IDENTITY: {
-            /* Update calling process uid/gid in active_procs
-             * (used by getty after login so fork+exec inherits identity) */
+            /* Set the CALLER's own uid/gid in active_procs (badge-indexed, so a
+             * process can only change its own slot). active_procs[].uid is the
+             * authoritative identity for authz (fs writes, shutdown), so this
+             * MUST be gated: only a currently-root caller may change identity.
+             * Otherwise any process could send PIPE_SET_IDENTITY(0) to become
+             * root (v0.4.190 privesc fix). getty drops privilege in its forked
+             * child (root at fork) before exec; sshd is root when it auths. A
+             * non-root caller is denied -- it cannot raise OR change its uid. */
             int ci = (int)badge - 1;
-            if (ci >= 0 && ci < MAX_ACTIVE_PROCS && active_procs[ci].active) {
+            if (ci >= 0 && ci < MAX_ACTIVE_PROCS && active_procs[ci].active
+                && active_procs[ci].uid == 0) {
                 active_procs[ci].uid = (uint32_t)seL4_GetMR(0);
                 active_procs[ci].gid = (uint32_t)seL4_GetMR(1);
                 seL4_SetMR(0, 0);

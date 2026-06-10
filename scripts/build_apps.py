@@ -82,7 +82,8 @@ def main():
     apps = [("netconsole.c", "netconsole", []),
             ("netconsole2.c", "netconsole2", []),
             ("psutil.c", "pidof", ["pkill", "killall"]),
-            ("nslookup.c", "nslookup", [])]
+            ("nslookup.c", "nslookup", []),
+            ("idtest.c", "idtest", [])]  # v0.4.190 privesc regression probe
     for src, out, aliases in apps:
         outp = os.path.join(BUILD, "sbase", out)
         cmd = [os.path.join(AIOS, "scripts", "aios-cc"),

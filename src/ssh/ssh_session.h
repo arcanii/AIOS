@@ -333,6 +333,11 @@ int  ssh_do_channel(ssh_session_t *s);
 /* Run the SFTP (v3) subsystem server on the open channel (ssh_sftp.c) */
 int  ssh_do_sftp(ssh_session_t *s);
 
+/* Drop to the session identity (PIPE_SET_IDENTITY); call ONLY from a forked
+ * shell child that is still root, never on long-lived sshd (v0.4.190). Defined
+ * in ssh_auth.c. */
+void ssh_drop_identity(uint32_t uid, uint32_t gid);
+
 /* ----------------------------------------------------------------
  * Function declarations -- ssh_encrypt.c
  * ---------------------------------------------------------------- */

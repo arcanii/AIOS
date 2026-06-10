@@ -30,6 +30,17 @@ extern seL4_CPtr pipe_ep;
 
 static seL4_CPtr serial_ep, fs_ep, auth_ep;
 
+/* Drop to the logged-in identity. v0.4.190: this MUST run in the forked child
+ * (which is still root, inherited from getty) right before exec -- pipe_server
+ * now only honours PIPE_SET_IDENTITY from a root caller, so getty itself stays
+ * root across logins and the privilege drop happens per-shell in the child. */
+static void drop_identity(uint32_t uid, uint32_t gid) {
+    if (!pipe_ep) return;
+    seL4_SetMR(0, (seL4_Word)uid);
+    seL4_SetMR(1, (seL4_Word)gid);
+    seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_SET_IDENTITY, 0, 0, 2));
+}
+
 /* ---- Helpers ---- */
 
 static long parse_num(const char *s) {
@@ -337,14 +348,9 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        /* Tell pipe_server our new identity so fork+exec
-         * propagates uid/gid to the child shell */
-        if (pipe_ep) {
-            seL4_SetMR(0, (seL4_Word)uid);
-            seL4_SetMR(1, (seL4_Word)gid);
-            seL4_Call(pipe_ep,
-                seL4_MessageInfo_new(PIPE_SET_IDENTITY, 0, 0, 2));
-        }
+        /* Identity is dropped in the forked child below (drop_identity),
+         * not here -- getty stays root so it can authenticate the next login
+         * (v0.4.190: PIPE_SET_IDENTITY is now root-only). */
 
         display_motd();
         /* Read /proc/hw for dynamic hardware info */
@@ -385,6 +391,10 @@ int main(int argc, char *argv[]) {
                 continue;
             }
             if (pid == 0) {
+                /* Child is root (inherited); drop to the user before exec.
+                 * The exec'd shell keeps this uid (pipe_server preserves the
+                 * slot uid across PIPE_EXEC). */
+                drop_identity(uid, gid);
                 char *sh_argv[] = {(char *)shell_name, (void *)0};
                 execv(shell_path, sh_argv);
                 _exit(127);
@@ -403,6 +413,9 @@ int main(int argc, char *argv[]) {
         }
         if (!shell_started) {
             ser_puts("getty: persistent fork failure, running shell in-process\n");
+            /* getty is still root here (gate allows it); drop before exec. NOTE
+             * this consumes getty -- no further logins after this fallback. */
+            drop_identity(uid, gid);
             char *sh_argv[] = {(char *)shell_name, (void *)0};
             execv(shell_path, sh_argv);
             /* execv returned -- log and fall through to login */

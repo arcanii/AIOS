@@ -4,6 +4,23 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.190 (2026-06-10)
+- Security: closed a local privilege-escalation. Previously any non-root process
+  could send `PIPE_SET_IDENTITY(0)` to set its own `active_procs[].uid = 0` and
+  gain filesystem root-write. The handler is now gated on the caller already
+  being root. getty and sshd were restructured to drop privilege in the forked
+  shell **child** (root at fork) rather than mutating their own long-lived slot,
+  so they stay root and every login/session gets the correct identity.
+- Defense-in-depth: `exec_server` now derives a child's authz uid from the
+  caller's real uid (badge), only honouring the caller-supplied `CWD=uid:gid`
+  for a root caller -- removing the latent forge-CWD vector (not user-reachable
+  today, since only the root task holds `exec_ep`).
+- Tests: `scripts/identity_qemu_test.py` (6/6: root/user/multi-login all work;
+  the exploit is denied `rc=-1` and ineffective via `idtest`) and
+  `scripts/ssh_nonroot_qemu_test.py` (2/2: non-root SSH login gets `user`
+  identity). Root SSH regression 6/6. Both trees build; adversarially reviewed
+  (the sshd cross-session regression it found is fixed here).
+
 ## v0.4.189 (2026-06-10)
 - Salted password hashing: the auth server (`src/apps/auth_server.c`) now stores
   `$a1$<salt>$<hash>` where the hash is SHA3-512 iterated 12000x over

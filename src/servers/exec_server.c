@@ -441,8 +441,28 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         cow_clear_proc(ap_idx);  /* v0.4.110: zero stale COW state */
         { extern void clear_file_vmas(int ci); clear_file_vmas(ap_idx); }  /* v0.4.146 */
         ap->active = 1;
-        ap->uid = (uint32_t)(uint8_t)cwd_buf[252] | ((uint32_t)(uint8_t)cwd_buf[253] << 8);
-        ap->gid = (uint32_t)(uint8_t)cwd_buf[254] | ((uint32_t)(uint8_t)cwd_buf[255] << 8);
+        /* v0.4.190 defense-in-depth: the CWD=uid:gid is caller-supplied argv, so
+         * a non-root caller must not be able to request a root child. Only a root
+         * caller (the boot/root task = unbadged badge 0, or a uid-0 process) may
+         * set the child identity from the CWD; a non-root caller's child inherits
+         * the caller's real uid. (Today only the root task holds exec_ep, so this
+         * is belt-and-suspenders -- but it removes the latent forge-CWD vector.) */
+        {
+            uint32_t req_uid = (uint32_t)(uint8_t)cwd_buf[252] | ((uint32_t)(uint8_t)cwd_buf[253] << 8);
+            uint32_t req_gid = (uint32_t)(uint8_t)cwd_buf[254] | ((uint32_t)(uint8_t)cwd_buf[255] << 8);
+            int caller = (int)badge - 1;
+            if (badge == 0) {                       /* boot/root task */
+                ap->uid = req_uid; ap->gid = req_gid;
+            } else if (caller >= 0 && caller < MAX_ACTIVE_PROCS
+                       && active_procs[caller].active && active_procs[caller].uid == 0) {
+                ap->uid = req_uid; ap->gid = req_gid;   /* root may set child id */
+            } else if (caller >= 0 && caller < MAX_ACTIVE_PROCS && active_procs[caller].active) {
+                ap->uid = active_procs[caller].uid;     /* non-root: inherit */
+                ap->gid = active_procs[caller].gid;
+            } else {
+                ap->uid = (uint32_t)-1; ap->gid = (uint32_t)-1;  /* unknown caller: non-priv */
+            }
+        }
         ap->fault_ep = child_fault_ep;
         ap->fault_on_pipe_ep = 0;
         ap->stdout_pipe_id = -1;
