@@ -29,35 +29,33 @@ Full QEMU suite: 9/9 green (`scripts/xhci_*_qemu_test.py`, `scripts/fb_scroll_qe
 
 ---
 
-## OPEN ITEM 1 (priority) -- HDMI console freezes on the first scroll
+## OPEN ITEM 1 -- HDMI console scroll freeze -- CLOSED (did not reproduce, v0.4.187)
 
-> **UPDATE 2026-06-10 (v0.4.187): DID NOT REPRODUCE on a clean full-SD flash.**
-> After a fresh `mksdcard.py` flash of committed v0.4.187, the HDMI console
-> scrolled **3115 times with no freeze** (`/proc/fbcon`: `scrolls=3115
-> phase=5(done)`), with `display_server` healthy (`/proc/serverstats`: display
-> ok=136 fail=0). Multiple `ls`/`cat` confirmed at the physical console.
-> v0.4.187 did NOT touch the scroll path (fb_console.c / display_server.c /
-> display_vc.c unchanged), so this is a deploy/state difference, not a code fix.
-> Leading hypothesis: the freeze was tied to the iterative **flash-free
-> kernel8.img-swap** deploy used during the USB session (stale FAT firmware /
-> config.txt / partial state); a full SD flash rewrites the GPU firmware +
-> config.txt, which changes how the GPU-reserved framebuffer is handed over --
-> exactly the cacheable region the scroll's 3MB memmove + per-page clean walks.
-> First boot ran 3534 total scrolls including a 419-scroll burst from a single
-> `cat /usr/src/tcc/elf.h` -- zero freezes (display ok, 0 fail). A COLD
-> POWER-CYCLE then came up clean (v0.4.187, `/proc/fbcon` baseline healthy at
-> scrolls=0). LAST CONFIRMATION OUTSTANDING: exercise the scroll at the
-> physical HDMI console after the cold boot (the scroll path is driven by the
-> getty/keyboard console, not reachable from netconsole) -- `cat` a large file,
-> then `cat /proc/fbcon` over the LAN should show scrolls climbing with
-> phase=done. If clean, CLOSE this item.
+> **RESOLVED 2026-06-10 (v0.4.187): the freeze does NOT reproduce on a clean
+> full-SD flash, confirmed across a cold power-cycle.** Evidence on real HW:
+> - Boot 1 (after `mksdcard.py` full flash): **3534 scrolls, 0 freezes**,
+>   including a 419-scroll burst from one `cat /usr/src/tcc/elf.h`; display ok,
+>   0 fail.
+> - **Cold power-cycle** -> Boot 2: came up clean, then **215 more scrolls,
+>   0 freezes**, `display ok fail=0`. Physical-console `cat` of a large file
+>   scrolled several pages with no issue.
 >
-> SEPARATE (new, lower priority): the scroll is correct but SLOW ("not fast")
-> -- each scroll does a 3MB memmove + a full-frame (~760-page) cacheable clean.
-> Perf follow-up queued: clean only the rows the memmove dirtied, not the whole
-> frame. This is the same optimization the "targeted fix" would have used, now
-> decoupled from the (non-reproducing) freeze. See [[feedback_hdmi_console_cacheable]].
-> Original analysis below for reference.
+> v0.4.187 did NOT touch the scroll path (fb_console.c / display_server.c /
+> display_vc.c unchanged), so this was NOT a code fix. The prior freeze was a
+> deploy/state artifact of the iterative **flash-free kernel8.img-swap** path
+> used during the USB session (stale FAT firmware / config.txt). A full SD
+> flash rewrites the GPU firmware + config.txt, changing how the GPU-reserved
+> framebuffer is handed over -- exactly the cacheable region the scroll's 3MB
+> memmove + per-page clean walks. LESSON: when a HW bug is in the boot/display
+> handover path, reflash the WHOLE card before deep-debugging a flash-free
+> kernel-swap image.
+>
+> SEPARATE perf follow-up (queued, lower priority): the scroll is correct but
+> SLOW -- each scroll does a 3MB memmove + a full-frame (~760-page) cacheable
+> clean. Optimize to clean only the rows the memmove dirtied (clean-as-you-go
+> row copy). See [[feedback_hdmi_console_cacheable]].
+>
+> Original analysis below for reference (now historical).
 
 **Symptom (HW):** once the keyboard fills the screen and fb_console must scroll, the
 display stops updating and the keyboard wedges, but AIOS keeps pinging.
