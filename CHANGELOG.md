@@ -4,6 +4,26 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.191 (2026-06-11)
+- thread_server: `pthread_join` no longer head-of-line-blocks the server. It was
+  a blocking `seL4_Recv` on a per-thread fault endpoint, so one join froze all
+  thread create/join across every process. Threads now fault onto the shared
+  thread_server endpoint via a per-thread badged mint, and the server is an
+  event loop with deferred reply caps -- joins park and other clients keep
+  being served. Handles both orderings (join-before-exit, exit-before-join as a
+  zombie), return-value propagation, and slot reuse.
+- Two bugs the adversarial review caught and that are fixed here: (1) a process
+  could `seL4_Send` on its own thread's fault cap to forge an exit of a *live*
+  thread (cross-process use-after-free) -- the server now `seL4_TCB_Suspend`s
+  before freeing, so the worst case is self-DoS; (2) allocating the reply slot
+  inside the join handler risked a nested `seL4_Call` clobbering the saved reply
+  cap (hang) -- the slot is now pre-allocated at thread create.
+- Tests: `scripts/thread_qemu_test.py` 5/5 (`test_join` deferred/zombie/retval/
+  reuse/concurrent; `test_threads` mutex counter == 2000). Both trees build.
+- Pre-existing limitations surfaced (not fixed here): libaios stdio is not
+  thread-safe (a concurrent `printf` from a worker + main corrupts stdout);
+  `pthread_detach` is a stub (a detached thread zombies a slot until proc exit).
+
 ## v0.4.190 (2026-06-10)
 - Security: closed a local privilege-escalation. Previously any non-root process
   could send `PIPE_SET_IDENTITY(0)` to set its own `active_procs[].uid = 0` and

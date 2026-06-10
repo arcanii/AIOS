@@ -594,11 +594,28 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             for (int ti = 0; ti < MAX_THREADS_PER_PROC; ti++) {
                 aios_thread_t *ct = &ap->threads[ti];
                 if (ct->active) {
-                    vka_free_object(&vka, &ct->tcb);
-                    vka_free_object(&vka, &ct->fault_ep);
-                    vka_free_object(&vka, &ct->ipc_frame);
-                    for (int si = 0; si < THREAD_STACK_PAGES; si++)
-                        vka_free_object(&vka, &ct->stack_frames[si]);
+                    /* v0.4.191: a zombie thread (exited, not yet joined) already
+                     * had its caps freed by handle_thread_exit -- only free a
+                     * still-live thread's caps here, and the fault_mint is now a
+                     * minted cslot (delete + free), not an endpoint object. */
+                    if (!ct->exited) {
+                        vka_free_object(&vka, &ct->tcb);
+                        seL4_CNode_Delete(ct->fault_mint.root, ct->fault_mint.capPtr,
+                                          ct->fault_mint.capDepth);
+                        vka_cspace_free(&vka, ct->fault_mint.capPtr);
+                        vka_free_object(&vka, &ct->ipc_frame);
+                        for (int si = 0; si < THREAD_STACK_PAGES; si++)
+                            vka_free_object(&vka, &ct->stack_frames[si]);
+                    }
+                    /* The deferred-join reply slot is pre-allocated per live
+                     * thread (v0.4.191): delete any parked reply cap, then free
+                     * the slot. */
+                    if (ct->join_pending) {
+                        seL4_CNode_Delete(ct->join_reply.root, ct->join_reply.capPtr,
+                                          ct->join_reply.capDepth);
+                        ct->join_pending = 0;
+                    }
+                    vka_cspace_free(&vka, ct->join_reply.capPtr);
                     ct->active = 0;
                 }
             }

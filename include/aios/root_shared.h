@@ -37,6 +37,10 @@
 
 #define THREAD_CREATE   30
 #define THREAD_JOIN     31
+/* v0.4.191: thread-exit faults arrive on the thread_server endpoint with a badge
+ * >= THREAD_FAULT_BASE (encoding proc_idx*MAX_THREADS_PER_PROC + tidx), distinct
+ * from client request badges (1..MAX_ACTIVE_PROCS) and seL4 fault labels. */
+#define THREAD_FAULT_BASE  0x10000
 
 #define PIPE_CREATE     60
 #define PIPE_WRITE      61
@@ -129,10 +133,17 @@ typedef struct {
     int active;
     int tid;
     vka_object_t tcb;
-    vka_object_t fault_ep;
+    /* v0.4.191: the thread faults onto the shared thread_server endpoint via a
+     * badged mint (badge = THREAD_FAULT_BASE + proc_idx*MAX_THREADS_PER_PROC +
+     * tidx), so the server multiplexes thread-exit faults with client requests
+     * in one event loop instead of blocking on a per-thread endpoint. */
+    cspacepath_t fault_mint;
     vka_object_t ipc_frame;
     vka_object_t stack_frames[THREAD_STACK_PAGES];
-    int exited;
+    int exited;            /* thread faulted/exited; caps freed; retval captured */
+    seL4_Word retval;      /* x0 at exit (pthread return value) */
+    int join_pending;      /* a joiner's reply cap is saved in join_reply */
+    cspacepath_t join_reply;
 } aios_thread_t;
 
 typedef struct {

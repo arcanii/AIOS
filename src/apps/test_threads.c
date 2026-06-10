@@ -11,13 +11,16 @@ static int shared = 0;
 static pthread_mutex_t mtx;
 
 static void *worker(void *arg) {
-    int id = (int)(long)arg;
+    (void)arg;
+    /* No printf here: libaios stdio is not thread-safe, and a concurrent
+     * printf from a worker + main corrupts the shared stdout buffer (a
+     * pre-existing limitation, unrelated to the thread_server join rework).
+     * This test validates the mutex-protected counter; main prints results. */
     for (int i = 0; i < 1000; i++) {
         pthread_mutex_lock(&mtx);
         shared++;
         pthread_mutex_unlock(&mtx);
     }
-    printf("[thread %d] done, shared=%d\n", id, shared);
     return NULL;
 }
 
