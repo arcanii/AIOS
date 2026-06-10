@@ -114,6 +114,116 @@ static void hash_to_hex(const uint8_t hash[64], char hex[129]) {
 }
 
 /* ═══════════════════════════════════════════
+ *  Password KDF (v0.4.189): per-user salt + iterated SHA3-512.
+ *
+ *  Stored form: "$a1$<16 salt-hex>$<128 derived-hex>". The derived key is
+ *  SHA3-512 chained AIOS_KDF_ITERS times over (h || salt || pass), which both
+ *  salts (identical passwords -> different hashes, rainbow-table-proof) and
+ *  adds a work factor (offline brute-force is ~AIOS_KDF_ITERS x slower). The
+ *  old scheme was a single unsalted SHA3-512. The algorithm is mirrored byte
+ *  for byte by scripts/gen_etc_passwd.py, which writes disk/rootfs/etc/passwd.
+ * ═══════════════════════════════════════════ */
+
+static void bytes_to_hex(const uint8_t *b, int n, char *out) {
+    const char *d="0123456789abcdef";
+    for(int i=0;i<n;i++){out[i*2]=d[b[i]>>4];out[i*2+1]=d[b[i]&0xf];}
+    out[n*2]='\0';
+}
+static int hexval(char c) {
+    if(c>='0'&&c<='9')return c-'0';
+    if(c>='a'&&c<='f')return c-'a'+10;
+    if(c>='A'&&c<='F')return c-'A'+10;
+    return -1;
+}
+/* Decode exactly n bytes from 2n hex chars. Returns 0 on success, -1 on bad hex. */
+static int hex_to_bytes(const char *s, int n, uint8_t *out) {
+    for(int i=0;i<n;i++){
+        int hi=hexval(s[i*2]), lo=hexval(s[i*2+1]);
+        if(hi<0||lo<0)return -1;
+        out[i]=(uint8_t)((hi<<4)|lo);
+    }
+    return 0;
+}
+
+/* Derive the 64-byte key: h = SHA3(salt||pass); repeat ITERS: h = SHA3(h||salt||pass). */
+static void kdf_derive(const uint8_t *salt, int slen,
+                       const char *pass, int plen, uint8_t out[64]) {
+    uint8_t buf[64 + AIOS_KDF_SALT_BYTES + 64];
+    int n=0;
+    for(int i=0;i<slen;i++) buf[n++]=salt[i];
+    for(int i=0;i<plen;i++) buf[n++]=(uint8_t)pass[i];
+    uint8_t h[64];
+    sha3_512(buf, (uint32_t)n, h);
+    for(uint32_t it=0; it<AIOS_KDF_ITERS; it++){
+        n=0;
+        for(int i=0;i<64;i++)   buf[n++]=h[i];
+        for(int i=0;i<slen;i++) buf[n++]=salt[i];
+        for(int i=0;i<plen;i++) buf[n++]=(uint8_t)pass[i];
+        sha3_512(buf, (uint32_t)n, h);
+    }
+    for(int i=0;i<64;i++) out[i]=h[i];
+}
+
+/* Constant-time compare of two NUL-terminated hex strings of equal length. */
+static int ct_streq(const char *a, const char *b) {
+    int diff=0, i=0;
+    for(;a[i]&&b[i];i++) diff |= (a[i]^b[i]);
+    diff |= (a[i]^b[i]);   /* both must terminate at the same spot */
+    return diff==0;
+}
+
+/* Build "$a1$<salt_hex>$<derived_hex>" into dst (>= AIOS_PASSHASH_LEN). */
+static void make_passhash(const uint8_t *salt, const char *pass, char *dst) {
+    int plen=str_len(pass);
+    uint8_t key[64];
+    kdf_derive(salt, AIOS_KDF_SALT_BYTES, pass, plen, key);
+    char salthex[AIOS_KDF_SALT_BYTES*2+1], keyhex[129];
+    bytes_to_hex(salt, AIOS_KDF_SALT_BYTES, salthex);
+    bytes_to_hex(key, 64, keyhex);
+    /* dst = "$a1$" + salthex + "$" + keyhex */
+    int n=0;
+    dst[n++]='$'; dst[n++]='a'; dst[n++]='1'; dst[n++]='$';
+    for(int i=0;salthex[i];i++) dst[n++]=salthex[i];
+    dst[n++]='$';
+    for(int i=0;keyhex[i];i++) dst[n++]=keyhex[i];
+    dst[n]='\0';
+}
+
+/* Verify pass against a stored "$a1$salt$hash". Returns 1 on match, 0 otherwise
+ * (including any non-"$a1$" / malformed stored hash -- old unsalted hashes are
+ * no longer accepted; reset such accounts with passwd). */
+static int verify_password(const char *stored, const char *pass) {
+    if(stored[0]!='$'||stored[1]!='a'||stored[2]!='1'||stored[3]!='$') return 0;
+    const char *salthex = stored+4;
+    uint8_t salt[AIOS_KDF_SALT_BYTES];
+    if(hex_to_bytes(salthex, AIOS_KDF_SALT_BYTES, salt)<0) return 0;
+    if(salthex[AIOS_KDF_SALT_BYTES*2]!='$') return 0;
+    const char *exp = salthex + AIOS_KDF_SALT_BYTES*2 + 1;  /* 128 hex chars */
+    uint8_t key[64];
+    kdf_derive(salt, AIOS_KDF_SALT_BYTES, pass, str_len(pass), key);
+    char keyhex[129];
+    bytes_to_hex(key, 64, keyhex);
+    return ct_streq(keyhex, exp);
+}
+
+/* Per-user salt. No CSPRNG in the isolated auth VSpace, but salts need only be
+ * unique (not secret): mix the ARM cycle counter, a monotonic counter, and the
+ * username, then run it through SHA3 to spread the bits. */
+static uint32_t salt_counter = 0;
+static void gen_salt(const char *uname, uint8_t *salt) {
+    uint64_t t;
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(t));
+    uint8_t seed[64]; int n=0;
+    for(int i=0;i<8;i++) seed[n++]=(uint8_t)(t>>(i*8));
+    uint32_t c = ++salt_counter;
+    for(int i=0;i<4;i++) seed[n++]=(uint8_t)(c>>(i*8));
+    for(int i=0;uname[i]&&n<60;i++) seed[n++]=(uint8_t)uname[i];
+    uint8_t h[64];
+    sha3_512(seed, (uint32_t)n, h);
+    for(int i=0;i<AIOS_KDF_SALT_BYTES;i++) salt[i]=h[i];
+}
+
+/* ═══════════════════════════════════════════
  *  User database + sessions
  * ═══════════════════════════════════════════ */
 static aios_user_t    users[AIOS_AUTH_MAX_USERS];
@@ -121,20 +231,22 @@ static int            num_users = 0;
 static aios_session_t sessions[AIOS_AUTH_MAX_SESSIONS];
 static uint32_t       next_token = 0x1001;
 
+/* Fallback users, used only if /etc/passwd fails to load. v0.4.189: the salted
+ * hash is computed at boot from the well-known default password (random per-boot
+ * salt -> login re-derives with the stored salt), so no hash is hardcoded. The
+ * authoritative store is disk/rootfs/etc/passwd (scripts/gen_etc_passwd.py). */
 static void init_default_users(void) {
     mem_zero(users,sizeof(users)); mem_zero(sessions,sizeof(sessions));
+    uint8_t salt[AIOS_KDF_SALT_BYTES];
+
     users[0].active=1; str_cpy(users[0].username,"root");
-    str_cpy(users[0].passhash,
-        "8cd824c700eb0c125fff40c8c185d14c5dfe7f32814afac079ba7c20d93bc3c0"
-        "82193243c420fed22ef2474fbb85880e7bc1ca772150a1f759f8ddebca77711f");
+    gen_salt("root", salt); make_passhash(salt, "root", users[0].passhash);
     users[0].uid=0; users[0].gid=0; users[0].is_root=1;
     str_cpy(users[0].home,"/"); str_cpy(users[0].shell,"/bin/sh");
     str_cpy(users[0].gecos,"System Administrator");
 
     users[1].active=1; str_cpy(users[1].username,"user");
-    str_cpy(users[1].passhash,
-        "dee4164777a98291e138fcebcf7ea59a837226bc8388cd1cf694581586910a81"
-        "d46f07b93c068f17eae5a8337201af7d51b3a888a6db41915d801cb15b6058e5");
+    gen_salt("user", salt); make_passhash(salt, "user", users[1].passhash);
     users[1].uid=1000; users[1].gid=1000; users[1].is_root=0;
     str_cpy(users[1].home,"/home/user"); str_cpy(users[1].shell,"/bin/sh");
     str_cpy(users[1].gecos,"Regular User");
@@ -187,12 +299,10 @@ static void handle_login(void) {
     char u[32],p[64];
     int next_mr=unpack_string(0,u,32);
     unpack_string(next_mr,p,64);
-    uint8_t hash[64]; sha3_512((const uint8_t*)p,(uint32_t)str_len(p),hash);
-    char hex[129]; hash_to_hex(hash,hex);
-    mem_zero(p,64);
     for(int i=0;i<num_users;i++){
         if(!users[i].active)continue;
-        if(str_cmp(users[i].username,u)==0 && str_cmp(users[i].passhash,hex)==0){
+        if(str_cmp(users[i].username,u)==0 && verify_password(users[i].passhash,p)){
+            mem_zero(p,64);
             for(int si=0;si<AIOS_AUTH_MAX_SESSIONS;si++){
                 if(!sessions[si].active){
                     aios_session_t *s=&sessions[si];
@@ -211,6 +321,7 @@ static void handle_login(void) {
             seL4_Reply(seL4_MessageInfo_new(0,0,0,1)); return;
         }
     }
+    mem_zero(p,64);
     ser_puts("[WRN] auth: login DENIED\n");
     seL4_SetMR(0,AIOS_AUTH_ERR_DENIED);
     seL4_Reply(seL4_MessageInfo_new(0,0,0,1));
@@ -283,10 +394,10 @@ static void handle_useradd(void) {
     int next_mr=unpack_string(3,u,32); unpack_string(next_mr,p,64);
     for(int i=0;i<num_users;i++) if(users[i].active&&str_cmp(users[i].username,u)==0){
         seL4_SetMR(0,AIOS_AUTH_ERR_EXISTS);seL4_Reply(seL4_MessageInfo_new(0,0,0,1));return;}
-    uint8_t hash[64]; sha3_512((const uint8_t*)p,(uint32_t)str_len(p),hash);
-    char hex[129]; hash_to_hex(hash,hex); mem_zero(p,64);
+    uint8_t salt[AIOS_KDF_SALT_BYTES]; gen_salt(u, salt);
+    char newhash[AIOS_PASSHASH_LEN]; make_passhash(salt, p, newhash); mem_zero(p,64);
     aios_user_t *nu=&users[num_users++];
-    nu->active=1; str_cpy(nu->username,u); str_cpy(nu->passhash,hex);
+    nu->active=1; str_cpy(nu->username,u); str_cpy(nu->passhash,newhash);
     nu->uid=new_uid; nu->gid=new_gid; nu->is_root=(new_uid==0)?1:0; nu->ngroups=0;
     if(new_uid==0) str_cpy(nu->home,"/");
     else{str_cpy(nu->home,"/home/");int hi=6;for(int j=0;u[j]&&hi<63;j++)nu->home[hi++]=u[j];nu->home[hi]='\0';}
@@ -304,8 +415,8 @@ static void handle_passwd(void) {
     if(!s->is_root&&str_cmp(s->username,u)!=0){mem_zero(p,64);seL4_SetMR(0,AIOS_AUTH_ERR_DENIED);seL4_Reply(seL4_MessageInfo_new(0,0,0,1));return;}
     for(int i=0;i<num_users;i++){
         if(users[i].active&&str_cmp(users[i].username,u)==0){
-            uint8_t hash[64]; sha3_512((const uint8_t*)p,(uint32_t)str_len(p),hash);
-            hash_to_hex(hash,users[i].passhash); mem_zero(p,64);
+            uint8_t salt[AIOS_KDF_SALT_BYTES]; gen_salt(u, salt);
+            make_passhash(salt, p, users[i].passhash); mem_zero(p,64);
             ser_puts("[INF] auth: passwd changed\n");
             seL4_SetMR(0,AIOS_AUTH_OK); seL4_Reply(seL4_MessageInfo_new(0,0,0,1)); return;
         }
@@ -333,10 +444,9 @@ static void handle_su(void) {
         }
         seL4_SetMR(0,AIOS_AUTH_ERR_NOSLOT); seL4_Reply(seL4_MessageInfo_new(0,0,0,1)); return;
     }
-    uint8_t hash[64]; sha3_512((const uint8_t*)p,(uint32_t)str_len(p),hash);
-    char hex[129]; hash_to_hex(hash,hex); mem_zero(p,64);
     for(int i=0;i<num_users;i++){
-        if(users[i].active&&str_cmp(users[i].username,u)==0&&str_cmp(users[i].passhash,hex)==0){
+        if(users[i].active&&str_cmp(users[i].username,u)==0&&verify_password(users[i].passhash,p)){
+            mem_zero(p,64);
             s->uid=users[i].uid; s->gid=users[i].gid; s->is_root=users[i].is_root;
             s->ngroups=users[i].ngroups;
             for(int g=0;g<users[i].ngroups;g++) s->groups[g]=users[i].groups[g];
@@ -346,6 +456,7 @@ static void handle_su(void) {
             seL4_Reply(seL4_MessageInfo_new(0,0,0,3)); return;
         }
     }
+    mem_zero(p,64);
     seL4_SetMR(0,AIOS_AUTH_ERR_DENIED); seL4_Reply(seL4_MessageInfo_new(0,0,0,1));
 }
 
@@ -427,7 +538,7 @@ static void handle_load_passwd(void) {
         if(buf[pos]!=':')goto skip; flen=pos-start;if(flen>31)flen=31;
         for(int j=0;j<flen;j++)u->username[j]=buf[start+j]; u->username[flen]='\0'; pos++;
         start=pos; while(buf[pos]&&buf[pos]!=':'&&buf[pos]!='\n')pos++;
-        if(buf[pos]!=':')goto skip; flen=pos-start;if(flen>128)flen=128;
+        if(buf[pos]!=':')goto skip; flen=pos-start;if(flen>AIOS_PASSHASH_LEN-1)flen=AIOS_PASSHASH_LEN-1;
         for(int j=0;j<flen;j++)u->passhash[j]=buf[start+j]; u->passhash[flen]='\0'; pos++;
         u->uid=(uint32_t)parse_uint_str(buf,&pos); if(buf[pos]==':')pos++;else goto skip;
         u->gid=(uint32_t)parse_uint_str(buf,&pos);

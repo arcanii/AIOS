@@ -4,6 +4,24 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.189 (2026-06-10)
+- Salted password hashing: the auth server (`src/apps/auth_server.c`) now stores
+  `$a1$<salt>$<hash>` where the hash is SHA3-512 iterated 12000x over
+  `(h || salt || password)`. Per-user salt defeats rainbow tables and makes
+  identical passwords hash differently; the iteration count adds a brute-force
+  work factor. Replaces the old bare, unsalted single SHA3-512. (Honest scope:
+  a research-OS work factor, not Argon2/bcrypt-grade.)
+- `scripts/gen_etc_passwd.py` writes `disk/rootfs/etc/passwd` with matching
+  hashes, reading the KDF constants from `aios_auth.h` so host and device never
+  drift. Clean break: old unsalted hashes no longer authenticate (reset with
+  `passwd`). Constant-time hash comparison; plaintext zeroed on every path.
+- Removed dead `src/aios_auth.c` (a stale, unbuilt duplicate auth server still
+  on the old unsalted format).
+- QEMU-verified: `scripts/auth_kdf_qemu_test.py` (login with a host-generated
+  hash proves the KDF matches byte-for-byte; wrong password denied) + SSH login
+  regression 6/6. Both trees build; adversarially reviewed (no memory-safety or
+  bypass bugs).
+
 ## v0.4.188 (2026-06-10)
 - Durability: implemented POSIX `sync(2)`/`fsync(2)`/`fdatasync(2)`, wired to a
   new `FS_SYNC` IPC that flushes the write-back block cache on the fs_thread

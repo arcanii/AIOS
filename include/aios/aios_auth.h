@@ -41,10 +41,21 @@
 #define AIOS_AUTH_MAX_GROUPS_PER_USER 16
 #define AIOS_AUTH_MAX_SESSIONS        4
 
+/* ── Password KDF (v0.4.189) ──
+ * Stored hash format: "$a1$<salt_hex>$<derived_hex>"
+ *   salt = AIOS_KDF_SALT_BYTES random bytes (per-user, defeats rainbow tables)
+ *   derived = SHA3-512 iterated AIOS_KDF_ITERS times over (h || salt || pass)
+ * This replaces the old bare single SHA3-512 (unsalted, no work factor).
+ * AIOS_KDF_ITERS MUST match scripts/gen_etc_passwd.py (kept in sync; the script
+ * parses this header). It is a research-OS work factor, not bcrypt-strength. */
+#define AIOS_KDF_SALT_BYTES  8
+#define AIOS_KDF_ITERS       12000
+#define AIOS_PASSHASH_LEN    160   /* "$a1$" + 16 salt-hex + "$" + 128 hash-hex + NUL */
+
 typedef struct {
     int      active;
     char     username[32];
-    char     passhash[129];  /* SHA-3-512: 128 hex chars + NUL */
+    char     passhash[AIOS_PASSHASH_LEN];  /* "$a1$salt$hash" (v0.4.189) */
     uint32_t uid;
     uint32_t gid;
     uint32_t groups[AIOS_AUTH_MAX_GROUPS_PER_USER];
@@ -66,21 +77,8 @@ typedef struct {
     char     username[32];
 } aios_session_t;
 
-/* ── API (implemented in aios_auth.c) ── */
-
-/* Thread entry point — pass auth_ep as arg0 */
-void aios_auth_thread_fn(void *arg0, void *arg1, void *ipc_buf);
-
-/* Init user database (called before thread start) */
-void aios_auth_init(void);
-
-/* Load /etc/passwd from VFS into user database */
-int aios_auth_load_passwd(void);
-
-/* Auto-login root — returns session token */
-uint32_t aios_auth_login_root(void);
-
-/* SHA-3-512 (exposed for testing) */
-void aios_sha3_512(const uint8_t *data, uint32_t len, uint8_t hash[64]);
+/* The auth server is the standalone MMU-isolated process src/apps/auth_server.c
+ * (a BOOT_APP). It has no exported C API -- everything is via the IPC labels
+ * above. This header is the shared protocol/type definition only. */
 
 #endif /* AIOS_AUTH_H */
