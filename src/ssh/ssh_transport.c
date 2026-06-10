@@ -12,13 +12,55 @@
 #include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <time.h>
+
+/* ----------------------------------------------------------------
+ * Pre-auth read deadline (v0.4.187, anti-tarpit)
+ *
+ * Before authentication completes, a client that connects and sends
+ * nothing (or dribbles bytes) would otherwise hold the single-session
+ * server forever inside a blocking read. sshd_main arms this deadline
+ * at accept (and puts the socket in O_NONBLOCK), so pre-auth reads
+ * poll with a short nap and give up when the deadline passes; it is
+ * disarmed after USERAUTH_SUCCESS. Time-based on the ARM counter,
+ * never an iteration count (QEMU hides iteration-speed differences).
+ * ---------------------------------------------------------------- */
+
+static uint64_t g_preauth_deadline;  /* cntpct ticks; 0 = disarmed */
+
+void ssh_set_preauth_deadline(int seconds)
+{
+    if (seconds <= 0) {
+        g_preauth_deadline = 0;
+        return;
+    }
+    uint64_t now, freq;
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+    if (freq == 0) freq = 62500000;
+    g_preauth_deadline = now + (uint64_t)seconds * freq;
+}
+
+static int preauth_expired(void)
+{
+    if (!g_preauth_deadline) return 0;
+    uint64_t now;
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
+    return now >= g_preauth_deadline;
+}
 
 /* ----------------------------------------------------------------
  * Low-level socket I/O with 900-byte chunking
  * ---------------------------------------------------------------- */
 
 /* Read exactly n bytes from socket, chunking at SOCK_CHUNK.
- * Returns 0 on success, -1 on EOF/error. */
+ * Returns 0 on success, -1 on EOF/error/deadline.
+ *
+ * With the pre-auth deadline armed the socket is O_NONBLOCK, so a
+ * negative read means no-data-yet (EAGAIN): nap 10ms and retry until
+ * the deadline. With it disarmed (post-auth blocking mode, or the
+ * relay which uses ssh_read_packet_nb instead) a negative read is a
+ * real error, as before. */
 static int sock_read_exact(int fd, uint8_t *buf, int n)
 {
     int total = 0;
@@ -26,7 +68,19 @@ static int sock_read_exact(int fd, uint8_t *buf, int n)
         int want = n - total;
         if (want > SOCK_CHUNK) want = SOCK_CHUNK;
         int got = (int)read(fd, buf + total, want);
-        if (got <= 0) return -1;
+        if (got == 0) return -1;  /* EOF */
+        if (got < 0) {
+            if (!g_preauth_deadline) return -1;
+            if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
+                return -1;  /* real error (e.g. reset): fail fast */
+            if (preauth_expired()) {
+                SSHLOG("[sshd] pre-auth deadline expired\n");
+                return -1;
+            }
+            struct timespec nap = { 0, 10 * 1000 * 1000 };  /* 10ms */
+            nanosleep(&nap, NULL);
+            continue;
+        }
         total += got;
     }
     return 0;
@@ -76,8 +130,15 @@ int ssh_version_exchange(ssh_session_t *s)
     char line[SSH_MAX_VERSION_LEN + 2];
     int pos = 0;
     int found = 0;
+    int lines = 0;
 
     while (!found) {
+        /* RFC 4253 allows lines before the SSH- line, but unbounded
+         * junk would let a client hold the server (v0.4.187). */
+        if (++lines > 64) {
+            SSHLOG("[sshd] no SSH- line within 64 lines, giving up\n");
+            return -1;
+        }
         pos = 0;
         while (pos < (int)sizeof(line) - 1) {
             uint8_t ch;

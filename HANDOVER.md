@@ -10,7 +10,9 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
 ## Quick orientation
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4.
-* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.186**.
+* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.187**
+  (Tier 0 review work: THIRD_PARTY_LICENSES/CONTRIBUTING/CHANGELOG/clangd +
+  SSH backoff + pre-auth hardening; see CHANGELOG.md).
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4).
 * **Host**: macOS Apple Silicon, cross-compile to aarch64-linux-gnu.
 * **Developer**: Bryan -- prefers Python patch scripts over sed/heredocs; no

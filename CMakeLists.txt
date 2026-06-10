@@ -12,5 +12,9 @@ include(${AIOS_SETTINGS})
 
 project(aios NONE)
 
+# Emit compile_commands.json in the build dir for clangd / IDE tooling.
+# Symlink it to the repo root: ln -sf build-04/compile_commands.json .
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "" FORCE)
+
 # Use seL4's standard build infrastructure
 include(tools/seL4/cmake-tool/all.cmake)

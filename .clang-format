@@ -1,0 +1,24 @@
+# AIOS C style -- codifies the dominant existing conventions (4-space indent,
+# attached braces, star binds to the name, ~100-column soft limit).
+#
+# Scope: NEW code and touched lines only (clang-format-diff) -- do NOT
+# mass-reformat existing files; the repo has hand-aligned register tables and
+# comment columns that wholesale formatting would destroy.
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+BreakBeforeBraces: Attach
+PointerAlignment: Right
+AlignAfterOpenBracket: Align
+AlignTrailingComments: true
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+IndentCaseLabels: false
+SortIncludes: Never
+ReflowComments: false
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 2
+SpaceBeforeParens: ControlStatements

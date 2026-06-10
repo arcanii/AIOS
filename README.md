@@ -18,26 +18,23 @@ Architectures / Hardware Supported
 - :white_medium_square: AArch64 (Raspberry Pi 5)
 - :white_medium_square: X86-64 
 
-## Latest Achievements
-- **USB keyboard on real RPi4** -- a USB HID keyboard drives the AIOS shell. Full stack
-  brought up on real hardware: brcmstb PCIe root complex -> VIA VL805 xHCI controller ->
-  USB hub enumeration -> HID boot keyboard, all over the BCM2711 PCIe (link trains 5.0 GT/s).
-  The interactive shell now mirrors to the HDMI framebuffer console, so the Pi runs
-  fully standalone: **USB keyboard in, HDMI monitor out, no serial cable or laptop**.
-  (QEMU-verified end to end via `scripts/xhci_key_qemu_test.py` + the hub variant.)
-- **RPi4 4-core SMP** -- all four Cortex-A72 cores brought up via spin-table, HW-verified (`/proc/hw` cores=4, 0% ping loss)
-- **Concurrent-process scaling** -- parallel-pipeline ceiling raised ~5x via higher process limits + demand-paged ELF .text (each process keeps resident only the code it runs)
-- **SSH over LAN** -- always-on (getty auto-starts sshd): AES-256-CTR + HMAC-SHA-256, password auth, sequential reconnect with shell self-heal, sftp + scp
-- **RPi4 networking** -- real GENET Ethernet with DHCP and bidirectional ping on hardware
-- **Network control channel** -- drive the Pi over the LAN (run commands, push/pull files, reboot) via netconsole; no serial needed after flashing
-- **DNS resolver** -- `nslookup` resolves hostnames to IPs (QEMU + real hardware)
-- **Write-back block cache** -- 4.5x faster file writes on real eMMC (CMD25 multi-block, HW-verified)
-- **Hardware-robust drivers** -- time-based (not iteration-count) completion waits across eMMC, GENET, and the VC mailbox -- removes multi-second HW stalls
-- **Wall-clock time** -- SNTP client syncs real date/time at boot
-- **RPi4 HDMI** -- VideoCore framebuffer lit on real hardware (1024x768 + fb_console)
-- **Process tools** -- `pidof` / `pkill` / `killall` via /proc/status + `kill(2)`
+## Highlights
+
+- **Standalone Raspberry Pi 4** -- USB keyboard in, HDMI monitor out, no serial
+  cable or laptop: brcmstb PCIe -> VL805 xHCI -> USB hub -> HID keyboard, with
+  the shell mirrored to the framebuffer console (all HW-verified; known open
+  issue: the HDMI console can freeze on its first scroll on hardware -- see
+  [CHANGELOG.md](CHANGELOG.md))
+- **4-core SMP on real hardware** -- all four Cortex-A72 cores via spin-table
+- **On the LAN** -- GENET Ethernet + DHCP, always-on SSH (AES-256-CTR +
+  HMAC-SHA-256, sftp/scp), netconsole remote control, DNS, SNTP wall-clock time
 - **TCC self-hosting** -- TinyCC compiles C programs natively on AIOS
-- Two shells: DASH (login) + ZSH (interactive, ZLE)
+- **POSIX core 55/55** -- real fork+exec+waitpid, signals, pipelines; dash as
+  login shell, zsh (ZLE) interactive, 99 sbase utilities
+- **Microkernel-honest memory** -- demand-paged ELF text/BSS, shared read-only
+  .text, COW fork, write-back block cache (4.5x faster eMMC writes)
+
+The full arc-by-arc history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ## Overview
 
@@ -51,7 +48,7 @@ External AI (Claude) is used as a development tool for code generation
 and review. This project is also a study in AI-assisted systems programming.
 The long-term goal is self-hosted development within AIOS itself.
 
-**Current version:** v0.4.185
+**Current version:** v0.4.187 (authoritative: `include/aios/version.h`; history: [CHANGELOG.md](CHANGELOG.md))
 
 ## Quick Start
 
@@ -460,6 +457,8 @@ See `hw/rpi4/BOOT_NOTES.md` for the firmware `config.txt` and boot details.
 
 ## Documentation
 
+- [CONTRIBUTING.md](CONTRIBUTING.md) -- How to build, test, and contribute (style, rebuild rules, conventions)
+- [CHANGELOG.md](CHANGELOG.md) -- Milestone history
 - [ENVIRONMENT_BUILD.md](docs/ENVIRONMENT_BUILD.md) -- Step-by-step build environment setup
 - [AI_BRIEFING.md](docs/AI_BRIEFING.md) -- Project context for AI sessions
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) -- System design
@@ -473,13 +472,18 @@ See `hw/rpi4/BOOT_NOTES.md` for the firmware `config.txt` and boot details.
 
 ## Project Status
 
-This is in an experimental/research phase. Collaborators welcome.
+This is in an experimental/research phase. Collaborators welcome -- see
+[CONTRIBUTING.md](CONTRIBUTING.md) for the workflow, style, and test
+conventions.
 
 The 0.4.x line runs on bare seL4 (single root task, no Microkit).
 Earlier branches (0.2.x, 0.3.x) explored Microkit-based designs.
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) file.
+First-party code is MIT -- see [LICENSE](LICENSE).
 
-The sbase utilities are from suckless.org (MIT License).
+AIOS builds on and ships alongside third-party components (seL4 kernel
+(GPL-2.0), sbase, dash, zsh, TinyCC (LGPL-2.1), Mbed TLS, musl, Raspberry Pi
+firmware). Their licenses and the obligations for distributing built images
+are catalogued in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).

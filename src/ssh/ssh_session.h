@@ -238,6 +238,12 @@ static inline int ssh_get_string(const uint8_t *buf, int buflen,
 /* Exchange version strings with client */
 int ssh_version_exchange(ssh_session_t *s);
 
+/* Pre-auth read deadline (v0.4.187): while armed (seconds > 0), socket
+ * reads give up once the deadline passes instead of waiting forever.
+ * The socket must be O_NONBLOCK for the deadline to be enforced.
+ * Pass 0 to disarm after authentication. */
+void ssh_set_preauth_deadline(int seconds);
+
 /* Read one SSH binary packet, return payload and length.
  * payload buffer must be at least SSH_BUF_SIZE bytes. */
 int ssh_read_packet(ssh_session_t *s, uint8_t *payload, int *payload_len);

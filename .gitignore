@@ -5,7 +5,6 @@ build-*/
 
 # Model weights (too large for git)
 *.bin
-!tokenizer.bin
 
 # Training outputs
 out/
@@ -47,6 +46,7 @@ screenlog.*
 # Disk images (built, not tracked)
 disk/*.img
 disk/rpi4-firmware/
+disk/rpi4-firmware-latest/
 disk/.sdcard-tmp/
 
 # Dependencies (cloned, not tracked)
@@ -59,3 +59,7 @@ src/lib/aios_posix.c.pre_modular
 
 # aios_console.py live mirror (watch viewer)
 .aios_console.live
+
+# clangd database (symlink into build-04/)
+compile_commands.json
+.cache/

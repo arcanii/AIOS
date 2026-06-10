@@ -12,6 +12,7 @@
 #include "aios_posix.h"
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 /* IPC labels (match getty.c / pipe_server.c) */
 #define AUTH_LOGIN        40
@@ -20,6 +21,33 @@
 
 /* Max login attempts before disconnect */
 #define MAX_AUTH_ATTEMPTS 3
+
+/* ----------------------------------------------------------------
+ * Failed-attempt backoff (v0.4.187, anti-brute-force)
+ *
+ * Delay (2 * attempt + prior failures) seconds, capped at 10, before
+ * each USERAUTH_FAILURE for a counted attempt. A fresh boot sees
+ * 2s/5s/8s across the three attempts of one connection; a reconnect
+ * starts at 2s + 1s per prior failure (sshd is one process per boot,
+ * so the static counter persists -- reconnecting for a fresh
+ * 3-attempt window no longer resets the cost). The cap keeps a
+ * legitimate typo tolerable; the counter saturates at 8 because the
+ * cap makes higher values indistinguishable. Successful first-try
+ * logins (and the method=none probe) see no delay at all.
+ * NOTE: nanosleep here is a yield busy-wait (the platform sleep
+ * primitive), so the tarpit spends sshd thread time, not just the
+ * time of the attacking client.
+ * ---------------------------------------------------------------- */
+
+static int g_prior_failures;
+
+static void auth_fail_delay(int attempt)
+{
+    int secs = 2 * attempt + g_prior_failures;
+    if (secs > 10) secs = 10;
+    struct timespec ts = { .tv_sec = secs, .tv_nsec = 0 };
+    nanosleep(&ts, NULL);
+}
 
 /* ----------------------------------------------------------------
  * Pack a string into seL4 message registers (8 bytes per MR)
@@ -167,10 +195,22 @@ static int send_auth_success(ssh_session_t *s)
 int ssh_do_userauth(ssh_session_t *s)
 {
     int attempts = 0;
+    int rounds = 0;
 
     while (attempts < MAX_AUTH_ATTEMPTS) {
         uint8_t pkt[SSH_BUF_SIZE];
         int plen = 0;
+
+        /* Bound this userauth request loop (v0.4.187): method=none probes,
+         * unknown methods, and IGNORE/DEBUG packets do not count as
+         * attempts, so without a cap a client could loop here forever.
+         * Normal flow uses 2-4 rounds (none probe + 1-3 password attempts).
+         * The transport-level loops (version exchange, service request)
+         * are separate and not bounded by this. */
+        if (++rounds > 16) {
+            SSHLOG("[sshd] Too many pre-auth requests, disconnecting\n");
+            return -1;
+        }
 
         if (ssh_read_packet(s, pkt, &plen) < 0) {
             SSHLOG("[sshd] Auth packet read failed\n");
@@ -241,6 +281,8 @@ int ssh_do_userauth(ssh_session_t *s)
              */
             if (off >= plen) {
                 SSHLOG("[sshd] Password field missing\n");
+                auth_fail_delay(attempts + 1);
+                if (g_prior_failures < 8) g_prior_failures++;
                 if (send_auth_failure(s) < 0) return -1;
                 attempts++;
                 continue;
@@ -253,6 +295,8 @@ int ssh_do_userauth(ssh_session_t *s)
             uint32_t pass_len;
             if (ssh_get_string(pkt, plen, &off, &pass_data, &pass_len) < 0) {
                 SSHLOG("[sshd] Bad password string\n");
+                auth_fail_delay(attempts + 1);
+                if (g_prior_failures < 8) g_prior_failures++;
                 if (send_auth_failure(s) < 0) return -1;
                 attempts++;
                 continue;
@@ -294,6 +338,8 @@ int ssh_do_userauth(ssh_session_t *s)
 
             SSHLOG("[sshd] Auth FAILED for user %s (attempt %d)\n",
                    username, attempts + 1);
+            auth_fail_delay(attempts + 1);
+            if (g_prior_failures < 8) g_prior_failures++;
             if (send_auth_failure(s) < 0) return -1;
             attempts++;
             continue;

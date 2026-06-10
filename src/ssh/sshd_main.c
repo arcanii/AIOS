@@ -12,8 +12,16 @@
 #include <signal.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+
+/* Pre-auth grace period (v0.4.187): a connection must reach
+ * USERAUTH_SUCCESS within this window or it is dropped, so an idle or
+ * dribbling client cannot hold the single-session server forever.
+ * 60s covers a hand-typed password plus the full failed-attempt
+ * backoff (2+5+8 = 15s); OpenSSH ships LoginGraceTime 120s. */
+#define SSHD_PREAUTH_GRACE_SECS 60
 
 int g_ssh_verbose = 0;
 
@@ -75,6 +83,14 @@ int main(int argc, char **argv)
         memset(&sess, 0, sizeof(sess));
         sess.sockfd = cfd;
 
+        /* Arm the pre-auth deadline; O_NONBLOCK lets reads poll
+         * against it instead of blocking in net_server (v0.4.187). */
+        {
+            int fl = fcntl(cfd, F_GETFL, 0);
+            fcntl(cfd, F_SETFL, fl | O_NONBLOCK);
+        }
+        ssh_set_preauth_deadline(SSHD_PREAUTH_GRACE_SECS);
+
         /* Phase 1: Version exchange */
         if (ssh_version_exchange(&sess) < 0) {
             SSHLOG("[sshd] Version exchange failed\n");
@@ -112,10 +128,17 @@ int main(int argc, char **argv)
         /* Read packets until SERVICE_REQUEST */
         {
             int got_service = 0;
+            int srounds = 0;
             uint8_t spkt[SSH_BUF_SIZE];
             int splen = 0;
 
             while (!got_service) {
+                /* IGNORE/DEBUG/EXT_INFO/unexpected packets loop here
+                 * without progress -- cap the rounds (v0.4.187). */
+                if (++srounds > 16) {
+                    SSHLOG("[sshd] Too many pre-service packets\n");
+                    break;
+                }
                 if (ssh_read_packet(&sess, spkt, &splen) < 0) {
                     SSHLOG("[sshd] Encrypted read failed\n");
                     break;
@@ -190,6 +213,14 @@ int main(int argc, char **argv)
 
         SSHLOG("[sshd] User authenticated (uid=%u)\n",
                (unsigned)sess.uid);
+
+        /* Disarm the pre-auth deadline and restore blocking reads;
+         * the channel relay manages its own O_NONBLOCK (v0.4.187). */
+        ssh_set_preauth_deadline(0);
+        {
+            int fl = fcntl(cfd, F_GETFL, 0);
+            fcntl(cfd, F_SETFL, fl & ~O_NONBLOCK);
+        }
 
         /* Phase 5: Session channel + shell */
         SSHLOG("[sshd] Phase 4 complete -- starting channel\n");
