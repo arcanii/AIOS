@@ -50,10 +50,30 @@ Full QEMU suite: 9/9 green (`scripts/xhci_*_qemu_test.py`, `scripts/fb_scroll_qe
 > handover path, reflash the WHOLE card before deep-debugging a flash-free
 > kernel-swap image.
 >
-> SEPARATE perf follow-up (queued, lower priority): the scroll is correct but
-> SLOW -- each scroll does a 3MB memmove + a full-frame (~760-page) cacheable
-> clean. Optimize to clean only the rows the memmove dirtied (clean-as-you-go
-> row copy). See [[feedback_hdmi_console_cacheable]].
+> SEPARATE perf item -- BACKLOGGED (analysis done 2026-06-10, deferred for Tier 1):
+> the scroll is correct but SLOW. Investigation findings:
+> - A scroll's memmove shifts EVERY pixel row up, so the whole visible frame is
+>   genuinely dirty -- "clean only dirty rows" does NOT apply to scrolling (it
+>   already applies to normal typing via con_mark).
+> - The per-page clean loop in gpu_fb_flush (boot_display_init.c) is forced by a
+>   REAL kernel constraint: seL4 decodeARMVSpaceRootInvocation "Refuse[s] to
+>   cross a page boundary" (deps/kernel/.../arm/64/kernel/vspace.c:1381). The
+>   boundary is the MAPPED page size; display_vc.c maps the FB with 4KB pages
+>   (seL4_PageBits) -> 3MB = ~768 clean syscalls.
+> - Per-scroll cost = 3MB memmove (~1-2ms, likely dominant) + ~768 clean
+>   syscalls (~0.4ms overhead + cache work). The clean-as-you-go fusion only
+>   merges these two passes -> ~5-15%, marginal, because moving 3MB + cleaning
+>   3MB is unavoidable without panning.
+> - THE REAL FIX = hardware panning: the VC mailbox already exposes
+>   TAG_SET_VIRT_WH (0x48004) + TAG_SET_VIRT_OFF (0x48009) in display_vc.c.
+>   Allocate a double-height virtual FB, scroll by bumping the pan offset
+>   instead of moving pixels (one amortized memmove every ~76 lines), clean only
+>   the new bottom row -> potentially ~20x. RISK: touches the hard-won FB alloc
+>   + a per-scroll mailbox call (latency unmeasured), HW-only to verify (card-
+>   shuffle deploy loop). Decision (Bryan, 2026-06-10): not worth the risk for a
+>   cosmetic nicety right now -> backlog, do Tier 1 first. If revisited, measure
+>   the memmove-vs-clean split first via per-phase cntpct timing in /proc/fbcon.
+> See [[feedback_hdmi_console_cacheable]].
 >
 > Original analysis below for reference (now historical).
 
