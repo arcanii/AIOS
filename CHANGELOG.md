@@ -4,6 +4,35 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.192 (2026-06-11) -- HW-verified
+- USB keyboard: fixed the "dies on the first key press" hardware regression
+  (LS keyboard behind the VL805 TT resets, lock LED out, input dead). ROOT
+  CAUSE: the driver armed ONE interrupt-IN transfer at a time and re-armed only
+  AFTER the blocking SER_KEY_PUSH echo (tty -> HDMI render), so during any echo
+  the keyboard went unpolled past its TT timeout and reset. The margin was
+  always thin; the v0.4.188-191 timing shifts made it fail on ~the first key.
+  FIX: multi-arm -- keep `INT_RING_BUFS`(8) interrupt-IN transfers armed in a
+  ring of report buffers (FIFO completion order); a consumed buffer is
+  re-armed BEFORE the blocking decode, so the controller never stops polling
+  the keyboard. HW-verified: 158 clean decodes, full login + commands, then a
+  second session with key repeat.
+- Typematic (host-side key repeat): the HID boot keyboard only reports state
+  changes, so repeat must be host-driven. Holding a key now repeats after
+  500ms at ~15cps, latest press wins, release disarms. QEMU test:
+  `scripts/xhci_typematic_qemu_test.py` (run of 17, stops on release).
+- Lock-key LEDs are now SOFTWARE-ONLY at runtime (Num/Caps still gate the
+  numpad/case; the physical LED stays at its enumeration state). HW-proven
+  (serial cc=6 STALL then cc=-1 timeout): with the multi-arm ring full, a
+  runtime SET_REPORT through the TT stalls this LS keyboard and wedges it --
+  the v0.4.185 kill resurfaced; v0.4.186's endpoint-aware dispatch is not
+  sufficient with a full ring. Proper fix (Stop Endpoint around SET_REPORT)
+  is backlogged. The `/proc/xhci.led` poke remains as an explicit diagnostic.
+- Process lessons from the debugging arc (see docs/NEXT_20260611b_kbd_resolved.md):
+  verify every flash-free kernel8.img swap by sha-on-card AND the serial
+  banner build number (several "failed" HW tests were stale kernels); one
+  serial reader at a time (two readers split the byte stream); the v0.4.188
+  flusher and the v0.4.190/191 changes were individually ruled out on HW.
+
 ## v0.4.191 (2026-06-11)
 - thread_server: `pthread_join` no longer head-of-line-blocks the server. It was
   a blocking `seL4_Recv` on a per-thread fault endpoint, so one join froze all

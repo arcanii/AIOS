@@ -319,6 +319,21 @@ static int map_bar(void) {
  * the array needs no locking. */
 enum { USB_NONE = 0, USB_KBD = 1, USB_MOUSE = 2, USB_HUB = 9 };
 #define MAX_USB_DEV  8
+/* v0.4.192: keep MULTIPLE interrupt-IN transfers armed at once. The keyboard is a
+ * low-speed device behind the VL805's transaction-translator (10ms interval) and
+ * resets itself (LED out, input dead) if the host stops polling it even briefly --
+ * which happened on ~the first key because the driver re-armed only AFTER the
+ * blocking SER_KEY_PUSH echo, leaving a window with ZERO armed transfers. Arming a
+ * small ring of report buffers means there are always (N-1) transfers pending while
+ * the driver is busy, so the controller never stops polling the keyboard -> it never
+ * starves. Buffers are carved from the existing (non-cacheable) rpt DMA page. */
+#define INT_RING_BUFS  8
+#define RPT_STRIDE     64    /* per-report buffer stride within the rpt page */
+
+/* Typematic (host-side key repeat) timing -- classic PC defaults. */
+#define KBD_REPEAT_DELAY_MS  500   /* hold this long before repeating  */
+#define KBD_REPEAT_RATE_MS   66    /* then ~15 chars per second        */
+
 struct usb_dev {
     int      in_use;
     int      kind;                                  /* USB_KBD / USB_MOUSE / USB_HUB */
@@ -333,7 +348,8 @@ struct usb_dev {
     /* interrupt-IN endpoint (HID boot report) */
     volatile uint8_t *int_ring; uint64_t int_ring_pa;
     uint32_t int_enq, int_cycle;
-    volatile uint8_t *rpt;      uint64_t rpt_pa;
+    uint32_t int_proc;                              /* FIFO: next report buffer to consume */
+    volatile uint8_t *rpt;      uint64_t rpt_pa;    /* page holding INT_RING_BUFS buffers */
     uint32_t dci;                                   /* interrupt-IN endpoint DCI */
     uint32_t int_mps;
     int      rpt_len;                               /* boot report bytes: 8 kbd, 4 mouse */
@@ -341,6 +357,14 @@ struct usb_dev {
     uint8_t  prev_keys[6];
     int      num_lock, caps_lock, scroll_lock;
     volatile uint8_t *led_buf;  uint64_t led_buf_pa;
+    /* v0.4.192 typematic (host-side key repeat): the HID boot keyboard reports only
+     * state CHANGES, so holding a key emits one report -- repeat must be host-driven.
+     * The latest printable press arms repeat; its release disarms. The driver loop
+     * emits the char again after KBD_REPEAT_DELAY_MS, then every KBD_REPEAT_RATE_MS. */
+    int      rep_active;
+    uint8_t  rep_kc;            /* usage code armed for repeat */
+    char     rep_ch;            /* decoded char to re-emit (modifiers at press) */
+    uint64_t rep_deadline;      /* mono_ticks deadline for the next emit */
     /* mouse state */
     uint8_t  prev_btn;
 };
@@ -536,10 +560,11 @@ static void set_leds_current(struct usb_dev *d) {
 }
 
 /* Re-arm one interrupt-IN transfer for device d's boot report. */
-static void arm_int(struct usb_dev *d) {
+static void arm_int_buf(struct usb_dev *d, uint32_t buf_idx) {
+    uint64_t pa = d->rpt_pa + (uint64_t)buf_idx * RPT_STRIDE;
     volatile uint32_t *trb = (volatile uint32_t *)(d->int_ring + d->int_enq * 16);
-    trb[0] = (uint32_t)d->rpt_pa;
-    trb[1] = (uint32_t)(d->rpt_pa >> 32);
+    trb[0] = (uint32_t)pa;
+    trb[1] = (uint32_t)(pa >> 32);
     trb[2] = (uint32_t)d->rpt_len;                /* boot report length (8 kbd, 4 mouse) */
     trb[3] = TRB_SET_TYPE(TRB_NORMAL) | (1u << 5) /* IOC */ | d->int_cycle;
     /* Wrap via a Link TRB at the last slot so the ring cycles indefinitely
@@ -571,8 +596,7 @@ static char ctrl_char(char c) {
 }
 
 /* Decode a keyboard boot report and feed newly-pressed keys to the tty. */
-static void process_kbd_report(struct usb_dev *d) {
-    volatile uint8_t *rpt = d->rpt;
+static void process_kbd_report(struct usb_dev *d, const uint8_t *rpt) {
     int shift = (rpt[0] & 0x22) != 0;             /* L/R Shift modifier bits */
     int ctrl  = (rpt[0] & 0x11) != 0;             /* L/R Ctrl modifier bits */
     for (int i = 2; i < 8; i++) {
@@ -581,20 +605,36 @@ static void process_kbd_report(struct usb_dev *d) {
         int was = 0;
         for (int j = 0; j < 6; j++) if (d->prev_keys[j] == kc) was = 1;
         if (was) continue;                        /* still held -- not a new press */
-        /* Lock keys: toggle software state, drive the physical LED, emit no character.
-         * Num Lock gates the numpad digits, Caps Lock the letter case. set_leds runs on
-         * this (driver) thread, and the interrupt-IN is not re-armed until arm_int after
-         * process_report returns, so no report is in flight during the transfer. */
-        if (kc == 0x53) { d->num_lock = !d->num_lock; set_leds_current(d); continue; }    /* Num Lock */
-        if (kc == 0x39) { d->caps_lock = !d->caps_lock; set_leds_current(d); continue; }  /* Caps Lock */
-        if (kc == 0x47) { d->scroll_lock = !d->scroll_lock; set_leds_current(d); continue; } /* Scroll Lock */
+        /* Lock keys: toggle the SOFTWARE state only (gates numpad digits / letter
+         * case); the physical LED stays at its enumeration-time state. HW-PROVEN
+         * (v0.4.192, serial-captured): with multi-arm keeping INT_RING_BUFS
+         * interrupt-IN transfers armed through the VL805 TT, a runtime SET_REPORT
+         * to this LS keyboard STALLs (cc=6) and the recovery retry times out
+         * (cc=-1), wedging the device -- the v0.4.185 kill resurfaced. The
+         * endpoint-aware dispatch (v0.4.186) is not sufficient with a full ring.
+         * A safe runtime LED needs Stop-Endpoint around the SET_REPORT (backlog).
+         * The /proc/xhci.led poke remains as an explicitly-invoked diagnostic. */
+        if (kc == 0x53) { d->num_lock = !d->num_lock; continue; }    /* Num Lock    */
+        if (kc == 0x39) { d->caps_lock = !d->caps_lock; continue; }  /* Caps Lock   */
+        if (kc == 0x47) { d->scroll_lock = !d->scroll_lock; continue; } /* Scroll Lock */
         char ch = hid_to_ascii(d, kc, shift);
         if (!ch) continue;
         if (ctrl) ch = ctrl_char(ch);             /* Ctrl-C -> 0x03, etc. */
         printf("[xhci-kbd] key=0x%02x '%c' (0x%02x)\n", kc,
                (ch >= 32 && ch < 127) ? ch : '?', (unsigned char)ch);
+        /* Arm typematic for the newest press (a later press steals the repeat,
+         * matching standard keyboard behaviour). */
+        d->rep_kc = kc; d->rep_ch = ch;
+        d->rep_deadline = mono_deadline_ms(KBD_REPEAT_DELAY_MS);
+        d->rep_active = 1;
         seL4_SetMR(0, (seL4_Word)(unsigned char)ch);
         seL4_Call(serial_ep.cptr, seL4_MessageInfo_new(SER_KEY_PUSH, 0, 0, 1));
+    }
+    /* Disarm typematic when the armed key is no longer held in this report. */
+    if (d->rep_active) {
+        int held = 0;
+        for (int i = 2; i < 8; i++) if (rpt[i] == d->rep_kc) held = 1;
+        if (!held) d->rep_active = 0;
     }
     for (int i = 0; i < 6; i++) d->prev_keys[i] = rpt[i + 2];
 }
@@ -602,8 +642,7 @@ static void process_kbd_report(struct usb_dev *d) {
 /* Decode a mouse boot report: byte0 = buttons (bit0 L, 1 R, 2 M), byte1 = dx, byte2 =
  * dy (both signed), byte3 = wheel (if present). Accumulate into the system-mouse state
  * (the Task 4 consumer, read via /proc/mouse) and log motion/clicks. */
-static void process_mouse_report(struct usb_dev *d) {
-    volatile uint8_t *rpt = d->rpt;
+static void process_mouse_report(struct usb_dev *d, const uint8_t *rpt) {
     uint8_t btn = rpt[0];
     int dx = (int8_t)rpt[1], dy = (int8_t)rpt[2];
     int wheel = (d->rpt_len > 3) ? (int8_t)rpt[3] : 0;
@@ -620,21 +659,30 @@ static void process_mouse_report(struct usb_dev *d) {
     d->prev_btn = btn;
 }
 
-/* Deliver one received boot report to the right decoder. */
-static void process_report(struct usb_dev *d) {
-    if (d->kind == USB_MOUSE) process_mouse_report(d);
-    else                      process_kbd_report(d);
+/* Deliver one received boot report (snapshot) to the right decoder. */
+static void process_report(struct usb_dev *d, const uint8_t *rpt) {
+    if (d->kind == USB_MOUSE) process_mouse_report(d, rpt);
+    else                      process_kbd_report(d, rpt);
 }
 
-/* Event-dispatcher hook (see evt_dispatch): find the device whose interrupt-IN endpoint
- * produced this transfer event, deliver its report + re-arm. Returns 1 if handled. */
+/* Event-dispatcher hook (see evt_dispatch): a transfer on the device's interrupt-IN
+ * endpoint completed. v0.4.192 multi-arm: completions arrive FIFO in the order the
+ * buffers were armed, so the report is in buffer (int_proc % INT_RING_BUFS). Snapshot
+ * it, RE-ARM that buffer immediately (keeping the ring full so the keyboard is never
+ * unpolled), then decode -- even if the decode blocks on the echo, (N-1) transfers
+ * stay armed and the controller keeps polling the keyboard. */
 static int kbd_try_deliver(uint32_t slot, uint32_t ep) {
     for (int i = 0; i < MAX_USB_DEV; i++) {
         struct usb_dev *d = &g_devs[i];
         if (d->in_use && d->kind != USB_NONE && d->kind != USB_HUB
             && d->slot == slot && d->dci == ep) {
-            process_report(d);
-            arm_int(d);
+            uint32_t bi = d->int_proc % INT_RING_BUFS;
+            volatile uint8_t *src = d->rpt + bi * RPT_STRIDE;
+            uint8_t snap[8];
+            for (int k = 0; k < 8; k++) snap[k] = src[k];
+            d->int_proc++;
+            arm_int_buf(d, bi);          /* replenish this buffer -> ring stays full */
+            process_report(d, snap);
             return 1;
         }
     }
@@ -722,9 +770,14 @@ static int setup_hid(struct usb_dev *d) {
     if (d->kind == USB_KBD)
         set_leds_current(d);
 
-    arm_int(d);
+    /* v0.4.192: prime the interrupt-IN ring with INT_RING_BUFS armed transfers so the
+     * keyboard is continuously polled even while the driver is busy (see kbd_try_deliver
+     * + the INT_RING_BUFS comment). set_leds above ran with nothing armed yet (safe). */
+    d->int_proc = 0;
+    for (uint32_t i = 0; i < INT_RING_BUFS; i++) arm_int_buf(d, i);
     xhci_kbd_ok = 1;
-    printf("[xhci] HID %s ready (polling)\n", d->kind == USB_MOUSE ? "mouse" : "keyboard");
+    printf("[xhci] HID %s ready (polling, %d-deep)\n",
+           d->kind == USB_MOUSE ? "mouse" : "keyboard", INT_RING_BUFS);
     return 0;
 }
 
@@ -809,6 +862,22 @@ void xhci_kbd_driver_fn(void *a, void *b, void *c) {
             if (d) {
                 if (req & 0x200) set_leds_current(d);   /* use current lock state */
                 else set_leds(d, (int)(req & 0x7));     /* explicit bitmap */
+            }
+        }
+
+        /* v0.4.192 typematic: re-emit the held key once its deadline passes (armed
+         * in process_kbd_report, disarmed by its release report). Polling-mode only
+         * in effect -- in opt-in IRQ mode the loop blocks indefinitely between
+         * events, so repeats would stall there (acceptable: polling is the default
+         * and the only HW-verified mode). Repeats pause while the driver is blocked
+         * in an echo Call and resume after -- never more than one emit per loop. */
+        for (int di = 0; di < MAX_USB_DEV; di++) {
+            struct usb_dev *d = &g_devs[di];
+            if (d->in_use && d->kind == USB_KBD && d->rep_active
+                && !mono_before(d->rep_deadline)) {
+                d->rep_deadline = mono_deadline_ms(KBD_REPEAT_RATE_MS);
+                seL4_SetMR(0, (seL4_Word)(unsigned char)d->rep_ch);
+                seL4_Call(serial_ep.cptr, seL4_MessageInfo_new(SER_KEY_PUSH, 0, 0, 1));
             }
         }
 
