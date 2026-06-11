@@ -165,6 +165,8 @@ static int evt_poll_once(uint32_t out[4]) {
 #define DISP_NONE   (-1)
 #define DISP_OTHER  0
 #define DISP_MATCH  1
+static void typematic_disarm_all(const char *why);
+
 static int evt_dispatch(uint32_t out[4], uint32_t want_type,
                         uint32_t want_slot, uint32_t want_ep) {
     uint32_t e[4];
@@ -183,6 +185,11 @@ static int evt_dispatch(uint32_t out[4], uint32_t want_type,
         out[0] = e[0]; out[1] = e[1]; out[2] = e[2]; out[3] = e[3];
         return DISP_MATCH;
     }
+    /* Port status change = a device reset/connected/disconnected. Any armed
+     * typematic may belong to a keyboard that just died mid-press (its release
+     * will never arrive) -- disarm rather than risk a repeat runaway (v0.4.197). */
+    if (type == TRB_PORT_STS_EVT)
+        typematic_disarm_all("port change");
     return DISP_OTHER;               /* port-status / stray -- consumed, ignored */
 }
 
@@ -327,12 +334,27 @@ enum { USB_NONE = 0, USB_KBD = 1, USB_MOUSE = 2, USB_HUB = 9 };
  * small ring of report buffers means there are always (N-1) transfers pending while
  * the driver is busy, so the controller never stops polling the keyboard -> it never
  * starves. Buffers are carved from the existing (non-cacheable) rpt DMA page. */
-#define INT_RING_BUFS  8
+#define INT_RING_BUFS  32    /* v0.4.197: was 8 -- fast typing + slow login-time
+                              * echoes can drain 8 while the driver blocks in one
+                              * echo Call; an EMPTY ring stops the controller
+                              * polling the LS-kbd-behind-the-TT -> device reset
+                              * (HW-seen: died mid-"root" at the login prompt).
+                              * The rpt page holds 64 x RPT_STRIDE buffers; 32
+                              * puts the cliff far beyond any human burst. */
 #define RPT_STRIDE     64    /* per-report buffer stride within the rpt page */
 
 /* Typematic (host-side key repeat) timing -- classic PC defaults. */
 #define KBD_REPEAT_DELAY_MS  500   /* hold this long before repeating  */
 #define KBD_REPEAT_RATE_MS   66    /* then ~15 chars per second        */
+/* Dead-man cap (v0.4.197): if the keyboard dies BETWEEN a press and its release
+ * (the recurring TT-death mode), the release never arrives and repeat would run
+ * FOREVER -- the "rrrr" storm whose echo/scroll/auth load saturates core 0 and
+ * takes the net down with it (HW-seen on builds 2045/2046). A held key on a
+ * healthy keyboard also sends no reports (boot protocol is change-only), so the
+ * guard is a generous cap on CONSECUTIVE repeats with no intervening report
+ * from that device: ~20s at 15cps. Real >20s holds are rare; a dead keyboard
+ * stops spamming. Any genuine report (incl. the eventual release) resets it. */
+#define KBD_REPEAT_MAX_RUN   300
 
 struct usb_dev {
     int      in_use;
@@ -365,6 +387,8 @@ struct usb_dev {
     uint8_t  rep_kc;            /* usage code armed for repeat */
     char     rep_ch;            /* decoded char to re-emit (modifiers at press) */
     uint64_t rep_deadline;      /* mono_ticks deadline for the next emit */
+    uint32_t rep_run;           /* consecutive emits since the last real report
+                                 * (dead-man: see KBD_REPEAT_MAX_RUN) */
     /* mouse state */
     uint8_t  prev_btn;
 };
@@ -665,6 +689,19 @@ static void process_report(struct usb_dev *d, const uint8_t *rpt) {
     else                      process_kbd_report(d, rpt);
 }
 
+/* Disarm typematic on every device (dead-man: KBD_REPEAT_MAX_RUN / port change --
+ * a keyboard that dies mid-press never sends its release, so repeat would run
+ * forever and the echo/scroll storm saturates core 0; v0.4.197). */
+static void typematic_disarm_all(const char *why) {
+    for (int i = 0; i < MAX_USB_DEV; i++) {
+        struct usb_dev *d = &g_devs[i];
+        if (d->in_use && d->rep_active) {
+            d->rep_active = 0;
+            printf("[xhci-kbd] typematic disarmed (%s)\n", why);
+        }
+    }
+}
+
 /* Event-dispatcher hook (see evt_dispatch): a transfer on the device's interrupt-IN
  * endpoint completed. v0.4.192 multi-arm: completions arrive FIFO in the order the
  * buffers were armed, so the report is in buffer (int_proc % INT_RING_BUFS). Snapshot
@@ -682,6 +719,7 @@ static int kbd_try_deliver(uint32_t slot, uint32_t ep) {
             for (int k = 0; k < 8; k++) snap[k] = src[k];
             d->int_proc++;
             arm_int_buf(d, bi);          /* replenish this buffer -> ring stays full */
+            d->rep_run = 0;              /* real report -> reset the dead-man run */
             process_report(d, snap);
             return 1;
         }
@@ -875,6 +913,12 @@ void xhci_kbd_driver_fn(void *a, void *b, void *c) {
             struct usb_dev *d = &g_devs[di];
             if (d->in_use && d->kind == USB_KBD && d->rep_active
                 && !mono_before(d->rep_deadline)) {
+                /* Dead-man (v0.4.197): too many repeats with no report from this
+                 * device = the keyboard likely died mid-press (release lost). */
+                if (++d->rep_run > KBD_REPEAT_MAX_RUN) {
+                    typematic_disarm_all("dead-man run cap");
+                    continue;
+                }
                 d->rep_deadline = mono_deadline_ms(KBD_REPEAT_RATE_MS);
                 seL4_SetMR(0, (seL4_Word)(unsigned char)d->rep_ch);
                 seL4_Call(serial_ep.cptr, seL4_MessageInfo_new(SER_KEY_PUSH, 0, 0, 1));

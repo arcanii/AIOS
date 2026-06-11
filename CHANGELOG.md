@@ -4,6 +4,24 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.197 (2026-06-11)
+- Typematic runaway guards. HW failure mode (builds 2045/2046): the keyboard
+  dies mid-press (the recurring TT-death), its RELEASE report never arrives,
+  and host-side repeat then types the key FOREVER -- the echo/scroll/auth storm
+  saturates core 0 and takes the net down ("rrrr..." / the v0.4.195 "#" flood;
+  this also re-frames the v0.4.193 hang as likely runaway-driven, though the
+  revert stands -- the yield added risk for no benefit). Guards: (1) a
+  PORT_STATUS_CHANGE event disarms all typematic (a hot-removed/reset keyboard
+  posts one -- this is the precise fix); (2) a dead-man cap (KBD_REPEAT_MAX_RUN
+  = 300 repeats, ~20s) on consecutive repeats with no intervening report from
+  the device. New `scripts/xhci_runaway_qemu_test.py`: hold a key, device_del
+  the keyboard mid-hold -- repeats must stop (PASS; normal repeat unaffected).
+- Interrupt-IN ring deepened 8 -> 32 buffers (the report page holds 64): fast
+  typing + slow login-time echoes could drain 8 while the driver blocked in one
+  echo Call; an empty ring stops the controller polling the
+  LS-keyboard-behind-the-TT, which is the device-death trigger (HW-seen: died
+  mid-"root" at the login prompt). 32 puts the cliff beyond any human burst.
+
 ## v0.4.196 (2026-06-11)
 - REVERT v0.4.193 (eMMC poll-loop yield). On real HW it regressed disk-heavy
   interactive use: `ls -l /bin` (a stat storm of inode reads) froze, recovered,
