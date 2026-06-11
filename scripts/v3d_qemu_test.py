@@ -55,7 +55,19 @@ def main():
         sock = ac.connect_qemu_socket(SOCK)
         con = ac.Console(sock.fileno(), echo=True)
         print("=== boot + login ===", flush=True)
-        con.ensure_shell("root", "root", 120)
+        # The ramfb boot mirrors every prompt char through the fb_console while
+        # the backgrounded netconsole+sntp burst writes to the same serial, so
+        # the Password: prompt can arrive fragmented and a single login attempt
+        # races it. getty re-prompts after a garbled attempt -- retry up to 3x.
+        for attempt in range(3):
+            try:
+                con.ensure_shell("root", "root", 120, nudge=(attempt > 0))
+                break
+            except (TimeoutError, RuntimeError) as e:
+                print("login attempt %d failed (%s) -- retrying" % (attempt + 1, e),
+                      flush=True)
+                if attempt == 2:
+                    raise
 
         # 1. cat /proc/v3d -- not-present path (init no-opped, dispatcher reachable).
         snap = con.run("cat /proc/v3d", 10)

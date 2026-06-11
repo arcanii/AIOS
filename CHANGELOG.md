@@ -4,6 +4,17 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.194 (2026-06-11) -- HW-verified (merged from design/rpi4-v3d-driver)
+- V3D 4.2 GPU Phase 0 (power/IDENT/IRQ): `src/gpu/v3d.c` claims the pre-mapped
+  MMIO, binds IRQ 106 masked, and pins the VC mailbox tag buffer -- with ZERO
+  V3D register access in the boot path (a power-gated block SErrors; the power
+  sequence runs only on an explicit `/proc/v3d.power` poke). HW-verified on the
+  real Pi: DEAD->PASS power-on, idempotent, reboot-stable; V3D 4.2, 8 QPUs,
+  MMU present. Design docs (DESIGN_V3D_IMPLEMENTATION.md) merged alongside;
+  key correction vs the research doc: hub IDENT0 = "VHUB", core = "V3D\004".
+  QEMU is a no-op (`has_v3d=0`); `scripts/v3d_qemu_test.py` 5/5 validates the
+  plumbing (graceful refusal + display path not regressed).
+
 ## v0.4.193 (2026-06-11)
 - RPi4 eMMC: the polled completion waits (`emmc_wait_int` / `emmc_wait_cmd` /
   `emmc_wait_dat`, src/plat/rpi4/blk_emmc.c) now `seL4_Yield()` once a wait
