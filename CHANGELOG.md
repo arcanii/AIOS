@@ -4,6 +4,19 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.193 (2026-06-11)
+- RPi4 eMMC: the polled completion waits (`emmc_wait_int` / `emmc_wait_cmd` /
+  `emmc_wait_dat`, src/plat/rpi4/blk_emmc.c) now `seL4_Yield()` once a wait
+  exceeds 1ms (`EMMC_YIELD_MS`). Previously a missed SDHCI status bit busy-spun
+  the FULL timeout (up to `EMMC_DATA_MS` = 2s) on the fs_thread with no yield --
+  monopolizing core 0, which every root server (display, tty echo, USB driver)
+  shares, so one bad eMMC wait stalled the whole interactive system
+  (v0.4.176-class hazard, same lesson: HW poll loops must not own the core).
+  The sub-ms fast path stays a tight spin -- zero throughput cost; during a
+  real multi-ms wait the card is the bottleneck, so yielding is free.
+  QEMU-clean (virtio path unaffected): sync 5/5, smp 7/7. HW-pending -- rides
+  the next card swap (kernel-only).
+
 ## v0.4.192 (2026-06-11) -- HW-verified
 - USB keyboard: fixed the "dies on the first key press" hardware regression
   (LS keyboard behind the VL805 TT resets, lock LED out, input dead). ROOT
