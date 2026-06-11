@@ -141,9 +141,6 @@ static void emmc_delay(int us) {
  * ---------------------------------------------------------------- */
 #define EMMC_CMD_MS    1000   /* command response / line-free          */
 #define EMMC_DATA_MS   2000   /* data phase (buffer ready / xfer done)  */
-#define EMMC_YIELD_MS  1      /* spin tight for the sub-ms fast path,   */
-                              /* then seL4_Yield so a stalled wait does */
-                              /* not monopolize the shared root core 0  */
 
 static inline uint64_t emmc_ticks(void) {
     uint64_t c; __asm__ volatile("mrs %0, cntpct_el0" : "=r"(c)); return c;
@@ -159,24 +156,13 @@ static uint64_t emmc_deadline(int ms) {
  * old fall-through), -1 = INT_ERROR latched (caller re-reads REG_INT_STATUS
  * for the detail, the bit stays latched until cleared). */
 static int emmc_wait_int(uint32_t want, int ms) {
-    uint64_t dl  = emmc_deadline(ms);
-    uint64_t yld = emmc_deadline(EMMC_YIELD_MS);
+    uint64_t dl = emmc_deadline(ms);
     for (;;) {
         arch_dmb();
         uint32_t st = EMMC_R(REG_INT_STATUS);
         if (st & INT_ERROR) return -1;
         if (st & want) return 1;
-        uint64_t now = emmc_ticks();
-        if (now >= dl) return 0;
-        /* v0.4.192: yield core 0 once the sub-ms fast path is exceeded. These
-         * waits run on the fs_thread, which is pinned to the single root core
-         * (core 0) shared with display_server. A missed status bit otherwise
-         * busy-spins here for the FULL timeout (up to EMMC_DATA_MS=2s) with no
-         * yield -- starving display_server mid-render and wedging the HDMI
-         * console -> tty_server -> USB-keyboard cascade (the v0.4.188 flusher
-         * regression). The card is the bottleneck during a real wait, so
-         * yielding costs no eMMC throughput; the fast path never reaches it. */
-        if (now >= yld) seL4_Yield();
+        if (emmc_ticks() >= dl) return 0;
     }
 }
 
@@ -184,16 +170,12 @@ static int emmc_wait_int(uint32_t want, int ms) {
  * emmc_wait_cmd -- wait for command line free
  * ---------------------------------------------------------------- */
 static int emmc_wait_cmd(void) {
-    uint64_t dl  = emmc_deadline(EMMC_CMD_MS);
-    uint64_t yld = emmc_deadline(EMMC_YIELD_MS);
-    for (;;) {
+    uint64_t dl = emmc_deadline(EMMC_CMD_MS);
+    do {
         arch_dmb();
         if (!(EMMC_R(REG_PRESENT) & PRES_CMD_INHIBIT))
             return 0;
-        uint64_t now = emmc_ticks();
-        if (now >= dl) break;
-        if (now >= yld) seL4_Yield();   /* see emmc_wait_int: free core 0 */
-    }
+    } while (emmc_ticks() < dl);
     printf("[blk] CMD inhibit timeout\n");
     return -1;
 }
@@ -202,16 +184,12 @@ static int emmc_wait_cmd(void) {
  * emmc_wait_dat -- wait for data line free
  * ---------------------------------------------------------------- */
 static int emmc_wait_dat(void) {
-    uint64_t dl  = emmc_deadline(EMMC_DATA_MS);
-    uint64_t yld = emmc_deadline(EMMC_YIELD_MS);
-    for (;;) {
+    uint64_t dl = emmc_deadline(EMMC_DATA_MS);
+    do {
         arch_dmb();
         if (!(EMMC_R(REG_PRESENT) & PRES_DAT_INHIBIT))
             return 0;
-        uint64_t now = emmc_ticks();
-        if (now >= dl) break;
-        if (now >= yld) seL4_Yield();   /* see emmc_wait_int: free core 0 */
-    }
+    } while (emmc_ticks() < dl);
     printf("[blk] DAT inhibit timeout\n");
     return -1;
 }

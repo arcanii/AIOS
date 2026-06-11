@@ -4,6 +4,21 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.196 (2026-06-11)
+- REVERT v0.4.193 (eMMC poll-loop yield). On real HW it regressed disk-heavy
+  interactive use: `ls -l /bin` (a stat storm of inode reads) froze, recovered,
+  then the system fully hung (keyboard LED out, net dead). Mechanism: yielding
+  inside the eMMC DATA-phase wait stretches every sector read (each yield is a
+  round-robin lap through the core-0 busy-pollers), and the silent
+  timeout-then-proceed path can churn retries in the sub-ms fast path,
+  monopolizing core 0 -- the exact failure it intended to prevent. The
+  motivating problem (eMMC waits starving the keyboard) was already properly
+  fixed by v0.4.192 multi-arm, so the yield was speculative hardening with a
+  real cost and no remaining benefit. LESSON: do not insert scheduler yields
+  into a device DATA phase; if eMMC waits need hardening, bound + yield only
+  the line-free waits (cmd/dat inhibit), never between buffer-ready and the
+  FIFO drain.
+
 ## v0.4.195 (2026-06-11) (merged from fix/reboot-flush-fs-thread)
 - Reboot/shutdown now flush the write-back block cache via `FS_SYNC` on the
   fs_thread instead of calling `blk_cache_flush()` directly from the root
