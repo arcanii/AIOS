@@ -134,11 +134,26 @@ static int irq_uart_active = 0;
 uint32_t gpu_width = 0;
 uint32_t gpu_height = 0;
 
+/* Final write-back flush before halt/reset.
+ *
+ * Routed through FS_SYNC so blk_cache_flush() runs ON the fs_thread: the
+ * block cache and the backend DMA ring are unlocked single-owner structures
+ * (blk_cache.c, flush_server.c:12-18), and these functions execute on the
+ * pipe_server thread (PIPE_SHUTDOWN handler, after its seL4_Reply -- so the
+ * plain seL4_Call here is reply-cap-safe). Calling blk_cache_flush() directly
+ * from here raced any in-flight fs IO right before the watchdog fired.
+ * Constraint: must never be called from the fs_thread itself (the Call to its
+ * own endpoint would deadlock); today the only caller is pipe_server. */
+static void shutdown_flush(void) {
+    if (fs_ep_cap)
+        seL4_Call(fs_ep_cap, seL4_MessageInfo_new(FS_SYNC, 0, 0, 0));
+}
+
 /* ── File permission check ── */
 /* PSCI shutdown -- seL4_DebugHalt stops QEMU cleanly */
 void aios_system_shutdown(void) {
     /* v0.4.172: write back any deferred (write-back cache) data before halt. */
-    blk_cache_flush();
+    shutdown_flush();
     printf("\n");
     printf("============================================\n");
     printf("  AIOS shutdown complete\n");
@@ -160,7 +175,7 @@ void aios_system_shutdown(void) {
  * On QEMU (no PM block) we fall back to a clean halt. */
 void aios_system_reboot(void) {
     /* v0.4.172: write back any deferred (write-back cache) data before reset. */
-    blk_cache_flush();
+    shutdown_flush();
     printf("\n");
     printf("============================================\n");
     printf("  AIOS reboot -- resetting board\n");
