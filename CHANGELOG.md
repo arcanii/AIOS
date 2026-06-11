@@ -4,6 +4,16 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.195 (2026-06-11) (merged from fix/reboot-flush-fs-thread)
+- Reboot/shutdown now flush the write-back block cache via `FS_SYNC` on the
+  fs_thread instead of calling `blk_cache_flush()` directly from the root
+  task. The cache and the backend DMA ring are single-owner (fs_thread);
+  the direct call raced any in-flight fs IO at shutdown. QEMU
+  `reboot_flush_qemu_test.py` 4/4 (dirty data survives a watchdog reboot);
+  harness uses private disk copies + a throttled writer so concurrent test
+  sessions cannot corrupt each other. HW-pending -- rides the next card swap
+  together with v0.4.193 (eMMC-yield) and v0.4.194 (V3D Phase 0 re-verify).
+
 ## v0.4.194 (2026-06-11) -- HW-verified (merged from design/rpi4-v3d-driver)
 - V3D 4.2 GPU Phase 0 (power/IDENT/IRQ): `src/gpu/v3d.c` claims the pre-mapped
   MMIO, binds IRQ 106 masked, and pins the VC mailbox tag buffer -- with ZERO
