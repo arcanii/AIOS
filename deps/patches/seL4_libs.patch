@@ -1,0 +1,72 @@
+diff --git a/libsel4muslcsys/CMakeLists.txt b/libsel4muslcsys/CMakeLists.txt
+index e8df174..18f2069 100644
+--- a/libsel4muslcsys/CMakeLists.txt
++++ b/libsel4muslcsys/CMakeLists.txt
+@@ -14,7 +14,7 @@ config_string(LibSel4MuslcSysMorecoreBytes LIB_SEL4_MUSLC_SYS_MORECORE_BYTES "Ma
+     This value sets the number of bytes reserved for the region malloc \
+     allocates from. Note that you won't actually be able to allocate this \
+     entire amount because there is some bookkeeping overhead. This area is \
+-    allocated statically." DEFAULT 1048576 UNQUOTE)
++    allocated statically." DEFAULT 4194304 UNQUOTE)
+ 
+ config_option(
+     LibSel4MuslcSysDebugHalt
+diff --git a/libsel4muslcsys/src/sys_morecore.c b/libsel4muslcsys/src/sys_morecore.c
+index ade41c8..4c595ee 100644
+--- a/libsel4muslcsys/src/sys_morecore.c
++++ b/libsel4muslcsys/src/sys_morecore.c
+@@ -82,8 +82,8 @@ long sys_mmap_impl(void *addr, size_t length, int prot, int flags, int fd, off_t
+ 
+ long sys_mremap(va_list ap)
+ {
+-    assert(!"not implemented");
+-    return -ENOMEM;
++    (void)ap;
++    return (long)-12;
+ }
+ 
+ #else
+@@ -372,7 +372,14 @@ long sys_mmap2(va_list ap)
+ 
+ long sys_munmap(va_list ap)
+ {
+-    ZF_LOGE("%s is unsupported. This may have been called due to a "
+-            "large malloc'd region being free'd.", __func__);
++    void *addr = va_arg(ap, void *);
++    size_t length = va_arg(ap, size_t);
++    uintptr_t a = (uintptr_t)addr;
++    /* Reclaim if this is the top-most mmap region (LIFO order).
++     * mmap grows morecore_top downward; munmap can push it back up
++     * if the freed region is exactly at morecore_top. */
++    if (a == morecore_top && length > 0) {
++        morecore_top += length;
++    }
+     return 0;
+ }
+diff --git a/libsel4platsupport/src/common.c b/libsel4platsupport/src/common.c
+index e867f86..dd3b046 100644
+--- a/libsel4platsupport/src/common.c
++++ b/libsel4platsupport/src/common.c
+@@ -272,8 +272,8 @@ static void __serial_setup()
+          * Don't call any stdio functions here, it will cause unexpected recursion
+          * that will mess up the internal file buffer!
+          */
+-        seL4_DebugPutString("\nWarning: using printf before serial is set up. This only works as your\n"
+-                            "printf is backed by seL4_Debug_PutChar()\n");
++        // // seL4_DebugPutString("\nWarning: using printf before serial is set up. This only works as your\n"
++                            // "printf is backed by seL4_Debug_PutChar()\n");
+         started_regular = 1;
+ #else
+         /* attempt failsafe initialization and print something out */
+diff --git a/libsel4utils/src/vspace/vspace.c b/libsel4utils/src/vspace/vspace.c
+index dfccc14..ccd426c 100644
+--- a/libsel4utils/src/vspace/vspace.c
++++ b/libsel4utils/src/vspace/vspace.c
+@@ -790,7 +790,6 @@ void sel4utils_tear_down(vspace_t *vspace, vka_t *vka)
+     sel4utils_alloc_data_t *data = get_alloc_data(vspace);
+ 
+     if (data->bootstrap == NULL) {
+-        ZF_LOGE("Not implemented: sel4utils cannot currently tear down a self-bootstrapped vspace\n");
+         return;
+     }
+ 

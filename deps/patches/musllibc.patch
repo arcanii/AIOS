@@ -1,0 +1,25 @@
+diff --git a/src/internal/stdio_impl.h b/src/internal/stdio_impl.h
+index 7cdf729d..91e3beaa 100644
+--- a/src/internal/stdio_impl.h
++++ b/src/internal/stdio_impl.h
+@@ -62,7 +62,7 @@ int __toread(FILE *);
+ int __towrite(FILE *);
+ 
+ #if defined(__PIC__) && (100*__GNUC__+__GNUC_MINOR__ >= 303)
+-__attribute__((visibility("protected")))
++__attribute__((visibility("default")))
+ #endif
+ int __overflow(FILE *, int), __uflow(FILE *);
+ 
+diff --git a/src/internal/vis.h b/src/internal/vis.h
+index 35855fc8..fa44855f 100644
+--- a/src/internal/vis.h
++++ b/src/internal/vis.h
+@@ -22,6 +22,6 @@ extern long timezone, __timezone;
+ __attribute__((__visibility__("default")))
+ extern char *optarg, **environ, **__environ, *tzname[2], *__tzname[2], *__progname, *__progname_full;
+ 
+-#pragma GCC visibility push(protected)
++#pragma GCC visibility push(default)
+ 
+ #endif

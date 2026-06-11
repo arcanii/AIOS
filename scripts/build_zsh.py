@@ -5,8 +5,8 @@ v0.4.99: Phase 2 (interactive mode)
 """
 import subprocess, os, sys, time
 
-AIOS = os.path.expanduser("~/Desktop/github_repos/AIOS")
-ZSH  = os.path.expanduser("~/Desktop/github_repos/zsh/Src")
+AIOS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ZSH  = os.path.join(os.environ.get("AIOS_DEPS_ROOT", os.path.dirname(AIOS)), "zsh", "Src")
 BUILD = os.path.join(AIOS, "build-04")
 CC = "aarch64-linux-gnu-gcc"
 MUSL_INC = os.path.join(BUILD, "projects/musllibc/build-temp/stage/include")

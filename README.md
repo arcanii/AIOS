@@ -12,6 +12,24 @@
 
 A research microkernel operating system built on seL4
 
+## Get going fast
+
+```bash
+git clone https://github.com/<you>/AIOS.git && cd AIOS
+./build_environment.sh          # checks host tools, fetches pinned deps,
+                                # applies patches, builds, boots a QEMU smoke test
+python3 scripts/qemu-boot.py    # interactive boot -- log in as root / root
+```
+
+`build_environment.sh` takes a fresh clone to a running system: it verifies the
+host toolchain (printing the exact `brew`/`apt` commands for anything missing),
+clones every dependency at the commit pinned in [DEPS.md](DEPS.md), applies the
+patch set from `deps/patches/`, configures + builds the QEMU tree, and boots it
+to the login prompt as a smoke test. Re-running is safe (idempotent); add
+`--rpi4` to also build the Raspberry Pi 4 image, `--check` to only verify host
+tools. Manual step-by-step instructions remain below under
+[Prerequisites](#prerequisites) and [Building](#building).
+
 Architectures / Hardware Supported
 - :white_check_mark: AArch64 (QEMU virt)
 - :white_check_mark: AArch64 (Raspberry Pi 4 Model B) -- 4-core SMP, GENET networking, HDMI console, USB keyboard (xHCI over PCIe), SSH + netconsole over LAN (serial : TXD : GPIO14, RXD : GPIO15)
@@ -52,9 +70,12 @@ The long-term goal is self-hosted development within AIOS itself.
 
 ## Quick Start
 
-**First-time setup** (one-time): work through [Prerequisites](#prerequisites) and
-[Setting Up Dependencies](#setting-up-dependencies) below -- those install the
-cross-toolchain and the gitignored seL4 / sbase / dash sources.
+**First-time setup** (one-time): run `./build_environment.sh` -- it automates
+everything in [Prerequisites](#prerequisites) and
+[Setting Up Dependencies](#setting-up-dependencies) below (host-tool check,
+pinned dependency clones per [DEPS.md](DEPS.md), the `deps/patches/` patch set,
+configure, build, QEMU smoke test). The manual steps below are the reference
+for what it does.
 
 Once the toolchain and `deps/` are in place, the fastest path to a running system on
 **QEMU**:

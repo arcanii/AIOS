@@ -16,9 +16,10 @@ import os, sys, subprocess, time
 
 AIOS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD = os.path.join(AIOS, "build-04")
-DASH_SRC = os.path.expanduser("~/Desktop/github_repos/dash/src")
-TCC_SRC = os.path.expanduser("~/Desktop/github_repos/tcc")
-MBEDTLS_SRC = os.path.expanduser("~/Desktop/github_repos/mbedtls")
+DEPS_ROOT = os.environ.get("AIOS_DEPS_ROOT", os.path.dirname(AIOS))
+DASH_SRC = os.path.join(DEPS_ROOT, "dash", "src")
+TCC_SRC = os.path.join(DEPS_ROOT, "tcc")
+MBEDTLS_SRC = os.path.join(DEPS_ROOT, "mbedtls")
 
 def run(cmd, label, cwd=None, tail=3):
     print(f"\n--- {label} ---")

@@ -4,6 +4,24 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.198 (2026-06-11)
+- Reproducible build environment (sweep item 1d -- the wrap-up before sharing
+  the repo). New `./build_environment.sh` takes a fresh clone to a booted QEMU
+  system: host-tool check (with exact brew/apt commands for anything missing),
+  clones every dependency at the commit pinned in the new `DEPS.md`, applies
+  the captured patch set from `deps/patches/` (seL4 DTS, musl GCC-15
+  visibility, seL4_libs morecore/vspace, elfloader serial/boot, tcc arm64,
+  mbedtls config -- plus vendored dash `config.h` / zsh `termcap.h` /
+  elfloader `diag_fb_debug.h`), configures + builds (add `--rpi4` for the Pi
+  tree), and smoke-boots QEMU to the login prompt. Idempotent; never clobbers
+  an existing checkout; `--capture-patches` re-exports the patch set for
+  maintainers. Verified end-to-end on a configured machine: 39 ok / 0 fail.
+- The build scripts (`build_apps.py`, `build_sbase.py`, `build_zsh.py`,
+  `build_mbedtls.py`) no longer hardcode `~/Desktop/github_repos/...`: sibling
+  deps resolve relative to the repo parent, overridable with `AIOS_DEPS_ROOT`.
+- README: new "Get going fast" section up top; Quick Start points at the
+  script with the manual steps kept as reference.
+
 ## v0.4.197 (2026-06-11)
 - Typematic runaway guards. HW failure mode (builds 2045/2046): the keyboard
   dies mid-press (the recurring TT-death), its RELEASE report never arrives,

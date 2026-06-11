@@ -35,7 +35,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 AIOS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD = os.path.join(AIOS, "build-04")
-MBEDTLS = os.path.expanduser("~/Desktop/github_repos/mbedtls")
+MBEDTLS = os.path.join(os.environ.get("AIOS_DEPS_ROOT", os.path.dirname(AIOS)), "mbedtls")
 CONFIG = os.path.join(MBEDTLS, "include", "mbedtls", "mbedtls_config.h")
 CMAKELISTS = os.path.join(MBEDTLS, "library", "CMakeLists.txt")
 AIOS_CC = os.path.join(AIOS, "scripts", "aios-cc")

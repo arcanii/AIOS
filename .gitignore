@@ -50,7 +50,9 @@ disk/rpi4-firmware-latest/
 disk/.sdcard-tmp/
 
 # Dependencies (cloned, not tracked)
-deps/
+deps/*
+# ...except the pinned-dependency patch set (see DEPS.md + build_environment.sh)
+!deps/patches/
 
 # Keep dead code archive for history
 !ref/dead_code/

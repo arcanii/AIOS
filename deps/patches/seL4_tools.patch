@@ -1,0 +1,321 @@
+diff --git a/elfloader-tool/src/arch-arm/sys_boot.c b/elfloader-tool/src/arch-arm/sys_boot.c
+index a222acd..2245026 100644
+--- a/elfloader-tool/src/arch-arm/sys_boot.c
++++ b/elfloader-tool/src/arch-arm/sys_boot.c
+@@ -99,22 +99,30 @@ void relocate_below_kernel(void)
+  *
+  * Unpack images, setup the MMU, jump to the kernel.
+  */
++/* RPi4 HDMI debug: pure framebuffer bars, no LED (no delays).
++ * Framebuffer info at physical 0x1000, set by diagnostic stub. */
++static void debug_led(int count)
++{
++    (void)count;
++}
++
+ void main(UNUSED void *arg)
+ {
+     void *bootloader_dtb = NULL;
+ 
++    debug_led(1);  /* 1 blink = entered main */
++
+     /* initialize platform to a state where we can print to a UART */
+     if (initialise_devices()) {
+-        printf("ERROR: Did not successfully return from initialise_devices()\n");
++        debug_led(8);  /* 8 = init error */
+         abort();
+     }
+ 
++    debug_led(2);  /* 2 blinks = devices OK */
++
+     platform_init();
+ 
+-    /* Print welcome message. */
+-    printf("\nELF-loader started on ");
+-    print_cpuid();
+-    printf("  paddr=[%p..%p]\n", _text, (uintptr_t)_end - 1);
++    /* Skip ALL printf -- jump straight to image loading */
+ 
+ #if defined(CONFIG_IMAGE_UIMAGE)
+ 
+@@ -136,24 +144,17 @@ void main(UNUSED void *arg)
+ 
+ #endif
+ 
+-    if (bootloader_dtb) {
+-        printf("  dtb=%p\n", bootloader_dtb);
+-    } else {
+-        printf("No DTB passed in from boot loader.\n");
+-    }
+ 
+     /* Unpack ELF images into memory. */
+     unsigned int num_apps = 0;
+     int ret = load_images(&kernel_info, &user_info, 1, &num_apps,
+                           bootloader_dtb, &dtb, &dtb_size);
+     if (0 != ret) {
+-        printf("ERROR: image loading failed\n");
+         abort();
+     }
+ 
++
+     if (num_apps != 1) {
+-        printf("ERROR: expected to load just 1 app, actually loaded %u apps\n",
+-               num_apps);
+         abort();
+     }
+     /*
+@@ -199,8 +200,7 @@ void continue_boot(int was_relocated)
+ #endif
+         init_hyp_boot_vspace(&kernel_info);
+     } else {
+-        /* If we are not in HYP mode, we enable the SV MMU and paging
+-         * just in case the kernel does not support hyp mode. */
++        /* EL1 path: standard MMU + paging */
+         init_boot_vspace(&kernel_info);
+     }
+ 
+@@ -212,9 +212,9 @@ void continue_boot(int was_relocated)
+         printf("Enabling hypervisor MMU and jumping to entry point...\n\n");
+         arm_enable_hyp_mmu();
+     } else {
+-        printf("Enabling MMU and jumping to entry point...\n\n");
+         arm_enable_mmu();
+     }
++    debug_led(4);  /* 4 blinks = MMU on, about to enter kernel */
+     /* Enter kernel. The UART is no longer accessible here. */
+     ((init_arm_kernel_t)kernel_info.virt_entry)(user_info.phys_region_start,
+                                                 user_info.phys_region_end,
+diff --git a/elfloader-tool/src/common.c b/elfloader-tool/src/common.c
+index b91bb24..f919741 100644
+--- a/elfloader-tool/src/common.c
++++ b/elfloader-tool/src/common.c
+@@ -9,6 +9,8 @@
+ #include <elfloader/gen_config.h>
+ 
+ #include <printf.h>
++#pragma GCC diagnostic ignored "-Wunused-parameter"
++#pragma GCC diagnostic ignored "-Wunused-but-set-variable"
+ #include <types.h>
+ #include <strops.h>
+ #include <binaries/elf/elf.h>
+@@ -31,6 +33,14 @@
+ 
+ #include <abort.h>
+ 
++/* RPi4: the elfloader cannot drive the mini-UART (it hangs the CPU bus), so
++ * printf was no-op'd for BCM2711. v0.4.178: with dtoverlay=disable-bt the PL011
++ * is the console on GPIO 14/15 and the pl011 driver (bounded putchar) drives
++ * it; the mini-UART is never registered. If PL011 is not present/console (no
++ * disable-bt), no UART registers and printf is a no-op via the NULL
++ * plat_console_putchar check -- so re-enabling printf is safe either way and
++ * lets the secondary-core bring-up trace reach the serial cable. */
++
+ extern char _bss[];
+ extern char _bss_end[];
+ 
+@@ -189,8 +199,6 @@ static int load_elf(
+     int ret;
+     uint64_t min_vaddr, max_vaddr;
+ 
+-    /* Print diagnostics. */
+-    printf("ELF-loading image '%s' to %p\n", name, dest_paddr);
+ 
+     /* Get the memory bounds. Unlike most other functions, this returns 1 on
+      * success and anything else is an error.
+@@ -207,14 +215,11 @@ static int load_elf(
+ 
+     /* Ensure our starting physical address is aligned. */
+     if (!IS_ALIGNED(dest_paddr, PAGE_BITS)) {
+-        printf("ERROR: Attempting to load ELF at unaligned physical address\n");
+         return -1;
+     }
+ 
+-    /* Ensure that the ELF file itself is 4-byte aligned in memory, so that
+-     * libelf can perform word accesses on it. */
++    /* Ensure that the ELF file itself is 4-byte aligned in memory */
+     if (!IS_ALIGNED(dest_paddr, 2)) {
+-        printf("ERROR: Input ELF file not 4-byte aligned in memory\n");
+         return -1;
+     }
+ 
+@@ -281,28 +286,22 @@ static int load_elf(
+ 
+ #endif  /* CONFIG_HASH_NONE */
+ 
+-    /* Print diagnostics. */
+-    printf("  paddr=[%p..%p]\n", dest_paddr, dest_paddr + image_size - 1);
+-    printf("  vaddr=[%p..%p]\n", (vaddr_t)min_vaddr, (vaddr_t)max_vaddr - 1);
+-    printf("  virt_entry=%p\n", (vaddr_t)elf_getEntryPoint(elf_blob));
++    /* printf disabled -- crashes on RPi4 */
+ 
+     /* Ensure the ELF file is valid. */
+     ret = elf_checkFile(elf_blob);
+     if (0 != ret) {
+-        printf("ERROR: Invalid ELF file\n");
+         return -1;
+     }
+ 
+     /* Ensure sane alignment of the image. */
+     if (!IS_ALIGNED(min_vaddr, PAGE_BITS)) {
+-        printf("ERROR: Start of image is not 4K-aligned\n");
+         return -1;
+     }
+ 
+     /* Ensure that we region we want to write to is sane. */
+     ret = ensure_phys_range_valid(dest_paddr, dest_paddr + image_size);
+     if (0 != ret) {
+-        printf("ERROR: Physical address range invalid\n");
+         return -1;
+     }
+ 
+@@ -400,6 +399,7 @@ int load_images(
+     void const *cpio = _archive_start;
+     size_t cpio_len = _archive_start_end - _archive_start;
+ 
++
+     /* Load kernel. */
+     unsigned long cpio_file_size = 0;
+     void const *kernel_elf_blob = cpio_get_file(cpio,
+@@ -418,17 +418,12 @@ int load_images(
+ 
+     ret = elf_checkFile(kernel_elf_blob);
+     if (ret != 0) {
+-        printf("ERROR: Kernel image not a valid ELF file\n");
+         return -1;
+     }
+ 
+-    /* Get physical memory bounds. Unlike most other functions, this returns 1
+-     * on success and anything else is an error.
+-     */
+     ret = elf_getMemoryBounds(kernel_elf_blob, 1, &kernel_phys_start,
+                               &kernel_phys_end);
+     if (1 != ret) {
+-        printf("ERROR: Could not get kernel memory bounds\n");
+         return -1;
+     }
+ 
+@@ -437,50 +432,30 @@ int load_images(
+ #ifdef CONFIG_ELFLOADER_INCLUDE_DTB
+ 
+     if (chosen_dtb) {
+-        printf("Looking for DTB in CPIO archive...");
+-        /*
+-         * Note the lack of newline in the above printf().  Normally one would
+-         * have an fflush(stdout) here to ensure that the message shows up on a
+-         * line-buffered stream (which is the POSIX default on terminal
+-         * devices).  But we are freestanding (on the "bare metal"), and using
+-         * our own unbuffered printf() implementation.
+-         */
+         dtb = cpio_get_file(cpio, cpio_len, "kernel.dtb", NULL);
+         if (dtb == NULL) {
+-            printf("not found.\n");
+         } else {
+             has_dtb_cpio = 1;
+-            printf("found at %p.\n", dtb);
+         }
+     }
+ 
+ #endif /* CONFIG_ELFLOADER_INCLUDE_DTB */
+ 
+     if (chosen_dtb && !dtb && bootloader_dtb) {
+-        /* Use the bootloader's DTB if we are not using the DTB in the CPIO
+-         * archive.
+-         */
+         dtb = bootloader_dtb;
+     }
+ 
+-    /*
+-     * Move the DTB out of the way, if it's present.
+-     */
+     if (dtb) {
+-        /* keep it page aligned */
+         next_phys_addr = dtb_phys_start = ROUND_UP(kernel_phys_end, PAGE_BITS);
+ 
+         size_t dtb_size = fdt_size(dtb);
+         if (0 == dtb_size) {
+-            printf("ERROR: Invalid device tree blob supplied\n");
+             return -1;
+         }
+ 
+-        /* Make sure this is a sane thing to do */
+         ret = ensure_phys_range_valid(next_phys_addr,
+                                       next_phys_addr + dtb_size);
+         if (0 != ret) {
+-            printf("ERROR: Physical address of DTB invalid\n");
+             return -1;
+         }
+ 
+@@ -510,7 +485,6 @@ int load_images(
+                    NULL); // we have calculated next_phys_addr already
+ 
+     if (0 != ret) {
+-        printf("ERROR: Could not load kernel ELF\n");
+         return -1;
+     }
+ 
+diff --git a/elfloader-tool/src/drivers/uart/bcm-uart.c b/elfloader-tool/src/drivers/uart/bcm-uart.c
+index 8fcf3d1..a98333e 100644
+--- a/elfloader-tool/src/drivers/uart/bcm-uart.c
++++ b/elfloader-tool/src/drivers/uart/bcm-uart.c
+@@ -40,17 +40,30 @@ static int bcm2835_uart_putchar(struct elfloader_device *dev, unsigned int c)
+ {
+     volatile void *mmio = dev->region_bases[0];
+ 
+-    /* Wait until UART ready for the next character. */
+-    while (!(*UART_REG(mmio, MU_LSR) & MU_LSR_TXIDLE));
+-
+-    /* Put in the register to be sent*/
+-    *UART_REG(mmio, MU_IO) = (c & 0xff);
++    /* Wait until the transmitter is idle, with a bounded timeout so a
++     * not-clocked Mini UART degrades to a no-op instead of hanging the
++     * elfloader. The firmware leaves this UART clocked at 115200 for
++     * uart_2ndstage (no disable-bt), so TXIDLE clears well within the
++     * bound -- v0.4.178 (RPi4 SMP debug prints the secondary-core
++     * bring-up trace through here). */
++    for (int t = 0; t < 100000; t++) {
++        if (*UART_REG(mmio, MU_LSR) & MU_LSR_TXIDLE) {
++            *UART_REG(mmio, MU_IO) = (c & 0xff);
++            return 0;
++        }
++    }
+ 
+     return 0;
+ }
+ 
+ static int bcm2835_uart_init(struct elfloader_device *dev, UNUSED void *match_data)
+ {
++    /* Register as the elfloader console. The Mini UART is the DTB stdout-path
++     * (serial1) and the firmware leaves it clocked at 115200 for uart_2ndstage,
++     * so the elfloader can print on it directly; the bounded putchar above
++     * keeps a not-clocked UART from hanging the boot. (v0.4.178 briefly skipped
++     * registration -- printf no-op'd via the NULL plat_console_putchar check --
++     * which is why the SMP bring-up trace was invisible.) */
+     uart_set_out(dev);
+     return 0;
+ }
+diff --git a/elfloader-tool/src/drivers/uart/pl011-uart.c b/elfloader-tool/src/drivers/uart/pl011-uart.c
+index bcd5cd5..2041d60 100644
+--- a/elfloader-tool/src/drivers/uart/pl011-uart.c
++++ b/elfloader-tool/src/drivers/uart/pl011-uart.c
+@@ -20,12 +20,15 @@ int pl011_uart_putchar(struct elfloader_device *dev, unsigned int c)
+ {
+     volatile void *mmio = dev->region_bases[0];
+ 
+-    /* Wait until UART ready for the next character. */
+-    while ((*UART_REG(mmio, UARTFR) & UARTFR_TXFF) != 0);
+-
+-    /* Add character to the buffer. */
+-    *UART_REG(mmio, UARTDR) = (c & 0xff);
+-
++    /* Wait until UART ready, with a bounded timeout so a not-yet-clocked PL011
++     * (e.g. if the firmware did not set it up) degrades to a no-op instead of
++     * hanging the elfloader -- v0.4.178 (RPi4 SMP debug enables this path). */
++    for (int t = 0; t < 100000; t++) {
++        if ((*UART_REG(mmio, UARTFR) & UARTFR_TXFF) == 0) {
++            *UART_REG(mmio, UARTDR) = (c & 0xff);
++            return 0;
++        }
++    }
+     return 0;
+ }
+ 

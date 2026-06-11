@@ -1,0 +1,60 @@
+diff --git a/src/plat/bcm2711/overlay-rpi4-4gb.dts b/src/plat/bcm2711/overlay-rpi4-4gb.dts
+index b2376aece..ce67f35e3 100644
+--- a/src/plat/bcm2711/overlay-rpi4-4gb.dts
++++ b/src/plat/bcm2711/overlay-rpi4-4gb.dts
+@@ -6,12 +6,12 @@
+ / {
+     /delete-node/ memory;
+ 
+-    /* Memory for the 4GB RAM variant of the RPi4B, see overlay-pi4.dts for an
++    /* Memory for the 4GB RAM variant (trimmed: 0x3A000000-0x40000000 reserved for GPU + fb_info) of the RPi4B, see overlay-pi4.dts for an
+      * explanation of the memory ranges.
+      */
+     memory@0 {
+         device_type = "memory";
+-        reg = < 0x00000000 0x00000000 0x3b400000
++        reg = < 0x00000000 0x00000000 0x3a000000
+             0x00000000 0x40000000 0xbc000000 >;
+     };
+ };
+diff --git a/src/plat/bcm2711/overlay-rpi4.dts b/src/plat/bcm2711/overlay-rpi4.dts
+index 18858b20d..4b4c29686 100644
+--- a/src/plat/bcm2711/overlay-rpi4.dts
++++ b/src/plat/bcm2711/overlay-rpi4.dts
+@@ -66,16 +66,18 @@
+ 		 * See also https://leiradel.github.io/2019/01/20/Raspberry-Pi-Stubs.html#armstub8s
+ 		 */
+ 		reserved-memory@0{
+-			reg = < 0x00000000 0x00000000 0x00001000 >;
++			reg = < 0x00000000 0x00000000 0x00200000 >;
+ 			no-map;
+ 		};
+ 
+ 		/* Enforce that nothing tries to
+-		 * use the VideoCore memory area
+-		 * by declaring it as reserved memory.
++		 * use the VideoCore memory area or the diagnostic stub
++		 * fb_info page by declaring it as reserved memory.
++		 * Device untypeds (not zeroed on retype) allow the root
++		 * task to read fb_info stored here by the diagnostic stub.
+ 		 */
+-		reserved-memory@3b400000 {
+-			reg = < 0x00000000 0x3b400000 0x04c00000 >;
++		reserved-memory@3a000000 {
++			reg = < 0x00000000 0x3a000000 0x06000000 >;
+ 			no-map;
+ 		};
+ 	};
+diff --git a/tools/dts/rpi4.dts b/tools/dts/rpi4.dts
+index b94127ec5..2c4925879 100644
+--- a/tools/dts/rpi4.dts
++++ b/tools/dts/rpi4.dts
+@@ -10,7 +10,7 @@
+ 
+ /dts-v1/;
+ 
+-/memreserve/	0x0000000000000000 0x0000000000001000;
++/memreserve/	0x0000000000000000 0x0000000000200000;
+ / {
+ 	compatible = "raspberrypi,4-model-b\0brcm,bcm2711";
+ 	model = "Raspberry Pi 4 Model B";

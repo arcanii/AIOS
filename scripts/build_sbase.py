@@ -43,7 +43,7 @@ def build_tool(name, srcs, flags):
 
 def main():
     parser = argparse.ArgumentParser(description="Build sbase tools for AIOS")
-    parser.add_argument("--sbase", default=os.path.expanduser("~/Desktop/github_repos/sbase"),
+    parser.add_argument("--sbase", default=os.path.join(os.environ.get("AIOS_DEPS_ROOT", os.path.dirname(AIOS_ROOT)), "sbase"),
                         help="Path to sbase source")
     parser.add_argument("--clean", action="store_true",
                         help="Remove build dir before building")
