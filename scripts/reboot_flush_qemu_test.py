@@ -23,8 +23,10 @@ to a clean halt, so phase 2 is a fresh QEMU process on the same image.
 import importlib.util
 import os
 import random
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -32,6 +34,17 @@ KERNEL = os.path.join(REPO, "build-04/images/aios_root-image-arm-qemu-arm-virt")
 DISK = os.path.join(REPO, "disk/disk_ext2.img")
 LOGDISK = os.path.join(REPO, "disk/log_ext2.img")
 SOCK = "/tmp/aios-rbflush-test.sock"
+
+# Boot from private copies: the test mutates the disk and must reuse the SAME
+# image across both boots, but it should not dirty the shared dev image (or
+# collide with another QEMU holding its write lock).
+WORKDIR = tempfile.mkdtemp(prefix="aios-rbflush-")
+DISKS = []
+for _src in [DISK, LOGDISK]:
+    if os.path.exists(_src):
+        _dst = os.path.join(WORKDIR, os.path.basename(_src))
+        shutil.copyfile(_src, _dst)
+        DISKS.append(_dst)
 
 spec = importlib.util.spec_from_file_location(
     "aios_console", os.path.join(REPO, "scripts/aios_console.py"))
@@ -48,10 +61,9 @@ def qemu_cmd():
         "-serial", "unix:%s,server" % SOCK,
         "-kernel", KERNEL,
     ]
-    for i, path in enumerate([DISK, LOGDISK]):
-        if os.path.exists(path):
-            cmd += ["-drive", "file=%s,format=raw,if=none,id=hd%d" % (path, i),
-                    "-device", "virtio-blk-device,drive=hd%d" % i]
+    for i, path in enumerate(DISKS):
+        cmd += ["-drive", "file=%s,format=raw,if=none,id=hd%d" % (path, i),
+                "-device", "virtio-blk-device,drive=hd%d" % i]
     return cmd
 
 
@@ -92,22 +104,23 @@ def main():
         print("=== boot 1: write probe + reboot under load ===", flush=True)
         proc, con = boot_and_login()
 
-        # Background writer keeps the fs thread busy with block IO across the
-        # reboot, exercising the old race window.
-        con.run("sh -c 'while :; do echo bgline >> /bgwrite.txt; done' &", 15)
-        time.sleep(2)
+        # Background writer keeps fs IO in flight across the reboot,
+        # exercising the old race window. Throttled to 1Hz: an unthrottled
+        # dash loop saturates core 0 and starves the serial console.
+        con.run("while :; do echo bgline >> /bgwrite.txt; sleep 1; done &", 15)
+        out = con.run("ls /bgwrite.txt", 15)
+        check("bg writer running (boot 1)", "bgwrite.txt" in out,
+              repr(out.strip()[:60]))
 
-        # Probe file: freshly dirty in the write-back cache when reboot runs.
-        con.run("echo %s > /rbtest.txt" % nonce, 15)
-        out = con.run("cat /rbtest.txt", 15)
-        check("probe written (boot 1)", nonce in out, repr(out.strip()[:60]))
-
-        # /bin/reboot -> PIPE_SHUTDOWN(1) -> aios_system_reboot. The banner
-        # prints only after the FS_SYNC seL4_Call returns; on QEMU the reboot
-        # path then halts instead of resetting.
-        con.sendline("reboot")
-        out = con.read_until(["AIOS reboot -- resetting board"], 30)
-        check("reboot banner after flush", "resetting board" in out,
+        # Probe write + reboot on ONE line: the gap between dirtying the
+        # cache and the reboot flush is then milliseconds, so the periodic
+        # 30s flusher cannot plausibly cover for a broken reboot-flush path.
+        # /bin/reboot -> PIPE_SHUTDOWN(1) -> aios_system_reboot. The reboot
+        # banner prints only after the FS_SYNC seL4_Call returns, so reaching
+        # it proves the flush completed; on QEMU the reboot path then halts.
+        con.sendline("echo %s > /rbtest.txt; reboot" % nonce)
+        pat, out = con.read_until(["AIOS reboot -- resetting board"], 60)
+        check("reboot banner after flush", pat is not None,
               repr(out.strip()[-80:]))
         time.sleep(1)
         stop_qemu(proc)
@@ -122,8 +135,6 @@ def main():
         check("bgwriter file present (fs intact)", "bgwrite.txt" in out,
               repr(out.strip()[:80]))
 
-        # Tidy the persistent image for the next test run.
-        con.run("rm -f /rbtest.txt /bgwrite.txt", 15)
 
     except Exception as e:
         import traceback
@@ -134,6 +145,7 @@ def main():
             stop_qemu(proc)
         if os.path.exists(SOCK):
             os.unlink(SOCK)
+        shutil.rmtree(WORKDIR, ignore_errors=True)
 
     npass = sum(1 for _, ok, _ in results if ok)
     print("\n=== reboot-flush QEMU test: %d/%d passed ===" % (npass, len(results)),
