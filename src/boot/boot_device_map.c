@@ -21,12 +21,15 @@ volatile uint32_t *dev_vcmbox_vaddr;
 uint32_t dev_vcmbox_off;
 volatile uint32_t *dev_pm_vaddr;
 volatile uint32_t *dev_pcie_vaddr;
+volatile uint32_t *dev_v3d_vaddr;
+volatile uint32_t *dev_v3d_asb_vaddr;
 
 #ifdef PLAT_RPI4
 
 #define RPI4_GPIO_PADDR 0xFE200000UL
 #define RPI4_MUART_PADDR 0xFE215000UL
 #define RPI4_PM_PADDR 0xFE100000UL     /* power management / watchdog */
+#define RPI4_V3D_ASB_PADDR 0xFEC11000UL /* RPiVid ASB V3D power bridges (1 page) */
 
 struct dev_req {
     uint64_t paddr;          /* page-aligned */
@@ -58,7 +61,7 @@ static void *map_dev(uint64_t paddr, int npages)
 
 void prealloc_rpi4_devices(void)
 {
-    struct dev_req reqs[8];
+    struct dev_req reqs[12];
     int n = 0;
 
     reqs[n++] = (struct dev_req){ RPI4_GPIO_PADDR,  1, &dev_gpio_vaddr, "gpio" };
@@ -85,8 +88,19 @@ void prealloc_rpi4_devices(void)
     if (hw_info.has_pcie)
         reqs[n++] = (struct dev_req){ hw_info.pcie_ecam_paddr & ~0xFFFUL, 10,
                                       &dev_pcie_vaddr, "pcie" };
+    /* V3D 4.2 GPU: hub+core0 as ONE contiguous 8-page region (0xFEC00000), plus the
+     * RPiVid ASB power bridges (0xFEC11000, 1 page). Both sit ABOVE the eMMC
+     * (0xFE340000, the current highest claim), so the ascending watermark is safe;
+     * they still go through the sorted table (house convention). v3d_init then uses
+     * these vaddrs instead of self-mapping (GENET rule). */
+    if (hw_info.has_v3d) {
+        reqs[n++] = (struct dev_req){ hw_info.v3d_paddr & ~0xFFFUL, 8,
+                                      &dev_v3d_vaddr, "v3d" };
+        reqs[n++] = (struct dev_req){ RPI4_V3D_ASB_PADDR, 1,
+                                      &dev_v3d_asb_vaddr, "v3dasb" };
+    }
 
-    /* Insertion sort ascending by paddr (n <= 6). This ordering is the whole
+    /* Insertion sort ascending by paddr (n <= 9). This ordering is the whole
      * point -- claim low addresses before the watermark passes them. */
     for (int i = 1; i < n; i++) {
         struct dev_req k = reqs[i];

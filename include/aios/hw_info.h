@@ -36,6 +36,11 @@ typedef struct {
     uint64_t vc_mbox_paddr;     /* ARM-to-VC mailbox base */
     int      has_vc_mbox;
 
+    /* V3D 4.2 GPU (RPi4) -- hub+core MMIO base (ARM phys); IRQ = GIC SPI 74 + 32 */
+    uint64_t v3d_paddr;         /* 0xFEC00000 (hub at +0, core0 at +0x4000) */
+    uint32_t v3d_irq;           /* seL4 IRQ 106 */
+    int      has_v3d;
+
     /* PCIe host bridge (QEMU virt: pci-host-ecam-generic; RPi4: brcmstb) */
     uint64_t pcie_ecam_paddr;   /* ECAM config-space base */
     uint64_t pcie_ecam_size;
