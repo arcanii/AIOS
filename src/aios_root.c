@@ -374,6 +374,18 @@ int main(int argc, char *argv[]) {
         xhci_init();
     }
 
+    /* Phase 2f: V3D 4.2 GPU bring-up (Phase 0 -- power/IDENT/IRQ). RPi4 only;
+     * no-op on QEMU (has_v3d=0). Claims the pre-mapped MMIO, binds IRQ 106
+     * MASKED, and pins the VC mailbox tag buffer with ZERO V3D register access --
+     * the power sequence runs lazily on an explicit /proc/v3d.power poke, never
+     * in the boot path. Must run after boot_display_init (gpu_fb) + plat_pcie_init
+     * (the tag-buffer watermark at 0x3A002000 follows display 0x3A000000 + PCIe
+     * 0x3A001000) and in this single-threaded boot context (IRQ binding). */
+    {
+        extern void v3d_init(void);
+        v3d_init();
+    }
+
     /* Boot status on HDMI console (for RPi4 without serial adapter) */
     fb_console_printf("AIOS %s\n", AIOS_VERSION_STR);
     fb_console_printf("[boot] RAM: %lu MB, CPU: %s\n",

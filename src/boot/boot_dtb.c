@@ -289,6 +289,41 @@ static void parse_pcie(const void *fdt) {
 #endif
 }
 
+static void parse_v3d(const void *fdt) {
+    /* V3D 4.2 GPU. Cloned from parse_genet: compatible brcm,2711-v3d, VC-bus
+     * +0x80000000 fixup (in fdt_read_reg_node), IRQ = SPI num + 32. */
+    int node = fdt_node_offset_by_compatible(fdt, -1, "brcm,2711-v3d");
+    if (node >= 0) {
+        uint64_t base = fdt_read_reg_node(fdt, node);   /* first reg = hub base */
+        if (base) { hw_info.v3d_paddr = base; hw_info.has_v3d = 1; }
+
+        int len;
+        const void *irq = fdt_getprop(fdt, node, "interrupts", &len);
+        if (irq && len >= 12) {
+            const fdt32_t *ic = (const fdt32_t *)irq;
+            uint32_t irq_type = fdt32_ld(&ic[0]);
+            uint32_t irq_num  = fdt32_ld(&ic[1]);
+            hw_info.v3d_irq = (irq_type == 0) ? irq_num + 32 : irq_num;
+        }
+    }
+
+#ifdef PLAT_RPI4
+    /* RPi4/BCM2711 fixed-address fallback (like parse_pcie). The firmware runtime
+     * DTB strips the gpu node, and downstream trees nest v3d under a v3dbus wrapper
+     * whose path is not stable, so the parse above almost always leaves has_v3d=0 on
+     * real hardware. Force the known V3D base + IRQ. Reads of the gated V3D block are
+     * HW-safe and v3d_init touches NO V3D MMIO (binds IRQ 106 masked, power deferred
+     * to an explicit /proc/v3d.power poke), so asserting this here is safe. */
+    if (!hw_info.has_v3d) {
+        hw_info.v3d_paddr = 0xFEC00000UL;   /* hub @ +0, core0 @ +0x4000 */
+        hw_info.has_v3d   = 1;
+        printf("[hw] v3d: BCM2711 fixed-address fallback (0x%lx)\n",
+               (unsigned long)hw_info.v3d_paddr);
+    }
+    if (!hw_info.v3d_irq) hw_info.v3d_irq = 106;   /* GIC SPI 74 + 32 */
+#endif
+}
+
 static void parse_memory(const void *fdt) {
     int node = fdt_path_offset(fdt, "/memory");
     if (node < 0) {
@@ -377,6 +412,7 @@ void boot_dtb_init(void) {
     parse_genet(fdt);
     parse_vc_mbox(fdt);
     parse_pcie(fdt);
+    parse_v3d(fdt);
     parse_cpus(fdt);
     parse_memory(fdt);
 }
@@ -405,6 +441,9 @@ void boot_hw_report(void) {
     if (hw_info.has_vc_mbox)
         printf("[hw] VC mbox: 0x%lx\n",
                (unsigned long)hw_info.vc_mbox_paddr);
+    if (hw_info.has_v3d)
+        printf("[hw] V3D: 0x%lx IRQ %u\n",
+               (unsigned long)hw_info.v3d_paddr, hw_info.v3d_irq);
     if (hw_info.has_pcie)
         printf("[hw] PCIe: ECAM 0x%lx, MMIO32 0x%lx (size 0x%lx), bus %u-%u\n",
                (unsigned long)hw_info.pcie_ecam_paddr,

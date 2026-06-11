@@ -171,6 +171,7 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/crypto/entropy_collect.c
     ${AIOS_ROOT}/src/crypto/crypto_server.c
     ${AIOS_ROOT}/src/usb/xhci.c
+    ${AIOS_ROOT}/src/gpu/v3d.c
     ${PLAT_SOURCES}
     apps_cpio.o
 )

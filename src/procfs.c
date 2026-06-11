@@ -18,6 +18,9 @@ int genet_diag_cmd(const char *args, char *buf, int bufsize);
 int xhci_diag_cmd(const char *args, char *buf, int bufsize);
 /* System mouse state at /proc/mouse (impl in src/usb/xhci.c). */
 int xhci_mouse_state(char *buf, int bufsize);
+/* V3D GPU bring-up probe/poke at /proc/v3d (impl in src/gpu/v3d.c). Phase 0:
+ * .power[.N] / .clock / register peek-poke. Prints "not present" on QEMU. */
+int v3d_diag_cmd(const char *args, char *buf, int bufsize);
 /* fb_console scroll/flush diagnostics at /proc/fbcon (impl in src/boot/fb_console.c). */
 int fb_console_diag(char *buf, int bufsize);
 
@@ -84,7 +87,7 @@ static int procfs_list(void *ctx, uint32_t ino, char *buf, int bufsize) {
     (void)ctx; (void)ino;
     int w = 0;
     /* List virtual files */
-    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- filehits\n", "- serverstats\n", "- flush\n", "- cow\n", "- cmdline\n", "- xhci\n", "- mouse\n", "- fbcon\n",
+    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- filehits\n", "- serverstats\n", "- flush\n", "- cow\n", "- cmdline\n", "- xhci\n", "- mouse\n", "- fbcon\n", "- v3d\n",
 #if defined(PLAT_RPI4)
         "- genet\n",
 #endif
@@ -476,6 +479,13 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         int xw = xhci_diag_cmd(path + 4, buf, bufsize);
         if (xw < 0) return -1;
         w = xw;
+    } else if (path[0] == 'v' && path[1] == '3' && path[2] == 'd') {
+        /* /proc/v3d -- V3D GPU bring-up probe (impl src/gpu/v3d.c). path[1]=='3'
+         * disambiguates from /proc/version and /proc/vka. cat /proc/v3d[.power[.N]
+         * |.clock[.MHz]|.r.<off>|.c.<off>|.w.<off>.<val>]. Works on QEMU + RPi4. */
+        int vw = v3d_diag_cmd(path + 3, buf, bufsize);
+        if (vw < 0) return -1;
+        w = vw;
 #if defined(PLAT_RPI4)
     } else if (path[0] == 'g' && path[1] == 'e' && path[2] == 'n'
             && path[3] == 'e' && path[4] == 't') {
