@@ -15,7 +15,7 @@ A research microkernel operating system built on seL4
 ## Get going fast
 
 ```bash
-git clone https://github.com/<you>/AIOS.git && cd AIOS
+git clone https://github.com/arcanii/AIOS.git && cd AIOS
 ./build_environment.sh          # checks host tools, fetches pinned deps,
                                 # applies patches, builds, boots a QEMU smoke test
 python3 scripts/qemu-boot.py    # interactive boot -- log in as root / root
