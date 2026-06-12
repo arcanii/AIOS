@@ -57,6 +57,16 @@ INT_RING_BUFS 32 -> 64 doubles the unattended-capture window to ~640ms
 worth it if 1+2 leave any residual drain risk; measure first via the
 key_events counter vs delivered count.
 
+## 3b. Keyboard auto-recovery after a stall-induced wedge (NEW, high value)
+
+A Source-B quantum (see NEXT_20260612_vl805_dma_stall.md) leaves the LS
+keyboard unpolled for 32s+, which wedges it (LED off) until reboot. The
+driver already detects the conditions (int-IN error storm -> park; or
+int_proc stalling while armed). On detection: USB port reset on the VL805
+root/hub port + re-enumerate + re-setup HID (the full setup_hid path already
+exists). Turns "dead until reboot" into a ~2s hiccup. Test by inducing a
+quantum (type during heavy spawn load on a PCIe-on kernel).
+
 ## 4. Stop-Endpoint LED fix (pre-existing backlog, restating)
 
 Runtime SET_REPORT to the LS keyboard behind the TT STALLs with a full
