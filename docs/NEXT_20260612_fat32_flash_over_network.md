@@ -1,5 +1,13 @@
 # NEXT: FAT32 flash-over-network (kernel8 swap without card pulls) -- 2026-06-12
 
+> **STATUS: DONE (v0.4.222-223, HW-VERIFIED incl cold boot).** Shipped:
+> src/fat32.c + FS_FATSWAP, plat_blk_*_abs HAL, virtio MBR parse,
+> /bin/fatswap, scripts/pi_flash.py, scripts/fatswap_qemu_test.py (46/46).
+> Kernel deploys are now a network push + reboot -- no card pulls. See the
+> project-fatswap memory and CHANGELOG v0.4.222/224. Design sketch below kept
+> for reference. (The corruption scare during this work was a SEPARATE ext2
+> builder bug, fixed v0.4.225 -- see NEXT_20260612_net_rx_corruption.md.)
+
 Goal: replace the mount-card-on-Mac kernel deploy with: push kernel8.img over
 the network -> AIOS rewrites it on the FAT32 boot partition -> reboot. The
 2026-06-12 stall-hunt session burned ~18 physical card swaps; this item ends
