@@ -83,6 +83,7 @@ AiosPosixApp(signal_test)
 AiosPosixApp(sbase_test)
 AiosPosixApp(shutdown)
 AiosPosixApp(reboot)
+AiosPosixApp(fatswap)
 AiosPosixApp(sntp)
 AiosPosixApp(fbshow)
 AiosPosixApp(tcp_connect)
@@ -140,6 +141,7 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/procfs.c
     ${AIOS_ROOT}/src/aios_log.c
     ${AIOS_ROOT}/src/blk_cache.c
+    ${AIOS_ROOT}/src/fat32.c
     ${AIOS_ROOT}/src/filehits.c
     ${AIOS_ROOT}/src/boot/boot_warmup.c
     ${AIOS_ROOT}/src/process/fork.c

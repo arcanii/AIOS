@@ -31,4 +31,19 @@ int plat_blk_write_multi(uint64_t sector, const void *buf, int count);
 int plat_blk_read_log(uint64_t sector, void *buf);
 int plat_blk_write_log(uint64_t sector, const void *buf);
 
+/* v0.4.222 fatswap: ABSOLUTE-LBA I/O on the primary device -- whole-card
+ * sector space, no ext2 partition offset. Used to rewrite KERNEL8.IMG on
+ * the FAT32 boot partition (src/fat32.c). These bypass the block cache by
+ * design; that is coherent because the cache only ever addresses
+ * ext2-partition-relative sectors, which map to a disjoint physical range.
+ * MUST be called from the fs_thread only (single-owner DMA/PIO state). */
+int plat_blk_read_abs(uint64_t sector, void *buf);
+int plat_blk_write_abs(uint64_t sector, const void *buf);
+int plat_blk_write_multi_abs(uint64_t sector, const void *buf, int count);
+
+/* FAT32/FAT16 boot partition (MBR type 0x0b/0x0c) discovered at
+ * plat_blk_init. start==0 means no boot partition on this disk. */
+uint64_t plat_blk_boot_part_start(void);
+uint64_t plat_blk_boot_part_sectors(void);
+
 #endif /* AIOS_BLK_HAL_H */

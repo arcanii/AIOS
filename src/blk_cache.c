@@ -30,6 +30,13 @@
  * qemu-virt driver increments it; the RPi4 eMMC driver leaves it 0. */
 volatile uint32_t blk_poll_renotifies;
 
+/* v0.4.224: eMMC data-phase completion-timeout accounting (same shared-
+ * definition pattern; the RPi4 driver increments, QEMU leaves them 0).
+ * A "retry" was absorbed by the driver re-issuing the command; a "fail"
+ * surfaced as an I/O error after the retry also timed out. */
+volatile uint32_t blk_emmc_timeout_retries;
+volatile uint32_t blk_emmc_timeout_fails;
+
 #define HASH_BUCKETS 512
 
 typedef struct cache_line {
@@ -182,17 +189,30 @@ static void flush_all_dirty(void) {
         if (l->dirty) flush_line(l);
 }
 
-/* Evict the LRU tail. Returns 1 if a line was freed, 0 if the cache
- * is empty. v0.4.172: write a dirty victim back before discarding it. */
+/* Evict the LRU tail. Returns 1 if a line was freed, 0 if nothing could
+ * be evicted. v0.4.172: write a dirty victim back before discarding it.
+ * v0.4.224: a dirty victim whose flush FAILS must not be discarded --
+ * that silently drops the write (the backend now reports real failures
+ * instead of lying on completion timeouts). Move it off the tail and try
+ * the next victim, bounded so an all-dirty cache over a dead card cannot
+ * loop forever. */
 static int evict_one(void) {
-    cache_line_t *victim = lru_tail;
-    if (!victim) return 0;
-    if (victim->dirty) flush_line(victim);
-    lru_unlink(victim);
-    hash_remove(victim);
-    line_free(victim);
-    stats.evicted++;
-    return 1;
+    for (int tries = 0; tries < 4; tries++) {
+        cache_line_t *victim = lru_tail;
+        if (!victim) return 0;
+        if (victim->dirty && flush_line(victim) != 0) {
+            AIOS_LOG_WARN_V("evict: dirty flush failed, sector=",
+                            (unsigned long)victim->line_sector);
+            lru_touch(victim);          /* keep it; try the next tail */
+            continue;
+        }
+        lru_unlink(victim);
+        hash_remove(victim);
+        line_free(victim);
+        stats.evicted++;
+        return 1;
+    }
+    return 0;
 }
 
 void blk_cache_init(int max_pages) {

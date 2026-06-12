@@ -329,19 +329,21 @@ int ext2_pwrite_file(ext2_ctx_t *ctx, uint32_t ino, int offset,
             /* Zero the new block */
             uint8_t zero[1024];
             for (int i = 0; i < block_size; i++) zero[i] = 0;
-            write_block(ctx, blk_num, zero);
+            if (write_block(ctx, blk_num, zero) != 0) return -5;
             if (ext2_set_block_num(ctx, &inode, block_idx, (uint32_t)blk_num) != 0)
                 return -3;
         }
 
-        /* Read block, patch in our data, write back */
+        /* Read block, patch in our data, write back. v0.4.224: the write
+         * result must propagate -- the block layer now reports real I/O
+         * failures (completion timeouts) instead of losing data quietly. */
         uint8_t blk[1024];
         if (read_block(ctx, blk_num, blk) != 0) return -4;
         int chunk = block_size - block_off;
         if (chunk > len - written) chunk = len - written;
         for (int i = 0; i < chunk; i++)
             blk[block_off + i] = data[written + i];
-        write_block(ctx, blk_num, blk);
+        if (write_block(ctx, blk_num, blk) != 0) return -5;
 
         written += chunk;
     }

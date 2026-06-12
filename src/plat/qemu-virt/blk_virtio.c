@@ -38,6 +38,56 @@ static uint64_t  blk_dma_pa_log;
 
 static int log_slot_found = -1;
 
+/* v0.4.222 fatswap: partition layout of the system disk. Historically the
+ * QEMU disk is a BARE ext2 image (part_offset 0, no boot partition); a
+ * composite MBR image (mksdcard.py layout: FAT32 boot + ext2) now also
+ * boots, so fatswap can be QEMU-tested before touching real cards. */
+static uint64_t part_offset;
+static uint64_t boot_part_start;
+static uint64_t boot_part_sectors;
+
+/* Probe-time single-sector read on a freshly initialized queue. Data lands
+ * in req->data (dma + 0x2000 + 16). Captures used->idx BEFORE the notify
+ * (v0.4.147 lesson: capturing after races a fast completion). */
+static int probe_read_sector(volatile uint32_t *vio, uint8_t *dma,
+                             uint64_t dma_pa, uint32_t qsz, uint64_t sector) {
+    struct virtq_desc  *desc  = (struct virtq_desc *)(dma);
+    struct virtq_avail *avail = (struct virtq_avail *)(dma + 0x100);
+    struct virtq_used  *used  = (struct virtq_used  *)(dma + 0x1000);
+    struct virtio_blk_req *req = (struct virtio_blk_req *)(dma + 0x2000);
+    uint64_t req_pa = dma_pa + 0x2000;
+
+    req->type = VIRTIO_BLK_T_IN;
+    req->reserved = 0;
+    req->sector = sector;
+    req->status = 0xFF;
+
+    desc[0].addr  = req_pa;      desc[0].len = 16;
+    desc[0].flags = VIRTQ_DESC_F_NEXT; desc[0].next = 1;
+    desc[1].addr  = req_pa + 16; desc[1].len = 512;
+    desc[1].flags = VIRTQ_DESC_F_WRITE | VIRTQ_DESC_F_NEXT; desc[1].next = 2;
+    desc[2].addr  = req_pa + 16 + 512; desc[2].len = 1;
+    desc[2].flags = VIRTQ_DESC_F_WRITE; desc[2].next = 0;
+
+    uint16_t last_used = used->idx;
+    arch_dmb();
+    avail->ring[avail->idx % qsz] = 0;
+    arch_dmb();
+    avail->idx += 1;
+    arch_dmb();
+    VIO_W(vio, VIRTIO_MMIO_QUEUE_NOTIFY, 0);
+
+    int ok = 0;
+    for (uint64_t dl = mono_deadline_ms(2000); mono_before(dl); ) {
+        arch_dmb();
+        if (used->idx != last_used) { ok = 1; break; }
+    }
+    arch_dmb();
+    VIO_R(vio, VIRTIO_MMIO_INTERRUPT_STATUS);
+    VIO_W(vio, VIRTIO_MMIO_INTERRUPT_ACK, 1);
+    return (ok && req->status == 0) ? 0 : -1;
+}
+
 /* ============================================================
  * plat_blk_init -- probe drives, init system disk
  * ============================================================ */
@@ -106,50 +156,51 @@ int plat_blk_init(void) {
         VIO_W(vio, VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER
               | VIRTIO_STATUS_DRIVER_OK);
 
-        /* Read sector 2 (ext2 superblock) */
-        struct virtq_desc  *desc  = (struct virtq_desc *)(dma);
-        struct virtq_avail *avail = (struct virtq_avail *)(dma + 0x100);
-        struct virtq_used  *used  = (struct virtq_used  *)(dma + 0x1000);
         struct virtio_blk_req *req = (struct virtio_blk_req *)(dma + 0x2000);
-        uint64_t req_pa = dma_pa + 0x2000;
 
-        req->type = VIRTIO_BLK_T_IN;
-        req->reserved = 0;
-        req->sector = 2;
-        req->status = 0xFF;
-
-        desc[0].addr  = req_pa;      desc[0].len = 16;
-        desc[0].flags = VIRTQ_DESC_F_NEXT; desc[0].next = 1;
-        desc[1].addr  = req_pa + 16; desc[1].len = 512;
-        desc[1].flags = VIRTQ_DESC_F_WRITE | VIRTQ_DESC_F_NEXT; desc[1].next = 2;
-        desc[2].addr  = req_pa + 16 + 512; desc[2].len = 1;
-        desc[2].flags = VIRTQ_DESC_F_WRITE; desc[2].next = 0;
-
-        arch_dmb();
-        avail->ring[avail->idx % qsz] = 0;
-        arch_dmb();
-        avail->idx += 1;
-        arch_dmb();
-        VIO_W(vio, VIRTIO_MMIO_QUEUE_NOTIFY, 0);
-
-        uint16_t last_used = 0;
-        int probe_ok = 0;
-        for (uint64_t dl = mono_deadline_ms(2000); mono_before(dl); ) {
-            arch_dmb();
-            if (used->idx != last_used) { probe_ok = 1; break; }
+        /* v0.4.222 fatswap: composite (MBR-partitioned) images boot too.
+         * Look for an MBR first: type 0x83 -> ext2 partition offset, type
+         * 0x0b/0x0c -> FAT boot partition. A bare ext2 image has no 0x55AA
+         * signature in its (zeroed) boot block, so the historic layout
+         * falls through with offset 0. If the MBR pointed somewhere that
+         * lacks an ext2 superblock, fall back to bare as well. */
+        uint64_t dev_part = 0, dev_boot = 0, dev_boot_cnt = 0;
+        if (probe_read_sector(vio, dma, dma_pa, qsz, 0) == 0 &&
+            req->data[510] == 0x55 && req->data[511] == 0xAA) {
+            for (int p = 0; p < 4; p++) {
+                const uint8_t *e = &req->data[0x1BE + p * 16];
+                uint8_t type = e[4];
+                uint32_t lba = (uint32_t)e[8]  | ((uint32_t)e[9] << 8) |
+                               ((uint32_t)e[10] << 16) | ((uint32_t)e[11] << 24);
+                uint32_t cnt = (uint32_t)e[12] | ((uint32_t)e[13] << 8) |
+                               ((uint32_t)e[14] << 16) | ((uint32_t)e[15] << 24);
+                if (type == 0x83 && dev_part == 0)
+                    dev_part = lba;
+                if ((type == 0x0B || type == 0x0C) && dev_boot == 0) {
+                    dev_boot = lba;
+                    dev_boot_cnt = cnt;
+                }
+            }
         }
-        arch_dmb();
-        VIO_R(vio, VIRTIO_MMIO_INTERRUPT_STATUS);
-        VIO_W(vio, VIRTIO_MMIO_INTERRUPT_ACK, 1);
 
-        if (!probe_ok || req->status != 0) {
+        /* Read the ext2 superblock (sector 2 of the partition or disk) */
+        int probe_ok = (probe_read_sector(vio, dma, dma_pa, qsz,
+                                          dev_part + 2) == 0);
+        uint16_t ext2_magic = probe_ok
+            ? (uint16_t)(req->data[0x38] | (req->data[0x39] << 8)) : 0;
+        if (probe_ok && ext2_magic != 0xEF53 && dev_part != 0) {
+            /* MBR parse found a partition but no fs there -- try bare. */
+            dev_part = 0; dev_boot = 0; dev_boot_cnt = 0;
+            probe_ok = (probe_read_sector(vio, dma, dma_pa, qsz, 2) == 0);
+            ext2_magic = probe_ok
+                ? (uint16_t)(req->data[0x38] | (req->data[0x39] << 8)) : 0;
+        }
+
+        if (!probe_ok) {
             AIOS_LOG_ERROR_V("Slot read failed slot=", (unsigned long)info->blk_slots[d]);
             VIO_W(vio, VIRTIO_MMIO_STATUS, 0);
             continue;
         }
-
-        /* Check ext2 magic */
-        uint16_t ext2_magic = req->data[0x38] | (req->data[0x39] << 8);
         if (ext2_magic != 0xEF53) {
             printf("[fs] Slot %d: not ext2 (0x%04x)\n",
                    info->blk_slots[d], ext2_magic);
@@ -170,7 +221,14 @@ int plat_blk_init(void) {
         }
 
         blk_slot = info->blk_slots[d];
-        printf("[fs] Slot %d: system disk\n", blk_slot);
+        part_offset = dev_part;
+        boot_part_start = dev_boot;
+        boot_part_sectors = dev_boot_cnt;
+        if (part_offset)
+            printf("[fs] Slot %d: system disk (MBR: ext2 at %u, boot at %u)\n",
+                   blk_slot, (unsigned)part_offset, (unsigned)boot_part_start);
+        else
+            printf("[fs] Slot %d: system disk\n", blk_slot);
         break;
     }
 
@@ -289,22 +347,32 @@ static int blk_complete(volatile uint32_t *vio, volatile struct virtq_used *used
     return done;
 }
 
-int plat_blk_read(uint64_t sector, void *buf) {
+/* One sector in or out at an ABSOLUTE disk LBA. The partition-relative
+ * HAL entry points add part_offset; the _abs entry points (fatswap) do
+ * not. Single shared body so the two spaces cannot drift. */
+static int blk_xfer_abs(int is_write, uint64_t sector, void *buf) {
+    if (!blk_vio) return -1;
     struct virtq_desc  *desc  = (struct virtq_desc *)(blk_dma);
     struct virtq_avail *avail = (struct virtq_avail *)(blk_dma + 0x100);
     struct virtq_used  *used  = (struct virtq_used  *)(blk_dma + 0x1000);
     struct virtio_blk_req *req = (struct virtio_blk_req *)(blk_dma + 0x2000);
     uint64_t req_pa = blk_dma_pa + 0x2000;
 
-    req->type = VIRTIO_BLK_T_IN;
+    req->type = is_write ? VIRTIO_BLK_T_OUT : VIRTIO_BLK_T_IN;
     req->reserved = 0;
     req->sector = sector;
     req->status = 0xFF;
 
+    if (is_write) {
+        const uint8_t *src = (const uint8_t *)buf;
+        for (int i = 0; i < 512; i++) req->data[i] = src[i];
+    }
+
     desc[0].addr = req_pa; desc[0].len = 16;
     desc[0].flags = VIRTQ_DESC_F_NEXT; desc[0].next = 1;
     desc[1].addr = req_pa + 16; desc[1].len = 512;
-    desc[1].flags = VIRTQ_DESC_F_WRITE | VIRTQ_DESC_F_NEXT; desc[1].next = 2;
+    desc[1].flags = (is_write ? 0 : VIRTQ_DESC_F_WRITE) | VIRTQ_DESC_F_NEXT;
+    desc[1].next = 2;
     desc[2].addr = req_pa + 16 + 512; desc[2].len = 1;
     desc[2].flags = VIRTQ_DESC_F_WRITE; desc[2].next = 0;
 
@@ -314,41 +382,20 @@ int plat_blk_read(uint64_t sector, void *buf) {
     avail->idx += 1;
     arch_dmb();
     if (!blk_complete(blk_vio, used) || req->status != 0) return -1;
-    uint8_t *src = req->data;
-    uint8_t *dst = (uint8_t *)buf;
-    for (int i = 0; i < 512; i++) dst[i] = src[i];
+    if (!is_write) {
+        uint8_t *src = req->data;
+        uint8_t *dst = (uint8_t *)buf;
+        for (int i = 0; i < 512; i++) dst[i] = src[i];
+    }
     return 0;
 }
 
+int plat_blk_read(uint64_t sector, void *buf) {
+    return blk_xfer_abs(0, part_offset + sector, buf);
+}
+
 int plat_blk_write(uint64_t sector, const void *buf) {
-    struct virtq_desc  *desc  = (struct virtq_desc *)(blk_dma);
-    struct virtq_avail *avail = (struct virtq_avail *)(blk_dma + 0x100);
-    struct virtq_used  *used  = (struct virtq_used  *)(blk_dma + 0x1000);
-    struct virtio_blk_req *req = (struct virtio_blk_req *)(blk_dma + 0x2000);
-    uint64_t req_pa = blk_dma_pa + 0x2000;
-
-    req->type = VIRTIO_BLK_T_OUT;
-    req->reserved = 0;
-    req->sector = sector;
-    req->status = 0xFF;
-
-    const uint8_t *src = (const uint8_t *)buf;
-    for (int i = 0; i < 512; i++) req->data[i] = src[i];
-
-    desc[0].addr = req_pa; desc[0].len = 16;
-    desc[0].flags = VIRTQ_DESC_F_NEXT; desc[0].next = 1;
-    desc[1].addr = req_pa + 16; desc[1].len = 512;
-    desc[1].flags = VIRTQ_DESC_F_NEXT; desc[1].next = 2;
-    desc[2].addr = req_pa + 16 + 512; desc[2].len = 1;
-    desc[2].flags = VIRTQ_DESC_F_WRITE; desc[2].next = 0;
-
-    arch_dmb();
-    avail->ring[avail->idx % 16] = 0;
-    arch_dmb();
-    avail->idx += 1;
-    arch_dmb();
-    if (!blk_complete(blk_vio, used) || req->status != 0) return -1;
-    return 0;
+    return blk_xfer_abs(1, part_offset + sector, (void *)buf);
 }
 
 /* v0.4.172: multi-sector write. QEMU virtio writes are already fast, so we
@@ -362,6 +409,26 @@ int plat_blk_write_multi(uint64_t sector, const void *buf, int count) {
     }
     return 0;
 }
+
+/* Absolute-LBA HAL (v0.4.222 fatswap) -- see blk_hal.h. */
+int plat_blk_read_abs(uint64_t sector, void *buf) {
+    return blk_xfer_abs(0, sector, buf);
+}
+
+int plat_blk_write_abs(uint64_t sector, const void *buf) {
+    return blk_xfer_abs(1, sector, (void *)buf);
+}
+
+int plat_blk_write_multi_abs(uint64_t sector, const void *buf, int count) {
+    const uint8_t *p = (const uint8_t *)buf;
+    for (int i = 0; i < count; i++) {
+        if (blk_xfer_abs(1, sector + i, (void *)(p + i * 512)) != 0) return -1;
+    }
+    return 0;
+}
+
+uint64_t plat_blk_boot_part_start(void)   { return boot_part_start; }
+uint64_t plat_blk_boot_part_sectors(void) { return boot_part_sectors; }
 
 /* ============================================================
  * Sector I/O -- log device

@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(shasum *)",
+      "Bash(xcrun xcresulttool *)",
+      "Bash(ping *)",
+      "Bash(xcrun simctl list *)"
+    ]
+  }
+}

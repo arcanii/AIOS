@@ -87,6 +87,7 @@ struct __attribute__((packed)) ext2_dir_entry {
 #define FS_PWRITE 20
 #define FS_TRUNCATE 21  /* v0.4.130 */
 #define FS_SYNC 22      /* v0.4.188: flush write-back block cache (fsync/sync) */
+#define FS_FATSWAP 23   /* v0.4.222: rewrite KERNEL8.IMG on the FAT32 boot partition */
 
 /* Block read function type (provided by caller) */
 typedef int (*blk_read_fn)(uint64_t sector, void *buf);

@@ -112,6 +112,11 @@ static int card_is_sdhc;
 static uint32_t part_offset;
 static int emmc_initialized;
 
+/* v0.4.222 fatswap: FAT32 boot partition (MBR type 0x0b/0x0c) location,
+ * recorded during the MBR parse. 0 = none found. */
+static uint64_t boot_part_start;
+static uint64_t boot_part_sectors;
+
 /* Aligned sector buffer for PIO reads (avoids alignment issues) */
 static uint32_t __attribute__((aligned(16))) sector_buf[128];
 
@@ -151,10 +156,17 @@ static uint64_t emmc_deadline(int ms) {
     return emmc_ticks() + (uint64_t)ms * f / 1000;
 }
 /* Poll INT_STATUS until `want` is latched, an error latches, or `ms` elapse.
- * Returns 1 = want seen, 0 = timed out (the controller has most likely
- * finished but the latched bit was missed -- callers proceed, matching the
- * old fall-through), -1 = INT_ERROR latched (caller re-reads REG_INT_STATUS
- * for the detail, the bit stays latched until cleared). */
+ * Returns 1 = want seen, 0 = timed out, -1 = INT_ERROR latched (caller
+ * re-reads REG_INT_STATUS for the detail, the bit stays latched until
+ * cleared).
+ *
+ * v0.4.224: a data-phase TIMEOUT is a FAILURE, not a shrug. The old
+ * "callers proceed" fall-through let a read drain an empty FIFO: under a
+ * 32.4s-multiple stall quantum the 2s deadline expires while the CPU is
+ * frozen, BUF_RD never latches, and REG_BUFFER returns 0xFFFFFFFF -- which
+ * is exactly how a network push landed 124 bytes of 0xFF inside an ext2
+ * block (the fatswap deploy corruption, 2026-06-12). Callers now treat 0 as
+ * a hard error and retry the whole (idempotent) command once. */
 static int emmc_wait_int(uint32_t want, int ms) {
     uint64_t dl = emmc_deadline(ms);
     for (;;) {
@@ -293,11 +305,19 @@ static void emmc_set_clock(uint32_t target_khz) {
 /* ----------------------------------------------------------------
  * emmc_read_raw_sector -- read one 512-byte sector via PIO
  *
- * lba:  physical sector number on SD card
- * buf:  destination buffer (512 bytes)
- * Returns 0 on success, -1 on error
+ * v0.4.224: completion TIMEOUTS now fail the attempt instead of falling
+ * through. The fall-through drained an un-ready FIFO (returns 0xFFFFFFFF
+ * per word) when a stall quantum expired the 2s deadline -- silent 0xFF
+ * corruption in whatever sat above (the fatswap push corruption). The
+ * public wrapper retries the whole command once (CMD17 is idempotent),
+ * then fails LOUDLY. Counters surface in /proc/cachestats.
  * ---------------------------------------------------------------- */
-static int emmc_read_raw_sector(uint64_t lba, void *buf) {
+extern volatile uint32_t blk_emmc_timeout_retries;   /* blk_cache.c */
+extern volatile uint32_t blk_emmc_timeout_fails;     /* blk_cache.c */
+
+/* One CMD17 attempt into sector_buf.
+ * Returns 0 = ok, -1 = hard error, -2 = completion wait timed out. */
+static int emmc_read_attempt(uint64_t lba) {
     if (emmc_wait_dat() != 0) return -1;
 
     /* Clear interrupts */
@@ -314,19 +334,24 @@ static int emmc_read_raw_sector(uint64_t lba, void *buf) {
         CMD_DATA | XFER_READ | XFER_BLKCNT_EN);
 
     /* Wait for command complete */
-    if (emmc_wait_int(INT_CMD_DONE, EMMC_CMD_MS) < 0) {
+    int r = emmc_wait_int(INT_CMD_DONE, EMMC_CMD_MS);
+    if (r < 0) {
         printf("[blk] Read LBA %u cmd err: 0x%x\n", (uint32_t)lba, EMMC_R(REG_INT_STATUS));
         EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
         return -1;
     }
+    if (r == 0) return -2;
     EMMC_W(REG_INT_STATUS, INT_CMD_DONE);
 
-    /* Wait for buffer read ready */
-    if (emmc_wait_int(INT_BUF_RD, EMMC_DATA_MS) < 0) {
+    /* Wait for buffer read ready. NEVER drain the FIFO on a timeout:
+     * an un-ready data port reads back 0xFFFFFFFF. */
+    r = emmc_wait_int(INT_BUF_RD, EMMC_DATA_MS);
+    if (r < 0) {
         printf("[blk] Read LBA %u data err: 0x%x\n", (uint32_t)lba, EMMC_R(REG_INT_STATUS));
         EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
         return -1;
     }
+    if (r == 0) return -2;
     EMMC_W(REG_INT_STATUS, INT_BUF_RD);
 
     /* Read 128 words (512 bytes) from data port */
@@ -335,13 +360,35 @@ static int emmc_read_raw_sector(uint64_t lba, void *buf) {
         sector_buf[i] = EMMC_R(REG_BUFFER);
     }
 
-    /* Wait for transfer complete */
-    if (emmc_wait_int(INT_XFER_DONE, EMMC_DATA_MS) < 0) {
+    /* Wait for transfer complete. BUF_RD latched and the FIFO was
+     * drained, so the data in hand is real; a missed XFER_DONE here is
+     * bookkeeping -- accept the data (this was the legitimate half of
+     * the old fall-through). Hard errors still fail. */
+    r = emmc_wait_int(INT_XFER_DONE, EMMC_DATA_MS);
+    if (r < 0) {
         printf("[blk] Read LBA %u xfer err: 0x%x\n", (uint32_t)lba, EMMC_R(REG_INT_STATUS));
         EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
         return -1;
     }
     EMMC_W(REG_INT_STATUS, INT_XFER_DONE);
+    return 0;
+}
+
+static int emmc_read_raw_sector(uint64_t lba, void *buf) {
+    int r = emmc_read_attempt(lba);
+    if (r == -2) {
+        blk_emmc_timeout_retries++;
+        printf("[blk] Read LBA %u completion timeout -- retrying once\n",
+               (uint32_t)lba);
+        r = emmc_read_attempt(lba);
+        if (r == -2) {
+            blk_emmc_timeout_fails++;
+            printf("[blk] Read LBA %u timed out twice -- FAILED\n",
+                   (uint32_t)lba);
+            return -1;
+        }
+    }
+    if (r != 0) return -1;
 
     /* Copy from aligned buffer to caller */
     memcpy(buf, sector_buf, 512);
@@ -542,6 +589,11 @@ int plat_blk_init(void) {
             part_offset = lba;
             found = 1;
         }
+        /* v0.4.222 fatswap: remember the FAT boot partition */
+        if ((type == 0x0B || type == 0x0C) && boot_part_start == 0) {
+            boot_part_start = lba;
+            boot_part_sectors = cnt;
+        }
     }
 
     if (!found) {
@@ -580,11 +632,14 @@ int plat_blk_read(uint64_t sector, void *buf) {
 /* ----------------------------------------------------------------
  * emmc_write_raw_sector -- write one 512-byte sector via PIO
  *
- * lba:  physical sector number on SD card
- * buf:  source buffer (512 bytes)
- * Returns 0 on success, -1 on error
+ * v0.4.224: same hardening as the read path. A write whose XFER_DONE
+ * never latched may be UNPROGRAMMED -- reporting success there loses the
+ * write while the cache above clears its dirty bit. Timeouts fail the
+ * attempt; the wrapper retries once (rewriting the same data to the same
+ * sector is idempotent), then fails loudly.
  * ---------------------------------------------------------------- */
-static int emmc_write_raw_sector(uint64_t lba, const void *buf) {
+/* One CMD24 attempt. Returns 0 = ok, -1 = hard error, -2 = timeout. */
+static int emmc_write_attempt(uint64_t lba, const void *buf) {
     if (emmc_wait_dat() != 0) return -1;
 
     /* Clear interrupts */
@@ -601,19 +656,23 @@ static int emmc_write_raw_sector(uint64_t lba, const void *buf) {
         CMD_DATA | XFER_BLKCNT_EN);
 
     /* Wait for command complete */
-    if (emmc_wait_int(INT_CMD_DONE, EMMC_CMD_MS) < 0) {
+    int r = emmc_wait_int(INT_CMD_DONE, EMMC_CMD_MS);
+    if (r < 0) {
         printf("[blk] Write LBA %u cmd err: 0x%x\n", (uint32_t)lba, EMMC_R(REG_INT_STATUS));
         EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
         return -1;
     }
+    if (r == 0) return -2;
     EMMC_W(REG_INT_STATUS, INT_CMD_DONE);
 
     /* Wait for buffer write ready */
-    if (emmc_wait_int(INT_BUF_WR, EMMC_DATA_MS) < 0) {
+    r = emmc_wait_int(INT_BUF_WR, EMMC_DATA_MS);
+    if (r < 0) {
         printf("[blk] Write LBA %u buf err: 0x%x\n", (uint32_t)lba, EMMC_R(REG_INT_STATUS));
         EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
         return -1;
     }
+    if (r == 0) return -2;
     EMMC_W(REG_INT_STATUS, INT_BUF_WR);
 
     /* Copy caller data into aligned buffer then write 128 words */
@@ -622,15 +681,35 @@ static int emmc_write_raw_sector(uint64_t lba, const void *buf) {
         EMMC_W(REG_BUFFER, sector_buf[i]);
     }
 
-    /* Wait for transfer complete */
-    if (emmc_wait_int(INT_XFER_DONE, EMMC_DATA_MS) < 0) {
+    /* Wait for transfer complete -- on a WRITE this is the card accepting
+     * the data; without it the block may never be programmed. */
+    r = emmc_wait_int(INT_XFER_DONE, EMMC_DATA_MS);
+    if (r < 0) {
         printf("[blk] Write LBA %u xfer err: 0x%x\n", (uint32_t)lba, EMMC_R(REG_INT_STATUS));
         EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
         return -1;
     }
+    if (r == 0) return -2;
     EMMC_W(REG_INT_STATUS, INT_XFER_DONE);
 
     return 0;
+}
+
+static int emmc_write_raw_sector(uint64_t lba, const void *buf) {
+    int r = emmc_write_attempt(lba, buf);
+    if (r == -2) {
+        blk_emmc_timeout_retries++;
+        printf("[blk] Write LBA %u completion timeout -- retrying once\n",
+               (uint32_t)lba);
+        r = emmc_write_attempt(lba, buf);
+        if (r == -2) {
+            blk_emmc_timeout_fails++;
+            printf("[blk] Write LBA %u timed out twice -- FAILED\n",
+                   (uint32_t)lba);
+            return -1;
+        }
+    }
+    return r == 0 ? 0 : -1;
 }
 
 /* ----------------------------------------------------------------
@@ -640,9 +719,10 @@ static int emmc_write_raw_sector(uint64_t lba, const void *buf) {
  * count separate CMD24 single-block writes (the v0.4.172 write speedup).
  * Returns 0 on success, -1 on error.
  * ---------------------------------------------------------------- */
-static int emmc_write_multi(uint64_t lba, const void *buf, int count) {
-    if (count <= 0) return 0;
-    if (count == 1) return emmc_write_raw_sector(lba, buf);
+/* One CMD25 attempt. Returns 0 = ok, -1 = hard error, -2 = a completion
+ * wait timed out (CMD12 stop sent best-effort so the retry starts from a
+ * stopped card). v0.4.224 hardening -- see emmc_write_raw_sector. */
+static int emmc_write_multi_attempt(uint64_t lba, const void *buf, int count) {
     if (emmc_wait_dat() != 0) return -1;
 
     EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
@@ -655,20 +735,30 @@ static int emmc_write_multi(uint64_t lba, const void *buf, int count) {
         CMD_DATA | XFER_MULTI | XFER_BLKCNT_EN);
 
     /* Wait for command complete */
-    if (emmc_wait_int(INT_CMD_DONE, EMMC_CMD_MS) < 0) {
+    int r = emmc_wait_int(INT_CMD_DONE, EMMC_CMD_MS);
+    if (r < 0) {
         printf("[blk] WriteM LBA %u cmd err: 0x%x\n", (uint32_t)lba, EMMC_R(REG_INT_STATUS));
         EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
         return -1;
     }
+    if (r == 0) return -2;
     EMMC_W(REG_INT_STATUS, INT_CMD_DONE);
 
     /* Transfer each block: wait for buffer-write-ready, push 128 words */
     const uint8_t *p = (const uint8_t *)buf;
     for (int b = 0; b < count; b++) {
-        if (emmc_wait_int(INT_BUF_WR, EMMC_DATA_MS) < 0) {
+        r = emmc_wait_int(INT_BUF_WR, EMMC_DATA_MS);
+        if (r < 0) {
             printf("[blk] WriteM LBA %u buf err: 0x%x\n", (uint32_t)lba, EMMC_R(REG_INT_STATUS));
             EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
             return -1;
+        }
+        if (r == 0) {
+            /* Mid-stream timeout: stop the open-ended write so the card
+             * leaves data state, then let the wrapper retry the run. */
+            emmc_send_cmd(CMD_INDEX(12) | CMD_RESP_48B | CMD_CRC_EN
+                          | CMD_IDX_EN, 0);
+            return -2;
         }
         EMMC_W(REG_INT_STATUS, INT_BUF_WR);
         memcpy(sector_buf, p + b * 512, 512);
@@ -677,11 +767,18 @@ static int emmc_write_multi(uint64_t lba, const void *buf, int count) {
         }
     }
 
-    /* Wait for transfer complete (all blocks accepted) */
-    if (emmc_wait_int(INT_XFER_DONE, EMMC_DATA_MS) < 0) {
+    /* Wait for transfer complete (all blocks accepted) -- without it the
+     * tail of the run may never be programmed. */
+    r = emmc_wait_int(INT_XFER_DONE, EMMC_DATA_MS);
+    if (r < 0) {
         printf("[blk] WriteM LBA %u xfer err: 0x%x\n", (uint32_t)lba, EMMC_R(REG_INT_STATUS));
         EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
         return -1;
+    }
+    if (r == 0) {
+        emmc_send_cmd(CMD_INDEX(12) | CMD_RESP_48B | CMD_CRC_EN
+                      | CMD_IDX_EN, 0);
+        return -2;
     }
     EMMC_W(REG_INT_STATUS, INT_XFER_DONE);
 
@@ -692,6 +789,25 @@ static int emmc_write_multi(uint64_t lba, const void *buf, int count) {
         return -1;
 
     return 0;
+}
+
+static int emmc_write_multi(uint64_t lba, const void *buf, int count) {
+    if (count <= 0) return 0;
+    if (count == 1) return emmc_write_raw_sector(lba, buf);
+    int r = emmc_write_multi_attempt(lba, buf, count);
+    if (r == -2) {
+        blk_emmc_timeout_retries++;
+        printf("[blk] WriteM LBA %u completion timeout -- retrying once\n",
+               (uint32_t)lba);
+        r = emmc_write_multi_attempt(lba, buf, count);
+        if (r == -2) {
+            blk_emmc_timeout_fails++;
+            printf("[blk] WriteM LBA %u timed out twice -- FAILED\n",
+                   (uint32_t)lba);
+            return -1;
+        }
+    }
+    return r == 0 ? 0 : -1;
 }
 
 /* ----------------------------------------------------------------
@@ -707,6 +823,29 @@ int plat_blk_write_multi(uint64_t sector, const void *buf, int count) {
     if (!emmc_initialized) return -1;
     return emmc_write_multi(part_offset + sector, buf, count);
 }
+
+/* ----------------------------------------------------------------
+ * HAL: absolute-LBA I/O (v0.4.222 fatswap) -- whole-card sector
+ * space, no partition offset, no block cache. fs_thread only (the
+ * PIO sector_buf is shared with the cache-backend paths above).
+ * ---------------------------------------------------------------- */
+int plat_blk_read_abs(uint64_t sector, void *buf) {
+    if (!emmc_initialized) return -1;
+    return emmc_read_raw_sector(sector, buf);
+}
+
+int plat_blk_write_abs(uint64_t sector, const void *buf) {
+    if (!emmc_initialized) return -1;
+    return emmc_write_raw_sector(sector, buf);
+}
+
+int plat_blk_write_multi_abs(uint64_t sector, const void *buf, int count) {
+    if (!emmc_initialized) return -1;
+    return emmc_write_multi(sector, buf, count);
+}
+
+uint64_t plat_blk_boot_part_start(void)   { return boot_part_start; }
+uint64_t plat_blk_boot_part_sectors(void) { return boot_part_sectors; }
 
 /* ----------------------------------------------------------------
  * HAL: log drive stubs (RPi4 has single SD card, no log drive)

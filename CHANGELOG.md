@@ -4,6 +4,73 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.224 (2026-06-12)
+Block-layer integrity hardening -- the root-cause fix for the push corruption
+caught (and worked around) during the v0.4.223 fatswap deploy. The corrupt
+124 bytes were 0xFF: an empty-FIFO PIO drain.
+- **eMMC data-phase timeouts are now failures** (blk_emmc.c): the v0.4.176
+  time-based waits kept the old "caller proceeds" fall-through on timeout;
+  under a 32.4s stall quantum the 2s deadline expires while the CPU is
+  frozen, INT_BUF_RD never latches, and draining the data port returns
+  0xFFFFFFFF per word -- which the ext2 partial-block RMW then merged into a
+  file. Reads no longer drain an un-ready FIFO; writes no longer report
+  success without XFER_DONE (a lost write let the write-back cache clear
+  dirty on unprogrammed data). Each path retries the whole idempotent
+  command once, then fails loudly. Counters in /proc/cachestats
+  (emmc_timeout_retries/fails).
+- **blk_cache evict_one** no longer discards a dirty line whose flush
+  failed (silent write loss); it skips that victim, bounded.
+- **ext2_pwrite_file** propagates write_block failures (RMW + zero-fill
+  paths previously ignored them).
+- The XFER_DONE-after-drained-FIFO read case keeps the old accept behavior
+  (data is already in hand; the miss is bookkeeping).
+- HW-verified on the Pi (deployed via pi_flash, banner v0.4.224 build 2096).
+  The new counters immediately earned their keep: a 4-push forensic run still
+  corrupted 2/4 pushes (short 0xFF-biased runs at block-aligned offsets, one
+  recurring at +0xf0800) with emmc_timeout_* = 0 and a LOCAL 1.5MB cp through
+  the same fs path byte-perfect -- so a SECOND, separate corruption source
+  lives in the INBOUND TCP receive path (likely retransmit resequencing under
+  stall-quanta loss). Characterized + contained (pi_flash pull-back verify);
+  hunt doc: docs/NEXT_20260612_net_rx_corruption.md.
+
+## v0.4.222 (2026-06-12)
+FAT32 flash-over-network ("fatswap"): kernel deploys are now a network push +
+reboot instead of a physical card swap (the v0.4.221 stall hunt burned ~18
+card pulls; this ends that).
+- **src/fat32.c + FS_FATSWAP**: root-task module that rewrites KERNEL8.IMG on
+  the FAT32 boot partition IN PLACE -- never reformats, never moves dirents
+  (the Pi firmware is intolerant of FAT relayout). Crash-ordered so a power
+  cut at any instant leaves a bootable kernel: allocate new chain -> write
+  data -> link both FATs -> COMMIT via one single-sector dirent write -> free
+  old chain + FSInfo. Runs on the fs_thread (single-owner block I/O), reads
+  the source from ext2, writes the FAT partition through new absolute-LBA HAL
+  entry points (plat_blk_*_abs -- cache-bypassing; the FAT LBA range is
+  physically disjoint from every cached ext2 sector). Reports sha256 of the
+  bytes written AND of a full readback through the new dirent chain.
+- **/bin/fatswap** (AiosPosixApp) + **scripts/pi_flash.py**: one host command
+  = push kernel8.img over netconsole __put -> fatswap -> three-way sha verify
+  (local == pushed == on-card readback) -> reboot -> ping-wait -> /proc/version
+  banner check against the string baked in the kernel binary.
+- **virtio MBR parse**: QEMU now boots composite (MBR-partitioned) images with
+  the real SD layout (FAT32 boot at 2048 + ext2), with bare-ext2 fallback, so
+  the whole path is QEMU-testable. scripts/fatswap_qemu_test.py: 46/46 --
+  swaps (grow/shrink), exact free-cluster accounting, FAT mirror + dirent +
+  FSInfo invariants via an independent python FAT32 reader, all three
+  crash-abort points, reboot persistence, bare-image regression.
+- **HW-VERIFIED end-to-end (v0.4.223)**: after the one bootstrap card swap
+  (v0.4.222), pi_flash.py deployed v0.4.223 with zero card handling -- push,
+  pull-back verify, fatswap (3048 clusters, 3-way sha match), watchdog
+  reboot, banner check -- AND a cold power-cycle boots it (the firmware
+  cold-reads the rewritten FAT, the risk that mattered).
+- Found en route (pre-existing): the ext2 write path corrupted one push by
+  EXACTLY 124 bytes (= 1024-900) at a block boundary -- a partial-block RMW
+  merged against a stale pre-read during a 129s stall quantum. pi_flash
+  works around it (__get pull-back compare + retry; never trust a bare
+  `__put ok` for MB files). Also: the 32.4s-multiple freezes fire with NO
+  keyboard attached (updates the Source-B picture); `wc -c < FILE`
+  stdin-redirects return garbage (fd routing); sbase ls aborts the whole
+  listing on one missing arg.
+
 ## v0.4.221 (2026-06-12)
 The 32.4-second whole-system freeze hunt (the marathon: ~18 kernel swaps of
 layered instrumentation -- pipe message -> reap phase -> thread-cleanup

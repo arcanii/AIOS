@@ -65,9 +65,26 @@ Usable but a keyboard-attached quantum still occurs occasionally and wedges
 the keyboard until reboot. For long keyboard-less netconsole/SSH sessions,
 a PCIe-off build is completely stall-free.
 
+## NEW DATA POINT (2026-06-12 evening, fatswap session, v0.4.222/223)
+
+Quanta fire WITH NO KEYBOARD ATTACHED: a keyboard-unplugged boot logged
+`[pipe] SLOW ... 32745ms / 97503ms / 98181ms` and
+`[reap] SLOW ... destroy=129603ms / [pipe] SLOW label=5 129614ms` (1x/3x/4x
+the 32.4s quantum). The "stalls stop the instant the keyboard unplugs" live
+evidence from the v0.4.221 hunt does NOT generalize: either another USB/VL805
+activity source (mouse? hub enumeration retries? xHCI periodic schedule with
+no device?) or a non-USB trigger also collides with TLBI/DSB. Re-baseline the
+A/B harness with ZERO USB devices and with PCIe fully off before trusting any
+device-specific theory. Collateral (fixed v0.4.224): the quanta exposed eMMC
+completion-timeout fall-throughs that silently corrupted/lost block I/O --
+see CHANGELOG v0.4.224; /proc/cachestats emmc_timeout_* counters now measure
+how often the data phase actually times out, which doubles as a cheap quantum
+detector for this hunt.
+
 ## Also open (separate)
 
 - fork=261ms/exec=314-970ms spawn cost (pipe-server occupancy).
-- FAT32 write driver for flash-over-network kernel swaps (would have saved
-  ~18 card pulls today; see the netconsole roadmap memory).
+- ~~FAT32 write driver for flash-over-network kernel swaps~~ SHIPPED
+  v0.4.222-224 (fatswap; scripts/pi_flash.py; HW-verified incl cold boot).
+  Kernel iterations for THIS hunt no longer need card pulls.
 - Restore KernelMaxNumNodes=4 once Source B is fixed.

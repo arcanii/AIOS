@@ -5,6 +5,7 @@
  * Includes badge-based write permission checks.
  */
 #include <stdio.h>
+#include <string.h>
 #include <sel4/sel4.h>
 #include "aios/root_shared.h"
 #include "aios/version.h"
@@ -12,6 +13,7 @@
 #include "aios/ext2.h"
 #include "aios/blk_cache.h"
 #include "aios/procfs.h"
+#include "aios/fat32.h"
 #define LOG_MODULE "fs"
 #define LOG_LEVEL LOG_LEVEL_INFO
 #include "aios/aios_log.h"
@@ -442,6 +444,56 @@ void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             blk_cache_flush();
             seL4_SetMR(0, 0);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        case FS_FATSWAP: {
+            /* v0.4.222 flash-over-network: rewrite KERNEL8.IMG on the FAT32
+             * boot partition from a file on the system disk (src/fat32.c).
+             * Runs on the fs_thread so the ext2 source reads, the block
+             * cache, and the raw absolute-LBA writes all stay single-owner.
+             * Root only -- this replaces the boot kernel.
+             * Request: MR0=path_len, MR1=abort_phase (crash-safety tests),
+             *          MR2..=path (8 bytes/MR).
+             * Reply:   MR0=status, MR1=bytes, MR2=clusters,
+             *          MR3=first_cluster, MR4-7=sha256(source),
+             *          MR8-11=sha256(readback). */
+            seL4_Word fw_pathlen = seL4_GetMR(0);
+            seL4_Word fw_abort   = seL4_GetMR(1);
+            char fw_path[128];
+            int fw_pl = (fw_pathlen > 127) ? 127 : (int)fw_pathlen;
+            int fw_mr = 2;
+            for (int i = 0; i < fw_pl; i++) {
+                if (i % 8 == 0 && i > 0) fw_mr++;
+                fw_path[i] = (char)((seL4_GetMR(fw_mr) >> ((i % 8) * 8)) & 0xFF);
+            }
+            fw_path[fw_pl] = '\0';
+
+            fat32_swap_result_t fr;
+            memset(&fr, 0, sizeof(fr));
+            long frc;
+            if (!fs_check_write_perm(fs_badge)) {
+                frc = -1;   /* permission denied: root only */
+            } else {
+                frc = fat32_swap_kernel(&ext2, fw_path,
+                                        (uint32_t)fw_abort, &fr);
+            }
+            seL4_SetMR(0, (seL4_Word)frc);
+            seL4_SetMR(1, (seL4_Word)fr.bytes);
+            seL4_SetMR(2, (seL4_Word)fr.clusters);
+            seL4_SetMR(3, (seL4_Word)fr.first_cluster);
+            for (int i = 0; i < 4; i++) {
+                seL4_Word w = 0;
+                for (int j = 0; j < 8; j++)
+                    w |= ((seL4_Word)fr.sha_src[i*8+j]) << (j*8);
+                seL4_SetMR(4 + i, w);
+            }
+            for (int i = 0; i < 4; i++) {
+                seL4_Word w = 0;
+                for (int j = 0; j < 8; j++)
+                    w |= ((seL4_Word)fr.sha_disk[i*8+j]) << (j*8);
+                seL4_SetMR(8 + i, w);
+            }
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 12));
             break;
         }
         default:

@@ -472,6 +472,15 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         extern volatile uint32_t blk_poll_renotifies;
         w += snprintf(buf + w, bufsize - w,
             "blk_read_renotifies: %u\n", (unsigned)blk_poll_renotifies);
+        /* v0.4.224: eMMC data-phase completion timeouts (RPi4; 0 on QEMU).
+         * retries = absorbed by the in-driver retry; fails = surfaced as
+         * I/O errors after the retry also timed out. */
+        extern volatile uint32_t blk_emmc_timeout_retries;
+        extern volatile uint32_t blk_emmc_timeout_fails;
+        w += snprintf(buf + w, bufsize - w,
+            "emmc_timeout_retries: %u\nemmc_timeout_fails: %u\n",
+            (unsigned)blk_emmc_timeout_retries,
+            (unsigned)blk_emmc_timeout_fails);
     } else if (path[0] == 'x' && path[1] == 'h' && path[2] == 'c'
             && path[3] == 'i') {
         /* /proc/xhci -- live USB xHCI + keyboard probe and lock-LED poke
