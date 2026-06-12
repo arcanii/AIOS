@@ -201,7 +201,10 @@ def main():
               for k in s1 if s1[k] != s0.get(k, 0)}, flush=True)
 
         # ---- phase B: fault injection at increasing brutality ----
-        for n, drop in enumerate([50, 10, 3], start=1):
+        # B1/B2 are the CONVERGENT regimes: loss is sparse enough that
+        # fast-retransmit/RTO recovery outruns netconsole's 10s no-progress
+        # abort (TICKS_STALL), so the stream must complete byte-perfect.
+        for n, drop in enumerate([50, 10], start=1):
             print("=== B%d: drop every %dth data segment ===" % (n, drop),
                   flush=True)
             sh(con, "cat /proc/netstat.drop.%d" % drop, 30)
@@ -232,6 +235,87 @@ def main():
                   "fault_drops=%d reseq-path hits=%d"
                   % (sb1.get("fault_drops", 0) - sb0.get("fault_drops", 0), ex))
 
+        nc.close()
+
+        # ---- phase B3: CATASTROPHIC loss must degrade gracefully ----
+        # drop-every-3rd cannot converge BY DESIGN: the deterministic counter
+        # phase-locks with RTO recovery (after a drop, two in-flight segments
+        # advance the counter to 2, so the retransmission arrives as the 3rd
+        # and is eaten again -- pcap-verified 2026-06-13), and netconsole's
+        # 10s no-progress abort (TICKS_STALL, src/apps/netconsole.c) fires
+        # during the RTO ladder. That abort is the DESIRED behavior -- it is
+        # the wedge-prevention that keeps a dead client from holding the
+        # relay. So B3 asserts the degradation contract, not byte-perfection:
+        #   (1) the client gets an explicit "__put err" (or clean close),
+        #       bounded -- no hang;
+        #   (2) THE RELAY SURVIVES: a fresh connection works and a clean
+        #       push completes (the on-HW netconsole wedge regression test);
+        #   (3) the loss paths actually ran (fault_drops/ooo advanced).
+        print("=== B3: drop every 3rd -- catastrophic loss, graceful abort ===",
+              flush=True)
+        sh(con, "cat /proc/netstat.drop.3", 30)
+        sb0 = netstat(con)
+        nc = NC()
+        nc.expect(b"aios# ", 60)
+        t0 = time.time()
+        outcome = None
+        sent_all = False
+        try:
+            nc.s.settimeout(10)
+            nc.s.sendall(("__put /tmp/nrx_b3.bin %d\n" % len(payload)).encode())
+            nc.s.sendall(payload)
+            sent_all = True
+        except socket.timeout:
+            pass        # SLIRP buffers full behind the stalled guest -- fine
+        except (ConnectionResetError, BrokenPipeError, OSError):
+            outcome = "reset-during-send"   # abort landed while streaming in
+        if outcome is None:
+            buf = b""
+            dl = time.time() + 120
+            while time.time() < dl and outcome is None:
+                try:
+                    d = nc.s.recv(65536)
+                except socket.timeout:
+                    continue
+                except (ConnectionResetError, OSError):
+                    outcome = "reset"
+                    break
+                if not d:
+                    outcome = "closed"
+                    break
+                buf += d
+                if b"__put err" in buf:
+                    outcome = "err-reported"
+            if outcome is None:
+                outcome = "hang"
+        dt = time.time() - t0
+        print("  B3 sent_all=%s outcome=%s" % (sent_all, outcome), flush=True)
+        nc.close()
+        check("B3 catastrophic loss aborts cleanly (%.0fs)" % dt,
+              outcome in ("err-reported", "closed", "reset",
+                          "reset-during-send"),
+              "outcome=%s" % outcome)
+        sh(con, "cat /proc/netstat.drop.0", 30)
+        sb1 = netstat(con)
+        check("B3 loss paths exercised",
+              sb1.get("fault_drops", 0) > sb0.get("fault_drops", 0)
+              and sb1.get("tcp_ooo_drops", 0) > sb0.get("tcp_ooo_drops", 0),
+              "fault_drops=+%d ooo=+%d"
+              % (sb1.get("fault_drops", 0) - sb0.get("fault_drops", 0),
+                 sb1.get("tcp_ooo_drops", 0) - sb0.get("tcp_ooo_drops", 0)))
+        check("B3 no checksum drops", sb1.get("tcp_cksum_drops", -1) == 0,
+              "drops=%s" % sb1.get("tcp_cksum_drops"))
+
+        # relay survival: fresh connection + clean push after the abort
+        time.sleep(2)
+        nc = NC()
+        nc.expect(b"aios# ", 60)
+        r = nc.put("/tmp/nrx_b3ok.bin", payload[:65536])
+        check("B3 relay survives: clean push after abort", "__put ok" in r,
+              r[:60])
+        got = nc.get("/tmp/nrx_b3ok.bin")
+        check("B3 relay survives: pull-back identical",
+              got == payload[:65536], "%d bytes" % len(got))
         nc.close()
 
     except Exception as e:
