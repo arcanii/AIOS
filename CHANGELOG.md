@@ -4,6 +4,32 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.199 (2026-06-11)
+- V3D GPU Phase 1 -- MMU + deliberate-fault probe (continues the HW-verified
+  Phase 0 power/IDENT bring-up; see `docs/DESIGN_V3D_IMPLEMENTATION.md` §8).
+  New `v3d_mem_reserve()` sets aside an 8 MB phys-contiguous, non-cacheable GPU
+  pool (4 MB single-level page table + a 4 KB illegal-address scratch + a bump
+  region) the same way the xHCI/GENET DMA pools are carved -- EARLY in boot,
+  before the fs cache and display FB consume the low frames (it must be
+  contiguous). The MMU is programmed lazily, never in the boot path.
+- Two new `/proc/v3d` verbs: `cat /proc/v3d.mmu` builds the page table (all
+  entries invalid, then one writeable 4 MB data window at GPU VA 0x00100000),
+  programs the V3D MMU in Linux's exact order (PT_PA_BASE -> MMU_CTL with
+  PT_INVALID/WRITE_VIOLATION/CAP_EXCEEDED abort+int -> ILLEGAL_ADDR ->
+  MMUC_CONTROL enable -> two-step flush), and reports the registers.
+  `cat /proc/v3d.fault` kicks the render thread (CT1) at the deliberately
+  UNMAPPED GPU VA 0x20000000, polls the hub interrupt status for the
+  page-table-invalid latch (the IRQ stays masked -- we read the status), prints
+  VIO_ADDR/VIO_ID + the candidate byte decodings, then dump-and-resets (clear
+  hub+core INT, flush) and re-checks IDENT. Best-effort `v3d_ensure_clock()`
+  sets the V3D core clock (the CLE needs it to fetch; `.power` only clocks the
+  register domain). All MMU/CLE/PTE register offsets transcribed VERBATIM from
+  Linux `drivers/gpu/drm/v3d` (rpi-6.6.y) into `v3d_regs.h`, never from memory.
+- QEMU has no V3D model, so both new verbs refuse gracefully (has_v3d=0);
+  `scripts/v3d_qemu_test.py` extended to 7/7 (adds `.mmu`/`.fault` graceful-
+  refusal + the unchanged display-path regression check). First light is
+  HW-only: kernel8 staged for a real-Pi `.power` -> `.mmu` -> `.fault` run.
+
 ## v0.4.198 (2026-06-11)
 - Reproducible build environment (sweep item 1d -- the wrap-up before sharing
   the repo). New `./build_environment.sh` takes a fresh clone to a booted QEMU

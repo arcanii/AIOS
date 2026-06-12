@@ -357,6 +357,16 @@ int main(int argc, char *argv[]) {
         extern int xhci_dma_reserve(void);
         xhci_dma_reserve();
     }
+
+    /* Reserve the 8 MB V3D GPU pool (page table + scratch + bump) in the same
+     * early window, for the SAME reason: it must be phys-contiguous, and once the
+     * fs cache / display FB consume low RAM an 8 MB contiguous untyped is gone
+     * (design risk #7). No-op when has_v3d == 0. The MMU is programmed lazily on
+     * the first /proc/v3d.mmu | .fault poke -- this only sets RAM aside. */
+    if (hw_info.has_v3d) {
+        extern int v3d_mem_reserve(void);
+        v3d_mem_reserve();
+    }
 #endif
 
     /* Phase 2: Filesystem (virtio-blk + ext2 + VFS)

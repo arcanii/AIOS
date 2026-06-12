@@ -100,4 +100,68 @@
 #define V3D_PM_PASSWORD       0x5a000000u
 #define V3D_PM_V3DRSTN        (1u << 6)
 
+/* ============================================================ *
+ *  Phase 1 -- MMU + CLE (transcribed VERBATIM from Linux         *
+ *  drivers/gpu/drm/v3d/v3d_regs.h @ rpi-6.6.y, 2026-06-11;       *
+ *  NOT from memory -- the design's flagged trap). The MMU is a   *
+ *  HUB block (offsets within the hub's 4 pages); the CLE is a    *
+ *  CORE block (add V3D_CORE0_OFFSET).                            *
+ * ============================================================ */
+
+/* ---- MMU cache control (hub) ---- */
+#define V3D_MMUC_CONTROL          0x1000
+#define V3D_MMUC_CONTROL_ENABLE   (1u << 0)
+#define V3D_MMUC_CONTROL_FLUSH    (1u << 1)
+#define V3D_MMUC_CONTROL_FLUSHING (1u << 2)   /* poll until clear after FLUSH */
+#define V3D_MMUC_CONTROL_CLEAR    (1u << 3)
+
+/* ---- MMU control (hub) ---- */
+#define V3D_MMU_CTL               0x1200
+#define V3D_MMU_CTL_ENABLE                    (1u << 0)
+#define V3D_MMU_CTL_TLB_CLEAR                 (1u << 2)
+#define V3D_MMU_CTL_TLB_CLEARING              (1u << 7)   /* poll until clear */
+#define V3D_MMU_CTL_WRITE_VIOLATION_EXCEPTION (1u << 9)
+#define V3D_MMU_CTL_WRITE_VIOLATION_INT       (1u << 10)
+#define V3D_MMU_CTL_WRITE_VIOLATION_ABORT     (1u << 11)
+#define V3D_MMU_CTL_PT_INVALID_ENABLE         (1u << 16)  /* REQUIRED for the PTI fault probe */
+#define V3D_MMU_CTL_PT_INVALID_EXCEPTION      (1u << 17)
+#define V3D_MMU_CTL_PT_INVALID_INT            (1u << 18)
+#define V3D_MMU_CTL_PT_INVALID_ABORT          (1u << 19)  /* abort the access (no stall) */
+#define V3D_MMU_CTL_CAP_EXCEEDED_EXCEPTION    (1u << 24)
+#define V3D_MMU_CTL_CAP_EXCEEDED_INT          (1u << 25)
+#define V3D_MMU_CTL_CAP_EXCEEDED_ABORT        (1u << 26)
+
+#define V3D_MMU_PT_PA_BASE        0x1204   /* write pt_pa >> V3D_MMU_PAGE_SHIFT */
+#define V3D_MMU_VIO_ID            0x122c   /* faulting client id */
+#define V3D_MMU_ILLEGAL_ADDR      0x1230   /* write (scratch_pa >> SHIFT) | ENABLE */
+#define V3D_MMU_ILLEGAL_ADDR_ENABLE (1u << 31)
+#define V3D_MMU_VIO_ADDR          0x1234   /* faulting GPU VA (the PTI probe reads this) */
+#define V3D_MMU_DEBUG_INFO        0x1238
+
+/* ---- PTE format (Linux v3d_mmu.c) ---- */
+#define V3D_MMU_PAGE_SHIFT        12        /* 4 KB GPU pages */
+#define V3D_PTE_VALID             (1u << 28)
+#define V3D_PTE_WRITEABLE         (1u << 29)
+#define V3D_PTE_SUPERPAGE         (1u << 31)
+
+/* ---- CLE control-list executor (core; CT0 = bin, CT1 = render) ---- */
+#define V3D_CLE_CT0CS             0x100
+#define V3D_CLE_CT1CS             0x104     /* render thread control/status */
+#define V3D_CLE_CT0CA             0x110
+#define V3D_CLE_CT1CA             0x114     /* render current address (hang pinpoint) */
+#define V3D_CLE_BFC               0x134     /* bin   frame count */
+#define V3D_CLE_RFC               0x138     /* render frame count (job-done tick) */
+#define V3D_CLE_CT0QBA            0x160
+#define V3D_CLE_CT1QBA            0x164     /* render queued buffer addr (start) */
+#define V3D_CLE_CT0QEA            0x168
+#define V3D_CLE_CT1QEA            0x16c     /* render queued end addr -- WRITE = kick */
+#define V3D_CLE_CT0QMA            0x170     /* bin tile-state addr  (Phase 2) */
+#define V3D_CLE_CT0QMS            0x174     /* bin tile-state size  (Phase 2) */
+
+/* ---- GCA (global cache/shutdown; Phase 2+ reset path) ---- */
+#define V3D_GCA_CACHE_CTRL        0x00c
+#define V3D_GCA_CACHE_CTRL_FLUSH  (1u << 0)
+#define V3D_GCA_SAFE_SHUTDOWN     0x0b0
+#define V3D_GCA_SAFE_SHUTDOWN_EN  (1u << 0)
+
 #endif /* AIOS_GPU_V3D_REGS_H */

@@ -17,6 +17,13 @@
  * single-threaded boot context (IRQ binding). */
 void v3d_init(void);
 
+/* Phase 1: reserve the 8 MB phys-contiguous GPU pool (page table + scratch +
+ * bump region) while low RAM is still plentiful. Call EARLY in boot, right after
+ * xhci_dma_reserve and before the fs cache / display FB eat the low frames. The
+ * MMU itself is programmed lazily on the first /proc/v3d.mmu | .fault poke. No-op
+ * when hw_info.has_v3d == 0. Returns 0 on success (or no-GPU), -1 on alloc failure. */
+int v3d_mem_reserve(void);
+
 /* /proc/v3d diagnostic verbs. `args` is the suffix after "v3d" ("" , ".power",
  * ".power.3", ".r.08", ".clock", ...). Phase 0 = bring-up regime: every verb
  * runs DIRECT on the fs thread (nothing else touches V3D, nothing touches the

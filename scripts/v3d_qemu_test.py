@@ -81,6 +81,14 @@ def main():
         ls = con.run("cat /proc/v3d.r.08", 10)   # register peek also refuses on QEMU
         check("/proc/v3d.r peek refuses gracefully", "not present" in ls, repr(ls[-80:]))
 
+        # 3b. Phase 1 verbs (.mmu builds the page table, .fault kicks CT1 at an
+        # unmapped VA) must ALSO refuse gracefully on QEMU -- there is no GPU to
+        # program, so the dispatcher's not-present guard fires before any MMIO.
+        mmu = con.run("cat /proc/v3d.mmu", 10)
+        check("/proc/v3d.mmu refuses gracefully", "not present" in mmu, repr(mmu[-80:]))
+        flt = con.run("cat /proc/v3d.fault", 10)
+        check("/proc/v3d.fault refuses gracefully", "not present" in flt, repr(flt[-80:]))
+
         # 4. fbshow --cube -- the CPU demo must still run (display path not regressed).
         cube = con.run("fbshow --cube", 30)
         check("fbshow --cube still runs", "not found" not in cube and "error" not in cube.lower(), repr(cube[-80:]))

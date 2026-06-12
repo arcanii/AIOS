@@ -52,6 +52,28 @@ static uint32_t  v3d_power_count;
 static uint64_t  v3d_asb_m_us, v3d_asb_s_us;
 static int       v3d_asb_m_to, v3d_asb_s_to, v3d_asb_timeout;
 
+/* ---- Phase 1: GPU memory pool + MMU (design §4) ---- */
+#define V3D_POOL_BITS     23                 /* 8 MB untyped (phys-contiguous)        */
+#define V3D_POOL_SIZE     (1u << V3D_POOL_BITS)
+#define V3D_POOL_FRAMES   4                  /* 4 x 2 MB large pages                  */
+#define V3D_PT_OFF        0x000000u          /* 4 MB page table (all-invalid = zeroed)*/
+#define V3D_PT_BYTES      0x400000u
+#define V3D_SCRATCH_OFF   0x400000u          /* 4 KB illegal-addr sink                */
+#define V3D_BUMP_OFF      0x401000u          /* CLs / records / vertices (Phase 2+)   */
+/* GPU VA layout (single 4 GB space; VA 0 never mapped). */
+#define V3D_VA_DATA       0x00100000u        /* -> pool+SCRATCH (scratch + bump)      */
+#define V3D_VA_FAULT      0x20000000u        /* deliberately UNMAPPED (Phase 1 probe) */
+
+static uint8_t  *v3d_pool_va;                /* CPU base of the 8 MB pool (non-cacheable) */
+static uint64_t  v3d_pool_pa;                /* phys base (2 MB aligned, contiguous)  */
+static volatile uint32_t *v3d_pt;            /* = pool_va + V3D_PT_OFF (1M PTEs)       */
+static uint64_t  v3d_scratch_pa;             /* = pool_pa + V3D_SCRATCH_OFF            */
+static int       v3d_mmu_inited;
+
+/* Phase 1 probe results (surfaced via /proc/v3d). */
+static uint32_t  v3d_fault_vio_addr, v3d_fault_vio_id;
+static uint32_t  v3d_mmu_faults_seen;
+
 /* ---- register accessors (device memory; explicit barriers) ---- */
 static inline uint32_t v3d_rd(uint32_t off)        { arch_dmb(); return v3d_base[off >> 2]; }
 static inline void     v3d_wr(uint32_t off, uint32_t v) { v3d_base[off >> 2] = v; arch_dsb(); }
@@ -346,6 +368,203 @@ static int  v3d_clock_verb(int set, uint32_t mhz, char *buf, int bufsize) {
 
 #endif /* PLAT_RPI4 */
 
+/* ============================================================ *
+ *  Phase 1 -- GPU memory pool + MMU (page table, init, fault)   *
+ * ============================================================ */
+
+/* Reserve the 8 MB GPU pool: one phys-contiguous untyped retyped into 4 x 2 MB
+ * large pages, mapped NON-CACHEABLE (xHCI/GENET DMA philosophy -- coherent by
+ * construction). Call EARLY (after xhci_dma_reserve, before fs/display eat low
+ * RAM) so an 8 MB contiguous untyped is still available (design risk #7).
+ * Idempotent; safe to call when has_v3d == 0 (it just reserves RAM). 0 on success. */
+int v3d_mem_reserve(void) {
+    if (v3d_pool_va) return 0;
+    if (!hw_info.has_v3d) return 0;            /* no GPU -> don't waste 8 MB */
+    vka_object_t ut;
+    if (vka_alloc_untyped(&vka, V3D_POOL_BITS, &ut)) {
+        AIOS_LOG_ERROR("V3D: 8MB pool untyped alloc failed (VKA pressure?)");
+        return -1;
+    }
+    seL4_CPtr frames[V3D_POOL_FRAMES];
+    for (int i = 0; i < V3D_POOL_FRAMES; i++) {
+        seL4_CPtr slot;
+        if (vka_cspace_alloc(&vka, &slot)) { AIOS_LOG_ERROR("V3D: pool cslot alloc failed"); return -1; }
+        /* sequential retypes from ONE untyped -> the 4 frames are contiguous */
+        if (seL4_Untyped_Retype(ut.cptr, seL4_ARM_LargePageObject, seL4_LargePageBits,
+                                seL4_CapInitThreadCNode, 0, 0, slot, 1)) {
+            AIOS_LOG_ERROR_V("V3D: pool retype failed at frame ", (unsigned long)i);
+            return -1;
+        }
+        frames[i] = slot;
+    }
+    void *va = vspace_map_pages(&vspace, frames, NULL, seL4_AllRights,
+                                V3D_POOL_FRAMES, seL4_LargePageBits, 0 /* non-cacheable */);
+    if (!va) { AIOS_LOG_ERROR("V3D: pool map failed"); return -1; }
+    seL4_ARM_Page_GetAddress_t ga = seL4_ARM_Page_GetAddress(frames[0]);
+    if (ga.error) { AIOS_LOG_ERROR("V3D: pool GetAddress failed"); return -1; }
+    v3d_pool_va     = (uint8_t *)va;
+    v3d_pool_pa     = ga.paddr;
+    v3d_pt          = (volatile uint32_t *)(v3d_pool_va + V3D_PT_OFF);
+    v3d_scratch_pa  = v3d_pool_pa + V3D_SCRATCH_OFF;
+    printf("[v3d] pool: 8MB @ phys 0x%lx (va %p) PT@+0 scratch@+0x400000\n",
+           (unsigned long)v3d_pool_pa, va);
+    return 0;
+}
+
+#ifdef PLAT_RPI4
+/* Two-step MMU flush (Linux v3d_mmu_flush_all order, deadline-bounded). */
+static int v3d_mmuc_flush_clear(void) { return !(v3d_rd(V3D_MMUC_CONTROL) & V3D_MMUC_CONTROL_FLUSHING); }
+static int v3d_tlb_clear_done(void)   { return !(v3d_rd(V3D_MMU_CTL) & V3D_MMU_CTL_TLB_CLEARING); }
+static void v3d_mmu_flush_all(void) {
+    v3d_wr(V3D_MMUC_CONTROL, V3D_MMUC_CONTROL_FLUSH | V3D_MMUC_CONTROL_ENABLE);
+    v3d_wait(v3d_mmuc_flush_clear, 100);
+    v3d_wr(V3D_MMU_CTL, v3d_rd(V3D_MMU_CTL) | V3D_MMU_CTL_TLB_CLEAR);
+    v3d_wait(v3d_tlb_clear_done, 100);
+}
+
+/* Map npages 4 KB pages: GPU VA -> phys, writeable. PTE = flags | (pa >> 12).
+ * The PT lives in the non-cacheable pool, so PTE writes need only a dsb. */
+static void v3d_mmu_map(uint32_t gpu_va, uint64_t pa, uint32_t npages, int w) {
+    uint32_t idx = gpu_va >> V3D_MMU_PAGE_SHIFT;
+    uint32_t flags = V3D_PTE_VALID | (w ? V3D_PTE_WRITEABLE : 0);
+    for (uint32_t i = 0; i < npages; i++)
+        v3d_pt[idx + i] = flags | (uint32_t)((pa + ((uint64_t)i << V3D_MMU_PAGE_SHIFT)) >> V3D_MMU_PAGE_SHIFT);
+    arch_dsb();
+}
+
+/* Build the page table (all-invalid), map the static regions, program the MMU in
+ * Linux v3d_mmu_set_page_table order, flush. Requires the pool + a powered core. */
+static int v3d_mmu_init(void) {
+    if (v3d_mmu_inited) return 0;
+    if (!v3d_pool_va) { AIOS_LOG_ERROR("V3D: mmu_init with no pool"); return -1; }
+    if (!v3d_ok_state) { AIOS_LOG_WARN("V3D: mmu_init before power -- run .power first"); return -1; }
+
+    /* 1. zero the 4 MB PT (every PTE invalid: a stray GPU VA -> PT_INVALID fault). */
+    for (uint32_t i = 0; i < V3D_PT_BYTES / 4; i++) v3d_pt[i] = 0;
+    arch_dsb();
+    /* 2. map the data window (scratch + bump) at V3D_VA_DATA, writeable.
+     *    0x20000000 is left UNMAPPED on purpose -- the Phase 1 fault target. */
+    v3d_mmu_map(V3D_VA_DATA, v3d_pool_pa + V3D_SCRATCH_OFF,
+                (V3D_POOL_SIZE - V3D_SCRATCH_OFF) >> V3D_MMU_PAGE_SHIFT, 1);
+
+    /* 3. program the MMU (exact Linux order + bit list). */
+    v3d_wr(V3D_MMU_PT_PA_BASE, (uint32_t)(v3d_pool_pa >> V3D_MMU_PAGE_SHIFT));
+    v3d_wr(V3D_MMU_CTL,
+           V3D_MMU_CTL_ENABLE | V3D_MMU_CTL_PT_INVALID_ENABLE |
+           V3D_MMU_CTL_PT_INVALID_ABORT | V3D_MMU_CTL_PT_INVALID_INT |
+           V3D_MMU_CTL_WRITE_VIOLATION_ABORT | V3D_MMU_CTL_WRITE_VIOLATION_INT |
+           V3D_MMU_CTL_CAP_EXCEEDED_ABORT | V3D_MMU_CTL_CAP_EXCEEDED_INT);
+    v3d_wr(V3D_MMU_ILLEGAL_ADDR,
+           (uint32_t)(v3d_scratch_pa >> V3D_MMU_PAGE_SHIFT) | V3D_MMU_ILLEGAL_ADDR_ENABLE);
+    v3d_wr(V3D_MMUC_CONTROL, V3D_MMUC_CONTROL_ENABLE);
+    v3d_mmu_flush_all();
+
+    /* keep the hub INT masked (Phase 0 invariant); the PTI STATUS still latches. */
+    v3d_wr(V3D_HUB_INT_MSK_SET, 0xffffffffu);
+    v3d_mmu_inited = 1;
+    return 0;
+}
+
+/* Best-effort: make sure the V3D CORE clock is running before we kick the CLE.
+ * .power (PM_GRAFX + ASB) only un-stops the register/APB domain -- IDENT reads
+ * work without a core clock, but the CLE thread won't advance (and thus won't
+ * fetch -> won't fault) if the firmware left the V3D clock at 0. GET it; if 0,
+ * SET a conservative 500 MHz; return the resulting Hz (0 = mailbox unavailable).
+ * Non-fatal: the firmware clock path and our manual PM/ASB power coexist. */
+static uint32_t v3d_ensure_clock(void) {
+    uint32_t g[2] = { VC_CLOCK_ID_V3D, 0 };
+    if (v3d_vc_tag(VC_TAG_GET_CLOCK_RATE, g, 2)) return 0;
+    if (g[1] == 0) {
+        uint32_t s[3] = { VC_CLOCK_ID_V3D, 500u * 1000000u, 0 };
+        v3d_vc_tag(VC_TAG_SET_CLOCK_RATE, s, 3);
+        g[0] = VC_CLOCK_ID_V3D; g[1] = 0;
+        if (v3d_vc_tag(VC_TAG_GET_CLOCK_RATE, g, 2)) return 0;
+    }
+    return g[1];
+}
+
+/* /proc/v3d.mmu : build + program the MMU (no fault), report the key registers. */
+static int v3d_mmu_verb(char *buf, int bufsize) {
+    if (!v3d_ok_state) {
+        char id[160]; v3d_report_ident(id, sizeof(id), 0, 0);
+        if (!v3d_ok_state)
+            return snprintf(buf, bufsize, "v3d.mmu: core not powered -- run cat /proc/v3d.power first\n");
+    }
+    if (v3d_mmu_init()) return snprintf(buf, bufsize, "v3d.mmu: init failed (see log)\n");
+    return snprintf(buf, bufsize,
+        "v3d.mmu: ON  PT@phys 0x%lx (%u PTEs)  scratch@0x%lx\n"
+        "  PT_PA_BASE=0x%08x MMU_CTL=0x%08x MMUC_CONTROL=0x%08x ILLEGAL_ADDR=0x%08x\n"
+        "  mapped: VA 0x%08x -> phys 0x%lx (%u pages, RW) ; VA 0x%08x left UNMAPPED\n",
+        (unsigned long)v3d_pool_pa, V3D_PT_BYTES / 4, (unsigned long)v3d_scratch_pa,
+        v3d_rd(V3D_MMU_PT_PA_BASE), v3d_rd(V3D_MMU_CTL),
+        v3d_rd(V3D_MMUC_CONTROL), v3d_rd(V3D_MMU_ILLEGAL_ADDR),
+        V3D_VA_DATA, (unsigned long)(v3d_pool_pa + V3D_SCRATCH_OFF),
+        (V3D_POOL_SIZE - V3D_SCRATCH_OFF) >> V3D_MMU_PAGE_SHIFT, V3D_VA_FAULT);
+}
+
+/* /proc/v3d.fault : the Phase 1 probe. Kick the render thread (CT1) at the
+ * deliberately-unmapped V3D_VA_FAULT, poll the HUB INT status for MMU_PTI (the
+ * IRQ stays masked -- we read the latched status), capture VIO_ADDR/VIO_ID,
+ * W1C-clear + flush (dump-and-reset), and confirm IDENT still reads. */
+static int v3d_hub_pti(void) { return (v3d_rd(V3D_HUB_INT_STS) & V3D_HUB_INT_MMU_PTI) != 0; }
+static int v3d_fault_probe(char *buf, int bufsize) {
+    if (!v3d_ok_state) {
+        char id[160]; v3d_report_ident(id, sizeof(id), 0, 0);
+        if (!v3d_ok_state)
+            return snprintf(buf, bufsize, "v3d.fault: core not powered -- run cat /proc/v3d.power first\n");
+    }
+    if (v3d_mmu_init()) return snprintf(buf, bufsize, "v3d.fault: mmu_init failed (see log)\n");
+    uint32_t clk = v3d_ensure_clock();   /* the CLE needs the core clock to fetch */
+
+    /* clear any stale hub MMU status, then kick CT1 at the unmapped VA. */
+    v3d_wr(V3D_HUB_INT_CLR, V3D_HUB_INT_MMU_PTI | V3D_HUB_INT_MMU_WRV | V3D_HUB_INT_MMU_CAP);
+    arch_dsb();
+    v3d_wr(V3D_CORE0_OFFSET + V3D_CLE_CT1QBA, V3D_VA_FAULT);
+    arch_dsb();
+    v3d_wr(V3D_CORE0_OFFSET + V3D_CLE_CT1QEA, V3D_VA_FAULT + 0x100);   /* QEA write = kick */
+    arch_dsb();
+
+    int faulted = v3d_wait(v3d_hub_pti, 50);
+    uint32_t sts  = v3d_rd(V3D_HUB_INT_STS);
+    uint32_t vraw = v3d_rd(V3D_MMU_VIO_ADDR);
+    uint32_t vid  = v3d_rd(V3D_MMU_VIO_ID);
+    uint32_t ct1ca = v3d_rd(V3D_CORE0_OFFSET + V3D_CLE_CT1CA);
+    /* VIO_ADDR units are unconfirmed on this silicon (Linux uses reg << (SHIFT-4)
+     * = <<8); report raw + the two plausible byte decodings so the HW log nails it. */
+    uint32_t vio8  = vraw << 8;
+    uint32_t vio12 = vraw << 12;
+    v3d_fault_vio_addr = vio8; v3d_fault_vio_id = vid;
+    if (faulted) v3d_mmu_faults_seen++;
+
+    /* dump-and-reset: clear the latched hub MMU status + any core error the abort
+     * raised, then flush the MMU so a second .fault re-kicks from a clean slate. */
+    v3d_wr(V3D_HUB_INT_CLR, V3D_HUB_INT_MMU_PTI | V3D_HUB_INT_MMU_WRV | V3D_HUB_INT_MMU_CAP);
+    v3d_wr(V3D_CORE0_OFFSET + V3D_CTL_INT_CLR, 0xffffffffu);
+    v3d_mmu_flush_all();
+
+    /* regression: IDENT must still read after the fault + reset. */
+    char id[160]; v3d_report_ident(id, sizeof(id), 0, 0);
+    int ident_ok = v3d_ok_state;
+
+    int pass = faulted && ident_ok && (vio8 == V3D_VA_FAULT || vraw != 0);
+    return snprintf(buf, bufsize,
+        "v3d.fault: core_clk=%u Hz  kicked CT1 @ 0x%08x  hub_int_sts=0x%08x PTI=%d\n"
+        "  VIO_ADDR raw=0x%08x  (<<8=0x%08x <<12=0x%08x)  VIO_ID=0x%08x  CT1CA=0x%08x\n"
+        "  reset: flushed, ident_after=%s  -- %s\n"
+        "  (no fault? try: cat /proc/v3d.clock.500 then re-run cat /proc/v3d.fault)\n",
+        clk, V3D_VA_FAULT, sts, faulted ? 1 : 0,
+        vraw, vio8, vio12, vid, ct1ca,
+        ident_ok ? "PASS" : "FAIL", pass ? "PASS" : "FAIL");
+}
+#else  /* !PLAT_RPI4 -- never reached (has_v3d=0); stubs keep the dispatcher common */
+static int v3d_mmu_verb(char *buf, int bufsize) {
+    return snprintf(buf, bufsize, "v3d.mmu: unavailable (not RPi4)\n");
+}
+static int v3d_fault_probe(char *buf, int bufsize) {
+    return snprintf(buf, bufsize, "v3d.fault: unavailable (not RPi4)\n");
+}
+#endif /* PLAT_RPI4 */
+
 /* ---- boot init: claims + IRQ bind + tag pin; ZERO V3D MMIO ---- */
 void v3d_init(void) {
     if (!hw_info.has_v3d) {
@@ -396,6 +615,10 @@ static int v3d_summary(char *buf, int bufsize) {
                   "power_pokes=%u asb_ack: m=%lluus%s s=%lluus%s\n", v3d_power_count,
                   (unsigned long long)v3d_asb_m_us, v3d_asb_m_to ? "(TO)" : "",
                   (unsigned long long)v3d_asb_s_us, v3d_asb_s_to ? "(TO)" : "");
+    w += snprintf(buf + w, bufsize - w,
+                  "pool=%s mmu=%s mmu_faults_seen=%u last_vio_addr=0x%08x vio_id=0x%08x\n",
+                  v3d_pool_va ? "8MB" : "none", v3d_mmu_inited ? "ON" : "off",
+                  v3d_mmu_faults_seen, v3d_fault_vio_addr, v3d_fault_vio_id);
     return w;
 }
 
@@ -414,6 +637,8 @@ int v3d_diag_cmd(const char *args, char *buf, int bufsize) {
             if (p[5] == '.') return v3d_clock_verb(1, v3d_dec(p + 6), buf, bufsize);
             return v3d_clock_verb(0, 0, buf, bufsize);
         }
+        if (v3d_pfx(p, "fault") && p[5] == 0) return v3d_fault_probe(buf, bufsize);
+        if (v3d_pfx(p, "mmu")   && p[3] == 0) return v3d_mmu_verb(buf, bufsize);
         if (p[0] == 'r' && p[1] == '.') {
             uint32_t off = v3d_hex(p + 2) & 0x3ffc;
             return snprintf(buf, bufsize, "v3d hub[0x%03x] = 0x%08x\n", off, v3d_rd(off));
@@ -434,7 +659,8 @@ int v3d_diag_cmd(const char *args, char *buf, int bufsize) {
                             off, val, v3d_rd(off));
         }
         return snprintf(buf, bufsize,
-            "v3d: verbs: (none) .power[.N] .clock[.MHz] .r.<off> .c.<off> .w.<off>.<val>\n");
+            "v3d: verbs: (none) .power[.N] .clock[.MHz] .mmu .fault "
+            ".r.<off> .c.<off> .w.<off>.<val>\n");
     }
     return v3d_summary(buf, bufsize);
 }
