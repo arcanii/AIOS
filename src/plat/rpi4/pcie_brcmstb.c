@@ -74,6 +74,25 @@
 #define PCIE_PROBE_LEVEL 2
 #endif
 
+/* Source-B A/B bisect gate (default 0 = full bring-up, no behavior change).
+ * Stops the bring-up at a defined point so boot variants isolate which PCIe-side
+ * state triggers the 10.8s-quantum TLBI/DSB stalls (project_stall_hunt Source B;
+ * quanta fire with ZERO USB devices, so the v0.4.221 keyboard-split-DMA theory is
+ * incomplete). Build one kernel per value; each stop prints [pcie] AB-STOP=N on
+ * the serial console so the running variant is verifiable from the boot capture.
+ *   1 = link trained + outbound window + SSC only. NO VL805 config access, NO
+ *       NOTIFY_XHCI_RESET (after our PERST the VL805 has no firmware -- deadest
+ *       possible link partner), no BAR, no bus-master.
+ *   2 = + VL805 firmware load (mbox) + config-space detect. No BAR, no mem-space,
+ *       no bus-master: the device firmware runs but cannot DMA or decode MMIO.
+ *   3 = + BAR0 programmed + mem-space + bus-master granted. pcie_xhci_present
+ *       stays 0 so xhci_init never runs: nothing resets/starts the xHC, no rings,
+ *       no scratchpads -- the device CAN master the bus but was never asked to.
+ * (PCIE_PROBE_LEVEL=0 remains the all-off variant: no controller MMIO at all.) */
+#ifndef PCIE_AB_STOP
+#define PCIE_AB_STOP 0
+#endif
+
 /* Discovered xHCI controller (set only when fully usable -- D.2). */
 uint64_t pcie_xhci_bar = 0;
 uint64_t pcie_xhci_bar_size = 0;
@@ -484,6 +503,11 @@ static int pcie_bringup_and_detect(void) {
      * unconditionally (harmless if unsupported -- the MDIO polls just time out). */
     printf("[pcie] SSC %s\n", set_ssc() == 0 ? "ENABLED" : "not enabled");
     print_link_speed();
+#if PCIE_AB_STOP == 1
+    printf("[pcie] AB-STOP=1: link trained + outbound window, stopping (no VL805 "
+           "fw load / config access / BAR / bus-master)\n");
+    return -1;
+#endif
     clrb(RC_CFG_VENDOR_SPEC1, VENDOR_ENDIAN_BAR2_MASK);  /* inbound BAR -> little-endian */
     clrb(RC_CFG_PRIV1_LINK_CAP, LINK_CAP_ASPM_MASK);     /* unadvertise ASPM (U-Boot) */
     /* THE missing step vs U-Boot: its generic PCI core sets the RC bridge bus
@@ -519,11 +543,23 @@ static int pcie_bringup_and_detect(void) {
     }
     printf("[pcie] VL805 xHCI DETECTED -- Phase D.1 link OK.\n");
 
+#if PCIE_AB_STOP == 2
+    printf("[pcie] AB-STOP=2: VL805 fw loaded + detected, stopping (no BAR / "
+           "mem-space / bus-master -- device cannot DMA)\n");
+    return -1;
+#endif
+
     /* D.2a: program the VL805 BAR0 in the outbound window (safe config ops). */
     if (program_xhci_bar(1, 0, 0) != 0) {
         AIOS_LOG_WARN("VL805 BAR0 programming failed");
         return -1;
     }
+
+#if PCIE_AB_STOP == 3
+    printf("[pcie] AB-STOP=3: BAR + mem-space + bus-master granted, stopping "
+           "(pcie_xhci_present stays 0 -- xHC never reset/started)\n");
+    return -1;
+#endif
 
 #if PCIE_PROBE_LEVEL >= 2
     /* D.2: hand the BAR to the shared xHCI driver. aios_root sees pcie_xhci_present
