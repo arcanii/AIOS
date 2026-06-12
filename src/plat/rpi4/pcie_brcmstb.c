@@ -99,6 +99,8 @@ int      pcie_xhci_present = 0;
 #define   MISC_CFG_READ_UR      0x2000
 #define   MISC_MAX_BURST_MASK   0x300000    /* 0 => 128 bytes on 2711 */
 #define   MISC_SCB0_SIZE_MASK   0xf8000000u
+#define RC_CONFIG_RETRY_TIMEOUT 0x405c      /* v0.4.213: bound stalled cfg retries */
+#define UBUS_TIMEOUT            0x40a8      /* v0.4.213: bound CPU<->PCIe bus stalls */
 #define PCIE_STATUS             0x4068
 #define   STATUS_PORT           0x80        /* 1 = root-complex mode */
 #define   STATUS_DL_ACTIVE      0x20
@@ -344,6 +346,25 @@ static void bringup(int do_perst) {
     mdelay(1);
     /* MISC_CTRL: SCB access + UR mode + RCB/MPS mode + 128B burst (clear mask) +
      * SCB0 size. RCB_MPS_MODE matches U-Boot (we previously omitted it). */
+    /* v0.4.213: bound the PCIe transaction timeouts. A transaction the VL805
+     * stalls (keyboard-glitch states) sits OUTSTANDING on the UBUS; every DSB
+     * on core 0 -- including the kernel's TLBI sequence inside ANY syscall --
+     * waits for it, freezing the whole system. The silicon default bounds that
+     * wait at ~32.4s (measured); Linux programs ~240/250ms. Print the defaults
+     * once (HW evidence), then apply the Linux values. */
+    /* HW-measured (v0.4.213): ubus default 0x80000 ticks == the 32.4s system
+     * freeze => the 2711 ubus timeout tick is ~16.2kHz (NOT the 2712's 750MHz
+     * -- the Linux bcm2712 constants would set HOURS here). 0x1000 ~= 253ms.
+     * retry default is 0 on 2711; semantics unknown -- leave it alone. */
+    printf("[pcie] timeout defaults: retry=0x%x ubus=0x%x\n",
+           rd(RC_CONFIG_RETRY_TIMEOUT), rd(UBUS_TIMEOUT));
+    wr(UBUS_TIMEOUT, 0x1000);
+    /* v0.4.219: retry default is 0 on 2711 -- possibly "use the (32.4s)
+     * silicon default". Bound it like the ubus timeout. */
+    wr(RC_CONFIG_RETRY_TIMEOUT, 0x1000);
+    printf("[pcie] timeouts set: retry=0x%x ubus=0x%x\n",
+           rd(RC_CONFIG_RETRY_TIMEOUT), rd(UBUS_TIMEOUT));
+
     clrset(MISC_CTRL, MISC_MAX_BURST_MASK | MISC_SCB0_SIZE_MASK,
            MISC_SCB_ACCESS_EN | MISC_CFG_READ_UR | MISC_RCB_MPS_MODE |
            (RC_BAR2_SIZE_3GB_ENC << 27));

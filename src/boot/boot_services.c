@@ -42,7 +42,9 @@ static int start_server_thread(sel4utils_thread_entry_fn fn,
         simple_get_cnode(&simple), seL4_NilData, &thread);
     if (error) return error;
     seL4_TCB_SetPriority(thread.tcb.cptr, simple_get_tcb(&simple), 200);
+    #if CONFIG_MAX_NUM_NODES > 1
     seL4_TCB_SetAffinity(thread.tcb.cptr, ROOT_CORE);
+    #endif
     return sel4utils_start_thread(&thread, fn,
         (void *)(uintptr_t)ep_cap, NULL, 1);
 }
@@ -52,7 +54,9 @@ void boot_start_services(vka_object_t *fault_ep) {
 
     /* v0.4.178: pin the root task's own init thread to core 0 too -- it shares
      * the same global allocman/vka as the servers (see start_server_thread). */
+    #if CONFIG_MAX_NUM_NODES > 1
     seL4_TCB_SetAffinity(simple_get_tcb(&simple), ROOT_CORE);
+    #endif
 
     /* v0.4.80: load configuration from /etc/ before starting servers */
     boot_load_config();
@@ -89,6 +93,12 @@ void boot_start_services(vka_object_t *fault_ep) {
     LOG_INFO("Thread server started");
     start_server_thread((sel4utils_thread_entry_fn)thread_server_fn, thread_ep_cap);
     start_server_thread((sel4utils_thread_entry_fn)pipe_server_fn, pipe_ep_cap);
+
+    /* v0.4.219: TLBI keepalive (tlbi_probe.c). Steady unmap/map traffic keeps
+     * the TLB/DVM path exercised -- empirically suppresses the BCM2711 stall
+     * family alongside the no-WFI idle; cost is ~25 unmaps/s on core 0. */
+    { extern void tlbi_probe_start(void); tlbi_probe_start(); }
+
     proc_add("pipe_server", 200);
 
     /* USB HID keyboard driver thread (if xhci_init enumerated a keyboard).
@@ -120,7 +130,9 @@ void boot_start_services(vka_object_t *fault_ep) {
             if (!error) {
                 seL4_TCB_SetPriority(net_srv.tcb.cptr,
                     simple_get_tcb(&simple), 200);
+                #if CONFIG_MAX_NUM_NODES > 1
                 seL4_TCB_SetAffinity(net_srv.tcb.cptr, ROOT_CORE);
+                #endif
                 int bind_err = seL4_TCB_BindNotification(
                     net_srv.tcb.cptr, net_srv_ntfn_cap);
                 AIOS_LOG_INFO_V("net srv ntfn bind err=", bind_err);

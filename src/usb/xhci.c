@@ -839,7 +839,11 @@ static int setup_hid(struct usb_dev *d) {
         uint32_t ms8 = (uint32_t)(ep_interval > 0 ? ep_interval : 10) * 8;
         ivl = 31 - (uint32_t)__builtin_clz(ms8);    /* floor(log2(ms x 8)) */
         if (ivl > 10) ivl = 10;
-        if (ivl < 3)  ivl = 3;                      /* >= 1ms */
+        /* v0.4.221 BCM2711 mitigation: each poll is a VL805 split-transaction
+         * DMA burst, and PCIe traffic triggers the 32.4s TLBI/DSB system
+         * freezes (project_stall_hunt). 32ms polling = 1/4 the trigger rate of
+         * 8ms, still imperceptible for typing (the original bug was 128ms). */
+        if (ivl < 8)  ivl = 8;                      /* >= 32ms on this SoC */
     } else {                                        /* HS / SS: exponent + 1 */
         ivl = ep_interval > 0 ? (uint32_t)ep_interval - 1 : 3;
         if (ivl > 15) ivl = 15;

@@ -27,7 +27,12 @@ set(RPI4_MEMORY "4096" CACHE STRING "" FORCE)
 # register the elfloader mini-UART console (deps bcm-uart.c uart_set_out, the
 # putchar is bounded) and keep the known-good mini-UART config (no disable-bt,
 # core_freq=250). See the project_rpi4_smp memory + hw/rpi4/BOOT_NOTES.md.
-set(KernelMaxNumNodes 4 CACHE STRING "" FORCE)
+# v0.4.220: single-core. The BCM2711 whole-system 32.4s stalls (TLBI+DSB) have
+# TWO triggers: WFI retention (fixed by the no-WFI idle) and an SMP-build
+# broadcast-TLBI path (unfixed). All AIOS threads and children are pinned to
+# core 0 anyway, so SMP=4 currently buys nothing. Restore to 4 only with the
+# stall A/B harness in hand (see project_stall_hunt memory).
+set(KernelMaxNumNodes 1 CACHE STRING "" FORCE)
 
 # Debug
 set(KernelVerificationBuild OFF CACHE BOOL "" FORCE)

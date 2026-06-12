@@ -1,3 +1,23 @@
+diff --git a/src/arch/arm/64/idle.S b/src/arch/arm/64/idle.S
+index c47710bcb..e9b106d30 100644
+--- a/src/arch/arm/64/idle.S
++++ b/src/arch/arm/64/idle.S
+@@ -9,6 +9,14 @@
+ .section .text, "ax"
+ 
+ BEGIN_FUNC(idle_thread)
+-    1: wfi
++    /* AIOS v0.4.217: busy idle (yield hint), NO WFI. On BCM2711 (Cortex-A72,
++     * Pi firmware defaults) a core that has entered WFI subsequently stalls
++     * kernel TLBI+DSB sequences in ~10.8s quanta (HW-measured 32.4/43.2/97s
++     * whole-system freezes; IRQs are off inside the syscall, so even the tick
++     * stops). Busy idle eliminates it completely and was HW-verified (0/12
++     * stalls + 2x faster spawn baseline). Cost: idle cores spin. The proper
++     * fix is disabling the RAM-retention states the firmware configures --
++     * tracked in AIOS as the retention follow-up. */
++    1: yield
+     b 1b
+ END_FUNC(idle_thread)
 diff --git a/src/plat/bcm2711/overlay-rpi4-4gb.dts b/src/plat/bcm2711/overlay-rpi4-4gb.dts
 index b2376aece..ce67f35e3 100644
 --- a/src/plat/bcm2711/overlay-rpi4-4gb.dts

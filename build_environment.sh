@@ -47,7 +47,8 @@ SIBLING_DEPS="sbase dash zsh tcc mbedtls"
 if [ "$CAPTURE" = 1 ]; then
   say "== capturing deps/patches from current working trees =="
   mkdir -p "$PATCHES/files"
-  git -C "$AIOS/deps/kernel"    diff -- src/plat/bcm2711 tools/dts > "$PATCHES/seL4-kernel.patch"
+  git -C "$AIOS/deps/kernel"    diff -- src/plat/bcm2711 tools/dts \
+      src/arch/arm/64/idle.S > "$PATCHES/seL4-kernel.patch"
   git -C "$AIOS/deps/musllibc"  diff > "$PATCHES/musllibc.patch"
   git -C "$AIOS/deps/seL4_libs" diff > "$PATCHES/seL4_libs.patch"
   git -C "$AIOS/deps/seL4_tools" diff -- elfloader-tool > "$PATCHES/seL4_tools.patch"

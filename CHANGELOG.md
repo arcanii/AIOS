@@ -4,6 +4,36 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.221 (2026-06-12)
+The 32.4-second whole-system freeze hunt (the marathon: ~18 kernel swaps of
+layered instrumentation -- pipe message -> reap phase -> thread-cleanup
+sub-phase -> per-page per-op -> kernel invocation -> kernel unmapPage phases).
+The freezes pin to the kernel's `dsb; tlbi vae1; dsb; isb` stalling in exact
+~10.8s quanta (32.4/43.2/64.8/97.2s observed) with IRQs off, freezing
+EVERYTHING including the timer tick. TWO independent triggers found on
+BCM2711:
+- **Source A -- WFI retention (FIXED)**: a core that has executed WFI
+  subsequently stalls TLBI+DSB. Kernel idle thread now spins (`yield`) instead
+  of WFI (deps/kernel idle.S, captured in deps/patches/seL4-kernel.patch).
+  HW-verified decisive A/B: PCIe-off + WFI stalls, PCIe-off + no-WFI is
+  completely clean (0/12, and baseline spawn latency HALVED to ~0.3s -- the
+  retention micro-stalls were inside every spawn).
+- **Source B -- VL805 keyboard split-transaction DMA (MITIGATED, open)**: with
+  PCIe up, the xHCI controller's periodic LS-keyboard polling DMA (fires every
+  interval even with no typing) collides with TLBI/DSB the same way. Live
+  evidence: stalls stop the instant the keyboard unplugs. Immune to: SMP 1 vs
+  4, the TLBI-keepalive hammer, UBUS/retry timeout registers. Mitigation: LS/FS
+  polling clamped to 32ms (4x fewer trigger windows than 8ms). A quantum that
+  fires with the keyboard attached still kills it (32s unpolled = LS wedge).
+  REAL FIX (next session): why VL805 inbound DMA vs TLBI/DSB collides on AIOS
+  but not Linux -- DMA pool mapping attributes / brcmstb inbound window / MSI.
+- Interim config: KernelMaxNumNodes=1 (everything is pinned to core 0 anyway);
+  restore SMP=4 with the A/B harness in hand. New src/servers/tlbi_probe.c
+  (TLBI keepalive + measurement probe). sel4utils_free_reservation NULL-res
+  guard (latent crash found during the hunt; deps/patches/seL4_libs.patch).
+  [pipe]/[reap] >250ms probes remain permanent. Diag kernels v0.4.206-217
+  were investigation-only (per-phase brackets, since removed).
+
 ## v0.4.203 (2026-06-12)
 - Keystroke-rate fix (the "sticky keyboard / missed keys at fast typing"
   reports). Two per-keystroke costs were holding the USB driver thread long

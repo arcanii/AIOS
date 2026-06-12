@@ -58,11 +58,54 @@ index e867f86..dd3b046 100644
          started_regular = 1;
  #else
          /* attempt failsafe initialization and print something out */
+diff --git a/libsel4utils/src/process.c b/libsel4utils/src/process.c
+index f2eaa07..81acffb 100644
+--- a/libsel4utils/src/process.c
++++ b/libsel4utils/src/process.c
+@@ -687,8 +687,6 @@ void sel4utils_destroy_process(sel4utils_process_t *process, vka_t *vka)
+         vka_cnode_revoke(&path);
+         vka_free_object(vka, &process->cspace);
+     }
+-
+-
+     /* destroy the thread */
+     sel4utils_clean_up_thread(vka, &process->vspace, &process->thread);
+ 
+diff --git a/libsel4utils/src/thread.c b/libsel4utils/src/thread.c
+index eecccca..6c166c9 100644
+--- a/libsel4utils/src/thread.c
++++ b/libsel4utils/src/thread.c
+@@ -202,11 +202,9 @@ void sel4utils_clean_up_thread(vka_t *vka, vspace_t *alloc, sel4utils_thread_t *
+     if (thread->tcb.cptr != 0) {
+         vka_free_object(vka, &thread->tcb);
+     }
+-
+     if (thread->ipc_buffer_addr != 0) {
+         vspace_free_ipc_buffer(alloc, (seL4_Word *) thread->ipc_buffer_addr);
+     }
+-
+     if (thread->stack_top != 0) {
+         vspace_free_sized_stack(alloc, thread->stack_top, thread->stack_size);
+     }
 diff --git a/libsel4utils/src/vspace/vspace.c b/libsel4utils/src/vspace/vspace.c
-index dfccc14..ccd426c 100644
+index dfccc14..2c17899 100644
 --- a/libsel4utils/src/vspace/vspace.c
 +++ b/libsel4utils/src/vspace/vspace.c
-@@ -790,7 +790,6 @@ void sel4utils_tear_down(vspace_t *vspace, vka_t *vka)
+@@ -638,6 +638,13 @@ void sel4utils_free_reservation(vspace_t *vspace, reservation_t reservation)
+     sel4utils_alloc_data_t *data = get_alloc_data(vspace);
+     sel4utils_res_t *res = reservation.res;
+ 
++    /* AIOS v0.4.207: guard a NULL res (no reservation at the lookup vaddr) --
++     * the unguarded dereference was a latent crash found during the WFI-stall
++     * investigation. */
++    if (res == NULL) {
++        ZF_LOGW("free_reservation: no reservation at vaddr -- skipping");
++        return;
++    }
+     clear_entries_range(vspace, res->start, res->end, true);
+     remove_reservation(data, res);
+     if (res->malloced) {
+@@ -790,7 +797,6 @@ void sel4utils_tear_down(vspace_t *vspace, vka_t *vka)
      sel4utils_alloc_data_t *data = get_alloc_data(vspace);
  
      if (data->bootstrap == NULL) {
