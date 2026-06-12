@@ -4,6 +4,35 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.225 (2026-06-12)
+Found and fixed the REAL push-corruption root cause -- an ext2 image-builder
+off-by-one, not a network or eMMC bug. (The v0.4.224 eMMC hardening and this
+are separate, both real; v0.4.224 fixed a stall-quanta-only fault, this fixes
+a deterministic one.)
+- **mkdisk Ext2Builder layout off-by-one** (scripts/ext2/builder.py): block
+  group g>0 was laid out starting at `g*blocks_per_group`, but the kernel
+  allocator (ext2.c) uses the standard `first_data_block + g*bpg` (= g*bpg+1).
+  The 1-block disagreement made the kernel's "last block of group g" alias
+  group g+1's BLOCK BITMAP. The allocator handed that bitmap block out as
+  file data; subsequent allocations in g+1 rewrote the bitmap, clobbering the
+  file's first ~124 bytes with 0xFF (a filling bitmap). Only bit -- groups
+  0-9 happened to have their cross-group metadata marked used, so it bit only
+  files large enough to reach group 10 (~960KB+), which is why 1.5MB kernel
+  pushes hit it ~30-50% of the time and small files never did. Fix: standard
+  `1 + g*bpg` for all groups + mark last-group padding bits used. All 16
+  groups' metadata now correctly placed and reserved.
+- This is the deterministic QEMU-reproducible corruption (3s/push, no stall
+  quanta) behind the v0.4.223/224 deploy scare. Diagnosis chain: inbound TCP
+  checksum-verified clean (new /proc/netstat counters, all zero) -> Pi-side
+  sha == pulled sha != source (on-disk, write path) -> ext2 write probe
+  showed correct data written then clobbered -> the clobbered block WAS a
+  group's block-bitmap. netrx_repro.py: was 2-3/8 corrupt, now 0/16.
+- Also added this session: inbound TCP checksum verification (drops + counts
+  mangled segments instead of accepting them), SPSC rx-ring acquire barrier,
+  /proc/netstat counters + a drop-every-Nth fault-injection knob
+  (scripts/netrx_qemu_test.py), all of which proved the network path INNOCENT
+  -- kept as permanent hardening + regression tooling.
+
 ## v0.4.224 (2026-06-12)
 Block-layer integrity hardening -- the root-cause fix for the push corruption
 caught (and worked around) during the v0.4.223 fatswap deploy. The corrupt

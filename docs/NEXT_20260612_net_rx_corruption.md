@@ -75,3 +75,23 @@ strongest clue: something about stream position ~984KB (mod 32KB rx ring =
 - fatswap itself re-hashes its source AND its on-card readback; pi_flash
   compares both against the local sha before any reboot. A corrupt push
   can never reach the boot partition.
+
+---
+
+## RESOLVED 2026-06-12 (v0.4.225): NOT the network -- ext2 builder off-by-one
+
+The inbound TCP path was INNOCENT. Added inbound checksum verification + a
+deterministic drop-every-Nth fault knob + /proc/netstat counters; under
+forced retransmission storms the stream stayed byte-perfect (netrx_qemu_test).
+A 0xFF-FREE payload still corrupted with 0xFF on disk, and the rx counters
+showed ZERO 0xFF ever stored/read on the socket (dbg_ff_store_off/read_off=0,
+store_bytes==read_bytes). Pi-side sha == pulled sha != source -> on-disk write
+corruption. An ext2_pwrite probe showed the data block written CORRECTLY then
+clobbered -- and the clobbered physical block was a group's BLOCK BITMAP.
+
+Root cause: scripts/ext2/builder.py laid out block group g>0 at `g*bpg`, but
+the kernel allocator uses `first_data_block + g*bpg`. The off-by-one made the
+kernel's last-block-of-group-g alias group g+1's bitmap; the allocator handed
+the bitmap block out as file data and later bitmap writes overwrote the file.
+Fixed builder to standard layout + padding reservation; netrx_repro 0/16.
+The checksum verify + counters + acquire barrier were kept as hardening.

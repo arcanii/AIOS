@@ -35,8 +35,9 @@ import pi_filexfer as fx   # NC netconsole client (prompt framing, __put)
 
 DEFAULT_KERNEL = os.path.join(REPO, "disk", "kernel8.img")
 REMOTE_PATH = "/tmp/kernel8.img"
-# Addresses the box has held across DHCP leases (checked after reboot).
-DEFAULT_FALLBACK_HOSTS = ["192.168.0.8", "192.168.0.127"]
+# Addresses the box has held across DHCP leases (checked after reboot),
+# plus the /etc/network.conf static fallback used when boot DHCP fails.
+DEFAULT_FALLBACK_HOSTS = ["192.168.0.8", "192.168.0.127", "192.168.0.250"]
 
 
 def step(msg):

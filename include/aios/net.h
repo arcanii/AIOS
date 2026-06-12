@@ -148,6 +148,37 @@ struct net_rx_ring {
     struct rx_pkt_entry pkts[NET_RX_RING_SIZE];
 };
 
+/* -- v0.4.225: inbound-path integrity counters (/proc/netstat) --
+ * Defined in net_stack.c, incremented across the rx path. Built for the
+ * push-corruption hunt (docs/NEXT_20260612_net_rx_corruption.md): counter
+ * deltas across a corrupt vs clean transfer localize the failing layer. */
+struct net_rx_stats {
+    uint32_t tcp_data_segs;       /* inbound TCP segments carrying data      */
+    uint32_t tcp_cksum_drops;     /* checksum mismatch -- segment DROPPED    */
+    uint32_t tcp_dup_segs;        /* pure retransmissions re-ACKed           */
+    uint32_t tcp_overlap_trims;   /* partial-overlap retransmits trimmed     */
+    uint32_t tcp_ooo_drops;       /* future segments dropped (no reseq buf)  */
+    uint32_t tcp_window_partial;  /* segment only partially accepted (full)  */
+    uint32_t ring_overflow_drops; /* driver dropped frame: SPSC ring full    */
+    uint32_t fault_drops;         /* test knob: deliberately dropped         */
+    uint32_t tcp_reader_handoff;  /* segment handed to a parked reader       */
+    uint32_t tcp_split_deliver;   /* handoff + remainder buffered (split)    */
+    /* v0.4.225 corruption-hunt probes: with a 0xFF-free payload any 0xFF in
+     * the rx path is corruption. Records the FIRST stream offset where a
+     * 0xFF byte was stored into the ring vs read back out of it -- isolates
+     * receive-path injection from the downstream ext2 write/read. */
+    uint32_t dbg_ff_store_off;    /* 0 = none seen (offset 0 unlikely)       */
+    uint32_t dbg_ff_read_off;
+    uint32_t dbg_store_bytes;     /* total bytes buffered into rings         */
+    uint32_t dbg_read_bytes;      /* total bytes read out of rings           */
+};
+extern struct net_rx_stats net_rx_stats;
+
+/* Test knob: drop every Nth inbound TCP data segment (0 = off). Set via
+ * /proc/netstat.drop.N -- forces retransmission storms deterministically
+ * so the resequencing/overlap paths can be exercised on QEMU. */
+extern uint32_t net_fault_drop_nth;
+
 /* -- ARP cache -- */
 #define ARP_CACHE_SIZE  16
 

@@ -51,6 +51,11 @@ struct net_socket {
     /* v0.4.86: blocked connect (client-side TCP) */
     int       has_connect_blocked;
     seL4_CPtr connect_blocked_cap;
+
+    /* v0.4.225 corruption-hunt: cumulative bytes stored/read on this conn
+     * (= sequential stream offset, which for netconsole __put == file off). */
+    uint32_t  dbg_store_off;
+    uint32_t  dbg_read_off;
 };
 
 static struct net_socket sockets[MAX_NET_SOCKETS];
@@ -251,11 +256,14 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
                     int skip = (int)(s->rcv_nxt - seq);
                     data += skip;
                     data_len -= skip;
+                    net_rx_stats.tcp_overlap_trims++;
                     /* Fall through to deliver the new tail bytes */
                 } else {
+                    net_rx_stats.tcp_dup_segs++;
                     return;  /* Pure retransmission, already ACKed */
                 }
             } else {
+                net_rx_stats.tcp_ooo_drops++;
                 return;  /* Out-of-order (seq > rcv_nxt), drop */
             }
         }
@@ -289,9 +297,11 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
                                   s->blocked_cap, seL4_WordBits);
                 s->has_blocked = 0;
                 accepted = d;
+                net_rx_stats.tcp_reader_handoff++;
                 /* Buffer any remainder that fits the ring. */
                 int rest = data_len - d;
                 if (rest > 0) {
+                    net_rx_stats.tcp_split_deliver++;
                     int free_sp = SOCK_RX_BUF_SZ - 1 -
                                   ((s->rx_head - s->rx_tail) & mask);
                     int b = rest < free_sp ? rest : free_sp;
@@ -308,14 +318,20 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
                               ((s->rx_head - s->rx_tail) & mask);
                 int b = data_len < free_sp ? data_len : free_sp;
                 for (int j = 0; j < b; j++) {
+                    if (data[j] == 0xFF && net_rx_stats.dbg_ff_store_off == 0)
+                        net_rx_stats.dbg_ff_store_off = s->dbg_store_off + j;
                     s->rxbuf[s->rx_head & mask] = data[j];
                     s->rx_head++;
                 }
+                s->dbg_store_off += b;
+                net_rx_stats.dbg_store_bytes += b;
                 accepted = b;
             }
 
             /* Advance rcv_nxt only by the accepted bytes, then ACK with the real
              * free window so the sender's flow control tracks us exactly. */
+            if (accepted < data_len)
+                net_rx_stats.tcp_window_partial++;
             s->rcv_nxt += (uint32_t)accepted;
             int used = (s->rx_head - s->rx_tail) & mask;
             int freew = SOCK_RX_BUF_SZ - 1 - used;
@@ -392,6 +408,11 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
         /* Poll rx_ring */
         while (net_rx_ring.tail != net_rx_ring.head) {
             uint32_t t = net_rx_ring.tail % NET_RX_RING_SIZE;
+            /* v0.4.225: ACQUIRE -- order the entry reads after the head read
+             * that published the slot. The producer's dmb (data before head)
+             * pairs with this; without it the A72 may satisfy the entry
+             * loads early and hand a torn/stale packet to the stack. */
+            __asm__ volatile("dmb sy" ::: "memory");
             struct rx_pkt_entry *entry = &net_rx_ring.pkts[t];
             if (entry->len > 0)
                 net_handle_packet(entry->data, entry->len);
@@ -564,10 +585,15 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                     int mr2 = 3;
                     seL4_Word w2 = 0;
                     for (int j = 0; j < n; j++) {
-                        w2 |= ((seL4_Word)sk->rxbuf[sk->rx_tail & mask]) << ((j % 8) * 8);
+                        uint8_t rb = sk->rxbuf[sk->rx_tail & mask];
+                        if (rb == 0xFF && net_rx_stats.dbg_ff_read_off == 0)
+                            net_rx_stats.dbg_ff_read_off = sk->dbg_read_off + j;
+                        w2 |= ((seL4_Word)rb) << ((j % 8) * 8);
                         sk->rx_tail++;
                         if (j % 8 == 7 || j == n - 1) { seL4_SetMR(mr2++, w2); w2 = 0; }
                     }
+                    sk->dbg_read_off += n;
+                    net_rx_stats.dbg_read_bytes += n;
                     seL4_Reply(seL4_MessageInfo_new(0, 0, 0, mr2));
                     /* v0.4.170: TCP window update on read. Draining the rx ring
                      * frees receive-window space; advertise it to the sender with

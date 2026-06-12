@@ -7,6 +7,7 @@
 #include "aios/blk_cache.h"
 #include "aios/filehits.h"
 #include "aios/cow.h"
+#include "aios/net.h"
 #include <stdio.h>
 
 #if defined(PLAT_RPI4)
@@ -87,7 +88,7 @@ static int procfs_list(void *ctx, uint32_t ino, char *buf, int bufsize) {
     (void)ctx; (void)ino;
     int w = 0;
     /* List virtual files */
-    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- filehits\n", "- serverstats\n", "- flush\n", "- cow\n", "- cmdline\n", "- xhci\n", "- mouse\n", "- fbcon\n", "- v3d\n",
+    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- netstat\n", "- filehits\n", "- serverstats\n", "- flush\n", "- cow\n", "- cmdline\n", "- xhci\n", "- mouse\n", "- fbcon\n", "- v3d\n",
 #if defined(PLAT_RPI4)
         "- genet\n",
 #endif
@@ -481,6 +482,50 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
             "emmc_timeout_retries: %u\nemmc_timeout_fails: %u\n",
             (unsigned)blk_emmc_timeout_retries,
             (unsigned)blk_emmc_timeout_fails);
+    } else if (path[0] == 'n' && path[1] == 'e' && path[2] == 't'
+            && path[3] == 's' && path[4] == 't' && path[5] == 'a'
+            && path[6] == 't') {
+        /* v0.4.225: /proc/netstat -- inbound-path integrity counters for the
+         * push-corruption hunt (docs/NEXT_20260612_net_rx_corruption.md).
+         * Path verbs (xhci/v3d pattern):
+         *   cat /proc/netstat          counters + current fault knob
+         *   cat /proc/netstat.drop.N   drop every Nth inbound TCP data
+         *                              segment (0 = off) -- deterministic
+         *                              retransmit-storm injection for tests */
+        if (path[7] == '.' && path[8] == 'd' && path[9] == 'r'
+            && path[10] == 'o' && path[11] == 'p' && path[12] == '.') {
+            uint32_t n = 0;
+            for (int i = 13; path[i] >= '0' && path[i] <= '9'; i++)
+                n = n * 10 + (uint32_t)(path[i] - '0');
+            net_fault_drop_nth = n;
+            w += snprintf(buf + w, bufsize - w,
+                "fault_drop_nth set to %u\n", (unsigned)n);
+        } else {
+            w += snprintf(buf + w, bufsize - w,
+                "tcp_data_segs: %u\ntcp_cksum_drops: %u\n"
+                "tcp_dup_segs: %u\ntcp_overlap_trims: %u\n"
+                "tcp_ooo_drops: %u\ntcp_window_partial: %u\n"
+                "ring_overflow_drops: %u\nfault_drops: %u\n"
+                "tcp_reader_handoff: %u\ntcp_split_deliver: %u\n"
+                "dbg_ff_store_off: %u\ndbg_ff_read_off: %u\n"
+                "dbg_store_bytes: %u\ndbg_read_bytes: %u\n"
+                "fault_drop_nth: %u\n",
+                (unsigned)net_rx_stats.tcp_data_segs,
+                (unsigned)net_rx_stats.tcp_cksum_drops,
+                (unsigned)net_rx_stats.tcp_dup_segs,
+                (unsigned)net_rx_stats.tcp_overlap_trims,
+                (unsigned)net_rx_stats.tcp_ooo_drops,
+                (unsigned)net_rx_stats.tcp_window_partial,
+                (unsigned)net_rx_stats.ring_overflow_drops,
+                (unsigned)net_rx_stats.fault_drops,
+                (unsigned)net_rx_stats.tcp_reader_handoff,
+                (unsigned)net_rx_stats.tcp_split_deliver,
+                (unsigned)net_rx_stats.dbg_ff_store_off,
+                (unsigned)net_rx_stats.dbg_ff_read_off,
+                (unsigned)net_rx_stats.dbg_store_bytes,
+                (unsigned)net_rx_stats.dbg_read_bytes,
+                (unsigned)net_fault_drop_nth);
+        }
     } else if (path[0] == 'x' && path[1] == 'h' && path[2] == 'c'
             && path[3] == 'i') {
         /* /proc/xhci -- live USB xHCI + keyboard probe and lock-LED poke

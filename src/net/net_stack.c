@@ -15,6 +15,10 @@
 
 /* be16/be32 provided by net.h */
 
+/* v0.4.225: inbound-path integrity counters + fault knob (see net.h). */
+struct net_rx_stats net_rx_stats;
+uint32_t net_fault_drop_nth;
+
 /* -- Internet checksum (RFC 1071) -- */
 uint16_t ip_checksum(const void *data, int len) {
     const uint16_t *p = (const uint16_t *)data;

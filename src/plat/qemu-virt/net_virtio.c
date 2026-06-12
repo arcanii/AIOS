@@ -301,6 +301,7 @@ void plat_net_driver_fn(void *arg0, void *arg1, void *ipc_buf) {
                     drained++;
                 } else {
                     rx_dropped++;
+                    net_rx_stats.ring_overflow_drops++;
                 }
             }
 

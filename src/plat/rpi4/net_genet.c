@@ -882,6 +882,10 @@ void plat_net_driver_fn(void *arg0, void *arg1, void *ipc_buf) {
                         __asm__ volatile("dmb sy" ::: "memory");
                         net_rx_ring.head = h + 1;
                         drained++;
+                    } else {
+                        /* v0.4.225: count the silent drop -- a frozen
+                         * consumer (stall quantum) backs the ring up fast */
+                        net_rx_stats.ring_overflow_drops++;
                     }
                 }
             }

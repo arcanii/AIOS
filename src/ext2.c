@@ -307,6 +307,10 @@ static int ext2_set_block_num(ext2_ctx_t *ctx, struct ext2_inode *inode,
     return -3; /* triple indirect write not supported */
 }
 
+/* v0.4.225 corruption-hunt probe: log block-mapping decisions for a file
+ * offset window. Set ext2_dbg_lo<ext2_dbg_hi (file bytes) to enable. */
+volatile int ext2_dbg_lo = 0, ext2_dbg_hi = 0;  /* 0 = probe off */
+
 /* Positioned write: write len bytes at offset, allocating blocks as needed */
 int ext2_pwrite_file(ext2_ctx_t *ctx, uint32_t ino, int offset,
                      const uint8_t *data, int len) {
@@ -323,9 +327,13 @@ int ext2_pwrite_file(ext2_ctx_t *ctx, uint32_t ino, int offset,
 
         /* Get or allocate block */
         int blk_num = ext2_get_block_num(ctx, &inode, block_idx);
+        int dbg = (ctx->dev_id == 0 && ext2_dbg_hi > ext2_dbg_lo &&
+                   cur_off >= ext2_dbg_lo && cur_off < ext2_dbg_hi);
+        int was_alloc = 0;
         if (blk_num == 0) {
             blk_num = ext2_alloc_block(ctx);
             if (blk_num < 0) return -2;
+            was_alloc = 1;
             /* Zero the new block */
             uint8_t zero[1024];
             for (int i = 0; i < block_size; i++) zero[i] = 0;
@@ -339,6 +347,13 @@ int ext2_pwrite_file(ext2_ctx_t *ctx, uint32_t ino, int offset,
          * failures (completion timeouts) instead of losing data quietly. */
         uint8_t blk[1024];
         if (read_block(ctx, blk_num, blk) != 0) return -4;
+        if (dbg) {
+            /* first 4 bytes read back at the block head, before patch */
+            printf("[e2dbg] off=%d bidx=%d blk=%d alloc=%d boff=%d "
+                   "head=%02x%02x%02x%02x\n",
+                   cur_off, block_idx, blk_num, was_alloc, block_off,
+                   blk[0], blk[1], blk[2], blk[3]);
+        }
         int chunk = block_size - block_off;
         if (chunk > len - written) chunk = len - written;
         for (int i = 0; i < chunk; i++)

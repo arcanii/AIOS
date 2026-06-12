@@ -98,6 +98,22 @@ void handle_tcp(const uint8_t *pkt, uint32_t len,
     int tcp_hlen = (tcp->off_rsvd >> 4) * 4;
     if (tcp_hlen < 20 || (uint32_t)tcp_hlen > len) return;
 
+    /* v0.4.225: VERIFY the inbound checksum (computing the sum over the
+     * whole segment including the peer's checksum field yields 0 iff
+     * valid). The stack accepted anything for years; a mismatch here means
+     * bytes were mangled between the peer's NIC and this point (GENET DMA
+     * ring, SPSC handoff, ...) -- exactly the silent push corruption under
+     * stall quanta. Dropping is CORRECT: the peer retransmits, the stream
+     * stays clean, and the counter localizes the lower-layer fault. */
+    if (tcp_checksum(req_ip->src, req_ip->dst, pkt, (int)len) != 0) {
+        net_rx_stats.tcp_cksum_drops++;
+        if (net_rx_stats.tcp_cksum_drops <= 8)
+            printf("[net] TCP RX cksum DROP #%u port=%u len=%u\n",
+                   net_rx_stats.tcp_cksum_drops,
+                   (unsigned)be16(tcp->dst_port), (unsigned)len);
+        return;
+    }
+
     uint16_t dst_port  = be16(tcp->dst_port);
     uint16_t src_port  = be16(tcp->src_port);
     uint32_t their_seq = be32(tcp->seq);
@@ -107,6 +123,20 @@ void handle_tcp(const uint8_t *pkt, uint32_t len,
     const uint8_t *data = pkt + tcp_hlen;
     int data_len = (int)len - tcp_hlen;
     if (data_len < 0) data_len = 0;
+
+    if (data_len > 0) {
+        net_rx_stats.tcp_data_segs++;
+        /* Deterministic fault injection (/proc/netstat.drop.N): drop every
+         * Nth data segment to force retransmission + overlap handling. */
+        if (net_fault_drop_nth) {
+            static uint32_t fault_ctr;
+            if (++fault_ctr >= net_fault_drop_nth) {
+                fault_ctr = 0;
+                net_rx_stats.fault_drops++;
+                return;
+            }
+        }
+    }
 
     net_tcp_deliver(req_ip->src, req_eth->src,
                     src_port, dst_port,

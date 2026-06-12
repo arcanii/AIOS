@@ -42,8 +42,12 @@ class Ext2Builder:
     def _alloc_block(self):
         for g in range(self.num_groups):
             bb, ib, it, ds = self.group_meta[g]
-            group_start = 1 + g * self.blocks_per_group if g == 0 else g * self.blocks_per_group
-            max_in_group = min(self.blocks_per_group, self.total_blocks - g * self.blocks_per_group)
+            # Standard ext2: block group g starts at first_data_block + g*bpg.
+            # (The kernel allocator uses the SAME formula -- they MUST agree, or
+            # the last block of each group aliases the next group's bitmap and
+            # writes corrupt it. See builder header note.)
+            group_start = 1 + g * self.blocks_per_group
+            max_in_group = min(self.blocks_per_group, self.total_blocks - group_start)
             bmp = self._read_block(bb)
             idx = self.next_block_in_group[g]
             while idx < max_in_group:
@@ -138,8 +142,17 @@ class Ext2Builder:
     def build_metadata(self):
         inode_table_blocks = (self.inodes_per_group * self.inode_size + self.block_size - 1) // self.block_size
         for g in range(self.num_groups):
-            group_start = 1 + g * self.blocks_per_group if g == 0 else g * self.blocks_per_group
+            # Standard ext2 layout: group g starts at first_data_block + g*bpg
+            # for ALL g (first_data_block = 1 for 1K blocks). This MUST match
+            # the kernel's ext2_alloc_block group_start = g*bpg + first_data_block,
+            # else the per-group block numbering is shifted and the last block
+            # of each group aliases the next group's block-bitmap (handing a
+            # bitmap block out as file data -> later bitmap writes clobber the
+            # file with 0xFF). v0.4.225 fix: the old `g*bpg` for g>0 was off by
+            # one and corrupted large files reaching group 10+ (block 81920).
+            group_start = 1 + g * self.blocks_per_group
             if g == 0:
+                # blocks 1=super, 2=bgdt already precede the bitmaps
                 bb, ib, it = group_start + 2, group_start + 3, group_start + 4
                 overhead = 2 + 1 + 1 + inode_table_blocks
             else:
@@ -148,6 +161,11 @@ class Ext2Builder:
             self.group_meta.append((bb, ib, it, it + inode_table_blocks))
             bmp = bytearray(self.block_size)
             for b in range(overhead):
+                bmp[b // 8] |= (1 << (b % 8))
+            # Mark padding bits (beyond the last valid block of this group) used
+            # so neither builder nor kernel ever allocates an out-of-range block.
+            max_in_group = min(self.blocks_per_group, self.total_blocks - group_start)
+            for b in range(max_in_group, self.blocks_per_group):
                 bmp[b // 8] |= (1 << (b % 8))
             self._write_block(bb, bmp)
             self.next_block_in_group[g] = overhead
