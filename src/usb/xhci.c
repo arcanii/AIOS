@@ -127,12 +127,19 @@ static inline void doorbell(uint32_t n, uint32_t target) {
 #define EVT_EPID(trb3)    (((trb3) >> 16) & 0x1F)  /* endpoint id (DCI) in transfer event [20:16] */
 #define CC_SUCCESS        1
 #define CC_STALL          6                        /* Stall Error -- endpoint halted */
+#define CC_SHORT_PKT      13                       /* Short Packet -- benign */
+/* v0.4.204: interrupt-IN error accounting. An error completion means the armed
+ * buffer holds NO report -- decoding it replays stale keys (garbage input), and
+ * blind re-arming can storm. Count, skip decode, and PARK the endpoint after a
+ * storm threshold (the kbd is dead at that point; a replug/port-reset re-enables). */
+#define INT_ERR_PARK_THRESHOLD  10000
+static uint32_t g_int_err_events;
 
 /* Forward decl: if (slot, ep) is the live keyboard's interrupt-IN endpoint, deliver
  * its report + re-arm and return 1, else 0. Defined in the HID section so the event
  * dispatcher below can keep the keyboard alive (even while a control transfer waits
  * on EP0) without pulling the HID globals up here. */
-static int kbd_try_deliver(uint32_t slot, uint32_t ep);
+static int kbd_try_deliver(uint32_t slot, uint32_t ep, uint32_t cc);
 
 /* ---- command ring + event ring producer/consumer state ---- */
 static uint32_t cmd_enq = 0, cmd_cycle = 1;   /* command ring (producer) */
@@ -178,7 +185,7 @@ static int evt_dispatch(uint32_t out[4], uint32_t want_type,
             out[0] = e[0]; out[1] = e[1]; out[2] = e[2]; out[3] = e[3];
             return DISP_MATCH;
         }
-        kbd_try_deliver(slot, ep);   /* a live keyboard report -- deliver + re-arm */
+        kbd_try_deliver(slot, ep, EVT_CC(e[2]));   /* live report -- deliver + re-arm */
         return DISP_OTHER;
     }
     if (type == want_type) {         /* CMD_COMP_EVT for cmd_submit */
@@ -360,6 +367,7 @@ struct usb_dev {
     int      in_use;
     int      kind;                                  /* USB_KBD / USB_MOUSE / USB_HUB */
     uint32_t slot;
+    uint32_t speed;                                 /* PORTSC speed: 1 FS, 2 LS, 3 HS, 4 SS */
     /* EP0 control endpoint */
     volatile uint8_t *dev_ctx;  uint64_t dev_ctx_pa;   /* output device context */
     volatile uint8_t *in_ctx;   uint64_t in_ctx_pa;    /* input context (Address/Configure) */
@@ -719,12 +727,31 @@ static void typematic_disarm_all(const char *why) {
  * it, RE-ARM that buffer immediately (keeping the ring full so the keyboard is never
  * unpolled), then decode -- even if the decode blocks on the echo, (N-1) transfers
  * stay armed and the controller keeps polling the keyboard. */
-static int kbd_try_deliver(uint32_t slot, uint32_t ep) {
+static int kbd_try_deliver(uint32_t slot, uint32_t ep, uint32_t cc) {
     for (int i = 0; i < MAX_USB_DEV; i++) {
         struct usb_dev *d = &g_devs[i];
         if (d->in_use && d->kind != USB_NONE && d->kind != USB_HUB
             && d->slot == slot && d->dci == ep) {
             uint32_t bi = d->int_proc % INT_RING_BUFS;
+            /* v0.4.204: an error completion carries NO report. Decoding the
+             * stale buffer replays old keys as input; never do that. Count it,
+             * advance + re-arm (a doorbell on a halted EP is ignored), and PARK
+             * the endpoint if errors storm -- a parked keyboard needs a
+             * replug/port reset, but it cannot eat core 0. */
+            if (cc != CC_SUCCESS && cc != CC_SHORT_PKT) {
+                g_int_err_events++;
+                if (g_int_err_events <= 3 || (g_int_err_events % 1000) == 0)
+                    printf("[xhci] int-IN err cc=%u slot=%u ep=%u total=%u\n",
+                           cc, slot, ep, g_int_err_events);
+                d->int_proc++;
+                if (g_int_err_events < INT_ERR_PARK_THRESHOLD) {
+                    arm_int_buf(d, bi);
+                } else if (g_int_err_events == INT_ERR_PARK_THRESHOLD) {
+                    typematic_disarm_all("int-IN error storm: endpoint parked");
+                    printf("[xhci] int-IN PARKED slot=%u ep=%u (err storm)\n", slot, ep);
+                }
+                return 1;
+            }
             volatile uint8_t *src = d->rpt + bi * RPT_STRIDE;
             uint8_t snap[8];
             for (int k = 0; k < 8; k++) snap[k] = src[k];
@@ -801,7 +828,25 @@ static int setup_hid(struct usb_dev *d) {
     icc[0] = 0;
     icc[1] = (1u << 0) | (1u << d->dci);
     slot_ctx[0] = (slot_ctx[0] & ~(0x1Fu << 27)) | (d->dci << 27);  /* context entries */
-    ep_ctx[0] = (uint32_t)(ep_interval & 0xFF) << 16;
+    /* v0.4.205: the Interval field is an EXPONENT -- period = 2^I x 125us. For
+     * LS/FS interrupt endpoints bInterval is in 1ms FRAMES, so the largest
+     * 2^I x 125us <= bInterval ms is I = floor(log2(bInterval x 8)): 10ms -> I=6
+     * (8ms). HS/SS bInterval is already exponent+1. The raw bInterval used to be
+     * written here directly, polling this LS keyboard at 2^10 x 125us = 128ms --
+     * any press+release inside one window was INVISIBLE (missed keys at speed). */
+    uint32_t ivl;
+    if (d->speed == 1 || d->speed == 2) {           /* FS / LS: bInterval in ms */
+        uint32_t ms8 = (uint32_t)(ep_interval > 0 ? ep_interval : 10) * 8;
+        ivl = 31 - (uint32_t)__builtin_clz(ms8);    /* floor(log2(ms x 8)) */
+        if (ivl > 10) ivl = 10;
+        if (ivl < 3)  ivl = 3;                      /* >= 1ms */
+    } else {                                        /* HS / SS: exponent + 1 */
+        ivl = ep_interval > 0 ? (uint32_t)ep_interval - 1 : 3;
+        if (ivl > 15) ivl = 15;
+    }
+    printf("[xhci] int-IN interval: bInterval=%d speed=%u -> 2^%u x 125us = %uus\n",
+           ep_interval, d->speed, ivl, (125u << ivl));
+    ep_ctx[0] = ivl << 16;
     ep_ctx[1] = (7u << 3) | (3u << 1) | (d->int_mps << 16);   /* Interrupt IN, CErr=3, MPS */
     ep_ctx[2] = (uint32_t)(d->int_ring_pa | 1);               /* TR dequeue | DCS */
     ep_ctx[3] = (uint32_t)(d->int_ring_pa >> 32);
@@ -974,6 +1019,7 @@ static int address_and_describe(struct usb_dev *d, uint32_t route, uint32_t root
         return -1;
     }
     d->slot = EVT_SLOT(evt[3]);
+    d->speed = speed;
 
     d->dev_ctx  = (volatile uint8_t *)dma_page(&d->dev_ctx_pa);
     d->in_ctx   = (volatile uint8_t *)dma_page(&d->in_ctx_pa);
@@ -1354,8 +1400,8 @@ int xhci_diag_cmd(const char *args, char *buf, int bufsize) {
         "irq: mode=%d bound=%d num=%d count=%u  (poll is the default; .irq.1 to block)\n",
         xhci_irq_mode, xhci_irq_ntfn ? 1 : 0, xhci_irq_num, xhci_irq_count);
     w += snprintf(buf + w, bufsize - w,
-        "slots=%u ports=%u  kbd_ok=%d  evt_deq=%u cyc=%u  last SET_REPORT cc=%d USBSTS=0x%x\n",
-        max_slots, max_ports, xhci_kbd_ok, evt_deq, evt_cycle,
+        "slots=%u ports=%u  kbd_ok=%d  evt_deq=%u cyc=%u  key_events=%u int_errs=%u  last SET_REPORT cc=%d USBSTS=0x%x\n",
+        max_slots, max_ports, xhci_kbd_ok, evt_deq, evt_cycle, g_key_events, g_int_err_events,
         (int)g_led_last_cc, g_led_last_sts);
     for (uint32_t pidx = 0; pidx < max_ports && pidx < 8; pidx++) {
         uint32_t sc = op_r32(XHCI_PORTSC(pidx));
