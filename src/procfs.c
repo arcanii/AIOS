@@ -509,7 +509,7 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
                 "tcp_reader_handoff: %u\ntcp_split_deliver: %u\n"
                 "dbg_ff_store_off: %u\ndbg_ff_read_off: %u\n"
                 "dbg_store_bytes: %u\ndbg_read_bytes: %u\n"
-                "fault_drop_nth: %u\n",
+                "tcp_read_acks: %u\nfault_drop_nth: %u\n",
                 (unsigned)net_rx_stats.tcp_data_segs,
                 (unsigned)net_rx_stats.tcp_cksum_drops,
                 (unsigned)net_rx_stats.tcp_dup_segs,
@@ -524,6 +524,7 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
                 (unsigned)net_rx_stats.dbg_ff_read_off,
                 (unsigned)net_rx_stats.dbg_store_bytes,
                 (unsigned)net_rx_stats.dbg_read_bytes,
+                (unsigned)net_rx_stats.tcp_read_acks,
                 (unsigned)net_fault_drop_nth);
         }
     } else if (path[0] == 'x' && path[1] == 'h' && path[2] == 'c'

@@ -4,6 +4,28 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.226 (2026-06-12)
+netconsole RX profiling: coalesced the TCP window-reopen ACKs -- a correct,
+standard change that did NOT move throughput (honest negative result).
+- net_server NET_RECVFROM sent a window-update ACK on EVERY 900-byte read
+  (~1740 per 1.5MB push). Now it fires only when >=1/4 of the rx buffer (8KB)
+  has drained since the last one, OR the ring just went empty (a window-
+  blocked sender with nothing left to trigger a receive-ACK must be woken).
+  net_tcp_deliver still ACKs per received segment. Measured 9x fewer read
+  ACKs (tcp_read_acks 197 vs ~1740). Correct under injected loss
+  (netrx_qemu_test B1/B2 byte-perfect, no stall).
+- BUT HW throughput was UNCHANGED (~24-30s/1.5MB, ~55KB/s, same as v0.4.225)
+  -- so the ACK TX was NOT the bottleneck. Profiling (push to /dev/null vs
+  /tmp, /proc/netstat) points at IPC COUNT x single-core context-switch:
+  ~1740 recv IPCs + ~3900 FS_PWRITE IPCs per push, all serialized on core 0
+  (the Source-B single-core interim). The real levers are bigger: implement
+  the SHM socket path (NET_RECVFROM_SHM is defined-only) to cut recv IPCs,
+  batch FS_PWRITE, and restore SMP=4 (blocked on Source B). HW measurements
+  are also dominated by the 32.4s stall quanta (push failures at 36/68/191s =
+  quanta multiples), which no RX tuning can fix. Kept the coalescing (9x less
+  TX is real system-load relief) + the tcp_read_acks counter; full analysis
+  in docs/NEXT_20260612_netconsole_rx_throughput.md.
+
 ## v0.4.225 (2026-06-12)
 Found and fixed the REAL push-corruption root cause -- an ext2 image-builder
 off-by-one, not a network or eMMC bug. (The v0.4.224 eMMC hardening and this

@@ -171,6 +171,8 @@ struct net_rx_stats {
     uint32_t dbg_ff_read_off;
     uint32_t dbg_store_bytes;     /* total bytes buffered into rings         */
     uint32_t dbg_read_bytes;      /* total bytes read out of rings           */
+    uint32_t tcp_read_acks;       /* v0.4.226: window-reopen ACKs sent on read
+                                   * (coalesced; was 1 per 900B read)        */
 };
 extern struct net_rx_stats net_rx_stats;
 

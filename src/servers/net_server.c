@@ -29,6 +29,7 @@ struct net_socket {
     uint16_t rxlen;
     uint16_t rx_head;    /* TCP ring write pos */
     uint16_t rx_tail;    /* TCP ring read pos */
+    uint16_t rx_ack_tail;/* v0.4.226: rx_tail at last window-reopen ACK (coalescing) */
     uint8_t  rx_eof;     /* FIN received */
     uint8_t  rx_src_ip[4];
     uint16_t rx_src_port;
@@ -164,6 +165,7 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
         conn->rxlen = 0;
         conn->rx_head = 0;
         conn->rx_tail = 0;
+        conn->rx_ack_tail = 0;
         conn->rx_eof = 0;
         conn->has_blocked = 0;
         conn->has_accept_blocked = 0;
@@ -450,6 +452,7 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 sockets[slot].rxlen = 0;
                 sockets[slot].rx_head = 0;
                 sockets[slot].rx_tail = 0;
+                sockets[slot].rx_ack_tail = 0;
                 sockets[slot].rx_eof = 0;
                 sockets[slot].has_blocked = 0;
                 sockets[slot].has_accept_blocked = 0;
@@ -597,19 +600,33 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                     seL4_Reply(seL4_MessageInfo_new(0, 0, 0, mr2));
                     /* v0.4.170: TCP window update on read. Draining the rx ring
                      * frees receive-window space; advertise it to the sender with
-                     * a pure ACK. Without this, a sustained push that filled the
-                     * small rx window stalls FOREVER: the sender is window-blocked
-                     * and the reader drains but never re-opens the window (the old
-                     * code only ACKed on RECEIVE, never on READ). Standard
-                     * ACK-on-read; the fix that makes large __put complete. */
+                     * a pure ACK, else a push that filled the window stalls (the
+                     * sender is window-blocked and only RECEIVE used to ACK).
+                     *
+                     * v0.4.226 throughput: COALESCE these. The old code sent a
+                     * window-update ACK on EVERY 900B read = ~1740 GENET TX +
+                     * network RTTs per 1.5MB push, the HW receive bottleneck
+                     * (QEMU hid it: near-zero TX latency). Send the reopen ACK
+                     * only when >=1/4 buffer (8KB) has been drained since the
+                     * last one, OR the ring just went empty (the sender may be
+                     * window-blocked with nothing left to trigger a receive-ACK
+                     * -- must wake it). net_tcp_deliver still ACKs per received
+                     * segment, so in-flight data keeps advancing rcv_nxt; this
+                     * only thins the redundant reopen ACKs. ~9x fewer TX. */
                     {
-                        int freew = SOCK_RX_BUF_SZ - 1 -
-                                    ((sk->rx_head - sk->rx_tail) & mask);
+                        int used = (sk->rx_head - sk->rx_tail) & mask;
+                        int freew = SOCK_RX_BUF_SZ - 1 - used;
                         if (freew < 0) freew = 0;
-                        tcp_tx_window = (uint16_t)freew;
-                        net_tcp_send(sk->remote_ip, sk->remote_mac,
-                                     sk->local_port, sk->remote_port,
-                                     sk->snd_nxt, sk->rcv_nxt, TCP_ACK, NULL, 0);
+                        uint16_t freed_since =
+                            (uint16_t)(sk->rx_tail - sk->rx_ack_tail);
+                        if (freed_since >= (SOCK_RX_BUF_SZ / 4) || used == 0) {
+                            sk->rx_ack_tail = sk->rx_tail;
+                            tcp_tx_window = (uint16_t)freew;
+                            net_tcp_send(sk->remote_ip, sk->remote_mac,
+                                         sk->local_port, sk->remote_port,
+                                         sk->snd_nxt, sk->rcv_nxt, TCP_ACK, NULL, 0);
+                            net_rx_stats.tcp_read_acks++;
+                        }
                     }
                 } else if (sk->rx_eof) {
                     seL4_SetMR(0, 0);
@@ -758,6 +775,7 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 sk->rcv_nxt = 0;
                 sk->rx_head = 0;
                 sk->rx_tail = 0;
+                sk->rx_ack_tail = 0;
                 sk->rx_eof = 0;
                 sk->owner_pid = caller_pid;
                 sk->state = TCP_SYN_SENT;
