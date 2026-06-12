@@ -343,17 +343,21 @@ int main(int argc, char *argv[]) {
             break;
         }
 
+        /* v0.4.203: reply BEFORE the line discipline. The caller is the USB
+         * driver (or the root UART RX path); holding it through the echo chain
+         * (polled-UART putchar + a DISP_CONSOLE Call into the display server)
+         * stalls the driver thread per keystroke, drains its interrupt ring
+         * under load, and drops keys at fast typing rates. The echo still runs
+         * here, after the caller is released; per-caller order is preserved by
+         * the endpoint. */
         case SER_KEY_PUSH:
-            line_discipline((char)seL4_GetMR(0));
-            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
-            break;
-
         /* -- New TTY protocol -- */
-
-        case TTY_INPUT:
-            line_discipline((char)seL4_GetMR(0));
+        case TTY_INPUT: {
+            char in_c = (char)seL4_GetMR(0);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
+            line_discipline(in_c);
             break;
+        }
 
         case TTY_WRITE: {
             /* Copy the payload OUT of the MRs before output -- disp_write reuses the

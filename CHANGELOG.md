@@ -4,6 +4,21 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.203 (2026-06-12)
+- Keystroke-rate fix (the "sticky keyboard / missed keys at fast typing"
+  reports). Two per-keystroke costs were holding the USB driver thread long
+  enough to drain the 32-deep interrupt ring under load (drained ring =
+  unpolled keyboard = dropped keys): (1) a 40-char `[xhci-kbd]` printf to the
+  POLLED mini UART (~3.5 ms busy-wait per key, plus an HDMI line render and a
+  full screen scroll once the display is full) -- now OFF by default, runtime
+  togglable via `cat /proc/xhci.debug.1|0`, with a key-event counter kept for
+  the `/proc/xhci` summary (the `[xhci-mouse]` per-motion printf is gated the
+  same way); (2) the tty server ran the whole echo chain (polled-UART putchar
+  + a blocking DISP_CONSOLE call into the display server) BEFORE replying to
+  SER_KEY_PUSH/TTY_INPUT -- it now replies first and echoes after, so the
+  driver is released in microseconds and echo cost stays on the tty thread.
+  QEMU: fb_scroll 4/4, v3d 7/7, xhci typematic PASS.
+
 ## v0.4.202 (2026-06-12)
 - **V3D Phase 1 HW-VERIFIED on a real Pi 4**: `.power` -> `.mmu` -> `.fault`
   first light. The MMU programmed cleanly (PT@0xfb000000, 1M PTEs,

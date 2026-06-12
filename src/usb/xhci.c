@@ -487,6 +487,12 @@ int xhci_kbd_ok = 0;               /* read by boot_services to spawn the driver 
  * the driver thread issues the SET_REPORT in its OWN (single-consumer) context. Bit 8 =
  * pending; bits [2:0] = the Num/Caps/Scroll bitmap (bit 9 = "use current lock state"). */
 static volatile uint32_t g_led_request;     /* 0x100=pending, 0x200=use-current, [2:0]=bits */
+/* v0.4.203: per-event HID logging is OFF by default -- a 40-char printf to the
+ * POLLED mini UART costs ~3.5ms of driver-thread busy-wait PER KEYSTROKE (plus
+ * an HDMI line render + scroll when the screen is full), which drains the
+ * interrupt ring under load and drops keys. /proc/xhci.debug.1 re-enables. */
+static volatile int g_hid_debug;
+static uint32_t g_key_events, g_mouse_events_logged;
 static volatile uint32_t g_led_last_cc;     /* last SET_REPORT completion code (diag) */
 static volatile uint32_t g_led_last_sts;    /* USBSTS right after last SET_REPORT (diag) */
 
@@ -644,8 +650,10 @@ static void process_kbd_report(struct usb_dev *d, const uint8_t *rpt) {
         char ch = hid_to_ascii(d, kc, shift);
         if (!ch) continue;
         if (ctrl) ch = ctrl_char(ch);             /* Ctrl-C -> 0x03, etc. */
-        printf("[xhci-kbd] key=0x%02x '%c' (0x%02x)\n", kc,
-               (ch >= 32 && ch < 127) ? ch : '?', (unsigned char)ch);
+        g_key_events++;
+        if (g_hid_debug)
+            printf("[xhci-kbd] key=0x%02x '%c' (0x%02x)\n", kc,
+                   (ch >= 32 && ch < 127) ? ch : '?', (unsigned char)ch);
         /* Arm typematic for the newest press (a later press steals the repeat,
          * matching standard keyboard behaviour). */
         d->rep_kc = kc; d->rep_ch = ch;
@@ -677,8 +685,11 @@ static void process_mouse_report(struct usb_dev *d, const uint8_t *rpt) {
         g_mouse_x = nx; g_mouse_y = ny;
         g_mouse_btn = btn;
         g_mouse_events++;
-        printf("[xhci-mouse] x=%d y=%d dx=%d dy=%d wheel=%d btn=0x%x\n",
-               nx, ny, dx, dy, wheel, btn);
+        if (g_hid_debug) {
+            g_mouse_events_logged++;
+            printf("[xhci-mouse] x=%d y=%d dx=%d dy=%d wheel=%d btn=0x%x\n",
+                   nx, ny, dx, dy, wheel, btn);
+        }
     }
     d->prev_btn = btn;
 }
@@ -1315,6 +1326,12 @@ int xhci_diag_cmd(const char *args, char *buf, int bufsize) {
             g_led_request = 0x100 | 0x200;    /* use current lock state */
             return snprintf(buf, bufsize, "xHCI: LED request (current state) queued\n");
         }
+        if (p[0] == 'd' && p[1] == 'e' && p[2] == 'b' && p[3] == 'u'
+            && p[4] == 'g' && p[5] == '.') {
+            g_hid_debug = (int)(xdiag_hex(p + 6) & 1);
+            return snprintf(buf, bufsize, "xHCI: per-event HID logging = %d (key_events=%u)\n",
+                            g_hid_debug, g_key_events);
+        }
         if (p[0] == 'i' && p[1] == 'r' && p[2] == 'q' && p[3] == '.') {
             uint32_t on = xdiag_hex(p + 4) & 1;
             if (on && xhci_irq_ntfn == 0)
@@ -1328,7 +1345,7 @@ int xhci_diag_cmd(const char *args, char *buf, int bufsize) {
     int w = 0;
     uint32_t sts = op_r32(XHCI_USBSTS), cmd = op_r32(XHCI_USBCMD);
     w += snprintf(buf + w, bufsize - w,
-        "xHCI diag. cmds: .led.N (bit0 Num, 1 Caps, 2 Scroll)  .lock  .irq.0|1\n");
+        "xHCI diag. cmds: .led.N (bit0 Num, 1 Caps, 2 Scroll)  .lock  .irq.0|1  .debug.0|1\n");
     w += snprintf(buf + w, bufsize - w,
         "USBSTS=0x%x (HCH=%d HSE=%d HCE=%d CNR=%d)  USBCMD=0x%x (RS=%d INTE=%d)\n",
         sts, sts & 1, (sts >> 2) & 1, (sts >> 12) & 1, (sts >> 11) & 1,
