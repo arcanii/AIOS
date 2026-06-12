@@ -37,7 +37,8 @@ DEFAULT_KERNEL = os.path.join(REPO, "disk", "kernel8.img")
 REMOTE_PATH = "/tmp/kernel8.img"
 # Addresses the box has held across DHCP leases (checked after reboot),
 # plus the /etc/network.conf static fallback used when boot DHCP fails.
-DEFAULT_FALLBACK_HOSTS = ["192.168.0.8", "192.168.0.127", "192.168.0.250"]
+DEFAULT_FALLBACK_HOSTS = ["192.168.0.8", "192.168.0.127", "192.168.0.250",
+                          "192.168.0.197"]
 
 
 def step(msg):
@@ -98,6 +99,28 @@ def wait_for_board(host, timeout=300):
     return None
 
 
+def scan_netconsole(prefix, port=2323):
+    """Find every host with netconsole (:port) open on the /24. The Pi is the
+    only box that listens there, so this beats ping-based discovery -- DHCP
+    churn (.8/.127/.197/.250 this session) and decoy hosts that answer ICMP
+    but not :2323 (e.g. .197) repeatedly mis-routed the deploy. Returns a list
+    of live IPs (usually exactly one: the Pi)."""
+    import concurrent.futures as cf
+
+    def probe(ip):
+        try:
+            s = socket.socket()
+            s.settimeout(1.0)
+            r = s.connect_ex((ip, port))
+            s.close()
+            return ip if r == 0 else None
+        except OSError:
+            return None
+    ips = ["%s%d" % (prefix, i) for i in range(2, 255)]
+    with cf.ThreadPoolExecutor(max_workers=128) as ex:
+        return [r for r in ex.map(probe, ips) if r]
+
+
 def connect_netconsole(host, attempts=30, gap=15):
     """One careful connection (netconsole serves one client at a time)."""
     last = None
@@ -110,6 +133,22 @@ def connect_netconsole(host, attempts=30, gap=15):
             last = e
             time.sleep(gap)
     fail("netconsole did not come back: %s" % last)
+
+
+def find_pi(host, timeout=420):
+    """Locate the Pi's netconsole after a reboot, scan-based (not ping-based,
+    which latches onto ICMP-only decoys). Returns the IP, or None. The /24 is
+    taken from `host`; falls back to the known lease list inside it."""
+    prefix = host.rsplit(".", 1)[0] + "."
+    step("scanning %s0/24 for netconsole :2323 (up to %ds)..." % (prefix, timeout))
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        hits = scan_netconsole(prefix)
+        if hits:
+            step("netconsole found at %s" % ", ".join(hits))
+            return hits[0]
+        time.sleep(5)
+    return None
 
 
 def main():
@@ -137,12 +176,27 @@ def main():
     step("sha256: %s" % local_sha)
     step("banner: %s" % expect_banner)
 
-    if not ping_ok(a.host):
-        fail("%s does not answer ping -- is the Pi up?" % a.host)
-
     # ---- one connection: push + pull-back verify + fatswap (+ reboot) ----
-    step("connecting to netconsole %s:2323" % a.host)
-    nc = connect_netconsole(a.host, attempts=3, gap=5)
+    # Try the given host directly first (no scan -> no wasted connection-1,
+    # which matters: netconsole serves one session per boot and a bare scan
+    # connect+close can corrupt the next real connection). Only scan if the
+    # Pi has moved off a.host.
+    host = a.host
+    step("connecting to netconsole %s:2323" % host)
+    nc = None
+    try:
+        nc = fx.NC(host)
+        nc.expect(b"aios# ", to=150)
+    except (OSError, TimeoutError) as e:
+        step("%s did not answer (%s); scanning for the Pi..." % (host, e))
+        try:
+            nc.close()
+        except (OSError, AttributeError):
+            pass
+        host = find_pi(a.host, timeout=60)
+        if not host:
+            fail("no netconsole on the /24 -- is the Pi up?")
+        nc = connect_netconsole(host, attempts=3, gap=5)
 
     # Verify by PULLING the file back (__get: server-direct, ~1MB/s, no
     # exec) and byte-comparing locally. Faster and safer than an on-Pi
@@ -235,14 +289,14 @@ def main():
     except OSError:
         pass
 
-    time.sleep(10)   # let the board actually drop off before ping-waiting
-    back_host = wait_for_board(a.host, timeout=420)
+    time.sleep(10)   # let the board actually drop off before scanning
+    # Scan for the netconsole port rather than ping: a fresh lease can land
+    # anywhere and ICMP-only decoys (.197 this session) mis-route a ping wait.
+    back_host = find_pi(a.host, timeout=420)
     if not back_host:
-        fail("board did not come back after reboot -- check serial console")
+        fail("netconsole did not reappear after reboot -- check serial console")
 
-    step("waiting for netconsole to come back (fresh boots can sit in "
-         "multi-minute stall quanta -- this retries for a while)...")
-    time.sleep(8)    # getty forks netconsole shortly after boot
+    step("connecting to netconsole at %s for banner check..." % back_host)
     nc = connect_netconsole(back_host)
     out = nc.cmd("cat /proc/version", to=600).decode("utf-8", "replace")
     nc.close()
