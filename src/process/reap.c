@@ -12,6 +12,12 @@
 #include "aios/procfs.h"
 #include "aios/vka_audit.h"
 #include "aios/cow.h"
+#include "aios/mono_wait.h"   /* diag v0.4.201 */
+static uint64_t reap_diag_ms(uint64_t a, uint64_t b) {
+    uint64_t f; __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(f));
+    if (!f) f = 54000000;
+    return (b - a) * 1000ull / f;
+}
 
 /* Variable definitions (extern in root_shared.h) */
 wait_pending_t wait_pending[MAX_WAIT_PENDING];
@@ -41,15 +47,24 @@ void reap_forked_child(int child_idx) {
     int estatus = child->exit_status;
 
     /* v0.4.109: release per-process VKA audit pages before destroy */
+    uint64_t rd0 = mono_ticks();
     vka_audit_release_proc_pages(&child->audit_pages_allocated);
     /* v0.4.111: unmap COW R/O dup pages before vspace tear-down */
     cow_release_proc(child_idx);
+    uint64_t rd1 = mono_ticks();
     /* v0.4.183: release this proc's shared-text ref + clear its share slot so a
      * future occupant of this index does not inherit it. The child's frame-cap
      * copies are deleted by the vspace tear-down below; the master frames stay. */
     { extern void clear_shared_text(int ci); clear_shared_text(child_idx); }
+    uint64_t rd2 = mono_ticks();
     /* Destroy the process */
     sel4utils_destroy_process(&child->proc, &vka);
+    uint64_t rd3 = mono_ticks();
+    if (reap_diag_ms(rd0, rd3) > 250)
+        printf("[reap] SLOW pid=%d cow=%lums shtext=%lums destroy=%lums\n",
+               child_pid, (unsigned long)reap_diag_ms(rd0, rd1),
+               (unsigned long)reap_diag_ms(rd1, rd2),
+               (unsigned long)reap_diag_ms(rd2, rd3));
     /* Free fault endpoint: minted cap vs allocated endpoint */
     if (child->fault_on_pipe_ep) {
         seL4_CNode_Delete(seL4_CapInitThreadCNode,

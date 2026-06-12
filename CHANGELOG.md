@@ -4,6 +4,31 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.202 (2026-06-12)
+- **V3D Phase 1 HW-VERIFIED on a real Pi 4**: `.power` -> `.mmu` -> `.fault`
+  first light. The MMU programmed cleanly (PT@0xfb000000, 1M PTEs,
+  MMU_CTL=0x060d0c01), and the deliberate-fault probe hit every exit
+  criterion: CT1 kicked at the unmapped GPU VA 0x20000000, the hub latched
+  PTI (`hub_int_sts=0x10`), `CT1CA=0x20000001` proved the render thread
+  genuinely fetched at the target VA, and IDENT still passed after the
+  dump-and-reset. Core clock was already 250 MHz from firmware. One open
+  detail for Phase 2: `VIO_ADDR raw=0x04000018` does not decode to the
+  fault VA with Linux's `<<8` (CT1CA confirms the address independently).
+- Stall investigation (the "USB keyboard dies / system freezes" reports):
+  episodic 20-160 s whole-system stalls were proven KERNEL-INDEPENDENT by
+  A/B (v0.4.199 pool-on stalled, v0.4.200 pool-off stalled, v0.4.201/202
+  boots clean) -- a per-boot environmental fault, NOT the V3D Phase 1
+  change. Disproven along the way: the V3D pool grab (A/B + QEMU
+  force-enable), eMMC timeouts (none logged), the periodic flusher
+  (FS_SYNC is a no-op with dirty=0), EDID (errors on clean boots too).
+  Evidence points at the pipe server going dark (serverstats: pipe 51 ms
+  avg vs 19 us healthy) with per-boot USB-keyboard health as the leading
+  correlate. Left in place to catch the next natural occurrence: permanent
+  diag probes that print `[pipe] SLOW msg label=N badge=N took Nms` for
+  any pipe-server message over 250 ms and `[reap] SLOW` with phase
+  breakdown for slow teardowns. Healthy-boot baseline measured: fork
+  261 ms, exec 314-970 ms per spawn (the "sticky keyboard" feel).
+
 ## v0.4.199 (2026-06-11)
 - V3D GPU Phase 1 -- MMU + deliberate-fault probe (continues the HW-verified
   Phase 0 power/IDENT bring-up; see `docs/DESIGN_V3D_IMPLEMENTATION.md` §8).

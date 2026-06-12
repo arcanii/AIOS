@@ -15,6 +15,17 @@
 #include <sel4utils/elf.h>
 #include <simple/simple.h>
 #include "aios/root_shared.h"
+#include "aios/mono_wait.h"   /* diag v0.4.201 */
+
+/* diag v0.4.201: per-message latency probe state */
+static seL4_Word diag_prev_label = (seL4_Word)~0ul;
+static seL4_Word diag_prev_badge;
+static uint64_t  diag_prev_t0;
+static uint64_t pipe_diag_ms(uint64_t t0) {
+    uint64_t f; __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(f));
+    if (!f) f = 54000000;
+    return (mono_ticks() - t0) * 1000ull / f;
+}
 #include "aios/vka_audit.h"
 /* Signal fetch: client retrieves and clears pending bits */
 #ifndef PIPE_SIG_FETCH
@@ -780,8 +791,20 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
         }
 
         seL4_Word badge;
+        /* diag v0.4.201: report the previous message if its handler ran long */
+        if (diag_prev_label != (seL4_Word)~0ul) {
+            uint64_t dms = pipe_diag_ms(diag_prev_t0);
+            if (dms > 250)
+                printf("[pipe] SLOW msg label=%lu badge=%lu took %lums\n",
+                       (unsigned long)diag_prev_label,
+                       (unsigned long)diag_prev_badge, (unsigned long)dms);
+            diag_prev_label = (seL4_Word)~0ul;
+        }
         seL4_MessageInfo_t msg = seL4_Recv(ep, &badge);
         seL4_Word label = seL4_MessageInfo_get_label(msg);
+        diag_prev_t0 = mono_ticks();
+        diag_prev_label = label;
+        diag_prev_badge = badge;
 
         /* ---- Fault detection: labels below PIPE_CREATE are seL4 faults ---- */
         if (label < PIPE_CREATE && badge > 0 && badge <= MAX_ACTIVE_PROCS) {
