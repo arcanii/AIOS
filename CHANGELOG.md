@@ -4,6 +4,43 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.228 (2026-06-13)
+Source-B 32.4s whole-system freeze ROOT-CAUSED and CURED for normal use:
+restored 4-core SMP (KernelMaxNumNodes=4). The freeze is the kernel's
+`tlbi vae1` DVM COMPLETION hanging when the A72 SCU/L2 interconnect has
+quiesced; the SCU low-powers while cores sit in the armstub WFE standby, so on
+single-core (cores 1-3 parked in WFE) the first post-idle teardown TLBI hangs
+to the ~32.4s UBUS timeout. nodes=4 brings all cores up idle-spinning (no WFE),
+the SCU stays clocked, and the TLBI completes immediately.
+- The hunt (this session, HW A/B with zero USB devices, a compile-time bisect
+  gate + soak/serial-capture harness): PCIe **innocent** (PCIE_PROBE_LEVEL=0
+  still froze -> the v0.4.221 VL805/keyboard theory is dead), GENET **innocent**
+  (boot_net_init off, serial-only, still froze), eMMC-completion uninvolved
+  (counters 0), dsb-scope **not it** (`dsb nsh` hangs the same 32399ms as
+  `dsb sy`), A72 clock-gate registers had **no enabled gate to disable** (D3
+  dump: CPUECTLR=0x40/SMPEN-only, CPUACTLR=0, L2ECTLR=0). A split-DSB kernel
+  probe pinned the stall to the TLBI completion (`lead_dsb=0ms,
+  tlbi+trail_dsb=32399ms`); V5(nodes=4) being clean at idle proved the lever is
+  active-cores-keep-the-SCU-awake. Full writeup:
+  docs/NEXT_20260613_stall_retention_after_idle.md, project_stall_hunt memory.
+- HW-verified clean (build 2125): pre/L1(6 spawns, 9s)/L2(2x 1.6MB push)/idle
+  all stall-free where single-core was pervasively dirty (43.8s+ SLOW-OPs).
+- KNOWN RESIDUAL: a heavy spawn-storm (soak L3, 120 rapid teardowns) can still
+  hit a 32.4s quantum on nodes=4 -- a separate SMP IPI/remote-TLBI sub-issue,
+  tracked as a follow-up. Does not affect normal interactive use.
+- Bonus: +4x compute restored. All diagnostic instrumentation removed from the
+  shipped kernel (deps/kernel reverted to stock; QEMU/build-04 unaffected).
+
+## v0.4.227 (2026-06-13)
+Source-B hunt scaffolding + the netrx B3 fix (no functional kernel change vs
+.226; the hunt's A/B variants rode on this version). Shipped: the PCIE_AB_STOP
+compile-time bisect gate (pcie_brcmstb.c), scripts/{sercap,sourceb_soak,
+serial_soak,idle_dep_test,netrx_b3_repro,pcap_tcp_dump}.py, pi_flash scan-based
+Pi discovery (robust to DHCP churn + ICMP-only decoy hosts), and the netrx
+B3 graceful-abort contract (15/15: drop-every-3rd phase-locks with RTO recovery
+so netconsole's 10s no-progress abort fires by design; the test now asserts a
+clean bounded abort + relay survival instead of impossible byte-perfection).
+
 ## v0.4.226 (2026-06-12)
 netconsole RX profiling: coalesced the TCP window-reopen ACKs -- a correct,
 standard change that did NOT move throughput (honest negative result).

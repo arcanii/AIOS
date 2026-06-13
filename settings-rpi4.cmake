@@ -27,12 +27,20 @@ set(RPI4_MEMORY "4096" CACHE STRING "" FORCE)
 # register the elfloader mini-UART console (deps bcm-uart.c uart_set_out, the
 # putchar is bounded) and keep the known-good mini-UART config (no disable-bt,
 # core_freq=250). See the project_rpi4_smp memory + hw/rpi4/BOOT_NOTES.md.
-# v0.4.220: single-core. The BCM2711 whole-system 32.4s stalls (TLBI+DSB) have
-# TWO triggers: WFI retention (fixed by the no-WFI idle) and an SMP-build
-# broadcast-TLBI path (unfixed). All AIOS threads and children are pinned to
-# core 0 anyway, so SMP=4 currently buys nothing. Restore to 4 only with the
-# stall A/B harness in hand (see project_stall_hunt memory).
-set(KernelMaxNumNodes 1 CACHE STRING "" FORCE)
+# v0.4.228: 4-core SMP -- this IS the Source-B cure. The BCM2711 whole-system
+# 32.4s freeze is the `tlbi vae1` DVM COMPLETION hanging when the A72 SCU/L2
+# interconnect has quiesced. The SCU low-powers when cores sit in the armstub
+# WFE standby; on nodes=1, cores 1-3 are parked in WFE so the SCU quiesces and
+# the first post-idle teardown TLBI hangs to the ~32.4s UBUS timeout. nodes=4
+# brings all cores up (idle-spinning, no WFE) so the SCU stays clocked and the
+# TLBI completes immediately -- HW-verified clean at idle/boot/light-load.
+# The hunt that established this: PCIe/GENET/eMMC/dsb-scope/A72-clock-gate-regs
+# all ruled out; split-DSB diag pinned it to the TLBI completion; D3 A72-reg
+# dump showed no enabled gate to disable; V5(nodes=4) was clean at idle because
+# active cores keep the SCU awake (project_stall_hunt; NEXT_20260613).
+# RESIDUAL: a heavy spawn-storm can still stall on nodes=4 -- a separate
+# SMP IPI/remote-TLBI sub-issue, tracked as a follow-up.
+set(KernelMaxNumNodes 4 CACHE STRING "" FORCE)
 
 # Debug
 set(KernelVerificationBuild OFF CACHE BOOL "" FORCE)
