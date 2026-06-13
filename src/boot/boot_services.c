@@ -197,6 +197,20 @@ void boot_start_services(vka_object_t *fault_ep) {
     flush_server_init();
     proc_add("flush", 200);
 
+#ifdef AIOS_NETD
+    /* netd de-monolithization (DESIGN_NETD Stage 2): spawn the MMU-isolated netd
+     * skeleton and drive its spawn / fault-listener / reply-sweep selftests. The
+     * skeleton runs on its OWN test endpoint -- the real net stack still serves
+     * net_ep in the root task (the Stage 3 cutover is a separate change) -- so
+     * this is purely additive and touches no net globals. Placed before the
+     * tty/auth/getty spawn so the skeleton's crash-containment fault is taken
+     * mid-boot, demonstrating the system still comes all the way up to login. */
+    {
+        extern void spawn_netd(void);
+        spawn_netd();
+    }
+#endif
+
     /* Spawn tty_server (CPIO, isolated process). Pass the display_server endpoint as
      * a 2nd cap (argv[1]) so tty output mirrors to the HDMI fb_console -- the shell is
      * then visible on HDMI for standalone USB-keyboard use. Omitted if no display. */

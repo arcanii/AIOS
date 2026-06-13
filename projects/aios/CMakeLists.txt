@@ -53,6 +53,11 @@ endmacro()
 
 # System services
 AiosChildApp(auth_server)
+# netd: MMU-isolated network daemon skeleton (DESIGN_NETD Stage 2). Pure leaf
+# server, raw seL4 IPC (no aios_posix), like tty_server/auth_server. Only
+# spawned + bundled into the CPIO when AIOS_NETD is ON (see below); the binary
+# always builds so the skeleton stays compile-checked.
+AiosChildApp(netd)
 AiosChildApp(hello_child)
 AiosChildApp(echo_server)
 AiosChildApp(serial_server)
@@ -87,6 +92,7 @@ AiosPosixApp(fatswap)
 AiosPosixApp(sntp)
 AiosPosixApp(fbshow)
 AiosPosixApp(tcp_connect)
+AiosPosixApp(netdiag)
 AiosPosixApp(test_fswrite)
 AiosPosixApp(test_smp)
 AiosPosixApp(test_pipe_rw)
@@ -100,8 +106,18 @@ AiosPosixApp(posix_verify
     SRCS ${CMAKE_CURRENT_SOURCE_DIR}/../../src/apps/posix_verify.c
 )
 
+# netd de-monolithization (DESIGN_NETD). OFF = the net stack runs in the root
+# task as today (zero change; the CPIO and root binary are unaffected). ON =
+# bundle + spawn the isolated netd skeleton and drive its Stage-2 selftests;
+# Stage 3 will move the net stack itself behind this same flag.
+option(AIOS_NETD "Spawn the isolated netd process (DESIGN_NETD)" OFF)
+
 # Boot services only in CPIO (launched before filesystem)
 set(BOOT_APPS tty_server auth_server)
+# netd joins the CPIO ONLY when AIOS_NETD is ON, so flag-OFF images are unchanged.
+if(AIOS_NETD)
+    list(APPEND BOOT_APPS netd)
+endif()
 set(CPIO_FILES "")
 foreach(app ${BOOT_APPS})
     if(CPIO_FILES)
@@ -158,6 +174,7 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/boot/boot_fs_init.c
     ${AIOS_ROOT}/src/lib/vka_audit.c
     ${AIOS_ROOT}/src/boot/boot_services.c
+    ${AIOS_ROOT}/src/boot/spawn_netd.c
     ${AIOS_ROOT}/src/boot/boot_net_init.c
     ${AIOS_ROOT}/src/boot/boot_display_init.c
     ${AIOS_ROOT}/src/boot/fb_console.c
@@ -185,6 +202,10 @@ target_link_libraries(aios_root sel4runtime sel4
     cpio elf fdt)
 target_include_directories(aios_root PRIVATE ${AIOS_ROOT}/include ${AIOS_ROOT}/src/arch ${AIOS_ROOT}/src ${AIOS_ROOT}/src/crypto)
 target_compile_definitions(aios_root PRIVATE ${AIOS_PLATFORM})
+if(AIOS_NETD)
+    target_compile_definitions(aios_root PRIVATE AIOS_NETD)
+    message(STATUS "AIOS_NETD=ON: bundling + spawning the isolated netd skeleton (DESIGN_NETD Stage 2)")
+endif()
 target_link_options(aios_root PRIVATE -Wl,--no-copy-dt-needed-entries)
 
 DeclareRootserver(aios_root)

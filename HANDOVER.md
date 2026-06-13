@@ -10,9 +10,13 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
 ## Quick orientation
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4.
-* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.187**
-  (Tier 0 review work: THIRD_PARTY_LICENSES/CONTRIBUTING/CHANGELOG/clangd +
-  SSH backoff + pre-auth hardening; see CHANGELOG.md).
+* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.231**
+  (netd de-monolithization Stages 0-2 -- see the DONE section below. Stage 2
+  proved the reply-sweep kernel bet; next is Stage 3, the real net cutover). The
+  v0.4.188-228 arcs (USB HID,
+  V3D, the Source-B 32.4s stall CURE, fatswap flash-over-network, ext2 group
+  layout, RPi4 4-core SMP) are captured in the memory index + `docs/NEXT_*.md`,
+  not inline here.
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4).
 * **Host**: macOS Apple Silicon, cross-compile to aarch64-linux-gnu.
 * **Developer**: Bryan -- prefers Python patch scripts over sed/heredocs; no
@@ -40,6 +44,60 @@ Honor it; this session learned the hard way what happens when you do not.
 * **QEMU cannot model:** RPi4 cache attributes, the VC mailbox, eMMC single-block
   write latency, GENET timing, and the fork/pipe/socket event-loop path. Verify
   those on the Pi -- but via push-over-net + serial, not reflashes.
+
+---
+
+## DONE: netd de-monolithization Stages 0-2 -- v0.4.229-231 (2026-06-13)
+
+Moving the net subsystem out of the root task into an isolated `netd` process
+(`docs/DESIGN_NETD.md`, staged 0-4). Stage-2 seed (now fulfilled):
+`docs/NEXT_20260613b_netd_stage2.md`. **Next: Stage 3 (real net cutover).**
+
+* **Stage 0** v0.4.229 (`000203a`, PUSHED) -- in-root hardening, zero behaviour
+  change: `include/aios/net_proto.h` (centralized NET IPC labels 90-103 +
+  `_Static_assert` against the posix `_L` mirror); the RST/close reply-slot
+  poisoning fix in net_server.c (`net_sock_wake_reset`/`net_sock_drop_parked`/
+  `net_park_caller` -- delete-first + rc-check at all SaveCaller sites);
+  cleanup-proxy (64-entry SPSC pid ring + sacrificial proxy thread in
+  pipe_server, so a wedged net server cannot freeze process management);
+  serverstats net row enabled=1 + `dead` state; connect() lazy-PID-resolve; new
+  `src/apps/nettest.c` + `scripts/net_socket_qemu_test.py`. QEMU socket suite
+  8/8 (incl a 200KB bulk-RX burst) + ssh 6/6.
+* **Stage 1** v0.4.230 (`1616e0f`, ahead-1, ASK before pushing) -- merged the
+  dedicated RX driver thread into net_server: `plat_net_drain()` (new in
+  `src/plat/net_hal.h`, per-platform in net_virtio.c + net_genet.c) at the
+  loop top + in dhcp_poll_rx; the RX IRQ notification is BOUND to the net_server
+  TCB; NAPI re-check folded into the drain; badge=1 IRQ / badge=2 kick mints;
+  net_srv_ntfn + the driver thread + its /proc row removed. QEMU 8/8 + ssh 6/6,
+  and **HW-VERIFIED on the real RPi4** (build 2150: DHCP, GENET IRQ-RX climbing,
+  ping 40/40 0% loss, netconsole). GENET register sequences unchanged.
+* **Stage 2 (skeleton process) DONE** v0.4.231 -- the netd SKELETON: an
+  MMU-isolated CPIO process (`src/apps/netd.c`) spawned by a custom
+  `src/boot/spawn_netd.c` (own cnode/vspace, prio 200, fault EP = a dedicated
+  ctrl EP; `include/aios/netd_skel.h` is the shared throwaway protocol). Proves
+  the leaf-driver mechanism before any net code moves: argv-cap parse, ntfn
+  self-bind, DEVD_READY handshake to a dedicated root fault-listener thread,
+  deferred replies via child-cnode SaveCaller (reserved slots via
+  `cspace_next_free`), and crash containment. **THE KERNEL BET (DESIGN_NETD s10
+  reply-sweep) IS PROVEN:** on non-MCS seL4, root CAN `seL4_CNode_Move` a
+  netd-saved reply cap out of netd's cnode into a root slot and `seL4_Send` it to
+  WAKE the parked caller (verified end-to-end, token 0xd00d) -- so the
+  crash-recovery sweep is viable, and Stage 3 can proceed on that footing.
+  Everything is gated behind `option(AIOS_NETD OFF)`: flag OFF = behavioral
+  parity (CPIO + boot path unchanged; spawn_netd.c compiles to nothing). New
+  `scripts/netd_qemu_test.py` 9/9 (in-netd self-wake, reply-sweep, NETD_CRASH ->
+  fault listener -> shell/fs/pipe/net still serve). `/bin/netdiag` shipped (a
+  socket-liveness probe today; the Stage-3 NET_DIAG home). VERIFIED: build-04 +
+  build-rpi4 build flag-OFF; flag-ON `build-netd` 9/9; flag-OFF parity ssh 6/6 +
+  net_socket 8/8; netdiag REACHABLE. (netcon_qemu_test flaked on its serial-login
+  prompt under boot-log spam -- a PRE-EXISTING fragility, flag-OFF-inert;
+  netconsole itself is proven by net_socket's 8/8. The spawn page-cost counter
+  reads delta 0 because a sel4utils CPIO spawn allocates via its own vspace path,
+  invisible to vka_live_frames -- capacity is the >=30-pipeline gate, deferred.)
+  ahead-2 of origin (Stage 1 + Stage 2; ASK before pushing).
+* **Lesson:** an "ext2 image-builder bug" this session was a MISDIAGNOSIS -- a
+  one-time concurrent write to `disk/disk_ext2.img` from another session. The
+  builder is deterministic. See `feedback_qemu_test_hygiene`.
 
 ---
 
