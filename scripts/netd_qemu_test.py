@@ -1,35 +1,33 @@
 #!/usr/bin/env python3
-"""QEMU selftest for the netd skeleton (DESIGN_NETD Stage 2, AIOS_NETD=ON).
+"""QEMU test for the netd Stage 3 CUTOVER (DESIGN_NETD s3/s8/s10, AIOS_NETD=ON).
 
 Builds a dedicated AIOS_NETD=ON kernel (build-netd/, so build-04 stays flag-OFF),
-boots it, and checks the boot-time selftest that spawn_netd drives over the
-serial console. The skeleton runs on its OWN test endpoint; the real net stack
-still serves net_ep in the root task, so networking (netconsole) keeps working --
-which is itself the crash-containment proof.
+boots it, and verifies that the net stack now runs in the MMU-isolated netd
+process AND that a netd crash is contained + recovered. Everything is driven over
+the QEMU SERIAL console -- NOT over netconsole, because the crash demo destroys
+the very net path netconsole rides on (s10): netconsole/sshd live in blocking
+accept inside netd, so when netd dies the reply-sweep errors them out.
 
-What it asserts (all from spawn_netd.c / netd.c serial output):
-  - the isolated netd process spawns + parses its argv caps + self-binds its ntfn
-  - it announces DEVD_READY; the dedicated root fault listener receives it
-  - NETD_PING round-trips                                        (liveness)
-  - NETD_BLOCK_KICK: netd defers the reply into its OWN cnode and self-wakes the
-    caller on a badge-2 kick  (child-cnode SaveCaller + Send + Delete)  -> 0x600d
-  - NETD_BLOCK_SWEEP: root CNode_Moves netd's saved reply cap out and Sends it
-    -> 0xd00d  == THE KERNEL BET (DESIGN_NETD s10 reply-sweep) PROVEN
-  - NETD_CRASH: the fault is delivered to the listener, decoded, and CONTAINED;
-    the system still comes up to a working netconsole shell.
+What it asserts (from serial):
+  bring-up (s3/s8): netd spawns, self-binds, plat_net_init runs in netd, the root
+    listener gets DEVD_READY -> publishes net_ep, netd's own DHCP gets a lease;
+  /proc/net (s6): the IPC-free stats page shows a live heartbeat + dev_init_done;
+  serverstats: the SRV_NET row is fed by the heartbeat (no SVC_PING to netd);
+  crash containment + recovery (s10): cat /proc/netd.crash faults netd; the root
+    fault listener logs the fault + runs the reply-slot sweep + clears the IRQ;
+    the shell/fs/pipe keep serving (echo round-trips); serverstats renders net
+    "dead". A wedged-or-crashed netd never takes the system down.
 
 Per qemu-test-hygiene: PRIVATE disk copies in a tempdir, a test-unique serial
-socket + host ports, and only this script's own QEMU is torn down.
+socket, and only this script's own QEMU is torn down.
 """
 import importlib.util
 import os
-import re
 import shutil
 import socket
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -46,14 +44,12 @@ ac = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ac)
 
 SOCK = "/tmp/aios-netd-%d.sock" % os.getpid()
-PORT_BASE = 36600 + (os.getpid() % 1500)
-P_NETCON = PORT_BASE + 0
 
 
 def ensure_build():
     """Configure (if needed) + build the AIOS_NETD=ON kernel in build-netd/."""
     if os.path.exists(KERNEL) and os.environ.get("AIOS_NETD_KERNEL"):
-        return True   # caller supplied a prebuilt kernel
+        return True
     os.makedirs(BUILD, exist_ok=True)
     if not os.path.exists(os.path.join(BUILD, "CMakeCache.txt")):
         print("=== configuring %s (AIOS_NETD=ON) ===" % BUILD, flush=True)
@@ -87,47 +83,9 @@ def qemu_cmd(disk, logdisk):
         if path and os.path.exists(path):
             cmd += ["-drive", "file=%s,format=raw,if=none,id=hd%d" % (path, i),
                     "-device", "virtio-blk-device,drive=hd%d" % i]
-    cmd += ["-netdev", "user,id=n0,hostfwd=tcp:127.0.0.1:%d-:2323" % P_NETCON,
-            "-device", "virtio-net-device,netdev=n0"]
+    # netd needs a NIC to provision; user-mode net answers DHCP.
+    cmd += ["-netdev", "user,id=n0", "-device", "virtio-net-device,netdev=n0"]
     return cmd
-
-
-class SerialCapture:
-    """Continuously drain the guest serial socket (so the TTY never blocks) while
-    accumulating everything for substring checks."""
-    def __init__(self, sk):
-        self.sk = sk
-        self.buf = ""
-        self.lock = threading.Lock()
-        self.stop = threading.Event()
-        self.t = threading.Thread(target=self._run, daemon=True)
-        self.t.start()
-
-    def _run(self):
-        self.sk.settimeout(0.5)
-        while not self.stop.is_set():
-            try:
-                d = self.sk.recv(4096)
-            except (socket.timeout, OSError):
-                continue
-            if not d:
-                return
-            with self.lock:
-                self.buf += d.decode("utf-8", "replace")
-
-    def text(self):
-        with self.lock:
-            return self.buf
-
-    def wait_for(self, pat, deadline):
-        while time.time() < deadline:
-            if pat in self.text():
-                return True
-            time.sleep(0.5)
-        return pat in self.text()
-
-    def close(self):
-        self.stop.set()
 
 
 def main():
@@ -154,80 +112,93 @@ def main():
         print("  [%s] %s %s" % ("PASS" if ok else "FAIL", name, detail), flush=True)
 
     proc = None
-    cap = None
+    sock = None
+    logpath = os.path.join(tmp, "serial.log")
+    logf = open(logpath, "w")
     try:
         proc = subprocess.Popen(qemu_cmd(disk, logdisk))
-        serial = ac.connect_qemu_socket(SOCK, timeout=20)
-        cap = SerialCapture(serial)
+        sock = ac.connect_qemu_socket(SOCK, timeout=20)
+        sess = ac.Console(sock.fileno(), logfile=logf, echo=False)
 
-        # The selftest runs during boot (before getty). Wait out the slow boot
-        # for the final containment line, then evaluate every check against the
-        # captured serial. Boot is slow under VKA/morecore pressure.
-        print("=== waiting for netd selftest (boot can take ~120s) ===", flush=True)
-        deadline = time.time() + 240
-        got_fault = cap.wait_for("[netd-listener] FAULT", deadline)
+        # --- bring-up (s3/s8): netd spawns, READY published, netd does DHCP. Boot
+        # is slow under VKA/morecore pressure, so be generous. ---
+        print("=== waiting for netd bring-up (boot can take ~120s) ===", flush=True)
+        pat, _ = sess.read_until("net_ep published", 240)
+        check("netd READY -> net_ep published (s3/s8)", pat is not None)
+        pat, _ = sess.read_until(["DHCP: lease acquired", "DHCP result: bound=1"], 90)
+        check("netd DHCP lease (net stack runs in netd)", pat is not None)
 
-        txt = cap.text()
-
-        def has(pat):
-            return pat in txt
-
-        check("spawn + argv + self-bind", has("[netd] skeleton up:"))
-        check("DEVD_READY -> listener", has("skeleton READY"))
-        check("NETD_PING round-trip", has("[netd-test] PING rc=0"))
-        check("in-netd park + badge-2 self-wake (KICK)",
-              has("[netd-test] KICK woke rc=0x600d"))
-        check("reply-sweep CNode_Move (err=0)",
-              bool(re.search(r"\[netd-sweep\] CNode_Move .*err=0", txt)))
-        check("reply-sweep Send issued", has("[netd-sweep] reply Send issued"))
-
-        # THE BET: did the root reply-sweep wake netd's parked caller?
-        swept = has("[netd-test] SWEEP woke rc=0xd00d")
-        sweep_detail = "" if swept else (
-            "BET KILLED: Send issued but caller never woke"
-            if has("[netd-sweep] reply Send issued")
-            else "(no sweep output captured)")
-        check("REPLY-SWEEP PROVEN (root woke a netd-parked caller)",
-              swept, sweep_detail)
-
-        check("crash delivered + CONTAINED",
-              got_fault and has("CONTAINED"))
-
-        # Post-crash liveness: the in-root net stack + shell must still work after
-        # the netd skeleton died mid-boot. netconsole auto-starts (getty forks it).
-        nc = None
-        ncd = time.time() + 120
-        while time.time() < ncd:
+        # --- login over serial. Let boot FULLY settle first: while the system is
+        # under VKA/morecore pressure, pipe_server prints "[pipe] SLOW msg" lines
+        # that interleave with -- and split -- getty's "Password:" prompt (the
+        # documented serial-login fragility). Drain ~30s so IPCs are fast + the
+        # prompt is contiguous, then log in (retry once for a stray tlbi line). ---
+        sess.read_until("\x00settle\x00", 30)   # drain; no match -> just waits
+        logged_in = False
+        for _attempt in range(3):
+            sess.buf = ""
             try:
-                nc = socket.create_connection(("127.0.0.1", P_NETCON), timeout=10)
-                nc.settimeout(2.0)
+                sess.ensure_shell("root", "root", 60, nudge=True, settle=1.0)
+                logged_in = True
                 break
-            except OSError:
-                nc = None
-                time.sleep(2.0)
-        alive = False
-        if nc is not None:
-            try:
-                # read the banner/prompt, then echo a unique token
-                _drain_until(nc, "aios# ", 8)
-                token = "NETD_ALIVE_%d" % os.getpid()
-                nc.sendall(("echo %s\n" % token).encode())
-                alive = _drain_until(nc, token, 10)
-            except (OSError, TimeoutError):
-                alive = False
-            finally:
-                try:
-                    nc.close()
-                except OSError:
-                    pass
-        check("system alive after netd crash (netconsole shell)", alive)
+            except (TimeoutError, RuntimeError):
+                time.sleep(3)
+        check("serial login (post-settle)", logged_in)
+        if not logged_in:
+            raise RuntimeError("serial login failed after retries")
+
+        # --- /proc/net (s6): the IPC-free heartbeat page is live ---
+        out = sess.run("cat /proc/net", 15)
+        check("/proc/net heartbeat live (s6)",
+              "heartbeat:" in out and "dev_init_done: 1" in out,
+              "" if "heartbeat:" in out else "(no heartbeat line)")
+
+        # --- serverstats: SRV_NET fed by the heartbeat, shown ok pre-crash ---
+        out = sess.run("cat /proc/serverstats", 15)
+        net_row = [ln for ln in out.splitlines() if ln.startswith("net ")]
+        pre_ok = bool(net_row) and (" ok " in net_row[0] or net_row[0].split()[1] == "ok")
+        check("serverstats net ok pre-crash", pre_ok,
+              net_row[0] if net_row else "(no net row)")
+
+        # --- crash containment + recovery (s10). The fault + sweep happen so fast
+        # that the listener's serial output INTERLEAVES with the cat command's own
+        # output, so per-command substring matching is unreliable -- assert against
+        # the full captured serial log instead. ---
+        sess.run("cat /proc/netd.crash", 15)       # trigger (output interleaves)
+        sess.read_until("\x00drain\x00", 8)         # let the listener finish printing
+        logf.flush()
+        with open(logpath) as f:
+            full = f.read()
+        check("crash trigger reached netd", "NET_DIAG crash trigger" in full)
+        check("netd fault contained (s10)", "netd-listener] FAULT" in full)
+        check("reply-slot sweep ran + IRQ cleared (s10)",
+              "swept" in full and "IRQ cleared" in full)
+
+        # shell/fs/pipe still serve after netd died
+        token = "NETD_ALIVE_%d" % os.getpid()
+        out = sess.run("echo %s" % token, 15)
+        check("system alive after netd crash (shell/fs/pipe)", token in out)
+
+        # serverstats renders the net row dead (net_ep_cap zeroed by the listener)
+        out = sess.run("cat /proc/serverstats", 15)
+        net_row = [ln for ln in out.splitlines() if ln.startswith("net ")]
+        dead = bool(net_row) and "dead" in net_row[0]
+        check("serverstats net dead post-crash", dead,
+              net_row[0] if net_row else "(no net row)")
 
     except Exception as e:   # noqa: BLE001
         print("EXCEPTION: %r" % e)
         check("driver", False, repr(e))
     finally:
-        if cap is not None:
-            cap.close()
+        try:
+            logf.close()
+        except OSError:
+            pass
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
         if proc is not None:
             proc.terminate()
             try:
@@ -236,31 +207,16 @@ def main():
                 proc.kill()
         if os.path.exists(SOCK):
             os.unlink(SOCK)
-        shutil.rmtree(tmp, ignore_errors=True)
+        print("serial log: %s" % os.path.join(tmp, "serial.log"))
+        # keep the tmp serial log on failure for postmortem; clean on success
+        npass_ = sum(1 for _, ok, _ in results if ok)
+        if npass_ == len(results) and results:
+            shutil.rmtree(tmp, ignore_errors=True)
 
     npass = sum(1 for _, ok, _ in results if ok)
     ntot = len(results)
-    print("\n=== netd Stage-2 selftest: %d/%d passed ===" % (npass, ntot))
+    print("\n=== netd Stage-3 cutover test: %d/%d passed ===" % (npass, ntot))
     return 0 if npass == ntot and ntot > 0 else 1
-
-
-def _drain_until(sk, pat, timeout):
-    """Read from a socket until `pat` is seen or timeout; return True if seen."""
-    buf = ""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            d = sk.recv(4096)
-        except socket.timeout:
-            continue
-        except OSError:
-            return False
-        if not d:
-            return pat in buf
-        buf += d.decode("utf-8", "replace")
-        if pat in buf:
-            return True
-    return pat in buf
 
 
 if __name__ == "__main__":

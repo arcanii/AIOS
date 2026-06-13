@@ -21,6 +21,7 @@
  */
 #include "aios/root_shared.h"
 #include "aios/vka_audit.h"
+#include "aios/netd_stats.h"   /* netd Stage 3 (s6): the SRV_NET heartbeat source */
 #include "crypto_server.h"
 #include <sel4/sel4.h>
 #include <sel4utils/thread.h>
@@ -47,6 +48,7 @@ typedef struct {
     uint64_t    last_ok_us;
     uint64_t    last_attempt_us;
     uint32_t    last_latency_us;
+    uint64_t    hb_seen;          /* netd Stage 3: last heartbeat observed (SRV_NET) */
 } srv_t;
 
 #define SRV_PIPE   0
@@ -92,10 +94,35 @@ static void ping_one(srv_t *s) {
     s->pings_ok++;
 }
 
+#ifdef AIOS_NETD
+/* netd Stage 3 (DESIGN_NETD s5/s6): the SRV_NET row when net runs in the isolated
+ * netd process. NEVER Call netd -- an untimed seL4_Call to a hung netd would wedge
+ * this probe thread and freeze EVERY row. Instead kick netd via its badge-2 ntfn
+ * (non-blocking) so its loop bumps the heartbeat even on an idle link, then read
+ * the heartbeat IPC-free from the stats page. A frozen heartbeat (netd wedged)
+ * shows as a growing age_s; a zeroed net_ep_cap (netd crashed) renders "dead". */
+static void netd_probe(srv_t *s) {
+    if (!s->enabled || !s->ep_p || *s->ep_p == 0) return;   /* render shows dead */
+    if (net_kick_ntfn_cap) seL4_Signal(net_kick_ntfn_cap);
+    s->last_attempt_us = now_us();
+    if (netd_stats_root) {
+        uint64_t hb = netd_stats_root->heartbeat;
+        if (hb != s->hb_seen) {           /* advanced since last probe -> alive */
+            s->hb_seen = hb;
+            s->last_ok_us = now_us();
+            s->pings_ok++;
+        }
+    }
+}
+#endif
+
 static void probe_thread_fn(void *a, void *b, void *c) {
     (void)a; (void)b; (void)c;
     while (1) {
         for (int i = 0; i < SRV_COUNT; i++) {
+#ifdef AIOS_NETD
+            if (i == SRV_NET) { netd_probe(&srv[i]); continue; }
+#endif
             ping_one(&srv[i]);
         }
         probe_sleep(PROBE_PERIOD_SEC);

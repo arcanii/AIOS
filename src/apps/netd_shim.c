@@ -25,6 +25,7 @@
 #include "aios/root_shared.h"   /* net_mac, net_available, net_*_cap, net_rx_ring extern */
 #include "aios/net.h"           /* full struct net_rx_ring definition */
 #include "aios/config.h"        /* net_cfg_ip/gw/mask extern */
+#include "aios/netd_stats.h"    /* struct netd_stats (the /proc/net page) */
 
 /* --- root_shared.h net globals (root defines these in aios_root.c) --- */
 uint8_t   net_mac[6];
@@ -44,3 +45,9 @@ uint8_t net_cfg_mask[4];
  *     in netd main (Stage 3); net_server.c reads it to populate its reply-slot
  *     arrays instead of calling vka. --- */
 seL4_CPtr netd_reply_slot_base;
+
+/* --- netd /proc/net stats page (DESIGN_NETD s6): a cacheable-both single-writer
+ *     frame root maps + copies to netd; netd writes the heartbeat + dhcp/ip/mac/
+ *     socket state into it each event-loop iteration. NULL until set from argv in
+ *     netd main; net_server.c writes through it via netd_stats_update(). --- */
+struct netd_stats *netd_stats_page;

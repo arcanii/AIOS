@@ -35,6 +35,7 @@
 #include "aios/root_shared.h"
 #include "aios/netd_ctrl.h"
 #include "aios/netd_handoff.h"
+#include "aios/netd_stats.h"
 #include "aios/net.h"
 #include "aios/config.h"
 #include "aios/mono_wait.h"
@@ -267,6 +268,38 @@ void spawn_netd(seL4_CPtr net_ep) {
         return;
     }
 
+    /* 6b. Stats page (DESIGN_NETD s6): one CACHEABLE-BOTH single-writer frame. Map
+     * the original cacheable in root (the fs thread renders /proc/net + serverstats
+     * reads the heartbeat IPC-free), copy the cap, map the copy CACHEABLE in netd
+     * (netd is the sole writer). Same memory type both ends per the v0.4.165
+     * pipe-SHM rule; root + netd both run on core 0 so a volatile read is coherent. */
+    void *stats_netd_va = NULL;
+    {
+        vka_object_t stf;
+        if (vka_alloc_frame(&vka, seL4_PageBits, &stf)) {
+            AIOS_LOG_ERROR("netd: stats frame alloc failed -- skipping spawn");
+            return;
+        }
+        void *root_va = vspace_map_pages(&vspace, &stf.cptr, NULL,
+                                         seL4_AllRights, 1, seL4_PageBits, 1 /*cacheable*/);
+        if (!root_va) { AIOS_LOG_ERROR("netd: stats root map failed"); return; }
+        for (size_t i = 0; i < sizeof(struct netd_stats); i++)
+            ((volatile uint8_t *)root_va)[i] = 0;
+        netd_stats_root = (struct netd_stats *)root_va;
+
+        cspacepath_t ssrc, sdst;
+        vka_cspace_make_path(&vka, stf.cptr, &ssrc);
+        if (vka_cspace_alloc_path(&vka, &sdst) ||
+            seL4_CNode_Copy(sdst.root, sdst.capPtr, sdst.capDepth,
+                            ssrc.root, ssrc.capPtr, ssrc.capDepth, seL4_AllRights)) {
+            AIOS_LOG_ERROR("netd: stats frame copy failed -- skipping spawn");
+            return;
+        }
+        stats_netd_va = vspace_map_pages(&netd_proc.vspace, &sdst.capPtr, NULL,
+                                         seL4_AllRights, 1, seL4_PageBits, 1 /*cacheable*/);
+        if (!stats_netd_va) { AIOS_LOG_ERROR("netd: stats netd map failed"); return; }
+    }
+
     /* 7. Reserve the SaveCaller reply-slot range AFTER all donations: take the
      * current cspace cursor as the base, then bump it past the range so the spawn
      * never reuses these slots. net_server.c (in netd) parks reply caps here; the
@@ -310,6 +343,7 @@ void spawn_netd(seL4_CPtr net_ep) {
     vals[NETD_ARGV_CFG_GW]      = (seL4_Word)gwp;
     vals[NETD_ARGV_CFG_MASK]    = (seL4_Word)maskp;
     vals[NETD_ARGV_FLAGS]       = 0;
+    vals[NETD_ARGV_STATS_VADDR] = (seL4_Word)(uintptr_t)stats_netd_va;
     vals[NETD_ARGV_REPLY_BASE]  = (seL4_Word)netd_reply_base;
     for (int i = 0; i < NETD_ARGV_COUNT; i++) {
         snprintf(a[i], sizeof a[i], "%lu", (unsigned long)vals[i]);

@@ -33,11 +33,15 @@
 #include "aios/root_shared.h"    /* net_available, net_ep_cap, net_drv_ntfn_cap, net_server_fn */
 #include "aios/net.h"
 #include "aios/config.h"         /* net_cfg_ip/gw/mask */
+#include "aios/netd_stats.h"     /* struct netd_stats (the /proc/net page) */
 #include "plat/net_hal.h"        /* plat_net_dev_attach, plat_net_init */
 
 /* netd-local reply-slot base (netd_shim.c); net_server.c reads it to address its
  * SaveCaller slots in the netd cnode instead of calling vka. */
 extern seL4_CPtr netd_reply_slot_base;
+/* netd-local /proc/net stats page (netd_shim.c); net_server.c writes the
+ * heartbeat + state through it each loop iteration (DESIGN_NETD s6). */
+extern struct netd_stats *netd_stats_page;
 
 static seL4_Word aw(const char *s) {
     seL4_Word v = 0;
@@ -65,6 +69,7 @@ int main(int argc, char **argv) {
     uintptr_t dma_va  = (uintptr_t)aw(argv[NETD_ARGV_DMA_VADDR]);
     uint64_t  dma_pa  = (uint64_t)aw(argv[NETD_ARGV_DMA_PADDR]);
     seL4_Word macp    = aw(argv[NETD_ARGV_MAC]);
+    uintptr_t stats_va= (uintptr_t)aw(argv[NETD_ARGV_STATS_VADDR]);
     seL4_Word rbase   = aw(argv[NETD_ARGV_REPLY_BASE]);
 
     /* Static IP config (DHCP fallback) -- root parsed /etc/network.conf. */
@@ -110,6 +115,9 @@ int main(int argc, char **argv) {
 
     /* net_server.c addresses its SaveCaller slots as rbase + {0,8,16} + sid. */
     netd_reply_slot_base = (seL4_CPtr)rbase;
+    /* /proc/net stats page (s6): net_server_fn writes the heartbeat + state here
+     * each loop iteration. Mapped cacheable by root at this vaddr in netd. */
+    netd_stats_page = (struct netd_stats *)stats_va;
 
     /* Announce readiness BEFORE DHCP (DESIGN_NETD s8): device init is
      * milliseconds, DHCP can take seconds on a real LAN -- root must publish

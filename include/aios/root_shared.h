@@ -273,6 +273,12 @@ extern seL4_CPtr net_kick_ntfn_cap;  /* badge=2 kick copy of net_drv_ntfn (GENET
 struct net_rx_ring;
 extern struct net_rx_ring net_rx_ring;
 
+/* netd Stage 3 (DESIGN_NETD s6): root mapping of the netd /proc/net stats page
+ * (the fs thread renders /proc/net + serverstats reads the SRV_NET heartbeat
+ * IPC-free). NULL unless netd spawned + mapped it. */
+struct netd_stats;
+extern struct netd_stats *netd_stats_root;
+
 /* Display state */
 extern uint32_t *gpu_fb;
 extern uint64_t gpu_fb_pa;

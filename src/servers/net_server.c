@@ -21,8 +21,10 @@
 #ifdef NETD_BUILD
 #include <sel4utils/process.h>   /* SEL4UTILS_CNODE_SLOT */
 #include "aios/netd_ctrl.h"      /* NETD_REPLY_SLOTS */
+#include "aios/netd_stats.h"     /* the /proc/net stats page (s6) */
 #define NET_REPLY_CNODE  SEL4UTILS_CNODE_SLOT
 extern seL4_CPtr netd_reply_slot_base;   /* reserved-range base (netd_shim.c, set from argv) */
+extern struct netd_stats *netd_stats_page;  /* set from argv in netd main; NULL otherwise */
 #else
 #define NET_REPLY_CNODE  seL4_CapInitThreadCNode
 #endif
@@ -471,6 +473,35 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
     }
 }
 
+#ifdef NETD_BUILD
+/* netd Stage 3 (DESIGN_NETD s6): publish liveness + state into the cacheable-both
+ * /proc/net stats page once per event-loop iteration. The heartbeat is the only
+ * thing root can use to tell a live-but-idle netd from a wedged one without an
+ * (untimed, wedge-prone) Call -- serverstats kicks netd >= every PROBE_PERIOD so
+ * this advances even on an idle link. netd is the SOLE writer. */
+static void netd_stats_update(void) {
+    struct netd_stats *st = netd_stats_page;
+    if (!st) return;
+    st->heartbeat++;
+    st->dev_init_done   = net_available ? 1u : 0u;
+    st->dhcp_bound      = (uint32_t)dhcp_bound;
+    st->dhcp_lease_secs = (uint32_t)dhcp_lease_secs;
+    st->dhcp_renews     = (uint32_t)dhcp_renews;
+    for (int i = 0; i < 6; i++) st->mac[i] = net_mac[i];
+    for (int i = 0; i < 4; i++) {
+        st->ip[i]   = net_cfg_ip[i];
+        st->gw[i]   = net_cfg_gw[i];
+        st->mask[i] = net_cfg_mask[i];
+    }
+    for (int i = 0; i < MAX_NET_SOCKETS && i < NETD_STATS_SOCKS; i++) {
+        st->sock[i].in_use    = (uint8_t)sockets[i].in_use;
+        st->sock[i].type      = (uint8_t)sockets[i].type;
+        st->sock[i].state     = (uint8_t)sockets[i].state;
+        st->sock[i].owner_pid = sockets[i].owner_pid;
+    }
+}
+#endif
+
 /* ---- Server thread ---- */
 void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
     seL4_CPtr ep = (seL4_CPtr)(uintptr_t)arg0;
@@ -548,6 +579,10 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             selftest_done = 1;
         }
 
+#ifdef NETD_BUILD
+        /* netd Stage 3 (s6): refresh the /proc/net liveness page each iteration. */
+        netd_stats_update();
+#endif
 
         /* IPC: socket API */
         seL4_Word badge = 0;
@@ -902,6 +937,21 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 }
             }
             connect_done: ;
+
+#ifdef NETD_BUILD
+        } else if (label == NET_DIAG) {
+            /* netd Stage 3 NET_DIAG surface (DESIGN_NETD s6/s11). Today only the
+             * crash-containment demo trigger: a fire-and-forget Send from
+             * /proc/netd.crash with MR0 = NETD_DIAG_CRASH null-derefs so the root
+             * fault listener can prove the s10 sweep. Any other diag op is a no-op
+             * reply for now (the /bin/netdiag ops land in Stage 4). */
+            if ((seL4_Word)seL4_GetMR(0) == NETD_DIAG_CRASH) {
+                printf("[netd] NET_DIAG crash trigger -- dereferencing NULL\n");
+                *(volatile int *)0 = 0;   /* fault -> root fault listener (s10) */
+            }
+            seL4_SetMR(0, (seL4_Word)-1);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+#endif
 
         } else if (label != 0) {
             seL4_SetMR(0, (seL4_Word)-1);

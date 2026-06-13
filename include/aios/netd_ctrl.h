@@ -46,9 +46,17 @@ enum {
     NETD_ARGV_CFG_GW,        /* static config gateway packed 32-bit               */
     NETD_ARGV_CFG_MASK,      /* static config netmask packed 32-bit               */
     NETD_ARGV_FLAGS,         /* reserved (platform / irq-mode bits); 0 today      */
+    NETD_ARGV_STATS_VADDR,   /* /proc/net stats page vaddr in netd (s6)           */
     NETD_ARGV_REPLY_BASE,    /* base of the reserved SaveCaller slot range        */
     NETD_ARGV_COUNT
 };
+
+/* Debug-only crash trigger for the s10 crash-containment demo: a NET_DIAG (103)
+ * request with MR0 = this magic makes netd null-deref, so the root fault listener
+ * can prove containment + the reply-slot sweep. Sent fire-and-forget by
+ * /proc/netd.crash; compiled into net_server ONLY under NETD_BUILD (the in-root
+ * flag-OFF server never has a crash op). */
+#define NETD_DIAG_CRASH  0xC4A54   /* leetspeak "crash" */
 
 /* SaveCaller reply slots netd carves out of its own cnode AFTER the cap
  * donations (DESIGN_NETD s3 row 6): 3 per socket (recv / accept / connect park)

@@ -8,6 +8,10 @@
 #include "aios/filehits.h"
 #include "aios/cow.h"
 #include "aios/net.h"
+#include "aios/netd_stats.h"  /* /proc/net: the netd liveness page (s6) */
+#ifdef AIOS_NETD
+#include "aios/netd_ctrl.h"   /* NETD_DIAG_CRASH (the /proc/netd.crash demo trigger) */
+#endif
 #include <stdio.h>
 
 #if defined(PLAT_RPI4)
@@ -483,8 +487,68 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
             (unsigned)blk_emmc_timeout_retries,
             (unsigned)blk_emmc_timeout_fails);
     } else if (path[0] == 'n' && path[1] == 'e' && path[2] == 't'
+            && path[3] == '\0') {
+        /* /proc/net -- netd liveness + state, rendered IPC-FREE from the
+         * cacheable stats page (DESIGN_NETD s6). Works even when netd is WEDGED
+         * (unlike a Call), so it is the hung-netd detector + soak instrument.
+         * NULL under flag-OFF (the in-root net stack uses /proc/netstat). */
+        struct netd_stats *st = netd_stats_root;
+        if (!st) {
+            w += snprintf(buf + w, bufsize - w,
+                "netd: not active (in-root net stack or no NIC)\n"
+                "see /proc/netstat (counters) and /proc/serverstats (health)\n");
+        } else {
+            w += snprintf(buf + w, bufsize - w,
+                "heartbeat: %llu\ndev_init_done: %u\n"
+                "dhcp_bound: %u  lease_secs: %u  renews: %u\n"
+                "mac: %02x:%02x:%02x:%02x:%02x:%02x\n"
+                "ip: %u.%u.%u.%u  gw: %u.%u.%u.%u  mask: %u.%u.%u.%u\n"
+                "last_err: %d  cleanup_lost: %u\n",
+                (unsigned long long)st->heartbeat, st->dev_init_done,
+                st->dhcp_bound, st->dhcp_lease_secs, st->dhcp_renews,
+                st->mac[0], st->mac[1], st->mac[2], st->mac[3], st->mac[4], st->mac[5],
+                st->ip[0], st->ip[1], st->ip[2], st->ip[3],
+                st->gw[0], st->gw[1], st->gw[2], st->gw[3],
+                st->mask[0], st->mask[1], st->mask[2], st->mask[3],
+                st->last_err, st->cleanup_lost);
+            for (int i = 0; i < NETD_STATS_SOCKS; i++)
+                if (st->sock[i].in_use)
+                    w += snprintf(buf + w, bufsize - w,
+                        "sock%d: type=%u state=%u owner_pid=%d\n",
+                        i, st->sock[i].type, st->sock[i].state, st->sock[i].owner_pid);
+        }
+#ifdef AIOS_NETD
+    } else if (path[0] == 'n' && path[1] == 'e' && path[2] == 't'
+            && path[3] == 'd') {
+        /* /proc/netd -- netd control (DESIGN_NETD Stage 3). For now only the s10
+         * crash-containment DEMO trigger: cat /proc/netd.crash fire-and-forgets a
+         * NET_DIAG crash request to netd so the root fault listener can prove
+         * containment + the reply-sweep. NBSend (never a Call): the fs thread must
+         * never block on netd, and a non-blocking send drops harmlessly if netd is
+         * already wedged/gone instead of wedging every /proc read. */
+        if (path[4] == '.' && path[5] == 'c') {   /* .crash */
+            if (net_ep_cap) {
+                seL4_SetMR(0, (seL4_Word)NETD_DIAG_CRASH);
+                seL4_NBSend(net_ep_cap, seL4_MessageInfo_new(NET_DIAG, 0, 0, 1));
+                w += snprintf(buf + w, bufsize - w,
+                    "netd crash trigger sent (NET_DIAG); watch the serial console "
+                    "for the fault listener sweep\n");
+            } else {
+                w += snprintf(buf + w, bufsize - w,
+                    "netd not active (net_ep_cap=0)\n");
+            }
+        } else {
+            w += snprintf(buf + w, bufsize - w,
+                "netd control: cat /proc/netd.crash faults netd (s10 demo)\n");
+        }
+    } else if (path[0] == 'n' && path[1] == 'e' && path[2] == 't'
             && path[3] == 's' && path[4] == 't' && path[5] == 'a'
             && path[6] == 't') {
+#else
+    } else if (path[0] == 'n' && path[1] == 'e' && path[2] == 't'
+            && path[3] == 's' && path[4] == 't' && path[5] == 'a'
+            && path[6] == 't') {
+#endif
         /* v0.4.225: /proc/netstat -- inbound-path integrity counters for the
          * push-corruption hunt (docs/NEXT_20260612_net_rx_corruption.md).
          * Path verbs (xhci/v3d pattern):

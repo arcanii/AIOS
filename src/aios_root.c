@@ -118,6 +118,7 @@ seL4_CPtr net_ep_cap = 0;
 seL4_CPtr net_drv_ntfn_cap = 0;
 seL4_CPtr net_kick_ntfn_cap = 0;   /* v0.4.230 (Stage 1): badge=2 RX-kick copy */
 struct net_rx_ring net_rx_ring;
+struct netd_stats *netd_stats_root = 0;   /* netd Stage 3 (s6): /proc/net page (root map) */
 
 /* Display state (virtio-gpu) */
 volatile uint32_t *gpu_vio = NULL;
