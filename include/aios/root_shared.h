@@ -260,7 +260,12 @@ extern volatile uint32_t *uart;
 
 /* Network state */
 extern uint8_t net_mac[6];
-extern int net_available;
+extern int net_available;        /* network is up + serving (published on netd DEVD_READY) */
+/* netd Stage 3 (DESIGN_NETD s8): split the flag. net_hw_present = a NIC was
+ * provisioned (set by plat_net_prov / plat_net_init); it gates the netd spawn and
+ * the boot banner. net_available + net_ep_cap are published only once the net
+ * stack is actually serving, so a child spawned before READY gets -ENOTSUP. */
+extern int net_hw_present;
 extern seL4_CPtr net_ep_cap;
 extern seL4_CPtr net_drv_ntfn_cap;   /* RX IRQ ntfn; bound to the net_server TCB (v0.4.230) */
 extern seL4_CPtr net_kick_ntfn_cap;  /* badge=2 kick copy of net_drv_ntfn (GENET .irqoff) */
@@ -345,6 +350,14 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf);
 void net_cleanup_proxy_fn(void *arg0, void *arg1, void *ipc_buf);
 void pipe_set_net_cleanup_ntfn(seL4_CPtr ntfn);
 void boot_net_init(void);
+#ifdef AIOS_NETD
+/* netd de-monolithization (DESIGN_NETD Stage 3). netd_prov() provisions the NIC
+ * root-side (boot_net_init, before the banner); spawn_netd() spawns the isolated
+ * netd process and hands it net_ep + the device caps. Both no-ops to nothing when
+ * AIOS_NETD is OFF (the whole spawn_netd.c is compiled out). */
+int  netd_prov(void);
+void spawn_netd(seL4_CPtr net_ep);
+#endif
 void boot_display_init(void);
 /* v0.4.230: the net driver thread merged into net_server, which drains the HW
  * RX ring via plat_net_drain() (plat/net_hal.h) at its loop top. */

@@ -385,27 +385,70 @@ static void read_mac_from_umac(void) {
 static seL4_CPtr genet_dma_caps[GENET_DMA_FRAMES];
 
 /* ----------------------------------------------------------------
- * dma_init -- allocate the 128KB DMA region.
- * TODO(netd Stage 3b/HW pass, DESIGN_NETD s3): add the retry-for-low <1GB loop
- * (xhci_dma_reserve pattern, src/usb/xhci.c) so genet_dma_pa lands below
- * 0x40000000 -- the VC-mailbox bus alias (| 0xC0000000) and the GENET SCB master
- * both need a low region. HW-only-verifiable (QEMU DMA is unrestricted), so it
- * lands with the HW pass, fail-loud on no low region. The current single alloc
- * has worked on HW to date (early boot -> low RAM still plentiful).
+ * dma_init -- allocate the 128KB DMA region BELOW 1GB.
+ *
+ * v0.4.236 (netd Stage 3b, DESIGN_NETD s3): retry-for-low <1GB loop (the
+ * HW-proven xhci_dma_reserve pattern, src/usb/xhci.c). genet_dma_pa MUST land
+ * below GENET_DMA_LIMIT: the VC-mailbox bus alias ORs 0xC0000000 and truncates to
+ * 32 bits (read_mac_from_mailbox), and the GENET SCB master wants a low region;
+ * the allocator provably hands out >3.9GB frames late in boot. Each attempt
+ * retypes one PROBE frame to read the untyped base paddr; a too-high untyped is
+ * kept allocated as a reject (so the next alloc differs) and freed at the end.
+ * Fail LOUD on no low region -- never silently fall back. RPi4-only (net_genet is
+ * not built for QEMU, whose RAM base is itself 0x40000000).
  * ---------------------------------------------------------------- */
+#define GENET_DMA_LIMIT 0x40000000ULL   /* keep paddr | 0xC0000000 within 32 bits */
+
 static int dma_init(void) {
     int error;
-
-    /* Allocate 128KB DMA region (size-17 untyped = 32 x 4K pages) */
     vka_object_t dma_ut;
-    vka_audit_untyped(VKA_SUB_NET, 17);
-    error = vka_alloc_untyped(&vka, 17, &dma_ut);
-    if (error) {
-        printf("[net] DMA untyped alloc failed: %d\n", error);
+    vka_object_t rejects[8];
+    int nrej = 0, have = 0;
+
+    /* Find a 128KB untyped (size 17) whose base lands below 1GB. Probe each by
+     * retyping frame 0 and reading its paddr; keep frame 0 of the winning untyped. */
+    for (int t = 0; t < 8 && !have; t++) {
+        vka_audit_untyped(VKA_SUB_NET, 17);
+        if (vka_alloc_untyped(&vka, 17, &dma_ut)) break;
+
+        seL4_CPtr probe;
+        if (vka_cspace_alloc(&vka, &probe)) {
+            vka_free_object(&vka, &dma_ut);
+            break;
+        }
+        error = seL4_Untyped_Retype(dma_ut.cptr, ARCH_PAGE_OBJECT, seL4_PageBits,
+                                    seL4_CapInitThreadCNode, 0, 0, probe, 1);
+        if (error) {
+            printf("[net] DMA probe retype failed: %d\n", error);
+            vka_cspace_free(&vka, probe);
+            vka_free_object(&vka, &dma_ut);
+            break;
+        }
+        seL4_ARM_Page_GetAddress_t ga = seL4_ARM_Page_GetAddress(probe);
+        if (!ga.error && ga.paddr + GENET_DMA_SIZE <= GENET_DMA_LIMIT) {
+            genet_dma_caps[0] = probe;     /* frame 0 of the low untyped */
+            genet_dma_pa = ga.paddr;
+            have = 1;
+            break;
+        }
+        /* Too high: delete the probe frame, keep the untyped as a reject so the
+         * next alloc lands elsewhere, retry. */
+        seL4_CNode_Delete(seL4_CapInitThreadCNode, probe, seL4_WordBits);
+        vka_cspace_free(&vka, probe);
+        if (nrej < 8) rejects[nrej++] = dma_ut;
+        else          vka_free_object(&vka, &dma_ut);
+    }
+
+    for (int i = 0; i < nrej; i++) vka_free_object(&vka, &rejects[i]);
+
+    if (!have) {
+        printf("[net] DMA: no <1GB region found in 8 tries -- net unavailable\n");
         return -1;
     }
 
-    for (int i = 0; i < GENET_DMA_FRAMES; i++) {
+    /* Retype the remaining 31 frames from the same (low) untyped -- contiguous
+     * after frame 0, so genet_dma_pa is the base of the whole 128KB region. */
+    for (int i = 1; i < GENET_DMA_FRAMES; i++) {
         seL4_CPtr slot;
         error = vka_cspace_alloc(&vka, &slot);
         if (error) {
@@ -429,18 +472,11 @@ static int dma_init(void) {
         return -1;
     }
 
-    seL4_ARM_Page_GetAddress_t ga = seL4_ARM_Page_GetAddress(genet_dma_caps[0]);
-    if (ga.error) {
-        printf("[net] DMA GetAddress failed\n");
-        return -1;
-    }
-
     genet_dma = (uint8_t *)dma_vaddr;
-    genet_dma_pa = ga.paddr;
     memset(genet_dma, 0, GENET_DMA_SIZE);
 
-    printf("[net] DMA region: virt=%p phys=0x%lx (128KB)\n",
-           dma_vaddr, (unsigned long)genet_dma_pa);
+    printf("[net] DMA region: virt=%p phys=0x%lx (128KB, <1GB, %d reject(s))\n",
+           dma_vaddr, (unsigned long)genet_dma_pa, nrej);
     return 0;
 }
 

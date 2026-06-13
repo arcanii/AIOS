@@ -38,7 +38,12 @@ import threading
 import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-KERNEL = os.path.join(REPO, "build-04/images/aios_root-image-arm-qemu-arm-virt")
+# AIOS_KERNEL overrides the image so the SAME socket suite runs against the
+# flag-OFF build (build-04, default) or the flag-ON netd build (build-netd) --
+# the netd Stage 3 cutover gate is "this suite passes against the isolated netd".
+KERNEL = os.environ.get(
+    "AIOS_KERNEL",
+    os.path.join(REPO, "build-04/images/aios_root-image-arm-qemu-arm-virt"))
 DISK = os.path.join(REPO, "disk/disk_ext2.img")
 LOGDISK = os.path.join(REPO, "disk/log_ext2.img")
 

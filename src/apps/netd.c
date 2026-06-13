@@ -1,53 +1,80 @@
 /*
- * netd.c -- MMU-isolated network daemon (DESIGN_NETD).
+ * netd.c -- MMU-isolated network daemon (DESIGN_NETD Stage 3 cutover).
  *
- * Stage 2 = SKELETON ONLY. No network logic yet (that arrives in Stage 3). The
- * job here is to prove the *mechanism* a leaf driver-process needs before any
- * net code is trusted to it:
- *   - spawn as an isolated CPIO process (own cnode + vspace, prio 200),
- *   - parse caps/values from argv (decimal strings, tty_server precedent),
- *   - SELF-BIND its notification to its own TCB so one blocking seL4_Recv wakes
- *     on both client IPC and a Signal (the bound-notification trick netd's RX
- *     IRQ will use),
- *   - announce readiness on the ctrl/fault EP (Send, never Call -- a Call would
- *     park us BlockedOnReply where the bound notification cannot wake us),
- *   - DEFER a reply by SaveCaller-ing the client into a reserved slot of its OWN
- *     cnode, then complete it later -- both the in-netd way (netd Sends to the
- *     saved slot on a badge-2 kick) and the root-driven way (root CNode_Moves
- *     the saved reply cap out of netd's cnode and Sends it: the reply-sweep
- *     that a crash recovery would use; DESIGN_NETD s10 -- the kernel bet),
- *   - and crash on demand so the root-side fault listener can prove containment.
+ * netd is a single-threaded, MMU-isolated CPIO process that owns the entire net
+ * stack: the socket server (net_server.c), the protocol stack (net_stack.c /
+ * net_tcp.c / net_dhcp.c) and the platform NIC driver dev half (net_virtio.c /
+ * net_genet.c, all compiled in under NETD_BUILD). Root retains every
+ * allocator-touching duty (DMA / IRQ / MAC / device frames) and provisions them
+ * before spawn; netd receives the results via argv (DESIGN_NETD s3) and the
+ * MMIO + DMA frames pre-mapped into its vspace by root.
  *
- * printf reaches the serial console via muslc -> seL4_DebugPutChar (KernelPrinting
- * is on for both targets), so no log-ring / serial_ep is handed to netd.
+ * Startup (DESIGN_NETD s2/s8):
+ *   1. parse argv (decimal cap slots + vaddrs/paddr/mac/cfg/reply-base),
+ *   2. SELF-BIND the RX notification to its own TCB, so one blocking seL4_Recv
+ *      in net_server_fn wakes on both client IPC and packet arrival,
+ *   3. plat_net_dev_attach() latches the root-provisioned MMIO/DMA/IRQ/MAC,
+ *   4. plat_net_init() runs the device-register sequence (dev half),
+ *   5. publish net_available + netd_reply_slot_base,
+ *   6. announce DEVD_READY on the ctrl EP (Send, never Call) BEFORE DHCP,
+ *   7. net_server_fn() -- the merged loop: drain HW ring, process rx, DHCP at
+ *      setup, then serve the socket API forever.
+ *
+ * On any init failure netd Sends DEVD_FAIL(errcode) so the root listener degrades
+ * the boot (net off) instead of bricking it. printf reaches serial via muslc ->
+ * seL4_DebugPutChar (KernelPrinting on both targets); netd has no log ring.
  */
 #include <sel4/sel4.h>
 #include <sel4runtime.h>
-#include <sel4utils/process.h>   /* SEL4UTILS_TCB_SLOT, SEL4UTILS_CNODE_SLOT */
+#include <sel4utils/process.h>   /* SEL4UTILS_TCB_SLOT */
 #include <stdio.h>
-#include "aios/netd_skel.h"
+#include <stdint.h>
+#include "aios/netd_ctrl.h"
+#include "aios/root_shared.h"    /* net_available, net_ep_cap, net_drv_ntfn_cap, net_server_fn */
+#include "aios/net.h"
+#include "aios/config.h"         /* net_cfg_ip/gw/mask */
+#include "plat/net_hal.h"        /* plat_net_dev_attach, plat_net_init */
 
-static seL4_Word argv_word(const char *s) {
+/* netd-local reply-slot base (netd_shim.c); net_server.c reads it to address its
+ * SaveCaller slots in the netd cnode instead of calling vka. */
+extern seL4_CPtr netd_reply_slot_base;
+
+static seL4_Word aw(const char *s) {
     seL4_Word v = 0;
     while (*s >= '0' && *s <= '9') v = v * 10 + (seL4_Word)(*s++ - '0');
     return v;
 }
 
+static void unpack4(seL4_Word w, uint8_t out[4]) {
+    out[0] = (uint8_t)(w >> 24); out[1] = (uint8_t)(w >> 16);
+    out[2] = (uint8_t)(w >> 8);  out[3] = (uint8_t)(w);
+}
+
 int main(int argc, char **argv) {
-    /* argv: [0]=main/test EP slot, [1]=ctrl/fault EP slot, [2]=notification slot,
-     * [3]=base of the reserved SaveCaller-slot range in our own cnode. */
-    if (argc < 4) {
-        printf("[netd] FATAL: argc=%d (need 4 args)\n", argc);
+    if (argc < NETD_ARGV_COUNT) {
+        printf("[netd] FATAL: argc=%d (need %d args)\n", argc, NETD_ARGV_COUNT);
         return 1;
     }
-    seL4_CPtr net_ep  = (seL4_CPtr)argv_word(argv[0]);
-    seL4_CPtr ctrl_ep = (seL4_CPtr)argv_word(argv[1]);
-    seL4_CPtr ntfn    = (seL4_CPtr)argv_word(argv[2]);
-    seL4_Word rsvd    = argv_word(argv[3]);
 
-    /* Self-bind the notification to our own TCB. A silently-failed bind is the
-     * historical "RX never wakes" signature, so assert it loudly and fail the
-     * ctrl handshake rather than come up half-wired. */
+    seL4_CPtr net_ep  = (seL4_CPtr)aw(argv[NETD_ARGV_NET_EP]);
+    seL4_CPtr ctrl_ep = (seL4_CPtr)aw(argv[NETD_ARGV_CTRL_EP]);
+    seL4_CPtr irqh    = (seL4_CPtr)aw(argv[NETD_ARGV_IRQ_HANDLER]);
+    seL4_CPtr ntfn    = (seL4_CPtr)aw(argv[NETD_ARGV_NTFN]);
+    uintptr_t mmio_va = (uintptr_t)aw(argv[NETD_ARGV_MMIO_VADDR]);
+    int       slot    = (int)aw(argv[NETD_ARGV_SLOT]);
+    uintptr_t dma_va  = (uintptr_t)aw(argv[NETD_ARGV_DMA_VADDR]);
+    uint64_t  dma_pa  = (uint64_t)aw(argv[NETD_ARGV_DMA_PADDR]);
+    seL4_Word macp    = aw(argv[NETD_ARGV_MAC]);
+    seL4_Word rbase   = aw(argv[NETD_ARGV_REPLY_BASE]);
+
+    /* Static IP config (DHCP fallback) -- root parsed /etc/network.conf. */
+    unpack4(aw(argv[NETD_ARGV_CFG_IP]),   net_cfg_ip);
+    unpack4(aw(argv[NETD_ARGV_CFG_GW]),   net_cfg_gw);
+    unpack4(aw(argv[NETD_ARGV_CFG_MASK]), net_cfg_mask);
+
+    /* Self-bind the RX notification to our own TCB. A silently-failed bind is the
+     * historical "RX never wakes" signature, so fail the handshake rather than
+     * come up half-wired (DESIGN_NETD s3 row 3). */
     int berr = seL4_TCB_BindNotification(SEL4UTILS_TCB_SLOT, ntfn);
     if (berr != seL4_NoError) {
         printf("[netd] FATAL: self-bind ntfn err=%d\n", berr);
@@ -55,84 +82,45 @@ int main(int argc, char **argv) {
         seL4_Send(ctrl_ep, seL4_MessageInfo_new(DEVD_FAIL, 0, 0, 1));
         return 2;
     }
+    net_drv_ntfn_cap = ntfn;   /* for completeness; the bind is what matters */
 
-    printf("[netd] skeleton up: net_ep=%lu ctrl_ep=%lu ntfn=%lu rsvd=%lu (bound)\n",
-           (unsigned long)net_ep, (unsigned long)ctrl_ep,
-           (unsigned long)ntfn, (unsigned long)rsvd);
+    uint8_t mac[6] = {
+        (uint8_t)(macp >> 40), (uint8_t)(macp >> 32), (uint8_t)(macp >> 24),
+        (uint8_t)(macp >> 16), (uint8_t)(macp >> 8),  (uint8_t)(macp)
+    };
 
-    /* Tell root we are ready (BEFORE any blocking loop). */
+    printf("[netd] up: net_ep=%lu ctrl=%lu irq=%lu ntfn=%lu mmio=0x%lx dma=0x%lx pa=0x%lx rsvd=%lu\n",
+           (unsigned long)net_ep, (unsigned long)ctrl_ep, (unsigned long)irqh,
+           (unsigned long)ntfn, (unsigned long)mmio_va, (unsigned long)dma_va,
+           (unsigned long)dma_pa, (unsigned long)rbase);
+
+    /* Latch the root-provisioned device resources, then program the device. */
+    plat_net_dev_attach(mmio_va, slot, dma_va, dma_pa, irqh, mac);
+
+    /* QEMU virtio dev-half plat_net_init requires net_available=1 on entry;
+     * GENET sets it itself. Set it first either way (netd-local). */
+    net_available = 1;
+    int rc = plat_net_init();
+    if (rc != 0 || !net_available) {
+        printf("[netd] FATAL: plat_net_init rc=%d net_available=%d\n", rc, net_available);
+        seL4_SetMR(0, (seL4_Word)(rc ? rc : -1));
+        seL4_Send(ctrl_ep, seL4_MessageInfo_new(DEVD_FAIL, 0, 0, 1));
+        return 3;
+    }
+
+    /* net_server.c addresses its SaveCaller slots as rbase + {0,8,16} + sid. */
+    netd_reply_slot_base = (seL4_CPtr)rbase;
+
+    /* Announce readiness BEFORE DHCP (DESIGN_NETD s8): device init is
+     * milliseconds, DHCP can take seconds on a real LAN -- root must publish
+     * net_ep_cap now so the getty fork-and-forget netconsole/sshd/sntp capture a
+     * live cap. Send (NOT Call): a Call would park us BlockedOnReply where the
+     * bound notification cannot wake us. */
     seL4_Send(ctrl_ep, seL4_MessageInfo_new(DEVD_READY, 0, 0, 0));
 
-    /* A NETD_BLOCK_KICK caller, if any, is parked in slot rsvd+0. */
-    int kick_parked = 0;
-
-    /* Single-threaded event loop: the bound notification means this Recv also
-     * wakes on a Signal to ntfn (badge in `badge`). */
-    while (1) {
-        seL4_Word badge = 0;
-        seL4_MessageInfo_t msg = seL4_Recv(net_ep, &badge);
-        seL4_Word label = seL4_MessageInfo_get_label(msg);
-
-        /* ---- notification wake (bound ntfn) ---- */
-        if (label == 0 && badge != 0) {
-            /* badge 2 = root kick: self-wake the parked KICK caller via the reply
-             * cap we saved in our OWN cnode -- the in-netd analog of net_server's
-             * blocked-recv wake (child-cnode SaveCaller + Send + Delete). */
-            if (badge == NETD_KICK_BADGE && kick_parked) {
-                seL4_SetMR(0, (seL4_Word)NETD_KICK_TOKEN);
-                seL4_Send(rsvd + 0, seL4_MessageInfo_new(0, 0, 0, 1));
-                seL4_CNode_Delete(SEL4UTILS_CNODE_SLOT, rsvd + 0, seL4_WordBits);
-                kick_parked = 0;
-                printf("[netd] kick: woke parked caller in slot %lu\n",
-                       (unsigned long)(rsvd + 0));
-            }
-            continue;
-        }
-
-        if (label == NETD_PING) {
-            seL4_SetMR(0, 0);
-            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
-
-        } else if (label == NETD_BLOCK_KICK) {
-            /* Defer: save the caller into our own cnode, tell root, loop. Root
-             * Signals badge 2; we wake the caller above. */
-            int rc = seL4_CNode_SaveCaller(SEL4UTILS_CNODE_SLOT,
-                                           rsvd + 0, seL4_WordBits);
-            if (rc != seL4_NoError) {
-                printf("[netd] BLOCK_KICK SaveCaller err=%d\n", rc);
-                seL4_SetMR(0, (seL4_Word)-5);   /* EIO */
-                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
-            } else {
-                kick_parked = 1;
-                seL4_SetMR(0, NETD_PARK_KICK);
-                seL4_SetMR(1, rsvd + 0);
-                seL4_Send(ctrl_ep, seL4_MessageInfo_new(NETD_PARKED, 0, 0, 2));
-            }
-
-        } else if (label == NETD_BLOCK_SWEEP) {
-            /* Defer into our cnode, then ask root to reply-sweep it: root will
-             * CNode_Move the saved reply cap OUT of our cnode and Send it. We
-             * never touch slot rsvd+1 again -- root owns the wake from here. */
-            int rc = seL4_CNode_SaveCaller(SEL4UTILS_CNODE_SLOT,
-                                           rsvd + 1, seL4_WordBits);
-            if (rc != seL4_NoError) {
-                printf("[netd] BLOCK_SWEEP SaveCaller err=%d\n", rc);
-                seL4_SetMR(0, (seL4_Word)-5);   /* EIO */
-                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
-            } else {
-                seL4_SetMR(0, NETD_PARK_SWEEP);
-                seL4_SetMR(1, rsvd + 1);
-                seL4_Send(ctrl_ep, seL4_MessageInfo_new(NETD_PARKED, 0, 0, 2));
-            }
-
-        } else if (label == NETD_CRASH) {
-            printf("[netd] NETD_CRASH: dereferencing NULL\n");
-            *(volatile int *)0 = 0;             /* fault -> root fault listener */
-            /* not reached */
-
-        } else if (label != 0) {
-            seL4_SetMR(0, (seL4_Word)-1);        /* unknown op */
-            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
-        }
-    }
+    /* Hand off to the merged event loop. It does DHCP + gratuitous ARP at setup,
+     * then drains the HW ring (plat_net_drain) and serves the socket API forever.
+     * Never returns. */
+    net_server_fn((void *)(uintptr_t)net_ep, 0, 0);
+    return 0;   /* not reached */
 }

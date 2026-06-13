@@ -207,7 +207,11 @@ int plat_net_prov(driver_handoff_t *ho) {
 void plat_net_dev_attach(uintptr_t mmio_vaddr, int slot, uintptr_t dma_vaddr,
                          uint64_t dma_paddr, seL4_CPtr irq_handler,
                          const uint8_t mac[6]) {
-    net_vio_priv = (volatile uint32_t *)mmio_vaddr;
+    /* mmio_vaddr is the BASE of the virtio MMIO window root mapped into netd
+     * (PLAT_VIRTIO_PAGES pages); the per-device register block is at
+     * base + slot*0x200 (8 x 0x200 slots per page). This matches the monolithic
+     * plat_virtio_slot_base(slot) = probe_vaddr + slot*0x200. DESIGN_NETD s3. */
+    net_vio_priv = (volatile uint32_t *)(mmio_vaddr + (uintptr_t)slot * PLAT_VIRTIO_SLOT_SIZE);
     net_vio_slot_priv = slot;
     net_dma_priv = (uint8_t *)dma_vaddr;
     net_dma_pa_priv = dma_paddr;

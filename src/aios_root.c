@@ -113,6 +113,7 @@ volatile int fg_sigint_sent = 0;  /* v0.4.85: root-side two-stage Ctrl-C */
 /* Network state (virtio-net) */
 uint8_t net_mac[6] = {0};
 int net_available = 0;
+int net_hw_present = 0;   /* netd Stage 3 (s8): a NIC was provisioned (gates spawn + banner) */
 seL4_CPtr net_ep_cap = 0;
 seL4_CPtr net_drv_ntfn_cap = 0;
 seL4_CPtr net_kick_ntfn_cap = 0;   /* v0.4.230 (Stage 1): badge=2 RX-kick copy */
@@ -434,7 +435,7 @@ int main(int argc, char *argv[]) {
     fb_console_printf("[fs]   %s\n",
                       ext2.read_sector ? "ext2 mounted" : "no filesystem");
     fb_console_printf("[net]  %s\n",
-                      net_available ? "OK" : "not available");
+                      net_hw_present ? "OK" : "not available");
     fb_console_printf("[gpu]  %s\n",
                       gpu_available ? "OK" : "not available");
     fb_console_printf("\n");

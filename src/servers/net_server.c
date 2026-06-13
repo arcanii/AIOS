@@ -20,6 +20,7 @@
  * numbers). */
 #ifdef NETD_BUILD
 #include <sel4utils/process.h>   /* SEL4UTILS_CNODE_SLOT */
+#include "aios/netd_ctrl.h"      /* NETD_REPLY_SLOTS */
 #define NET_REPLY_CNODE  SEL4UTILS_CNODE_SLOT
 extern seL4_CPtr netd_reply_slot_base;   /* reserved-range base (netd_shim.c, set from argv) */
 #else
@@ -27,6 +28,14 @@ extern seL4_CPtr netd_reply_slot_base;   /* reserved-range base (netd_shim.c, se
 #endif
 
 #define MAX_NET_SOCKETS  8
+
+#ifdef NETD_BUILD
+/* spawn_netd reserves NETD_REPLY_SLOTS past the netd cspace_next_free; net_server
+ * addresses them as netd_reply_slot_base + {0, MAX_NET_SOCKETS, 2*MAX_NET_SOCKETS}
+ * + sid (recv / accept / connect park). Pin the count so the two never skew. */
+_Static_assert(NETD_REPLY_SLOTS == 3 * MAX_NET_SOCKETS,
+               "NETD_REPLY_SLOTS must equal 3*MAX_NET_SOCKETS");
+#endif
 #define SOCK_RX_BUF_SZ   32768   /* v0.4.171: 32KB rx window (was 4KB) -- 8x fewer
                                   * window-reopen round-trips on a large push */
 

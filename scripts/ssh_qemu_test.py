@@ -25,7 +25,11 @@ import sys
 import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-KERNEL = os.path.join(REPO, "build-04/images/aios_root-image-arm-qemu-arm-virt")
+# AIOS_KERNEL overrides the image (build-04 default; build-netd for the netd
+# Stage 3 cutover gate -- sshd's accept/recv path served by the isolated netd).
+KERNEL = os.environ.get(
+    "AIOS_KERNEL",
+    os.path.join(REPO, "build-04/images/aios_root-image-arm-qemu-arm-virt"))
 DISK = os.path.join(REPO, "disk/disk_ext2.img")
 LOGDISK = os.path.join(REPO, "disk/log_ext2.img")
 SOCK = "/tmp/aios-ssh-test.sock"

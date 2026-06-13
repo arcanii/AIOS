@@ -49,6 +49,26 @@ static int start_server_thread(sel4utils_thread_entry_fn fn,
         (void *)(uintptr_t)ep_cap, NULL, 1);
 }
 
+/* v0.4.229 (netd Stage 0): start the sacrificial net-socket cleanup proxy. It
+ * drains pids handle_child_fault enqueues on child exit and issues the blocking
+ * NET_CLEANUP_PID Call to net_ep_cap, so a slow/wedged net server (in-root OR the
+ * isolated netd) parks only this expendable thread, never the pipe_server loop.
+ * Re-checks net_ep_cap per dequeue, so it tolerates net_ep_cap being published
+ * late (netd DEVD_READY) or zeroed (a netd crash). Must be live before getty (the
+ * first faultable child) spawns. */
+static void start_net_cleanup_proxy(void) {
+    vka_object_t cleanup_ntfn_obj;
+    if (!vka_alloc_notification(&vka, &cleanup_ntfn_obj)) {
+        pipe_set_net_cleanup_ntfn(cleanup_ntfn_obj.cptr);
+        start_server_thread(
+            (sel4utils_thread_entry_fn)net_cleanup_proxy_fn,
+            cleanup_ntfn_obj.cptr);
+        proc_add("net_cleanup", 200);
+    } else {
+        AIOS_LOG_WARN("net cleanup proxy ntfn alloc failed");
+    }
+}
+
 void boot_start_services(vka_object_t *fault_ep) {
     int error;
 
@@ -110,6 +130,24 @@ void boot_start_services(vka_object_t *fault_ep) {
             start_server_thread((sel4utils_thread_entry_fn)xhci_kbd_driver_fn, 0);
     }
 
+    /* Start the network path. DESIGN_NETD Stage 3: under AIOS_NETD the net stack
+     * runs in the isolated netd process; root owns net_ep (so the client ABI is
+     * unchanged) and hands a copy to netd. Flag-OFF keeps the in-root net_server
+     * thread. Root compiles BOTH so a rollback is a reconfigure, not a code edit. */
+#ifdef AIOS_NETD
+    if (net_hw_present) {
+        /* Root allocates net_ep (the same endpoint object clients already hold);
+         * spawn_netd donates a copy to netd, waits for DEVD_READY, then PUBLISHES
+         * net_ep_cap = this object + net_available (s8). net_ep_cap stays 0 until
+         * READY, so children spawned meanwhile get child_net=0 -> -ENOTSUP. */
+        vka_object_t net_ep_obj;
+        vka_audit_endpoint(VKA_SUB_BOOT);
+        vka_alloc_endpoint(&vka, &net_ep_obj);
+        spawn_netd(net_ep_obj.cptr);
+        start_net_cleanup_proxy();
+        AIOS_LOG_INFO("netd network path started");
+    }
+#else
     /* Start network threads (if virtio-net detected) */
     if (net_available) {
         vka_object_t net_ep_obj;
@@ -141,27 +179,10 @@ void boot_start_services(vka_object_t *fault_ep) {
             }
         }
         proc_add("net_server", 200);
-
-        /* v0.4.229 (netd Stage 0): sacrificial net-socket cleanup proxy. Drains
-         * pids that handle_child_fault enqueues on child exit and issues the
-         * blocking NET_CLEANUP_PID Call, so a slow/wedged net server parks only
-         * this thread, never the pipe_server loop. Its wakeup notification must
-         * be live before getty (the first faultable child) spawns -- set it
-         * here, well before the getty spawn at the end of boot. */
-        {
-            vka_object_t cleanup_ntfn_obj;
-            if (!vka_alloc_notification(&vka, &cleanup_ntfn_obj)) {
-                pipe_set_net_cleanup_ntfn(cleanup_ntfn_obj.cptr);
-                start_server_thread(
-                    (sel4utils_thread_entry_fn)net_cleanup_proxy_fn,
-                    cleanup_ntfn_obj.cptr);
-                proc_add("net_cleanup", 200);
-            } else {
-                AIOS_LOG_WARN("net cleanup proxy ntfn alloc failed");
-            }
-        }
+        start_net_cleanup_proxy();
         AIOS_LOG_INFO("Network threads started");
     }
+#endif
 
     /* Start display server */
     {
@@ -196,20 +217,6 @@ void boot_start_services(vka_object_t *fault_ep) {
      * the drive-0 write-back cache by issuing FS_SYNC every 30s. */
     flush_server_init();
     proc_add("flush", 200);
-
-#ifdef AIOS_NETD
-    /* netd de-monolithization (DESIGN_NETD Stage 2): spawn the MMU-isolated netd
-     * skeleton and drive its spawn / fault-listener / reply-sweep selftests. The
-     * skeleton runs on its OWN test endpoint -- the real net stack still serves
-     * net_ep in the root task (the Stage 3 cutover is a separate change) -- so
-     * this is purely additive and touches no net globals. Placed before the
-     * tty/auth/getty spawn so the skeleton's crash-containment fault is taken
-     * mid-boot, demonstrating the system still comes all the way up to login. */
-    {
-        extern void spawn_netd(void);
-        spawn_netd();
-    }
-#endif
 
     /* Spawn tty_server (CPIO, isolated process). Pass the display_server endpoint as
      * a 2nd cap (argv[1]) so tty output mirrors to the HDMI fb_console -- the shell is
