@@ -10,6 +10,22 @@
 #include "plat/net_hal.h"
 #include <stdio.h>
 
+/* netd Stage 3 (DESIGN_NETD s5): the SaveCaller reply slots live in a CNode that
+ * differs by build. In root (monolithic / flag-OFF) they are vka-allocated slots
+ * in the init-thread CNode. In netd (NETD_BUILD) they are a range reserved past
+ * netd's own cspace_next_free, addressed in netd's OWN CNode (sel4utils mints it
+ * into SEL4UTILS_CNODE_SLOT); spawn_netd hands the range base over via argv. The
+ * SaveCaller/Delete/Reply mechanism is otherwise byte-identical (DESIGN_NETD s12:
+ * child-cnode SaveCaller via the guarded slot-1 cnode cap works with plain slot
+ * numbers). */
+#ifdef NETD_BUILD
+#include <sel4utils/process.h>   /* SEL4UTILS_CNODE_SLOT */
+#define NET_REPLY_CNODE  SEL4UTILS_CNODE_SLOT
+extern seL4_CPtr netd_reply_slot_base;   /* reserved-range base (netd_shim.c, set from argv) */
+#else
+#define NET_REPLY_CNODE  seL4_CapInitThreadCNode
+#endif
+
 #define MAX_NET_SOCKETS  8
 #define SOCK_RX_BUF_SZ   32768   /* v0.4.171: 32KB rx window (was 4KB) -- 8x fewer
                                   * window-reopen round-trips on a large push */
@@ -84,21 +100,21 @@ static void net_sock_wake_reset(struct net_socket *sk) {
     if (sk->has_blocked) {
         seL4_SetMR(0, (seL4_Word)(-104));   /* ECONNRESET -> blocking recv */
         seL4_Send(sk->blocked_cap, seL4_MessageInfo_new(0, 0, 0, 1));
-        seL4_CNode_Delete(seL4_CapInitThreadCNode,
+        seL4_CNode_Delete(NET_REPLY_CNODE,
                           sk->blocked_cap, seL4_WordBits);
         sk->has_blocked = 0;
     }
     if (sk->has_accept_blocked) {
         seL4_SetMR(0, (seL4_Word)(-1));     /* -> accept (maps to ECONNREFUSED) */
         seL4_Send(sk->accept_blocked_cap, seL4_MessageInfo_new(0, 0, 0, 1));
-        seL4_CNode_Delete(seL4_CapInitThreadCNode,
+        seL4_CNode_Delete(NET_REPLY_CNODE,
                           sk->accept_blocked_cap, seL4_WordBits);
         sk->has_accept_blocked = 0;
     }
     if (sk->has_connect_blocked) {
         seL4_SetMR(0, (seL4_Word)(-111));   /* ECONNREFUSED -> connect */
         seL4_Send(sk->connect_blocked_cap, seL4_MessageInfo_new(0, 0, 0, 1));
-        seL4_CNode_Delete(seL4_CapInitThreadCNode,
+        seL4_CNode_Delete(NET_REPLY_CNODE,
                           sk->connect_blocked_cap, seL4_WordBits);
         sk->has_connect_blocked = 0;
     }
@@ -106,17 +122,17 @@ static void net_sock_wake_reset(struct net_socket *sk) {
 
 static void net_sock_drop_parked(struct net_socket *sk) {
     if (sk->has_blocked) {
-        seL4_CNode_Delete(seL4_CapInitThreadCNode,
+        seL4_CNode_Delete(NET_REPLY_CNODE,
                           sk->blocked_cap, seL4_WordBits);
         sk->has_blocked = 0;
     }
     if (sk->has_accept_blocked) {
-        seL4_CNode_Delete(seL4_CapInitThreadCNode,
+        seL4_CNode_Delete(NET_REPLY_CNODE,
                           sk->accept_blocked_cap, seL4_WordBits);
         sk->has_accept_blocked = 0;
     }
     if (sk->has_connect_blocked) {
-        seL4_CNode_Delete(seL4_CapInitThreadCNode,
+        seL4_CNode_Delete(NET_REPLY_CNODE,
                           sk->connect_blocked_cap, seL4_WordBits);
         sk->has_connect_blocked = 0;
     }
@@ -130,8 +146,8 @@ static void net_sock_drop_parked(struct net_socket *sk) {
  * otherwise hang forever). Returns 0 if the caller is now parked, -1 if it was
  * already replied (do not set the has_*_blocked bookkeeping). */
 static int net_park_caller(seL4_CPtr slot) {
-    seL4_CNode_Delete(seL4_CapInitThreadCNode, slot, seL4_WordBits);
-    int rc = seL4_CNode_SaveCaller(seL4_CapInitThreadCNode, slot, seL4_WordBits);
+    seL4_CNode_Delete(NET_REPLY_CNODE, slot, seL4_WordBits);
+    int rc = seL4_CNode_SaveCaller(NET_REPLY_CNODE, slot, seL4_WordBits);
     if (rc != seL4_NoError) {
         seL4_SetMR(0, (seL4_Word)(-5));   /* EIO: could not save reply cap */
         seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
@@ -165,7 +181,7 @@ void net_udp_deliver(uint16_t dst_port, uint16_t src_port,
                 if (j % 8 == 7 || j == n - 1) { seL4_SetMR(mr++, w); w = 0; }
             }
             seL4_Send(s->blocked_cap, seL4_MessageInfo_new(0, 0, 0, mr));
-            seL4_CNode_Delete(seL4_CapInitThreadCNode,
+            seL4_CNode_Delete(NET_REPLY_CNODE,
                               s->blocked_cap, seL4_WordBits);
             s->has_blocked = 0;
             return;
@@ -287,7 +303,7 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
             seL4_SetMR(0, 0);
             seL4_Send(s->connect_blocked_cap,
                       seL4_MessageInfo_new(0, 0, 0, 1));
-            seL4_CNode_Delete(seL4_CapInitThreadCNode,
+            seL4_CNode_Delete(NET_REPLY_CNODE,
                               s->connect_blocked_cap, seL4_WordBits);
             s->has_connect_blocked = 0;
         }
@@ -304,7 +320,7 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
             seL4_SetMR(0, (seL4_Word)si);
             seL4_Send(sockets[pi].accept_blocked_cap,
                       seL4_MessageInfo_new(0, 0, 0, 1));
-            seL4_CNode_Delete(seL4_CapInitThreadCNode,
+            seL4_CNode_Delete(NET_REPLY_CNODE,
                               sockets[pi].accept_blocked_cap, seL4_WordBits);
             sockets[pi].has_accept_blocked = 0;
             /* v0.4.163: handed to a blocked accept -- mark consumed so the
@@ -370,7 +386,7 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
                     if (j % 8 == 7 || j == d - 1) { seL4_SetMR(mr++, w); w = 0; }
                 }
                 seL4_Send(s->blocked_cap, seL4_MessageInfo_new(0, 0, 0, mr));
-                seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                seL4_CNode_Delete(NET_REPLY_CNODE,
                                   s->blocked_cap, seL4_WordBits);
                 s->has_blocked = 0;
                 accepted = d;
@@ -431,7 +447,7 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
         if (s->has_blocked) {
             seL4_SetMR(0, 0); /* len=0 = EOF */
             seL4_Send(s->blocked_cap, seL4_MessageInfo_new(0, 0, 0, 1));
-            seL4_CNode_Delete(seL4_CapInitThreadCNode,
+            seL4_CNode_Delete(NET_REPLY_CNODE,
                               s->blocked_cap, seL4_WordBits);
             s->has_blocked = 0;
         }
@@ -452,6 +468,14 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
     (void)arg1; (void)ipc_buf;
 
     for (int i = 0; i < MAX_NET_SOCKETS; i++) {
+#ifdef NETD_BUILD
+        /* Reserved SaveCaller slots in netd's own CNode: spawn_netd reserved
+         * 3*MAX_NET_SOCKETS slots past cspace_next_free and handed the base over
+         * via argv (netd_reply_slot_base). netd holds no vka. DESIGN_NETD s3 row 6. */
+        blocked_slots[i] = netd_reply_slot_base + i;
+        accept_slots[i]  = netd_reply_slot_base + MAX_NET_SOCKETS + i;
+        connect_slots[i] = netd_reply_slot_base + 2 * MAX_NET_SOCKETS + i;
+#else
         cspacepath_t p1, p2;
         vka_cspace_alloc_path(&vka, &p1);
         blocked_slots[i] = p1.capPtr;
@@ -460,6 +484,7 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
         cspacepath_t p3;
         vka_cspace_alloc_path(&vka, &p3);
         connect_slots[i] = p3.capPtr;
+#endif
     }
 
 

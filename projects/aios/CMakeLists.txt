@@ -208,6 +208,29 @@ if(AIOS_NETD)
 endif()
 target_link_options(aios_root PRIVATE -Wl,--no-copy-dt-needed-entries)
 
+# netd Stage 3 (DESIGN_NETD s9): compile the net stack + the platform driver dev
+# half into the netd process under NETD_BUILD. The skeleton main (netd.c) does not
+# call net_server_fn yet (Stage 3 wires that) -- compiling+linking it here is the
+# isolation proof: if the net stack referenced a root-only symbol the netd_shim
+# does not provide (e.g. the vka `vka` global), the netd link would FAIL. Root
+# keeps its OWN full copy of the same sources for the in-root (flag-OFF) path; the
+# two binaries never share these objects. Built unconditionally (like the netd
+# skeleton) so every build compile-checks the NETD_BUILD path, flag on or off.
+target_sources(netd PRIVATE
+    ${AIOS_ROOT}/src/servers/net_server.c
+    ${AIOS_ROOT}/src/net/net_stack.c
+    ${AIOS_ROOT}/src/net/net_tcp.c
+    ${AIOS_ROOT}/src/net/net_dhcp.c
+    ${AIOS_ROOT}/src/apps/netd_shim.c
+)
+if(AIOS_PLATFORM STREQUAL "PLAT_QEMU_VIRT")
+    target_sources(netd PRIVATE ${AIOS_ROOT}/src/plat/qemu-virt/net_virtio.c)
+elseif(AIOS_PLATFORM STREQUAL "PLAT_RPI4")
+    target_sources(netd PRIVATE ${AIOS_ROOT}/src/plat/rpi4/net_genet.c)
+endif()
+target_compile_definitions(netd PRIVATE NETD_BUILD ${AIOS_PLATFORM})
+target_include_directories(netd PRIVATE ${AIOS_ROOT}/src)
+
 DeclareRootserver(aios_root)
 
 add_custom_command(

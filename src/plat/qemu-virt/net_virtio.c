@@ -306,7 +306,9 @@ int plat_net_init(void) {
     printf("[boot] virtio-net ready, MAC=%02x:%02x:%02x:%02x:%02x:%02x\n",
            net_mac[0], net_mac[1], net_mac[2],
            net_mac[3], net_mac[4], net_mac[5]);
-    LOG_INFO("virtio-net initialized");
+#ifndef NETD_BUILD
+    LOG_INFO("virtio-net initialized");   /* root log ring; netd has no log ring (logs via printf) */
+#endif
     return 0;
 }
 
