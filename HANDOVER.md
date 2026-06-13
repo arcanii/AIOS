@@ -10,20 +10,21 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
 ## Quick orientation
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4.
-* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.238**.
-  Origin is at `a6b6473` (the 3b commit, pushed); `532fccd` + `bc590ef` + the docs
-  are **ahead, pending Bryan's push**.
-  **netd Stage 3 CUTOVER COMPLETE + QEMU-VERIFIED 2026-06-13e: the net stack now
+* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.239**.
+  Origin is at `a6b6473` (the 3b commit, pushed); everything after it (`532fccd`,
+  `bc590ef`, `b0a34fc`, docs) is **ahead, pending Bryan's push**.
+  **netd Stage 3 CUTOVER HW-VERIFIED on a real RPi4 2026-06-13f: the net stack now
   runs in the MMU-isolated `netd` process behind `AIOS_NETD`** -- 3b boot cutover
   (`a6b6473`), 3c `/proc/net` stats page + 3d crash-recovery sweep (`532fccd`),
-  capacity gate (`bc590ef`). flag-OFF stays byte-identical. **Only a real-RPi4
-  Step-4 HW pass + a forced-degrade QEMU gate remain** -- see the DONE section
-  below + the seed `docs/NEXT_20260613e_netd_stage3_hw.md` + the
-  `project_demono_netd` memory. Earlier this arc: the Stage-3 FOUNDATION (5
-  flag-OFF-inert commits `ec20d24`..`7cbee78`), netd Stages 0-2, stability A/B,
-  and the RPi4 thermal cap (all HW-VERIFIED; C/GENET-MAC backlogged, harmless).
-  The Pi last ran v0.4.235 @ 600MHz at 192.168.0.127 (it has NOT run any Stage-3
-  build -- the HW pass is the first netd-on-Pi boot). The v0.4.188-228 arcs (USB HID, V3D, the Source-B
+  capacity gate (`bc590ef`), and the prov-UMAC HW fix (`b0a34fc`). flag-OFF stays
+  byte-identical. **The real Pi now runs v0.4.239 at 192.168.0.8 (the REAL MAC --
+  the retry-for-low DMA fixed the long-standing `.127` fallback) with netd serving
+  DHCP+ping+ssh+netconsole; the s10 crash demo recovered cleanly.** Only a
+  forced-degrade QEMU gate + Stage 4 (re-home, default ON) remain -- see the DONE
+  section below + the seed `docs/NEXT_20260613e_netd_stage3_hw.md` (now with the HW
+  result) + the `project_demono_netd` memory. Earlier this arc: the Stage-3
+  FOUNDATION (5 flag-OFF-inert commits `ec20d24`..`7cbee78`), netd Stages 0-2,
+  stability A/B, and the RPi4 thermal cap (all HW-VERIFIED). The v0.4.188-228 arcs (USB HID, V3D, the Source-B
   32.4s stall CURE, fatswap flash-over-network, ext2 group layout, RPi4 4-core
   SMP) are captured in the memory index + `docs/NEXT_*.md`, not inline here.
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4).
@@ -56,7 +57,7 @@ Honor it; this session learned the hard way what happens when you do not.
 
 ---
 
-## DONE: netd Stage 3 CUTOVER -- net runs in netd -- v0.4.237/238 (2026-06-13e)
+## DONE: netd Stage 3 CUTOVER -- net runs in netd -- HW-VERIFIED v0.4.237-239 (2026-06-13e/f)
 
 The behavioral cutover (`DESIGN_NETD` s3/s8/s9/s10). With `AIOS_NETD=ON` the net
 stack -- socket server + TCP/UDP/DHCP + the NIC driver dev half -- runs in the
@@ -92,22 +93,39 @@ first try. Full runway: `docs/NEXT_20260613e_netd_stage3_hw.md` + the
 * **Capacity gate (`bc590ef`, pending push).** `smp_qemu_test.py` vs build-netd:
   clean parallel-pipeline ceiling = **30** (W=32 Cannot fork), matching the
   build-04 ~30 -- netd's CPIO footprint does NOT erode the ceiling on QEMU.
+* **HW pass + prov-UMAC fix (`b0a34fc`, v0.4.239, pending push).** The first
+  netd-on-real-Pi boot caught a HW-only bug QEMU cannot: in the flag-ON path root
+  runs `plat_net_prov`, and `read_mac_from_mailbox` wrote `UMAC_MAC0` with
+  `genet_regs` NULL (root does not map GENET at prov) -> fault at `0x80c`. Fixed
+  with a runtime `genet_in_prov` flag gating the prov UMAC writes (prov reads MAC
+  bytes only; netd programs UMAC after its own SWINIT release). flag-OFF
+  unaffected. **Bonus: the prov mailbox read succeeding with the retry-for-low
+  <1GB DMA resolved the long-standing `.127` fallback -> the Pi now takes the real
+  MAC `.8`** (the C/GENET-MAC backlog -- the tag-buffer bus alias `|0xC0000000`
+  needs a <1GB physical addr; see `feedback_genet_umac_swinit`).
 
 **Verified (QEMU, flag-ON):** `netd_qemu_test.py` 10/10 (bring-up + `/proc/net` +
-serverstats + the s10 crash demo over SERIAL: fault contained, sweep woke 2
-parked callers = sshd+netconsole, IRQ cleared, shell alive, net dead); socket
-suite 8/8; ssh 6/6; no-`--net` -> netd never spawns (zero delta, clean login);
-30-pipeline ceiling 30. **flag-OFF parity:** build-04 socket 8/8. All three trees
-build (build-04 + build-rpi4 + build-netd).
+serverstats + the s10 crash demo over SERIAL); socket suite 8/8; ssh 6/6;
+no-`--net` -> netd never spawns (zero delta); 30-pipeline ceiling 30. **flag-OFF
+parity:** build-04 socket 8/8. All three trees build.
 
-**Remaining (next session):** (1) the real-RPi4 **Step-4 HW pass** (build-rpi4 +
-flash-free kernel8 swap, SD shuffle for rollback, capture SERIAL): DHCP+ping+ssh,
-`/proc/net` heartbeat, retry-for-low DMA, GENET IRQ-RX + s10 crash recovery on
-real GENET, a soak with USB+HDMI attached (a netd crash on a standalone Pi needs
-the serial cable -- the HDMI console freezes on first scroll). (2) a
-**forced-DEVD_FAIL / delayed-READY** QEMU gate (the degrade tail is shared with
-the verified no-net route; wants a small `NETD_TEST_NO_READY` hook). (3) **Stage 4**
-re-home + default ON. See the seed.
+**HW-VERIFIED on a real RPi4 (2026-06-13f, v0.4.239 at 192.168.0.8):** every gate
+passed -- netd provisions on real GENET (retry-for-low DMA `phys=0x3880000, <1GB,
+6 rejects`; real-MAC mailbox read), the GENET register sequence runs INSIDE netd,
+DEVD_READY handshake, **DHCP `.8` with the real MAC**, bidirectional ping,
+`/proc/net` heartbeat + socket occupancy, serverstats net `ok` (heartbeat-fed, no
+SVC_PING), netconsole + ssh both served by netd, and the **s10 crash demo on real
+GENET** (`cat /proc/netd.crash` -> fault contained + reply-sweep woke the parked
+caller + IRQ cleared -> root + shell alive, net `dead`; clean `reboot` -> netd
+back up clean, no re-crash). The Pi is left healthy at 192.168.0.8 on v0.4.239.
+Rollbacks on disk: `kernel8-oncard-v235-backup.img`, `kernel8-flagoff-rollback.img`.
+
+**Remaining (next session):** (1) a **forced-DEVD_FAIL / delayed-READY** QEMU gate
+(the degrade tail is shared with the verified no-net route; wants a small
+`NETD_TEST_NO_READY` hook). (2) **Stage 4** re-home + default ON (`/proc/genet`
+UMAC-free rewrite -- note in the flag-ON root `genet_regs` is NULL so the current
+`genet_diag_cmd` returns "not initialized"; NET_DIAG ops in `/bin/netdiag`; flip
+`AIOS_NETD` default ON). See the seed.
 
 ---
 

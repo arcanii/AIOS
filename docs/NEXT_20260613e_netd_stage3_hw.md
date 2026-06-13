@@ -1,5 +1,15 @@
 # NEXT: session seed -- 2026-06-13e (netd Stage 3 -- the real-RPi4 HW pass)
 
+> **HW PASS DONE 2026-06-13f (v0.4.239).** The real Pi booted netd, took the
+> real-MAC lease **192.168.0.8**, and passed every gate (DHCP/ping/ssh/netconsole,
+> `/proc/net`, s10 crash recovery). The first boot caught + fixed a HW-only bug
+> (prov-time UMAC write with `genet_regs` NULL -> fault `0x80c`; fix = the
+> `genet_in_prov` guard, commit `b0a34fc`), and the retry-for-low DMA resolved the
+> long-standing `.127` fallback. Pi is healthy at 192.168.0.8 on v0.4.239. The
+> sections below are the (completed) HW-pass plan, kept for reference. **What still
+> remains: the forced-degrade QEMU gate + Stage 4 (re-home + default ON)** -- see
+> the bottom two sections. Full record: `project_demono_netd` memory "HW PASS".
+
 Read `HANDOVER.md` (top + the DONE section "netd Stage 3 CUTOVER") and the memory
 `project_demono_netd` first. This doc is the orientation + the HW-pass plan.
 
