@@ -956,6 +956,32 @@ void plat_net_get_mac(uint8_t mac[6]) {
     for (int i = 0; i < 6; i++) mac[i] = genet_mac[i];
 }
 
+/* v0.4.235: deferred MAC read. genet_init's early read_mac_from_mailbox() loses a
+ * race with VC firmware readiness -- HW-confirmed (build 2169): the mailbox MAC
+ * read times out 3x at genet_init, yet the display server's mailbox calls a moment
+ * later succeed. DHCP runs in the net_server thread AFTER display init, so re-read
+ * the real MAC here, when the VC is proven ready -- this fixes the fake fallback
+ * (dc:a6:32:01:02:03) -> wrong lease (.127 instead of .8). Only re-reads if still
+ * on the fallback; read_mac_from_mailbox re-programs UMAC_MAC0/1 so the unicast RX
+ * filter follows the real MAC too. */
+int plat_net_refresh_mac(void) {
+    static const uint8_t fb[6] = { 0xDC, 0xA6, 0x32, 0x01, 0x02, 0x03 };
+    int is_fallback = 1;
+    for (int i = 0; i < 6; i++) if (genet_mac[i] != fb[i]) { is_fallback = 0; break; }
+    if (!is_fallback) return 0;   /* the early read already won */
+
+    for (int attempt = 0; attempt < 5; attempt++) {
+        if (read_mac_from_mailbox() == 0) {
+            printf("[net] real MAC (mailbox, deferred): %02x:%02x:%02x:%02x:%02x:%02x\n",
+                   net_mac[0], net_mac[1], net_mac[2], net_mac[3], net_mac[4], net_mac[5]);
+            return 0;
+        }
+        genet_delay(2000);   /* ~2ms settle between attempts */
+    }
+    printf("[net] deferred mailbox MAC read still failed -- keeping fallback\n");
+    return -1;
+}
+
 /* ================================================================
  * Live diagnostic interface -- driven from /proc/genet so the GENET
  * datapath can be probed AND poked from the AIOS shell WITHOUT reflashing.

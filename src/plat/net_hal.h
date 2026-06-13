@@ -30,6 +30,13 @@ void plat_net_drain(void);
 /* Get hardware MAC address (6 bytes). */
 void plat_net_get_mac(uint8_t mac[6]);
 
+/* v0.4.235: re-read the real MAC after early boot. On RPi4 the VC mailbox is not
+ * ready at genet_init time (the MAC read times out -> fake fallback -> wrong DHCP
+ * lease), but it is ready by the time the net_server thread runs DHCP (display
+ * init has happened). Called just before net_dhcp_acquire(). Returns 0 if a real
+ * MAC is set, -1 if still on the fallback. QEMU: no-op. */
+int plat_net_refresh_mac(void);
+
 /* Live diagnostic hook, driven from /proc/genet (RPi4 GENET only).
  * args is the path text after "genet" ("" = dump, ".cmd[.hexargs]" = command).
  * Writes a human-readable report into buf; returns bytes, or -1 on bad command. */
