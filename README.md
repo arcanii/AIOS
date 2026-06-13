@@ -12,7 +12,7 @@
 
 A research microkernel operating system built on seL4
 
-## Get going fast
+## Get going fast (MacOS)
 
 ```bash
 git clone https://github.com/arcanii/AIOS.git && cd AIOS
