@@ -136,12 +136,46 @@ Diag kernels: disk/kernel8-D1-tlbisplit.img (2120, split-DSB), D2-dsbnsh-cure
 deps/kernel machine.h + vspace.c -- UNTRACKED (capture into deps/patches or it
 is lost on a deps reset); remove before shipping a release kernel.
 
-## HARDWARE STATE / RECOVERY (important)
+## THE RESIDUAL: localized to the SMP remote TLB shootdown (2026-06-13, D5/D6)
 
-The Pi is on **V4-genetoff (build 2115): GENET OFF, serial-only, NO network.**
-It CANNOT be flashed over the network (fatswap needs a netconsole push). To
-restore a networked kernel you must **physically reflash the card** (balenaEtcher
-disk/sdcard-rpi4.img, or swap kernel8.img) OR re-flash to a GENET-on variant
-once the card is reachable again. Keep KernelMaxNumNodes=1 (Bryan's call:
-SMP=4 only after a real cure). Serial: /dev/cu.usbserial-0001 @115200, one
-reader (stop sercap before driving load).
+The cure (nodes=4) is shipped (v0.4.228); the only open Source-B item is the
+heavy-spawn-storm residual. This session localized it precisely:
+
+- **D5 (build 2127) split local-vs-remote diag:** bracketed unmapPage's TLBI op
+  into local (`invalidateLocalTLB_VAASID`) vs SMP remote shootdown
+  (`doRemoteInvalidateTranslationSingle`). Under soak L3, 3x consistent:
+  **`[KUSMP] total=32399ms local=0ms remote=32399ms`.** The local TLBI is
+  INSTANT (cure working, SCU awake) -- the entire residual is the REMOTE
+  shootdown: core 0 IPIs cores 1-3 and waits for their TLBI to complete, and
+  that hangs to the 32.4s timeout. Mechanism: AIOS pins all user threads to
+  core 0, so cores 1-3 are pure idle-spinners whose own DVM/TLB-maintenance
+  interface quiesces -> a remote TLBI dispatched to them hangs (same root
+  mechanism as the cured one, now on the idle remote cores).
+- **D6 (build 2129) DVM-keepalive cure REFUTED:** a posted `tlbi vae1, xzr`
+  (no dsb -> non-blocking) each idle iteration did NOT keep the remote cores'
+  completion path warm -- `[KUSMP] remote=32399ms` unchanged. A posted tlbi
+  issues the op but the completion machinery only engages on a `dsb`, which
+  cannot safely go in idle (an uninterruptible dsb that hits the quiesce would
+  hang that core 32s). So a keepalive is a dead end.
+
+### Candidate fix (deferred -- correctness-sensitive, low-impact residual)
+The remote shootdown to cores 1-3 is UNNECESSARY: under core-0 thread pinning
+they never cache user translations, so there is nothing to invalidate. Skipping
+it would cure the residual with certainty AND save the wasteful IPI. seL4's
+`invalidateTranslationSingle` broadcasts to MASK(CONFIG_MAX_NUM_NODES)
+unconditionally; the principled change is to shoot down only cores not running
+the idle thread (idle cores hold no user TLB entries) -- but that has a
+scheduler/shootdown race and is a TLB-correctness-sensitive kernel change (a
+wrong skip = silent stale-TLB corruption), so it deserves a focused session,
+not a marathon-tail attempt. Footgun-but-safe-for-AIOS shortcut: skip the
+remote shootdown entirely (valid only while ALL threads are core-0-pinned).
+Diag kernels: D5-smpsplit (2127), D6-dvmkeepalive (2129, refuted).
+
+## HARDWARE STATE (current)
+
+Pi at 192.168.0.127 running the **clean v0.4.228 cure** (nodes=4, no diag
+instrumentation), networked, healthy. KernelMaxNumNodes=4 is committed.
+Serial: /dev/cu.usbserial-0001 @115200, one reader (stop sercap before driving
+serial load). All Source-B diag instrumentation has been reverted from
+deps/kernel (stock); the D1-D6 diag kernels remain on disk as
+disk/kernel8-D*.img if the residual hunt resumes.
