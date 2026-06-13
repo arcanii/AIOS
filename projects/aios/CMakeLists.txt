@@ -111,6 +111,10 @@ AiosPosixApp(posix_verify
 # bundle + spawn the isolated netd skeleton and drive its Stage-2 selftests;
 # Stage 3 will move the net stack itself behind this same flag.
 option(AIOS_NETD "Spawn the isolated netd process (DESIGN_NETD)" OFF)
+# Test-only: build netd so it comes up but never sends DEVD_READY, to exercise the
+# DESIGN_NETD s8 degrade-and-continue path (a wedged netd init must not brick boot).
+# Default OFF; turn ON only in a throwaway build (e.g. build-netd-degrade).
+option(AIOS_NETD_TEST_DEGRADE "netd skips DEVD_READY (degrade-path gate)" OFF)
 
 # Boot services only in CPIO (launched before filesystem)
 set(BOOT_APPS tty_server auth_server)
@@ -229,6 +233,10 @@ elseif(AIOS_PLATFORM STREQUAL "PLAT_RPI4")
     target_sources(netd PRIVATE ${AIOS_ROOT}/src/plat/rpi4/net_genet.c)
 endif()
 target_compile_definitions(netd PRIVATE NETD_BUILD ${AIOS_PLATFORM})
+if(AIOS_NETD_TEST_DEGRADE)
+    target_compile_definitions(netd PRIVATE NETD_TEST_NO_READY)
+    message(STATUS "AIOS_NETD_TEST_DEGRADE=ON: netd will skip DEVD_READY (degrade gate)")
+endif()
 target_include_directories(netd PRIVATE ${AIOS_ROOT}/src)
 
 DeclareRootserver(aios_root)

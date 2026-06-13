@@ -119,6 +119,16 @@ int main(int argc, char **argv) {
      * each loop iteration. Mapped cacheable by root at this vaddr in netd. */
     netd_stats_page = (struct netd_stats *)stats_va;
 
+#ifdef NETD_TEST_NO_READY
+    /* Forced-degrade gate (DESIGN_NETD s8): a netd that comes up but never sends
+     * DEVD_READY must NOT brick boot -- the spawn_netd cntpct-bounded wait must time
+     * out and degrade (net off, boot continues to login). Skip READY + the serve
+     * loop and spin so netd stays alive-but-silent (the "spawned but never READY"
+     * case). Built only when AIOS_NETD_TEST_DEGRADE is ON; default OFF. */
+    printf("[netd] TEST: NETD_TEST_NO_READY set -- skipping DEVD_READY (degrade gate)\n");
+    for (;;) seL4_Yield();
+#endif
+
     /* Announce readiness BEFORE DHCP (DESIGN_NETD s8): device init is
      * milliseconds, DHCP can take seconds on a real LAN -- root must publish
      * net_ep_cap now so the getty fork-and-forget netconsole/sshd/sntp capture a
