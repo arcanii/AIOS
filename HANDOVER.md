@@ -10,10 +10,10 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
 ## Quick orientation
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4.
-* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.231**
-  (netd de-monolithization Stages 0-2 -- see the DONE section below. Stage 2
-  proved the reply-sweep kernel bet; next is Stage 3, the real net cutover). The
-  v0.4.188-228 arcs (USB HID,
+* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.234**
+  (netd Stages 0-2 + three stability follow-ups -- see the DONE sections below.
+  Stage 2 proved the reply-sweep kernel bet; next is Stage 3, the real net
+  cutover). The v0.4.188-228 arcs (USB HID,
   V3D, the Source-B 32.4s stall CURE, fatswap flash-over-network, ext2 group
   layout, RPi4 4-core SMP) are captured in the memory index + `docs/NEXT_*.md`,
   not inline here.
@@ -94,10 +94,51 @@ Moving the net subsystem out of the root task into an isolated `netd` process
   netconsole itself is proven by net_socket's 8/8. The spawn page-cost counter
   reads delta 0 because a sel4utils CPIO spawn allocates via its own vspace path,
   invisible to vka_live_frames -- capacity is the >=30-pipeline gate, deferred.)
-  ahead-2 of origin (Stage 1 + Stage 2; ASK before pushing).
+  Committed `7cf262e` (pushed to origin).
 * **Lesson:** an "ext2 image-builder bug" this session was a MISDIAGNOSIS -- a
   one-time concurrent write to `disk/disk_ext2.img` from another session. The
   builder is deterministic. See `feedback_qemu_test_hygiene`.
+
+---
+
+## DONE: stability follow-ups -- v0.4.232-234 (2026-06-13)
+
+Three small, low-risk wins after netd Stage 2 (each its own commit; all QEMU- or
+build-verified). Push state: A `e1aaf75` + B `fc68cc2` are on origin; C `b2e7a58`
+is ahead-1 (pending push).
+
+* **A -- quiet per-spawn serial logging** (v0.4.232, `e1aaf75`). Every
+  spawn/exec/fork printed ~4-5 routine stat lines at INFO (text cached/shared/lazy
+  pages, BSS lazy pages, cow_setup, the per-exec elf size); on the lossy RPi4
+  mini-UART that buries real `[WRN]`/`[ERR]` and fragments the getty prompt.
+  Demoted them to `AIOS_LOG_DEBUG` (gated off at the default INFO level; live
+  counts stay in /proc/vka + /proc/cow, exec paths in /proc/filehits). VERIFIED:
+  a boot capture shows all six per-spawn strings at count 0 on serial; boot
+  healthy. **If you miss those lines, set that module's `LOG_LEVEL` to DEBUG.**
+  NOTE: this did NOT fix `netcon_qemu_test`'s serial-login flake -- that harness
+  times out at the password-prompt step for separate, pre-existing reasons (ssh's
+  serial login works on the same getty; net_socket deliberately drives over
+  netconsole-TCP to avoid serial login). A is about HW serial observability.
+
+* **B -- DHCP lease renewal** (v0.4.233, `fc68cc2`). AIOS bound once at boot and
+  never renewed, so an idle Pi dropped off the LAN at lease expiry. Now it parses
+  the lease (option 51) and renews at T1 (50%) from the net_server loop -- which
+  already wakes >= every 5s via the serverstats SVC_PING, so no timer thread. The
+  renewal REQUEST is the proven boot packet; `net_dhcp_input` gained a
+  `dhcp_renewing` ACK path (extends + re-arms T1, bounded retry lease/8).
+  /proc/netstat now shows dhcp_acks/dhcp_renews/dhcp_lease_secs, and
+  `cat /proc/netstat.renew` forces one (SLIRP's lease is 86400s, too long to wait
+  out). VERIFIED: `scripts/dhcp_renew_qemu_test.py` 3/3 (lease=86400s parsed;
+  forced renew acks 1->2, renews 0->1). Follow-up: non-blocking re-acquire on a
+  renewal NAK.
+
+* **C -- GENET mailbox MAC retry** (v0.4.234, `b2e7a58`, RPi4-only, **HW-VERIFY
+  PENDING**). The VC-mailbox MAC read fails intermittently on the A72; a single
+  failure left the fake fallback dc:a6:32:01:02:03 -> the MAC-derived DHCP xid got
+  a different lease (.127 not .8). Now retries 3x (each `genet_mbox_call` is a 2s
+  bounded poll, so worst case ~6s only on persistent failure; the intermittent
+  case clears on attempt 2). build-rpi4 compiles; QEMU has no GENET, so the
+  consistent-.8 behavior needs a real-Pi boot to confirm.
 
 ---
 
