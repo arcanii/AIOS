@@ -107,7 +107,11 @@ void serverstats_init(void) {
     srv[SRV_PIPE]   = (srv_t){ "pipe",    &pipe_ep_cap,   0, 1, 0, 0, 0, 0, 0 };
     srv[SRV_FS]     = (srv_t){ "fs",      &fs_ep_cap,     0, 1, 0, 0, 0, 0, 0 };
     srv[SRV_THREAD] = (srv_t){ "thread",  &thread_ep_cap, 0, 1, 0, 0, 0, 0, 0 };
-    srv[SRV_NET]    = (srv_t){ "net",     &net_ep_cap,    0, net_available, 0, 0, 0, 0, 0 };
+    /* v0.4.229 (netd Stage 0): net is always a monitored row (enabled=1), not
+     * hidden as "off" when absent. ping_one already skips it while net_ep_cap==0
+     * (the *ep_p==0 guard), and the render shows "dead" in that case -- the
+     * shape the Stage 3 heartbeat-fed, never-Call'd-when-wedged row will take. */
+    srv[SRV_NET]    = (srv_t){ "net",     &net_ep_cap,    0, 1, 0, 0, 0, 0, 0 };
     srv[SRV_DISP]   = (srv_t){ "display", &disp_ep_cap,   0, gpu_available, 0, 0, 0, 0, 0 };
     srv[SRV_CRYPTO] = (srv_t){ "crypto",  &crypto_ep_cap, 1, 1, 0, 0, 0, 0, 0 };
 
@@ -150,9 +154,13 @@ int serverstats_format(char *buf, int bufsize) {
         srv_t *s = &srv[i];
         const char *state;
         uint64_t age_s = 0;
-        if (!s->enabled)              state = "off";
-        else if (s->pings_ok == 0)    state = "pending";
-        else                          state = "ok";
+        /* v0.4.229: "dead" = enabled but no live endpoint cap (absent NIC, or a
+         * future netd crash that zeroes net_ep_cap). Only the net row can hit
+         * this today; the always-on servers keep non-zero caps. */
+        if (!s->enabled)                          state = "off";
+        else if (!s->ep_p || *s->ep_p == 0)       state = "dead";
+        else if (s->pings_ok == 0)                state = "pending";
+        else                                      state = "ok";
         if (s->last_ok_us)
             age_s = (now - s->last_ok_us) / 1000000ULL;
         w += snprintf(buf + w, bufsize - w,

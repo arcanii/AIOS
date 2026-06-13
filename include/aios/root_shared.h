@@ -74,21 +74,11 @@
 #define PIPE_GET_TIME    89 /* v0.4.166: read the wall-clock epoch offset (seconds) */
 #define PIPE_SET_TIME    90 /* v0.4.166: set the wall-clock epoch offset (e.g. from SNTP) */
 
-/* ---- NET IPC labels (90-109) ---- */
-#define NET_SOCKET       90
-#define NET_BIND         91
-#define NET_LISTEN       92
-#define NET_ACCEPT       93
-#define NET_CONNECT      94
-#define NET_SENDTO       95
-#define NET_RECVFROM     96
-#define NET_CLOSE_SOCK   97
-#define NET_CLEANUP_PID  98
-#define NET_GETINFO      98
-#define NET_SETSOCKOPT   99
-#define NET_SENDTO_SHM   100
-#define NET_RECVFROM_SHM 101
-#define NET_MAP_SHM      102
+/* ---- NET IPC labels (90-109) -- canonical defs in aios/net_proto.h.
+ * v0.4.229 (netd Stage 0): factored out so the in-root net server and the
+ * future netd process share one definition; retired the unused NET_GETINFO
+ * that collided with NET_CLEANUP_PID at 98. ---- */
+#include "aios/net_proto.h"
 
 /* ---- DISPLAY IPC labels (110-119) ---- */
 #define DISP_FB_INFO     110
@@ -348,6 +338,12 @@ void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf);
 void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf);
 int process_kill(int pid);
 void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf);
+/* v0.4.229 (netd Stage 0): sacrificial net-socket-cleanup proxy thread + the
+ * setter boot uses to hand it (and handle_child_fault) its wakeup notification.
+ * Decouples the blocking NET_CLEANUP_PID Call from the pipe_server main loop so
+ * a slow/wedged net server parks only the proxy, not all process management. */
+void net_cleanup_proxy_fn(void *arg0, void *arg1, void *ipc_buf);
+void pipe_set_net_cleanup_ntfn(seL4_CPtr ntfn);
 void boot_net_init(void);
 void boot_display_init(void);
 /* net_driver_fn moved to plat/qemu-virt/net_virtio.c as plat_net_driver_fn */

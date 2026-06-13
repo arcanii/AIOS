@@ -86,7 +86,8 @@ def main():
             ("nslookup.c", "nslookup", []),
             ("idtest.c", "idtest", []),    # v0.4.190 privesc regression probe
             ("test_threads.c", "test_threads", []),  # pthreads smoke (mutex)
-            ("test_join.c", "test_join", [])]        # v0.4.191 deferred-join test
+            ("test_join.c", "test_join", []),        # v0.4.191 deferred-join test
+            ("nettest.c", "nettest", [])]            # v0.4.229 netd Stage 0 socket probe
     for src, out, aliases in apps:
         outp = os.path.join(BUILD, "sbase", out)
         cmd = [os.path.join(AIOS, "scripts", "aios-cc"),

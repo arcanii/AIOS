@@ -226,6 +226,16 @@ long aios_sys_connect(va_list ap) {
     uint32_t ip = ((uint32_t)sa[4] << 24) | ((uint32_t)sa[5] << 16) |
                   ((uint32_t)sa[6] << 8) | sa[7];
 
+    /* v0.4.229 (netd Stage 0): resolve PID before registering owner_pid with the
+     * net server, mirroring socket(). A forked child that calls connect() before
+     * any getpid() would otherwise register owner_pid=0, so its socket is never
+     * reclaimed on exit (NET_CLEANUP_PID matches on pid). Done before the MR sets
+     * so the PIPE_GETPID Call cannot clobber them. */
+    if (aios_pid <= 1 && pipe_ep) {
+        seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_GETPID, 0, 0, 0));
+        int rpid = (int)(long)seL4_GetMR(0);
+        if (rpid > 0) aios_pid = rpid;
+    }
     seL4_SetMR(0, (seL4_Word)f->socket_id);
     seL4_SetMR(1, (seL4_Word)ip);
     seL4_SetMR(2, (seL4_Word)port);

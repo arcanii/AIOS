@@ -258,10 +258,68 @@ static int reclaim_orphaned_pipes(void) {
     return reclaimed;
 }
 
+/* v0.4.229 (netd Stage 0): cleanup-proxy SPSC ring (DESIGN_NETD s5).
+ *
+ * handle_child_fault (running on THIS pipe_server thread) used to stash one
+ * exiting pid in a single int, and the main loop issued the blocking
+ * seL4_Call(net_ep_cap, NET_CLEANUP_PID). Two problems: (a) one int drops a
+ * second exit that arrives before the loop drains it; (b) the blocking Call sat
+ * on the pipe_server's own thread, so a slow or wedged net server would freeze
+ * ALL process/pipe management. Fix: a 64-entry single-producer/single-consumer
+ * ring (the net_rx_ring idiom) drained by a sacrificial proxy thread. The
+ * producer (this thread) only enqueues + Signals; the proxy makes the Call, so
+ * a hung net server parks only the expendable proxy. Both ends are pinned to
+ * core 0 (boot_services ROOT_CORE), so the dmb is belt-and-braces, kept for the
+ * cross-core future and idiom match. */
+#define NET_CLEANUP_RING_SZ MAX_ACTIVE_PROCS   /* 64; up to 63 pids in flight */
+static volatile int      net_cleanup_ring[NET_CLEANUP_RING_SZ];
+static volatile uint32_t net_cleanup_head;     /* producer: pipe_server thread */
+static volatile uint32_t net_cleanup_tail;     /* consumer: proxy thread */
+static seL4_CPtr         net_cleanup_ntfn;      /* proxy wakeup; set by boot
+                                                 * before any child can fault */
+static uint32_t          net_cleanup_lost;      /* ring-full drops (observability) */
+
+void pipe_set_net_cleanup_ntfn(seL4_CPtr ntfn) { net_cleanup_ntfn = ntfn; }
+
+static void net_cleanup_enqueue(int pid) {
+    uint32_t head = net_cleanup_head;
+    uint32_t next = (head + 1u) % NET_CLEANUP_RING_SZ;
+    if (next == net_cleanup_tail) {
+        /* Ring full -- drop and count. Far harder to hit than the old single
+         * int, which dropped on the very next concurrent exit. */
+        net_cleanup_lost++;
+        return;
+    }
+    net_cleanup_ring[head] = pid;
+    __asm__ volatile("dmb sy" ::: "memory");   /* publish entry before head */
+    net_cleanup_head = next;
+    if (net_cleanup_ntfn) seL4_Signal(net_cleanup_ntfn);
+}
+
+/* Sacrificial proxy thread: drain the ring, issue the blocking NET_CLEANUP_PID
+ * Call. Drain-then-wait, so a Signal that races the drain just makes the next
+ * Wait return immediately (no lost wakeup). Re-checks net_ep_cap per dequeue:
+ * once net moves to netd, its fault listener zeroes net_ep_cap on a crash, and
+ * the proxy then drops cleanups instead of Calling a dead endpoint. */
+void net_cleanup_proxy_fn(void *arg0, void *arg1, void *ipc_buf) {
+    seL4_CPtr ntfn = (seL4_CPtr)(uintptr_t)arg0;
+    (void)arg1; (void)ipc_buf;
+    while (1) {
+        while (net_cleanup_head != net_cleanup_tail) {
+            __asm__ volatile("dmb sy" ::: "memory");   /* acquire: pair w/ enqueue */
+            int pid = net_cleanup_ring[net_cleanup_tail];
+            net_cleanup_tail = (net_cleanup_tail + 1u) % NET_CLEANUP_RING_SZ;
+            if (net_ep_cap) {
+                seL4_SetMR(0, (seL4_Word)pid);
+                seL4_Call(net_ep_cap,
+                          seL4_MessageInfo_new(NET_CLEANUP_PID, 0, 0, 1));
+            }
+        }
+        seL4_Wait(ntfn, NULL);
+    }
+}
+
 /* Handle child fault arriving on pipe_ep */
-/* v0.4.86: deferred net socket cleanup (avoids nested seL4_Call
- * which destroys the reply cap in non-MCS seL4) */
-static int pending_net_cleanup_pid = -1;
 
 static void handle_child_fault(int child_idx) {
     active_proc_t *ch = &active_procs[child_idx];
@@ -294,10 +352,12 @@ static void handle_child_fault(int child_idx) {
         fg_sigint_sent = 0;  /* v0.4.85: reset two-stage Ctrl-C */
     }
 
-    /* v0.4.86: defer net cleanup (cannot seL4_Call here -- would
-     * destroy the reply cap needed for PIPE_SIGNAL reply) */
+    /* v0.4.86: defer net cleanup (cannot seL4_Call here -- would destroy the
+     * reply cap needed for PIPE_SIGNAL reply). v0.4.229: enqueue to the
+     * cleanup-proxy ring + Signal it (see NET_CLEANUP_RING above) instead of
+     * stashing one pid for the main loop. */
     if (net_ep_cap && ch->pid > 0)
-        pending_net_cleanup_pid = ch->pid;
+        net_cleanup_enqueue(ch->pid);
 
     /* Auto-close write end if child was a registered pipe writer. */
     if (ch->stdout_pipe_id >= 0 && ch->stdout_pipe_id < MAX_PIPES
@@ -783,12 +843,9 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
     for (int i = 0; i < MAX_ACTIVE_PROCS; i++) exec_done[i] = 0;
 
     while (1) {
-        /* v0.4.86: process deferred net cleanup (safe: no pending reply cap) */
-        if (pending_net_cleanup_pid >= 0) {
-            seL4_SetMR(0, (seL4_Word)pending_net_cleanup_pid);
-            seL4_Call(net_ep_cap, seL4_MessageInfo_new(98, 0, 0, 1));
-            pending_net_cleanup_pid = -1;
-        }
+        /* v0.4.229: net-socket cleanup on child exit now runs on the
+         * net_cleanup_proxy thread (enqueued by handle_child_fault), not here --
+         * a wedged net server must never freeze this loop. */
 
         seL4_Word badge;
         /* diag v0.4.201: report the previous message if its handler ran long */

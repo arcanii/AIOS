@@ -147,7 +147,15 @@
 #define __NR_getsockopt 209
 #endif
 
-/* Net IPC labels (client side) */
+/* Net IPC labels (client side).
+ *
+ * These literal mirrors keep the posix library (linked into dash/zsh/sshd,
+ * which ninja does NOT rebuild) independent of the root headers. v0.4.229
+ * (netd Stage 0): the _Static_asserts below pin them to the canonical labels
+ * in aios/net_proto.h -- so a future label change that forgets to update this
+ * mirror fails the posix-library build LOUDLY instead of silently skewing the
+ * disk binaries' wire protocol. Keep the literals (do not replace them with the
+ * canonical names) -- the whole point is an independent value to assert against. */
 #define NET_SOCKET_L      90
 #define NET_BIND_L        91
 #define NET_SENDTO_L      95
@@ -156,6 +164,16 @@
 #define NET_ACCEPT_L      93
 #define NET_CONNECT_L     94
 #define NET_CLOSE_SOCK_L  97
+
+#include "aios/net_proto.h"
+_Static_assert(NET_SOCKET_L     == NET_SOCKET,     "NET_SOCKET label skew");
+_Static_assert(NET_BIND_L       == NET_BIND,       "NET_BIND label skew");
+_Static_assert(NET_LISTEN_L     == NET_LISTEN,     "NET_LISTEN label skew");
+_Static_assert(NET_ACCEPT_L     == NET_ACCEPT,     "NET_ACCEPT label skew");
+_Static_assert(NET_CONNECT_L    == NET_CONNECT,    "NET_CONNECT label skew");
+_Static_assert(NET_SENDTO_L     == NET_SENDTO,     "NET_SENDTO label skew");
+_Static_assert(NET_RECVFROM_L   == NET_RECVFROM,   "NET_RECVFROM label skew");
+_Static_assert(NET_CLOSE_SOCK_L == NET_CLOSE_SOCK, "NET_CLOSE_SOCK label skew");
 
 
 /* Pipe IPC protocol labels */

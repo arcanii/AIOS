@@ -64,6 +64,81 @@ static seL4_CPtr blocked_slots[MAX_NET_SOCKETS];
 static seL4_CPtr accept_slots[MAX_NET_SOCKETS];
 static seL4_CPtr connect_slots[MAX_NET_SOCKETS];
 
+/* v0.4.229 (netd Stage 0): reply-slot poisoning fix (DESIGN_NETD F4).
+ *
+ * A SaveCaller'd reply cap parked in blocked/accept/connect_slots[] must be
+ * accounted for on EVERY path that retires a socket, or the slot is reused by a
+ * later park while still holding the stale cap: seL4_CNode_SaveCaller into an
+ * occupied slot fails, the server keeps pointing at the old cap, and the next
+ * delivery replies to the wrong (or dead) caller while the real one hangs.
+ *
+ * Two flavours of retirement:
+ *  - reset (RST): the peer is gone but the caller is a LIVE process -- wake it
+ *    with an error (seL4_Send) so its blocking call returns, THEN delete the
+ *    spent cap. On non-MCS seL4 deleting a reply cap does NOT wake a caller --
+ *    only the Send does (DESIGN_NETD s5 reply-cap ground truth).
+ *  - drop (close / pid-exit): the owner is closing the fd or being reaped, so
+ *    there is nobody to wake -- just delete each cap to free the slot. */
+static void net_sock_wake_reset(struct net_socket *sk) {
+    if (sk->has_blocked) {
+        seL4_SetMR(0, (seL4_Word)(-104));   /* ECONNRESET -> blocking recv */
+        seL4_Send(sk->blocked_cap, seL4_MessageInfo_new(0, 0, 0, 1));
+        seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                          sk->blocked_cap, seL4_WordBits);
+        sk->has_blocked = 0;
+    }
+    if (sk->has_accept_blocked) {
+        seL4_SetMR(0, (seL4_Word)(-1));     /* -> accept (maps to ECONNREFUSED) */
+        seL4_Send(sk->accept_blocked_cap, seL4_MessageInfo_new(0, 0, 0, 1));
+        seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                          sk->accept_blocked_cap, seL4_WordBits);
+        sk->has_accept_blocked = 0;
+    }
+    if (sk->has_connect_blocked) {
+        seL4_SetMR(0, (seL4_Word)(-111));   /* ECONNREFUSED -> connect */
+        seL4_Send(sk->connect_blocked_cap, seL4_MessageInfo_new(0, 0, 0, 1));
+        seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                          sk->connect_blocked_cap, seL4_WordBits);
+        sk->has_connect_blocked = 0;
+    }
+}
+
+static void net_sock_drop_parked(struct net_socket *sk) {
+    if (sk->has_blocked) {
+        seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                          sk->blocked_cap, seL4_WordBits);
+        sk->has_blocked = 0;
+    }
+    if (sk->has_accept_blocked) {
+        seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                          sk->accept_blocked_cap, seL4_WordBits);
+        sk->has_accept_blocked = 0;
+    }
+    if (sk->has_connect_blocked) {
+        seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                          sk->connect_blocked_cap, seL4_WordBits);
+        sk->has_connect_blocked = 0;
+    }
+}
+
+/* v0.4.229 (netd Stage 0): park the current caller's reply cap in `slot`.
+ * Deletes any stale cap left in the slot first (deleting an empty slot is a
+ * no-op) so an async RST/close that raced this park cannot leave SaveCaller
+ * staring at an occupied slot, and checks the rc: on failure the caller is
+ * replied -EIO instead of being silently parked against a bogus cap (it would
+ * otherwise hang forever). Returns 0 if the caller is now parked, -1 if it was
+ * already replied (do not set the has_*_blocked bookkeeping). */
+static int net_park_caller(seL4_CPtr slot) {
+    seL4_CNode_Delete(seL4_CapInitThreadCNode, slot, seL4_WordBits);
+    int rc = seL4_CNode_SaveCaller(seL4_CapInitThreadCNode, slot, seL4_WordBits);
+    if (rc != seL4_NoError) {
+        seL4_SetMR(0, (seL4_Word)(-5));   /* EIO: could not save reply cap */
+        seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+        return -1;
+    }
+    return 0;
+}
+
 /* ---- UDP delivery (unchanged from M3) ---- */
 void net_udp_deliver(uint16_t dst_port, uint16_t src_port,
                      const uint8_t *src_ip,
@@ -116,15 +191,14 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
             struct net_socket *s = &sockets[i];
             if (s->in_use && s->type == 1 && s->local_port == dst_port &&
                 s->state >= TCP_SYN_RCVD) {
-                /* v0.4.86: wake blocked connect() on RST */
-                if (s->has_connect_blocked) {
-                    seL4_SetMR(0, (seL4_Word)(-111)); /* ECONNREFUSED */
-                    seL4_Send(s->connect_blocked_cap,
-                              seL4_MessageInfo_new(0, 0, 0, 1));
-                    seL4_CNode_Delete(seL4_CapInitThreadCNode,
-                                      s->connect_blocked_cap, seL4_WordBits);
-                    s->has_connect_blocked = 0;
-                }
+                /* v0.4.229: wake EVERY parked caller and delete its reply cap,
+                 * not just connect() (v0.4.86 only did connect). A parked recv
+                 * left behind here hung forever AND poisoned its reply slot for
+                 * the next socket to reuse that index. Matched states are
+                 * SYN_RCVD/ESTAB/FIN_WAIT (recv parks) and SYN_SENT (connect
+                 * parks); LISTEN is excluded, so accept is handled by the
+                 * close/exit drop path instead. */
+                net_sock_wake_reset(s);
                 s->state = TCP_CLOSED;
                 s->in_use = 0;
             }
@@ -524,9 +598,7 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                      * it services its other sessions. */
                     seL4_SetMR(0, (seL4_Word)-11);
                     seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
-                } else {
-                    seL4_CNode_SaveCaller(seL4_CapInitThreadCNode,
-                        accept_slots[sid], seL4_WordBits);
+                } else if (net_park_caller(accept_slots[sid]) == 0) {
                     sockets[sid].accept_blocked_cap = accept_slots[sid];
                     sockets[sid].has_accept_blocked = 1;
                 }
@@ -636,9 +708,7 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                         /* v0.4.84: O_NONBLOCK -- return EAGAIN */
                         seL4_SetMR(0, (seL4_Word)(-11));
                         seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
-                    } else {
-                        seL4_CNode_SaveCaller(seL4_CapInitThreadCNode,
-                            blocked_slots[sid], seL4_WordBits);
+                    } else if (net_park_caller(blocked_slots[sid]) == 0) {
                         sk->blocked_cap = blocked_slots[sid];
                         sk->blocked_max = max;
                         sk->has_blocked = 1;
@@ -668,9 +738,7 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 if (nb) {
                     seL4_SetMR(0, (seL4_Word)(-11));
                     seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
-                } else {
-                    seL4_CNode_SaveCaller(seL4_CapInitThreadCNode,
-                        blocked_slots[sid], seL4_WordBits);
+                } else if (net_park_caller(blocked_slots[sid]) == 0) {
                     sockets[sid].blocked_cap = blocked_slots[sid];
                     sockets[sid].blocked_max = max;
                     sockets[sid].has_blocked = 1;
@@ -681,6 +749,10 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             int sid = (int)seL4_GetMR(0);
             if (sid >= 0 && sid < MAX_NET_SOCKETS && sockets[sid].in_use) {
                 struct net_socket *sk = &sockets[sid];
+                /* v0.4.229: free any SaveCaller'd reply slot before retiring the
+                 * socket, like op-98 -- otherwise a stale cap poisons the slot
+                 * when this index is reused (DESIGN_NETD F4). */
+                net_sock_drop_parked(sk);
                 /* TCP: send FIN if connected */
                 if (sk->type == 1 && sk->state == TCP_ESTAB) {
                     net_tcp_send(sk->remote_ip, sk->remote_mac,
@@ -710,21 +782,12 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                                      TCP_ACK | TCP_FIN, NULL, 0);
                         sk->snd_nxt++;
                     }
-                    if (sk->has_blocked) {
-                        seL4_CNode_Delete(seL4_CapInitThreadCNode,
-                                          sk->blocked_cap, seL4_WordBits);
-                        sk->has_blocked = 0;
-                    }
-                    if (sk->has_accept_blocked) {
-                        seL4_CNode_Delete(seL4_CapInitThreadCNode,
-                                          sk->accept_blocked_cap, seL4_WordBits);
-                        sk->has_accept_blocked = 0;
-                    }
-                    if (sk->has_connect_blocked) {
-                        seL4_CNode_Delete(seL4_CapInitThreadCNode,
-                                          sk->connect_blocked_cap, seL4_WordBits);
-                        sk->has_connect_blocked = 0;
-                    }
+                    /* v0.4.229: same delete-parked-caps logic, now via the
+                     * shared helper. The owner is being reaped, so delete
+                     * without waking (DESIGN_NETD s5 reply-cap ground truth:
+                     * deleting a saved reply cap does not wake a parked caller;
+                     * only the caller's own teardown frees it). */
+                    net_sock_drop_parked(sk);
                     sk->in_use = 0;
                     sk->state = TCP_CLOSED;
                     freed++;
@@ -785,11 +848,11 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                              sk->local_port, sk->remote_port,
                              sk->snd_nxt, 0, TCP_SYN, NULL, 0);
                 sk->snd_nxt++;
-                /* Block until SYN-ACK received */
-                seL4_CNode_SaveCaller(seL4_CapInitThreadCNode,
-                    connect_slots[sid], seL4_WordBits);
-                sk->connect_blocked_cap = connect_slots[sid];
-                sk->has_connect_blocked = 1;
+                /* Block until SYN-ACK received (or RST -> ECONNREFUSED). */
+                if (net_park_caller(connect_slots[sid]) == 0) {
+                    sk->connect_blocked_cap = connect_slots[sid];
+                    sk->has_connect_blocked = 1;
+                }
             }
             connect_done: ;
 

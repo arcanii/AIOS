@@ -143,6 +143,25 @@ void boot_start_services(vka_object_t *fault_ep) {
         }
         proc_add("net_driver", 200);
         proc_add("net_server", 200);
+
+        /* v0.4.229 (netd Stage 0): sacrificial net-socket cleanup proxy. Drains
+         * pids that handle_child_fault enqueues on child exit and issues the
+         * blocking NET_CLEANUP_PID Call, so a slow/wedged net server parks only
+         * this thread, never the pipe_server loop. Its wakeup notification must
+         * be live before getty (the first faultable child) spawns -- set it
+         * here, well before the getty spawn at the end of boot. */
+        {
+            vka_object_t cleanup_ntfn_obj;
+            if (!vka_alloc_notification(&vka, &cleanup_ntfn_obj)) {
+                pipe_set_net_cleanup_ntfn(cleanup_ntfn_obj.cptr);
+                start_server_thread(
+                    (sel4utils_thread_entry_fn)net_cleanup_proxy_fn,
+                    cleanup_ntfn_obj.cptr);
+                proc_add("net_cleanup", 200);
+            } else {
+                AIOS_LOG_WARN("net cleanup proxy ntfn alloc failed");
+            }
+        }
         AIOS_LOG_INFO("Network threads started");
     }
 
