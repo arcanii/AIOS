@@ -221,6 +221,16 @@ struct genet_desc {
 static volatile uint32_t *genet_regs;
 static int genet_initialized;
 
+/* v0.4.239 (netd Stage 3 HW fix): 1 while plat_net_prov runs. The prov path reads
+ * the board MAC via the VC mailbox but must NOT touch GENET UMAC registers -- root
+ * does not map genet_regs at prov (it is NULL; netd owns the device programming),
+ * and SWINIT is still latched (a UMAC write would bus-error). netd programs UMAC
+ * from the argv MAC after its OWN SWINIT release. The #ifndef NETD_PROV guard alone
+ * does not cover this because the flag-ON root keeps the FULL driver (no NETD_PROV
+ * define), so it reaches the UMAC writes via plat_net_prov -> read_mac_from_mailbox
+ * with genet_regs NULL -> fault at 0x80c (UMAC_MAC0). This runtime flag gates them. */
+static int genet_in_prov;
+
 /* DMA buffer memory (allocated from VKA) */
 static uint8_t  *genet_dma;
 static uint64_t  genet_dma_pa;
@@ -624,19 +634,21 @@ static int read_mac_from_mailbox(void) {
     if ((mac[0]|mac[1]|mac[2]|mac[3]|mac[4]|mac[5]) == 0) return -1;
     for (int i = 0; i < 6; i++) { genet_mac[i] = mac[i]; net_mac[i] = mac[i]; }
 #ifndef NETD_PROV
-    /* Program the MAC into UMAC. SKIPPED in a prov-only root (NETD_PROV): at prov
-     * time nothing has released SWINIT since power-up, so a UMAC write bus-errors
-     * -> external abort -> kernel halt (v0.4.151). netd programs UMAC from this
-     * MAC (handed over via argv) in plat_net_init() AFTER its own SWINIT release +
-     * UMAC reset; the monolithic build reaches here only after SWINIT is already
-     * cleared, so the write is safe. DESIGN_NETD s7. */
-    GENET_W(UMAC_MAC0, ((uint32_t)mac[0] << 24) | ((uint32_t)mac[1] << 16) |
-                       ((uint32_t)mac[2] << 8) | mac[3]);
-    /* v0.4.161: UMAC_MAC1 is a 16-bit field -- bytes 4,5 go in the LOW half
-     * (the upper 16 bits are reserved). The old <<24/<<16 packing landed them in
-     * the reserved half -> MAC1 read back 0 -> unicast RX filter was
-     * dc:a6:32:xx:00:00 -> pings (unicast) were dropped while broadcast worked. */
-    GENET_W(UMAC_MAC1, ((uint32_t)mac[4] << 8) | (uint32_t)mac[5]);
+    /* Program the MAC into UMAC. SKIPPED at prov time (genet_in_prov): root has not
+     * mapped genet_regs (it is NULL) and SWINIT is still latched, so a UMAC write
+     * would fault / bus-error -> kernel halt (v0.4.151/239). netd programs UMAC from
+     * this MAC (handed over via argv) in plat_net_init() AFTER its own SWINIT release
+     * + UMAC reset; the monolithic build reaches here only after SWINIT is already
+     * cleared (genet_in_prov stays 0), so the write is safe. DESIGN_NETD s7. */
+    if (!genet_in_prov) {
+        GENET_W(UMAC_MAC0, ((uint32_t)mac[0] << 24) | ((uint32_t)mac[1] << 16) |
+                           ((uint32_t)mac[2] << 8) | mac[3]);
+        /* v0.4.161: UMAC_MAC1 is a 16-bit field -- bytes 4,5 go in the LOW half
+         * (the upper 16 bits are reserved). The old <<24/<<16 packing landed them in
+         * the reserved half -> MAC1 read back 0 -> unicast RX filter was
+         * dc:a6:32:xx:00:00 -> pings (unicast) were dropped while broadcast worked. */
+        GENET_W(UMAC_MAC1, ((uint32_t)mac[4] << 8) | (uint32_t)mac[5]);
+    }
 #endif
     return 0;
 }
@@ -716,6 +728,9 @@ int plat_net_prov(driver_handoff_t *ho) {
         printf("[net] No GENET in DTB\n");
         return -1;
     }
+    /* prov reads the MAC via the mailbox but must not touch UMAC (genet_regs is
+     * NULL here + SWINIT latched); netd programs UMAC after its own reset. */
+    genet_in_prov = 1;
     if (dma_init() != 0) {
         printf("[net] DMA init failed\n");
         return -1;
