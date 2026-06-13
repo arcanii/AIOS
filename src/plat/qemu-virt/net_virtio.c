@@ -6,6 +6,15 @@
  *
  * v0.4.90: reads device slot from plat_virtio_probe instead of
  * extern bridge globals (net_vio, net_vio_slot removed).
+ *
+ * v0.4.236 (netd Stage 3): prov/dev split (DESIGN_NETD s7). The root-only
+ * provisioning half (slot resolve, DMA alloc, IRQ bind) is gated #ifndef
+ * NETD_BUILD; the device-programming half (identity, queues, MAC, drain, tx) is
+ * gated #ifndef NETD_PROV. With NEITHER define (the flag-OFF monolithic build)
+ * BOTH halves compile and plat_net_init() runs them in the original order, so
+ * behavior is unchanged. Flag-ON: root compiles the prov half (NETD_PROV) and
+ * calls plat_net_prov(); netd compiles the dev half (NETD_BUILD), attaches the
+ * root-provisioned resources via plat_net_dev_attach(), and calls plat_net_init().
  */
 #include "aios/root_shared.h"
 #include <simple/simple.h>
@@ -29,13 +38,14 @@ static int       net_vio_slot_priv;
 static seL4_CPtr net_irq_handler_priv;
 
 /* ============================================================
- * plat_net_init -- init virtio-net device, DMA, IRQ
+ * Provisioning half (root only) -- slot resolve, DMA alloc, IRQ bind.
+ * These touch vka/simple, so netd (NETD_BUILD) never compiles them; netd
+ * receives the results via plat_net_dev_attach(). DESIGN_NETD s7.
  * ============================================================ */
-int plat_net_init(void) {
-    if (!net_available) return -1;
-    int error;
+#ifndef NETD_BUILD
 
-    /* Get device slot from shared virtio probe */
+/* Resolve the virtio-net slot from the shared probe and latch the MMIO base. */
+static int net_slot_resolve(void) {
     const plat_virtio_info_t *vinfo = plat_virtio_get_info();
     if (!vinfo || vinfo->net_slot < 0) {
         AIOS_LOG_WARN("No virtio-net in probe results");
@@ -44,16 +54,13 @@ int plat_net_init(void) {
     }
     net_vio_priv = plat_virtio_slot_base(vinfo->net_slot);
     net_vio_slot_priv = vinfo->net_slot;
+    return 0;
+}
 
-    /* Verify device identity */
-    if (net_vio_priv[VIRTIO_MMIO_MAGIC / 4] != VIRTIO_MAGIC ||
-        net_vio_priv[VIRTIO_MMIO_DEVICE_ID / 4] != VIRTIO_NET_DEVICE_ID) {
-        printf("[net] Bad device at slot %d\n", net_vio_slot_priv);
-        net_available = 0;
-        return -1;
-    }
-
-    /* Allocate 128KB DMA (size-17 untyped = 32 contiguous pages) */
+/* Allocate 128KB DMA (size-17 untyped = 32 contiguous pages), map it
+ * non-cacheable, and latch the vaddr/paddr. */
+static int net_dma_alloc(void) {
+    int error;
     vka_object_t dma_ut;
     vka_audit_untyped(VKA_SUB_NET, 17);
     error = vka_alloc_untyped(&vka, 17, &dma_ut);
@@ -103,6 +110,124 @@ int plat_net_init(void) {
 
     /* Zero DMA region */
     for (int i = 0; i < NET_DMA_SIZE; i++) net_dma_priv[i] = 0;
+    return 0;
+}
+
+/* Allocate the RX IRQ notification, bind the virtio-net IRQ to a badge=1 minted
+ * copy (v0.4.230: the merged net_server's bound notification wakes on it). */
+static int net_irq_bind(void) {
+    int error;
+    vka_object_t drv_ntfn_obj;
+    error = vka_alloc_notification(&vka, &drv_ntfn_obj);
+    if (error) {
+        AIOS_LOG_ERROR("drv notification alloc failed");
+        net_available = 0;
+        return -1;
+    }
+    net_drv_ntfn_cap = drv_ntfn_obj.cptr;
+
+    /* Bind virtio-net IRQ to driver notification */
+    {
+        uint32_t net_irq = 48 + (uint32_t)net_vio_slot_priv;
+        cspacepath_t nirq_path;
+        int irq_err = vka_cspace_alloc_path(&vka, &nirq_path);
+        if (!irq_err) {
+            irq_err = simple_get_IRQ_handler(&simple, net_irq, nirq_path);
+            if (!irq_err) {
+                net_irq_handler_priv = nirq_path.capPtr;
+                /* v0.4.230 (Stage 1): the IRQ signals a badge=1 minted copy so
+                 * the merged net_server's seL4_Recv wakes with a non-zero badge
+                 * (its wake test). The unbadged net_drv_ntfn_cap stays bound to
+                 * the server TCB; this badged copy is what the IRQ delivers. */
+                seL4_CPtr irq_ntfn = net_drv_ntfn_cap;
+                cspacepath_t b1src, b1;
+                vka_cspace_make_path(&vka, net_drv_ntfn_cap, &b1src);
+                if (!vka_cspace_alloc_path(&vka, &b1) &&
+                    !seL4_CNode_Mint(b1.root, b1.capPtr, b1.capDepth,
+                                     b1src.root, b1src.capPtr, b1src.capDepth,
+                                     seL4_AllRights, (seL4_Word)1))
+                    irq_ntfn = b1.capPtr;
+                irq_err = seL4_IRQHandler_SetNotification(
+                    net_irq_handler_priv, irq_ntfn);
+                if (!irq_err) {
+                    seL4_IRQHandler_Ack(net_irq_handler_priv);
+                    printf("[boot] virtio-net IRQ %u bound to driver\n", net_irq);
+                } else {
+                    printf("[boot] net IRQ bind failed: %d\n", irq_err);
+                }
+            } else {
+                printf("[boot] net IRQ handler failed: %d (irq=%u)\n", irq_err, net_irq);
+            }
+        }
+    }
+    return 0;
+}
+
+/* plat_net_prov -- root-side provisioning for the flag-ON netd path
+ * (DESIGN_NETD s7). Resolves the slot, allocates DMA, binds the IRQ. netd then
+ * programs the device itself in plat_net_init() after plat_net_dev_attach(). */
+int plat_net_prov(void) {
+    if (!net_available) return -1;
+    if (net_slot_resolve() != 0) return -1;
+    if (net_dma_alloc() != 0) return -1;
+    if (net_irq_bind() != 0) return -1;
+    return 0;
+}
+
+#endif /* !NETD_BUILD */
+
+/* ============================================================
+ * netd attach -- netd latches the root-provisioned MMIO/DMA/IRQ (passed via
+ * argv) before plat_net_init() programs the device. DESIGN_NETD s3.
+ * ============================================================ */
+#ifdef NETD_BUILD
+void plat_net_dev_attach(uintptr_t mmio_vaddr, int slot, uintptr_t dma_vaddr,
+                         uint64_t dma_paddr, seL4_CPtr irq_handler,
+                         const uint8_t mac[6]) {
+    net_vio_priv = (volatile uint32_t *)mmio_vaddr;
+    net_vio_slot_priv = slot;
+    net_dma_priv = (uint8_t *)dma_vaddr;
+    net_dma_pa_priv = dma_paddr;
+    net_irq_handler_priv = irq_handler;
+    (void)mac;   /* QEMU reads the MAC from config space in plat_net_init() */
+}
+#endif
+
+/* ============================================================
+ * Device-programming half (netd + monolithic) -- identity, queues, MAC,
+ * DRIVER_OK, TX, RX drain. Gated #ifndef NETD_PROV so root's prov-only build
+ * does not define these (link-time check: root no longer references them).
+ * ============================================================ */
+#ifndef NETD_PROV
+
+/* ============================================================
+ * plat_net_init -- program the virtio-net device.
+ *
+ * Monolithic (flag-OFF): provisions inline via the #ifndef NETD_BUILD helpers,
+ * in the original order, then programs the device -- behavior unchanged.
+ * netd (NETD_BUILD): the helpers are gated out; netd has already attached the
+ * root-provisioned resources via plat_net_dev_attach().
+ * ============================================================ */
+int plat_net_init(void) {
+    if (!net_available) return -1;
+
+#ifndef NETD_BUILD
+    /* Monolithic provisioning (flag-OFF). Flag-ON root does this via
+     * plat_net_prov() instead, before netd starts. */
+    if (net_slot_resolve() != 0) return -1;
+#endif
+
+    /* Verify device identity */
+    if (net_vio_priv[VIRTIO_MMIO_MAGIC / 4] != VIRTIO_MAGIC ||
+        net_vio_priv[VIRTIO_MMIO_DEVICE_ID / 4] != VIRTIO_NET_DEVICE_ID) {
+        printf("[net] Bad device at slot %d\n", net_vio_slot_priv);
+        net_available = 0;
+        return -1;
+    }
+
+#ifndef NETD_BUILD
+    if (net_dma_alloc() != 0) return -1;
+#endif
 
     /* Legacy virtio init sequence */
     net_vio_priv[VIRTIO_MMIO_STATUS / 4] = 0;
@@ -170,51 +295,13 @@ int plat_net_init(void) {
         VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK;
     net_vio_priv[VIRTIO_MMIO_QUEUE_NOTIFY / 4] = 0;
 
+#ifndef NETD_BUILD
     /* RX IRQ notification (v0.4.230: bound to the net_server TCB in
-     * boot_services; the old separate net_srv_ntfn / driver thread are gone). */
-    vka_object_t drv_ntfn_obj;
-    error = vka_alloc_notification(&vka, &drv_ntfn_obj);
-    if (error) {
-        AIOS_LOG_ERROR("drv notification alloc failed");
-        net_available = 0;
-        return -1;
-    }
-    net_drv_ntfn_cap = drv_ntfn_obj.cptr;
-
-    /* Bind virtio-net IRQ to driver notification */
-    {
-        uint32_t net_irq = 48 + (uint32_t)net_vio_slot_priv;
-        cspacepath_t nirq_path;
-        int irq_err = vka_cspace_alloc_path(&vka, &nirq_path);
-        if (!irq_err) {
-            irq_err = simple_get_IRQ_handler(&simple, net_irq, nirq_path);
-            if (!irq_err) {
-                net_irq_handler_priv = nirq_path.capPtr;
-                /* v0.4.230 (Stage 1): the IRQ signals a badge=1 minted copy so
-                 * the merged net_server's seL4_Recv wakes with a non-zero badge
-                 * (its wake test). The unbadged net_drv_ntfn_cap stays bound to
-                 * the server TCB; this badged copy is what the IRQ delivers. */
-                seL4_CPtr irq_ntfn = net_drv_ntfn_cap;
-                cspacepath_t b1src, b1;
-                vka_cspace_make_path(&vka, net_drv_ntfn_cap, &b1src);
-                if (!vka_cspace_alloc_path(&vka, &b1) &&
-                    !seL4_CNode_Mint(b1.root, b1.capPtr, b1.capDepth,
-                                     b1src.root, b1src.capPtr, b1src.capDepth,
-                                     seL4_AllRights, (seL4_Word)1))
-                    irq_ntfn = b1.capPtr;
-                irq_err = seL4_IRQHandler_SetNotification(
-                    net_irq_handler_priv, irq_ntfn);
-                if (!irq_err) {
-                    seL4_IRQHandler_Ack(net_irq_handler_priv);
-                    printf("[boot] virtio-net IRQ %u bound to driver\n", net_irq);
-                } else {
-                    printf("[boot] net IRQ bind failed: %d\n", irq_err);
-                }
-            } else {
-                printf("[boot] net IRQ handler failed: %d (irq=%u)\n", irq_err, net_irq);
-            }
-        }
-    }
+     * boot_services; the old separate net_srv_ntfn / driver thread are gone).
+     * Flag-ON root binds this in plat_net_prov(); netd inherits the handler via
+     * plat_net_dev_attach() and self-binds the notification to its own TCB. */
+    if (net_irq_bind() != 0) return -1;
+#endif
 
     printf("[boot] virtio-net ready, MAC=%02x:%02x:%02x:%02x:%02x:%02x\n",
            net_mac[0], net_mac[1], net_mac[2],
@@ -336,3 +423,5 @@ void plat_net_drain(void) {
 void plat_net_get_mac(uint8_t mac[6]) {
     for (int i = 0; i < 6; i++) mac[i] = net_mac[i];
 }
+
+#endif /* !NETD_PROV */

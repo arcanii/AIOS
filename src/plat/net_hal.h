@@ -30,6 +30,28 @@ void plat_net_drain(void);
 /* Get hardware MAC address (6 bytes). */
 void plat_net_get_mac(uint8_t mac[6]);
 
+/* netd Stage 3 prov/dev split (DESIGN_NETD s3/s7). The driver compiles in one of
+ * three modes selected by two defines:
+ *   - neither (flag-OFF monolithic): plat_net_init() runs both halves, unchanged.
+ *   - NETD_PROV (flag-ON root):  only the prov half; root calls plat_net_prov().
+ *   - NETD_BUILD (flag-ON netd):  only the dev half; netd calls
+ *       plat_net_dev_attach() then plat_net_init(). */
+#ifndef NETD_BUILD
+/* Root-side provisioning: resolve the device, allocate DMA, bind the IRQ.
+ * Returns 0 on success. Sets the driver file statics so the monolithic
+ * plat_net_init() shares one alloc path. */
+int plat_net_prov(void);
+#endif
+
+#ifdef NETD_BUILD
+#include <sel4/sel4.h>
+/* netd latches the root-provisioned MMIO/DMA/IRQ/MAC (received via argv) before
+ * plat_net_init() programs the device. */
+void plat_net_dev_attach(uintptr_t mmio_vaddr, int slot, uintptr_t dma_vaddr,
+                         uint64_t dma_paddr, seL4_CPtr irq_handler,
+                         const uint8_t mac[6]);
+#endif
+
 /* Live diagnostic hook, driven from /proc/genet (RPi4 GENET only).
  * args is the path text after "genet" ("" = dump, ".cmd[.hexargs]" = command).
  * Writes a human-readable report into buf; returns bytes, or -1 on bad command. */
