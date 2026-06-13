@@ -370,8 +370,18 @@ static void read_mac_from_umac(void) {
     for (int i = 0; i < 6; i++) net_mac[i] = genet_mac[i];
 }
 
+/* ================================================================
+ * Provisioning half (root only) -- DMA alloc, VC-mailbox MAC query, IRQ bind.
+ * Gated #ifndef NETD_BUILD: these touch vka / the VC mailbox, so netd never
+ * compiles them; netd receives the DMA region, MAC, and IRQ handler via
+ * plat_net_dev_attach() (DESIGN_NETD s3/s7). The device-register sequence
+ * (SWINIT/UMAC/RBUF/RGMII/ring_init/INTRL2 in plat_net_init) is the dev half
+ * and stays byte-identical -- only its prov sub-steps are gated.
+ * ================================================================ */
+#ifndef NETD_BUILD
+
 /* ----------------------------------------------------------------
- * dma_init -- set up RX and TX descriptor rings
+ * dma_init -- allocate the 128KB DMA region
  * ---------------------------------------------------------------- */
 static int dma_init(void) {
     int error;
@@ -425,8 +435,11 @@ static int dma_init(void) {
     return 0;
 }
 
+#endif /* !NETD_BUILD (dma_init) */
+
 /* ----------------------------------------------------------------
- * ring_init -- configure RX and TX default rings (ring 16)
+ * ring_init -- configure RX and TX default rings (ring 16). Dev half: MMIO-only,
+ * runs in netd. Uses genet_dma_pa (attached from prov via argv in the netd path).
  * ---------------------------------------------------------------- */
 static void ring_init(void) {
     /* --- Disable both DMA engines first (U-Boot bcmgenet_disable_dma) --- */
@@ -517,6 +530,8 @@ static void ring_init(void) {
     arch_dsb();
 }
 
+#ifndef NETD_BUILD   /* prov half: VC mailbox + IRQ bind (root/vka/vcmbox) */
+
 /* VC property-mailbox call (channel 8). buf_pa = VC bus address of a 16-byte-
  * aligned tag buffer; buf = ARM pointer to read the response. From display_vc.c. */
 static int genet_mbox_call(uint64_t buf_pa, volatile uint32_t *buf) {
@@ -563,6 +578,13 @@ static int read_mac_from_mailbox(void) {
     };
     if ((mac[0]|mac[1]|mac[2]|mac[3]|mac[4]|mac[5]) == 0) return -1;
     for (int i = 0; i < 6; i++) { genet_mac[i] = mac[i]; net_mac[i] = mac[i]; }
+#ifndef NETD_PROV
+    /* Program the MAC into UMAC. SKIPPED in a prov-only root (NETD_PROV): at prov
+     * time nothing has released SWINIT since power-up, so a UMAC write bus-errors
+     * -> external abort -> kernel halt (v0.4.151). netd programs UMAC from this
+     * MAC (handed over via argv) in plat_net_init() AFTER its own SWINIT release +
+     * UMAC reset; the monolithic build reaches here only after SWINIT is already
+     * cleared, so the write is safe. DESIGN_NETD s7. */
     GENET_W(UMAC_MAC0, ((uint32_t)mac[0] << 24) | ((uint32_t)mac[1] << 16) |
                        ((uint32_t)mac[2] << 8) | mac[3]);
     /* v0.4.161: UMAC_MAC1 is a 16-bit field -- bytes 4,5 go in the LOW half
@@ -570,137 +592,16 @@ static int read_mac_from_mailbox(void) {
      * the reserved half -> MAC1 read back 0 -> unicast RX filter was
      * dc:a6:32:xx:00:00 -> pings (unicast) were dropped while broadcast worked. */
     GENET_W(UMAC_MAC1, ((uint32_t)mac[4] << 8) | (uint32_t)mac[5]);
+#endif
     return 0;
 }
 
-/* ================================================================
- * plat_net_init -- initialize BCM54213 GENET on RPi4
- * ================================================================ */
-int plat_net_init(void) {
-    /* v0.4.149: re-enabled -- the v0.4.98 disable was a misattributed
-     * device-MMIO watermark bug, now fixed by prealloc_rpi4_devices(). */
+/* genet_irq_bind -- allocate the RX IRQ notification + a badge=2 kick copy and
+ * bind the GENET IRQ to a badge=1 minted copy (v0.4.230/162). Factored from
+ * plat_net_init for the netd prov path; netd inherits genet_irq_handler via
+ * plat_net_dev_attach() and self-binds the unbadged ntfn to its own TCB. */
+static int genet_irq_bind(void) {
     int error;
-
-    if (!hw_info.has_genet) {
-        printf("[net] No GENET in DTB\n");
-        return -1;
-    }
-
-    printf("[net] GENET at 0x%lx IRQ %u\n",
-           (unsigned long)hw_info.genet_paddr, hw_info.genet_irq);
-
-    /* v0.4.149: use the pre-mapped GENET MMIO (claimed ascending in
-     * prealloc_rpi4_devices so it lands ahead of the higher peripherals
-     * instead of behind the device-untyped watermark). */
-    if (!dev_genet_vaddr) {
-        printf("[net] GENET MMIO not pre-mapped\n");
-        return -1;
-    }
-    genet_regs = dev_genet_vaddr;
-
-    /* Verify controller is alive */
-    arch_dmb();
-    uint32_t rev = GENET_R(SYS_REV_CTRL);
-    if (rev == 0 || rev == 0xFFFFFFFF) {
-        printf("[net] GENET not responding (rev=0x%x)\n", rev);
-        return -1;
-    }
-    uint32_t major = (rev >> 24) & 0xFF;
-    uint32_t minor = (rev >> 16) & 0xFF;
-    printf("[net] GENET rev: 0x%08x (v%u.%u)\n", rev, major, minor);
-
-    /* v0.4.151: release the UMAC software-reset latch BEFORE touching any UMAC
-     * register. The GENET powers up with SYS_RBUF_FLUSH_CTRL.SWINIT set, which
-     * holds the UMAC sub-block in reset; accessing UMAC (0x808) while it is held
-     * in reset bus-errors -> external abort -> kernel halt. NOT clock-gating (the
-     * firmware clocks GENET; the rev read above proves the SYS block is live).
-     * HW-CONFIRMED on real RPi4 (v0.4.151). Linux/Circle reset_umac do the same
-     * via rbuf_ctrl_set(0). If GENET ever halts right after the rev print above,
-     * this clear is the first thing to check. */
-    GENET_W(SYS_RBUF_FLUSH_CTRL, 0);
-    genet_delay(10);
-
-    /* --- UniMAC reset (Linux/Circle reset_umac order) --- */
-    GENET_W(UMAC_CMD, 0);
-    GENET_W(UMAC_CMD, CMD_SW_RESET | CMD_LCL_LOOP);
-    genet_delay(2);
-    GENET_W(UMAC_CMD, 0);
-    genet_delay(10);
-
-    /* Read MAC address from UniMAC (set by firmware) */
-    read_mac_from_umac();
-    printf("[net] MAC: %02x:%02x:%02x:%02x:%02x:%02x\n",
-           genet_mac[0], genet_mac[1], genet_mac[2],
-           genet_mac[3], genet_mac[4], genet_mac[5]);
-
-    /* If MAC is all zeros, firmware did not set it */
-    if (genet_mac[0] == 0 && genet_mac[1] == 0 &&
-        genet_mac[2] == 0 && genet_mac[3] == 0 &&
-        genet_mac[4] == 0 && genet_mac[5] == 0) {
-        printf("[net] MAC not set by firmware, using fallback\n");
-        genet_mac[0] = 0xDC; genet_mac[1] = 0xA6;
-        genet_mac[2] = 0x32; genet_mac[3] = 0x01;
-        genet_mac[4] = 0x02; genet_mac[5] = 0x03;
-        uint32_t m0 = ((uint32_t)genet_mac[0] << 24) |
-                      ((uint32_t)genet_mac[1] << 16) |
-                      ((uint32_t)genet_mac[2] <<  8) |
-                      ((uint32_t)genet_mac[3]);
-        uint32_t m1 = ((uint32_t)genet_mac[4] << 8) |
-                      ((uint32_t)genet_mac[5]);     /* MAC1 = 16-bit low field */
-        GENET_W(UMAC_MAC0, m0);
-        GENET_W(UMAC_MAC1, m1);
-        for (int i = 0; i < 6; i++) net_mac[i] = genet_mac[i];
-    }
-
-    /* Set max frame length */
-    GENET_W(UMAC_MAX_FRAME, 1536);
-
-    /* Configure RBUF */
-    GENET_W(RBUF_CTRL, RBUF_ALIGN_2B | RBUF_BAD_DIS);
-
-    /* v0.4.154: TBUF size control -- U-Boot/Linux set this in the reset path;
-     * AIOS omitted it. Required for the TX buffer engine. */
-    GENET_W(RBUF_TBUF_SIZE_CTRL, 1);
-
-    /* Set port mode to external GPHY (BCM54213) */
-    GENET_W(SYS_PORT_CTRL, PORT_MODE_EXT_GPHY);
-
-    /* Initialize PHY */
-    if (phy_init() != 0) {
-        printf("[net] PHY init failed (continuing without link)\n");
-    }
-
-    /* v0.4.155: configure the GENET<->BCM54213 RGMII link (EXT_RGMII_OOB_CTRL).
-     * AIOS never did this; U-Boot/Linux set it in adjust_link. This is the lead
-     * suspect for the v0.4.154 RX-dead/TX-works split -- RX is the RGMII timing
-     * -sensitive direction. Clear OOB_DISABLE, force RGMII_LINK + RGMII_MODE_EN;
-     * set ID_MODE_DIS because RPi4 genet is rgmii-rxid (PHY adds the RX delay, so
-     * the MAC must not add its own). */
-    {
-        uint32_t oob = GENET_R(EXT_RGMII_OOB_CTRL);
-        oob &= ~OOB_DISABLE;
-        oob |= RGMII_LINK | RGMII_MODE_EN | ID_MODE_DIS;
-        GENET_W(EXT_RGMII_OOB_CTRL, oob);
-    }
-
-    /* Allocate DMA buffers */
-    if (dma_init() != 0) {
-        printf("[net] DMA init failed\n");
-        return -1;
-    }
-
-    /* v0.4.158: now that the DMA buffer exists, read the REAL board MAC from the
-     * VC firmware mailbox and override the fake fallback (so DHCP uses the real
-     * MAC). Falls back silently to whatever read_mac_from_umac set. */
-    if (read_mac_from_mailbox() == 0)
-        printf("[net] real MAC (mailbox): %02x:%02x:%02x:%02x:%02x:%02x\n",
-               net_mac[0], net_mac[1], net_mac[2], net_mac[3], net_mac[4], net_mac[5]);
-    else
-        printf("[net] mailbox MAC read failed, keeping fallback\n");
-
-    /* Set up descriptor rings */
-    ring_init();
-
     /* RX IRQ notification (v0.4.230 Stage 1: bound to the net_server TCB in
      * boot_services; the old separate net_srv_ntfn / driver thread are gone). */
     vka_object_t drv_ntfn_obj;
@@ -757,6 +658,208 @@ int plat_net_init(void) {
             }
         }
     }
+    return 0;
+}
+
+/* plat_net_prov -- root-side provisioning for the flag-ON netd path
+ * (DESIGN_NETD s7): allocate DMA, read the board MAC via the VC mailbox (bytes
+ * only -- the UMAC programming is gated out at prov time), bind the IRQ. netd
+ * runs the GENET register sequence itself in plat_net_init() after
+ * plat_net_dev_attach(). */
+int plat_net_prov(void) {
+    if (!hw_info.has_genet) {
+        printf("[net] No GENET in DTB\n");
+        return -1;
+    }
+    if (dma_init() != 0) {
+        printf("[net] DMA init failed\n");
+        return -1;
+    }
+    if (read_mac_from_mailbox() == 0)
+        printf("[net] real MAC (mailbox, prov): %02x:%02x:%02x:%02x:%02x:%02x\n",
+               net_mac[0], net_mac[1], net_mac[2], net_mac[3], net_mac[4], net_mac[5]);
+    else
+        printf("[net] mailbox MAC read failed at prov, keeping fallback\n");
+    if (genet_irq_bind() != 0) return -1;
+    return 0;
+}
+
+#endif /* !NETD_BUILD (prov half) */
+
+#ifdef NETD_BUILD
+/* netd latches the root-provisioned MMIO/DMA/IRQ/MAC (received via argv) before
+ * plat_net_init() runs the GENET register sequence. DESIGN_NETD s3. */
+void plat_net_dev_attach(uintptr_t mmio_vaddr, int slot, uintptr_t dma_vaddr,
+                         uint64_t dma_paddr, seL4_CPtr irq_handler,
+                         const uint8_t mac[6]) {
+    (void)slot;   /* GENET is a single fixed device; no slot index */
+    genet_regs = (volatile uint32_t *)mmio_vaddr;
+    genet_dma = (uint8_t *)dma_vaddr;
+    genet_dma_pa = dma_paddr;
+    genet_irq_handler = irq_handler;
+    for (int i = 0; i < 6; i++) { genet_mac[i] = mac[i]; net_mac[i] = mac[i]; }
+}
+#endif
+
+/* ================================================================
+ * plat_net_init -- run the GENET device-register sequence (dev half).
+ *
+ * Monolithic (flag-OFF, neither define): provisions inline via the
+ * #ifndef NETD_BUILD helpers, in the original order, then programs the device --
+ * behavior unchanged. netd (NETD_BUILD): the prov helpers are gated out; netd
+ * has already attached the root-provisioned MMIO/DMA/IRQ/MAC.
+ * ================================================================ */
+#ifndef NETD_PROV
+int plat_net_init(void) {
+    /* v0.4.149: re-enabled -- the v0.4.98 disable was a misattributed
+     * device-MMIO watermark bug, now fixed by prealloc_rpi4_devices(). */
+#ifndef NETD_BUILD
+    if (!hw_info.has_genet) {
+        printf("[net] No GENET in DTB\n");
+        return -1;
+    }
+
+    printf("[net] GENET at 0x%lx IRQ %u\n",
+           (unsigned long)hw_info.genet_paddr, hw_info.genet_irq);
+
+    /* v0.4.149: use the pre-mapped GENET MMIO (claimed ascending in
+     * prealloc_rpi4_devices so it lands ahead of the higher peripherals
+     * instead of behind the device-untyped watermark). */
+    if (!dev_genet_vaddr) {
+        printf("[net] GENET MMIO not pre-mapped\n");
+        return -1;
+    }
+    genet_regs = dev_genet_vaddr;
+#endif /* !NETD_BUILD: netd attached genet_regs via plat_net_dev_attach() */
+
+    /* Verify controller is alive */
+    arch_dmb();
+    uint32_t rev = GENET_R(SYS_REV_CTRL);
+    if (rev == 0 || rev == 0xFFFFFFFF) {
+        printf("[net] GENET not responding (rev=0x%x)\n", rev);
+        return -1;
+    }
+    uint32_t major = (rev >> 24) & 0xFF;
+    uint32_t minor = (rev >> 16) & 0xFF;
+    printf("[net] GENET rev: 0x%08x (v%u.%u)\n", rev, major, minor);
+
+    /* v0.4.151: release the UMAC software-reset latch BEFORE touching any UMAC
+     * register. The GENET powers up with SYS_RBUF_FLUSH_CTRL.SWINIT set, which
+     * holds the UMAC sub-block in reset; accessing UMAC (0x808) while it is held
+     * in reset bus-errors -> external abort -> kernel halt. NOT clock-gating (the
+     * firmware clocks GENET; the rev read above proves the SYS block is live).
+     * HW-CONFIRMED on real RPi4 (v0.4.151). Linux/Circle reset_umac do the same
+     * via rbuf_ctrl_set(0). If GENET ever halts right after the rev print above,
+     * this clear is the first thing to check. */
+    GENET_W(SYS_RBUF_FLUSH_CTRL, 0);
+    genet_delay(10);
+
+    /* --- UniMAC reset (Linux/Circle reset_umac order) --- */
+    GENET_W(UMAC_CMD, 0);
+    GENET_W(UMAC_CMD, CMD_SW_RESET | CMD_LCL_LOOP);
+    genet_delay(2);
+    GENET_W(UMAC_CMD, 0);
+    genet_delay(10);
+
+#ifdef NETD_BUILD
+    /* netd: root read the board MAC via the VC mailbox at prov time and handed it
+     * over via argv (latched in plat_net_dev_attach). Program it into UMAC now
+     * that SWINIT is released + UMAC reset. If it was zero, fall back to whatever
+     * the firmware left in UMAC. v0.4.161 MAC1 16-bit low-half packing. */
+    if (!(genet_mac[0] | genet_mac[1] | genet_mac[2] |
+          genet_mac[3] | genet_mac[4] | genet_mac[5]))
+        read_mac_from_umac();
+    GENET_W(UMAC_MAC0, ((uint32_t)genet_mac[0] << 24) | ((uint32_t)genet_mac[1] << 16) |
+                       ((uint32_t)genet_mac[2] <<  8) | ((uint32_t)genet_mac[3]));
+    GENET_W(UMAC_MAC1, ((uint32_t)genet_mac[4] << 8) | ((uint32_t)genet_mac[5]));
+    for (int i = 0; i < 6; i++) net_mac[i] = genet_mac[i];
+    printf("[net] MAC (prov): %02x:%02x:%02x:%02x:%02x:%02x\n",
+           genet_mac[0], genet_mac[1], genet_mac[2],
+           genet_mac[3], genet_mac[4], genet_mac[5]);
+#else
+    /* Read MAC address from UniMAC (set by firmware) */
+    read_mac_from_umac();
+    printf("[net] MAC: %02x:%02x:%02x:%02x:%02x:%02x\n",
+           genet_mac[0], genet_mac[1], genet_mac[2],
+           genet_mac[3], genet_mac[4], genet_mac[5]);
+
+    /* If MAC is all zeros, firmware did not set it */
+    if (genet_mac[0] == 0 && genet_mac[1] == 0 &&
+        genet_mac[2] == 0 && genet_mac[3] == 0 &&
+        genet_mac[4] == 0 && genet_mac[5] == 0) {
+        printf("[net] MAC not set by firmware, using fallback\n");
+        genet_mac[0] = 0xDC; genet_mac[1] = 0xA6;
+        genet_mac[2] = 0x32; genet_mac[3] = 0x01;
+        genet_mac[4] = 0x02; genet_mac[5] = 0x03;
+        uint32_t m0 = ((uint32_t)genet_mac[0] << 24) |
+                      ((uint32_t)genet_mac[1] << 16) |
+                      ((uint32_t)genet_mac[2] <<  8) |
+                      ((uint32_t)genet_mac[3]);
+        uint32_t m1 = ((uint32_t)genet_mac[4] << 8) |
+                      ((uint32_t)genet_mac[5]);     /* MAC1 = 16-bit low field */
+        GENET_W(UMAC_MAC0, m0);
+        GENET_W(UMAC_MAC1, m1);
+        for (int i = 0; i < 6; i++) net_mac[i] = genet_mac[i];
+    }
+#endif
+
+    /* Set max frame length */
+    GENET_W(UMAC_MAX_FRAME, 1536);
+
+    /* Configure RBUF */
+    GENET_W(RBUF_CTRL, RBUF_ALIGN_2B | RBUF_BAD_DIS);
+
+    /* v0.4.154: TBUF size control -- U-Boot/Linux set this in the reset path;
+     * AIOS omitted it. Required for the TX buffer engine. */
+    GENET_W(RBUF_TBUF_SIZE_CTRL, 1);
+
+    /* Set port mode to external GPHY (BCM54213) */
+    GENET_W(SYS_PORT_CTRL, PORT_MODE_EXT_GPHY);
+
+    /* Initialize PHY */
+    if (phy_init() != 0) {
+        printf("[net] PHY init failed (continuing without link)\n");
+    }
+
+    /* v0.4.155: configure the GENET<->BCM54213 RGMII link (EXT_RGMII_OOB_CTRL).
+     * AIOS never did this; U-Boot/Linux set it in adjust_link. This is the lead
+     * suspect for the v0.4.154 RX-dead/TX-works split -- RX is the RGMII timing
+     * -sensitive direction. Clear OOB_DISABLE, force RGMII_LINK + RGMII_MODE_EN;
+     * set ID_MODE_DIS because RPi4 genet is rgmii-rxid (PHY adds the RX delay, so
+     * the MAC must not add its own). */
+    {
+        uint32_t oob = GENET_R(EXT_RGMII_OOB_CTRL);
+        oob &= ~OOB_DISABLE;
+        oob |= RGMII_LINK | RGMII_MODE_EN | ID_MODE_DIS;
+        GENET_W(EXT_RGMII_OOB_CTRL, oob);
+    }
+
+#ifndef NETD_BUILD
+    /* Allocate DMA buffers (flag-OFF monolithic; flag-ON root does this in
+     * plat_net_prov() and netd receives the region via plat_net_dev_attach). */
+    if (dma_init() != 0) {
+        printf("[net] DMA init failed\n");
+        return -1;
+    }
+
+    /* v0.4.158: now that the DMA buffer exists, read the REAL board MAC from the
+     * VC firmware mailbox and override the fake fallback (so DHCP uses the real
+     * MAC). Falls back silently to whatever read_mac_from_umac set. */
+    if (read_mac_from_mailbox() == 0)
+        printf("[net] real MAC (mailbox): %02x:%02x:%02x:%02x:%02x:%02x\n",
+               net_mac[0], net_mac[1], net_mac[2], net_mac[3], net_mac[4], net_mac[5]);
+    else
+        printf("[net] mailbox MAC read failed, keeping fallback\n");
+#endif
+
+    /* Set up descriptor rings */
+    ring_init();
+
+#ifndef NETD_BUILD
+    /* RX IRQ notification + kick + handler bind (root/vka). netd inherits the
+     * handler via plat_net_dev_attach() and self-binds the ntfn to its own TCB. */
+    if (genet_irq_bind() != 0) return -1;
+#endif
 
     /* Enable UniMAC TX and RX */
     GENET_W(UMAC_CMD, CMD_TX_EN | CMD_RX_EN | CMD_SPEED_100 |
@@ -942,6 +1045,9 @@ void plat_net_get_mac(uint8_t mac[6]) {
     for (int i = 0; i < 6; i++) mac[i] = genet_mac[i];
 }
 
+#endif /* !NETD_PROV (dev half: plat_net_init/tx/drain/get_mac) */
+
+#ifndef NETD_BUILD   /* root-local /proc/genet diag: uses the VC mailbox + root globals */
 /* ================================================================
  * Live diagnostic interface -- driven from /proc/genet so the GENET
  * datapath can be probed AND poked from the AIOS shell WITHOUT reflashing.
@@ -1135,3 +1241,5 @@ int genet_diag_cmd(const char *args, char *buf, int bufsize) {
     }
     return -1;
 }
+
+#endif /* !NETD_BUILD (root-local /proc/genet diag) */
