@@ -10,10 +10,13 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
 ## Quick orientation
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4.
-* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.234**
-  (netd Stages 0-2 + three stability follow-ups -- see the DONE sections below.
-  Stage 2 proved the reply-sweep kernel bet; next is Stage 3, the real net
-  cutover). The v0.4.188-228 arcs (USB HID,
+* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.235**,
+  **ahead-3 of origin** (Bryan pushes). netd Stages 0-2 + stability follow-ups
+  A/B/C + an RPi4 thermal cap -- see the DONE sections below. **A, B, and the
+  heat cap are HW-VERIFIED on the real Pi this session; C is NOT fixed (two
+  attempts failed) and is BACKLOGGED (harmless).** Stage 2 proved the reply-sweep
+  kernel bet; the big next thread is Stage 3, the real net cutover. The Pi last
+  ran v0.4.235 @ 600MHz at 192.168.0.127. The v0.4.188-228 arcs (USB HID,
   V3D, the Source-B 32.4s stall CURE, fatswap flash-over-network, ext2 group
   layout, RPi4 4-core SMP) are captured in the memory index + `docs/NEXT_*.md`,
   not inline here.
@@ -51,7 +54,9 @@ Honor it; this session learned the hard way what happens when you do not.
 
 Moving the net subsystem out of the root task into an isolated `netd` process
 (`docs/DESIGN_NETD.md`, staged 0-4). Stage-2 seed (now fulfilled):
-`docs/NEXT_20260613b_netd_stage2.md`. **Next: Stage 3 (real net cutover).**
+`docs/NEXT_20260613b_netd_stage2.md`. **Next-session seed (state + thread menu):
+`docs/NEXT_20260613c_handoff.md`.** The big next thread is Stage 3 (the real net
+cutover); the contained follow-ons are C (GENET MAC fix), DVFS, and sshd-22.
 
 * **Stage 0** v0.4.229 (`000203a`, PUSHED) -- in-root hardening, zero behaviour
   change: `include/aios/net_proto.h` (centralized NET IPC labels 90-103 +
@@ -101,44 +106,56 @@ Moving the net subsystem out of the root task into an isolated `netd` process
 
 ---
 
-## DONE: stability follow-ups -- v0.4.232-234 (2026-06-13)
+## DONE: stability follow-ups + RPi4 thermal cap -- v0.4.232-235 (2026-06-13)
 
-Three small, low-risk wins after netd Stage 2 (each its own commit; all QEMU- or
-build-verified). Push state: A `e1aaf75` + B `fc68cc2` are on origin; C `b2e7a58`
-is ahead-1 (pending push).
+Wins after netd Stage 2 (each its own commit). **A, B, and the heat cap are
+HW-VERIFIED on the real Pi; C is NOT fixed (two attempts failed) and is
+BACKLOGGED.** Push state: A/B (`e1aaf75`/`fc68cc2`) + the C-attempt (`b2e7a58`) +
+the docs commit (`6f241d0`) are on origin; v0.4.235 (`706a820`) + heat cap
+(`60f7fb1`) + the C backlog (`ad7c438`) are **ahead-3 (pending push)**.
 
-* **A -- quiet per-spawn serial logging** (v0.4.232, `e1aaf75`). Every
-  spawn/exec/fork printed ~4-5 routine stat lines at INFO (text cached/shared/lazy
-  pages, BSS lazy pages, cow_setup, the per-exec elf size); on the lossy RPi4
-  mini-UART that buries real `[WRN]`/`[ERR]` and fragments the getty prompt.
-  Demoted them to `AIOS_LOG_DEBUG` (gated off at the default INFO level; live
-  counts stay in /proc/vka + /proc/cow, exec paths in /proc/filehits). VERIFIED:
-  a boot capture shows all six per-spawn strings at count 0 on serial; boot
-  healthy. **If you miss those lines, set that module's `LOG_LEVEL` to DEBUG.**
-  NOTE: this did NOT fix `netcon_qemu_test`'s serial-login flake -- that harness
-  times out at the password-prompt step for separate, pre-existing reasons (ssh's
-  serial login works on the same getty; net_socket deliberately drives over
-  netconsole-TCP to avoid serial login). A is about HW serial observability.
+* **A -- quiet per-spawn serial logging** (v0.4.232, `e1aaf75`). **HW-VERIFIED.**
+  Every spawn/exec/fork printed ~4-5 routine stat lines at INFO (text
+  cached/shared/lazy pages, BSS lazy pages, cow_setup, the per-exec elf size); on
+  the lossy mini-UART that buries real `[WRN]`/`[ERR]`. Demoted to
+  `AIOS_LOG_DEBUG` (gated off at INFO; live counts stay in /proc/vka + /proc/cow,
+  exec paths in /proc/filehits). A real-Pi boot capture shows **0 per-spawn spam
+  lines**. **If you miss those lines, set that module's `LOG_LEVEL` to DEBUG.**
+  (Did NOT fix `netcon_qemu_test`'s serial-login flake -- a separate pre-existing
+  harness issue; net_socket drives over netconsole-TCP to avoid serial login.)
 
-* **B -- DHCP lease renewal** (v0.4.233, `fc68cc2`). AIOS bound once at boot and
-  never renewed, so an idle Pi dropped off the LAN at lease expiry. Now it parses
-  the lease (option 51) and renews at T1 (50%) from the net_server loop -- which
-  already wakes >= every 5s via the serverstats SVC_PING, so no timer thread. The
-  renewal REQUEST is the proven boot packet; `net_dhcp_input` gained a
+* **B -- DHCP lease renewal** (v0.4.233, `fc68cc2`). **HW-VERIFIED (lease parse).**
+  AIOS bound once at boot and never renewed -> an idle Pi dropped off the LAN at
+  expiry. Now parses the lease (option 51) + renews at T1 (50%) from the
+  net_server loop (woken >= every 5s by the serverstats SVC_PING, so no timer
+  thread). Renewal REQUEST = the proven boot packet; `net_dhcp_input` gained a
   `dhcp_renewing` ACK path (extends + re-arms T1, bounded retry lease/8).
-  /proc/netstat now shows dhcp_acks/dhcp_renews/dhcp_lease_secs, and
-  `cat /proc/netstat.renew` forces one (SLIRP's lease is 86400s, too long to wait
-  out). VERIFIED: `scripts/dhcp_renew_qemu_test.py` 3/3 (lease=86400s parsed;
-  forced renew acks 1->2, renews 0->1). Follow-up: non-blocking re-acquire on a
-  renewal NAK.
+  /proc/netstat shows dhcp_acks/dhcp_renews/dhcp_lease_secs; `cat
+  /proc/netstat.renew` forces one. VERIFIED: `dhcp_renew_qemu_test.py` 3/3 + a
+  real-Pi boot log `lease=86400s` from the router. (Renewal round-trip on real
+  GENET is still QEMU-only-proven -- a long-uptime soak would confirm it.)
+  Follow-up: non-blocking re-acquire on a renewal NAK.
 
-* **C -- GENET mailbox MAC retry** (v0.4.234, `b2e7a58`, RPi4-only, **HW-VERIFY
-  PENDING**). The VC-mailbox MAC read fails intermittently on the A72; a single
-  failure left the fake fallback dc:a6:32:01:02:03 -> the MAC-derived DHCP xid got
-  a different lease (.127 not .8). Now retries 3x (each `genet_mbox_call` is a 2s
-  bounded poll, so worst case ~6s only on persistent failure; the intermittent
-  case clears on attempt 2). build-rpi4 compiles; QEMU has no GENET, so the
-  consistent-.8 behavior needs a real-Pi boot to confirm.
+* **Heat cap -- RPi4 `arm_freq=600`** (`60f7fb1`). **HW-VERIFIED stable.** The Pi
+  ran hot because AIOS idle-SPINS all 4 cores (no WFI -- the v0.4.228 stall cure
+  needs the SCU clocked), so the firmware pins the A72 at its 1500MHz max doing no
+  useful work. Cap arm_freq in the generated config.txt (mksdcard.py, tunable
+  `ARM_FREQ_CAP_MHZ`): the cores still spin (stall-safe) but at a lower clock +
+  voltage. v0.4.235 boots **STABLE + stall-free at 600MHz** (regular 30s tlbi
+  heartbeat, no 32s gap). No on-chip temp readout yet to quantify it. Follow-up
+  (BACKLOG): load-driven DVFS governor (idle=low clock, never WFI) + a /proc/temp
+  readout (mailbox GET_TEMPERATURE).
+
+* **C -- GENET real-MAC read -- FAILED, BACKLOGGED (harmless).** Goal: the Pi
+  takes lease `.8` (real MAC) not `.127` (fake fallback dc:a6:32:01:02:03). TWO
+  attempts FAILED on real HW: v0.4.234 (`b2e7a58`, retry 3x) + v0.4.235
+  (`706a820`, deferred re-read before DHCP). DECISIVE: a fully-settled post-boot
+  `cat /proc/genet.mac` returns `ret=-1`, so the mailbox read fails EVERY time --
+  NOT a boot-timing race -- yet display_vc's mbox_call to the SAME mailbox
+  succeeds. net_genet's CALL is broken (prime suspect: tag-buffer
+  region/coherency vs display_vc's pinned-low 0x3A000000). HARMLESS -- .127 works.
+  Full diagnosis + real-fix plan + the **~14s-boot-latency cleanup owed (revert
+  both attempts)** are in **BACKLOG.md "GENET real-MAC read fails"**.
 
 ---
 
