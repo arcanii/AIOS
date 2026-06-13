@@ -120,12 +120,19 @@ caller + IRQ cleared -> root + shell alive, net `dead`; clean `reboot` -> netd
 back up clean, no re-crash). The Pi is left healthy at 192.168.0.8 on v0.4.239.
 Rollbacks on disk: `kernel8-oncard-v235-backup.img`, `kernel8-flagoff-rollback.img`.
 
-**Remaining (next session):** (1) a **forced-DEVD_FAIL / delayed-READY** QEMU gate
-(the degrade tail is shared with the verified no-net route; wants a small
-`NETD_TEST_NO_READY` hook). (2) **Stage 4** re-home + default ON (`/proc/genet`
-UMAC-free rewrite -- note in the flag-ON root `genet_regs` is NULL so the current
-`genet_diag_cmd` returns "not initialized"; NET_DIAG ops in `/bin/netdiag`; flip
-`AIOS_NETD` default ON). See the seed.
+**Forced-degrade gate DONE** (`f4aeda9`, the `AIOS_NETD_TEST_DEGRADE`/
+`NETD_TEST_NO_READY` hook): a netd that spawns but never sends DEVD_READY ->
+spawn_netd bounded wait times out -> "degrade (network off, boot continues)" ->
+login reached. The last open QEMU gate; all QEMU gates now closed.
+
+**Remaining = Stage 4 (re-home + default ON), DESIGN_NETD s9:** the `/proc/genet`
+root-local rewrite that is UMAC/MDIO-free (note: in the flag-ON root `genet_regs`
+is NULL, so `genet_diag_cmd` already returns "not present/initialized" -- safe but
+blind; the netd-software half renders from the stats page, the HW half needs a
+dead-netd-safe MMIO-only reader); NET_DIAG ops in `/bin/netdiag` (only the crash
+op is wired today); an explicit SVC_PING reply in netd (cosmetic); then flip
+`AIOS_NETD` default ON both targets; after one stable release delete the in-root
+net path + retire the flag. See the seed.
 
 ---
 
