@@ -492,7 +492,13 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
          *   cat /proc/netstat.drop.N   drop every Nth inbound TCP data
          *                              segment (0 = off) -- deterministic
          *                              retransmit-storm injection for tests */
-        if (path[7] == '.' && path[8] == 'd' && path[9] == 'r'
+        if (path[7] == '.' && path[8] == 'r' && path[9] == 'e'
+            && path[10] == 'n' && path[11] == 'e' && path[12] == 'w') {
+            /* v0.4.233: force one immediate DHCP lease renewal (test hook). */
+            net_dhcp_force_renew();
+            w += snprintf(buf + w, bufsize - w,
+                "dhcp renewal forced (watch dhcp_renews / dhcp_acks)\n");
+        } else if (path[7] == '.' && path[8] == 'd' && path[9] == 'r'
             && path[10] == 'o' && path[11] == 'p' && path[12] == '.') {
             uint32_t n = 0;
             for (int i = 13; path[i] >= '0' && path[i] <= '9'; i++)
@@ -526,6 +532,11 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
                 (unsigned)net_rx_stats.dbg_read_bytes,
                 (unsigned)net_rx_stats.tcp_read_acks,
                 (unsigned)net_fault_drop_nth);
+            /* v0.4.233: DHCP lease/renewal state (the renewal test reads these). */
+            w += snprintf(buf + w, bufsize - w,
+                "dhcp_acks: %u\ndhcp_renews: %u\ndhcp_lease_secs: %u\n",
+                (unsigned)dhcp_acks, (unsigned)dhcp_renews,
+                (unsigned)dhcp_lease_secs);
         }
     } else if (path[0] == 'x' && path[1] == 'h' && path[2] == 'c'
             && path[3] == 'i') {

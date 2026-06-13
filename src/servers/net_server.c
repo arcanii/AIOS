@@ -504,6 +504,11 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             net_rx_ring.tail++;
         }
 
+        /* v0.4.233: renew the DHCP lease at T1. Cheap (a cntpct compare that
+         * early-returns until due); the loop wakes >= every PROBE_PERIOD_SEC via
+         * the serverstats SVC_PING, so this fires on time even on an idle link. */
+        net_dhcp_renew_check();
+
         if (!selftest_done && net_arp_resolved(gw)) {
             net_send_ping(gw);
             selftest_done = 1;

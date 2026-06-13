@@ -35,6 +35,7 @@
 #define O_ROUTER    3
 #define O_DNS       6
 #define O_REQIP     50
+#define O_LEASE     51
 #define O_MSGTYPE   53
 #define O_SERVERID  54
 #define O_PARAMS    55
@@ -56,6 +57,11 @@ int dhcp_acks;
 int dhcp_naks;
 int dhcp_mismatch;
 int dhcp_bound;
+/* v0.4.233: lease-renewal state. dhcp_lease_secs = lease time from option 51
+ * (0 if the server omitted it -> no timer-based renewal); dhcp_renews = the count
+ * of successful renewals (surfaced via /proc/netstat for the renewal test). */
+int dhcp_lease_secs;
+int dhcp_renews;
 
 static int      dhcp_state;      /* 0 idle, 1 discover sent, 2 request sent, 3 bound */
 static uint32_t dhcp_xid;
@@ -64,6 +70,13 @@ static uint8_t  dhcp_server[4];  /* opt 54 (server id) */
 static uint8_t  dhcp_router[4];  /* opt 3 */
 static uint8_t  dhcp_mask[4];    /* opt 1 */
 static int      have_router, have_mask;
+
+/* v0.4.233: renewal timer. dhcp_renew_at = cntpct deadline for the next renewal
+ * (armed to T1 = 50% of the lease on each ACK); dhcp_renewing = a renewal REQUEST
+ * is outstanding; dhcp_force_renew = a one-shot test poke (/proc/netstat.renew). */
+static uint64_t dhcp_renew_at;
+static int      dhcp_renewing;
+static int      dhcp_force_renew;
 
 static uint8_t  dhcp_tx[1518];
 
@@ -144,6 +157,7 @@ void net_dhcp_input(const uint8_t *p, uint32_t len, const uint8_t *src_ip) {
 
     uint8_t msgtype = 0, r_router[4], r_mask[4], r_server[4];
     int g_router = 0, g_mask = 0, g_server = 0;
+    uint32_t r_lease = 0; int g_lease = 0;
     uint32_t i = 240;
     while (i < len) {
         uint8_t code = p[i++];
@@ -156,6 +170,7 @@ void net_dhcp_input(const uint8_t *p, uint32_t len, const uint8_t *src_ip) {
         else if (code == O_ROUTER   && olen >= 4) { for (int k=0;k<4;k++) r_router[k]=p[i+k]; g_router=1; }
         else if (code == O_SUBNET   && olen >= 4) { for (int k=0;k<4;k++) r_mask[k]=p[i+k];   g_mask=1; }
         else if (code == O_SERVERID && olen >= 4) { for (int k=0;k<4;k++) r_server[k]=p[i+k]; g_server=1; }
+        else if (code == O_LEASE    && olen >= 4) { r_lease = ((uint32_t)p[i]<<24)|((uint32_t)p[i+1]<<16)|((uint32_t)p[i+2]<<8)|p[i+3]; g_lease=1; }
         i += olen;
     }
 
@@ -170,20 +185,36 @@ void net_dhcp_input(const uint8_t *p, uint32_t len, const uint8_t *src_ip) {
                dhcp_server[0], dhcp_server[1], dhcp_server[2], dhcp_server[3]);
         dhcp_send(DHCPREQUEST);
         dhcp_state = 2;
-    } else if (msgtype == DHCPACK && dhcp_state == 2) {
+    } else if (msgtype == DHCPACK && (dhcp_state == 2 || dhcp_renewing)) {
         dhcp_acks++; dhcp_bound = 1;
         for (int k = 0; k < 4; k++) net_cfg_ip[k] = p[16 + k];   /* yiaddr from ACK */
         if (have_router) for (int k=0;k<4;k++) net_cfg_gw[k]   = dhcp_router[k];
         if (have_mask)   for (int k=0;k<4;k++) net_cfg_mask[k] = dhcp_mask[k];
+        /* v0.4.233: arm the next renewal at T1 = 50% of the lease. */
+        if (g_lease) dhcp_lease_secs = (int)r_lease;
+        if (dhcp_lease_secs > 0) {
+            uint64_t freq = read_cntfrq(); if (freq == 0) freq = 62500000;
+            dhcp_renew_at = read_cntpct() + (uint64_t)(dhcp_lease_secs / 2) * freq;
+        }
+        if (dhcp_renewing) { dhcp_renews++; dhcp_renewing = 0; net_dhcp_pending = 0; }
         dhcp_state = 3;
-        printf("[net] DHCP ACK: ip=%d.%d.%d.%d gw=%d.%d.%d.%d mask=%d.%d.%d.%d\n",
+        printf("[net] DHCP ACK: ip=%d.%d.%d.%d gw=%d.%d.%d.%d mask=%d.%d.%d.%d lease=%ds\n",
                net_cfg_ip[0], net_cfg_ip[1], net_cfg_ip[2], net_cfg_ip[3],
                net_cfg_gw[0], net_cfg_gw[1], net_cfg_gw[2], net_cfg_gw[3],
-               net_cfg_mask[0], net_cfg_mask[1], net_cfg_mask[2], net_cfg_mask[3]);
+               net_cfg_mask[0], net_cfg_mask[1], net_cfg_mask[2], net_cfg_mask[3],
+               dhcp_lease_secs);
     } else if (msgtype == DHCPNAK) {
         dhcp_naks++;
-        printf("[net] DHCP NAK; will retry\n");
         dhcp_state = 0;
+        if (dhcp_renewing) {
+            /* renewal refused -- give up the lease cleanly; a fresh DISCOVER
+             * happens on the next boot (non-blocking re-acquire is a follow-up). */
+            dhcp_renewing = 0;
+            net_dhcp_pending = 0;
+            printf("[net] DHCP renewal NAK; lease lost\n");
+        } else {
+            printf("[net] DHCP NAK; will retry\n");
+        }
     }
 }
 
@@ -237,4 +268,42 @@ int net_dhcp_acquire(void) {
            dhcp_bound, net_cfg_ip[0], net_cfg_ip[1], net_cfg_ip[2], net_cfg_ip[3],
            dhcp_replies, dhcp_offers, dhcp_acks, dhcp_mismatch);
     return (dhcp_state == 3) ? 0 : -1;
+}
+
+/* v0.4.233: lease renewal. Called from the net_server main loop, which wakes at
+ * least every PROBE_PERIOD_SEC (the serverstats SVC_PING) even on an idle link,
+ * so this fires on time without a dedicated timer thread. At T1 (50% of the
+ * lease) it sends a renewal DHCPREQUEST; the server ACK (net_dhcp_input's
+ * dhcp_renewing path) extends the lease and re-arms T1. A bounded retry (lease/8)
+ * covers a dropped renewal up to expiry. The renewal REQUEST is the same packet
+ * the boot bind used, so the round-trip is the already-proven path -- only the
+ * trigger is new. dhcp_force_renew (/proc/netstat.renew) fires a one-shot renewal
+ * for QEMU tests, where SLIRP's lease is too long to wait out. */
+void net_dhcp_renew_check(void) {
+    if (!net_available || dhcp_state != 3) return;
+    int due = dhcp_force_renew;
+    if (!due && dhcp_lease_secs > 0 && dhcp_renew_at != 0
+        && read_cntpct() >= dhcp_renew_at)
+        due = 1;
+    if (!due) return;
+    dhcp_force_renew = 0;
+
+    net_dhcp_pending = 1;               /* route the renewal ACK to net_dhcp_input */
+    dhcp_renewing = 1;
+    dhcp_send(DHCPREQUEST);             /* same broadcast REQUEST the bind used */
+
+    /* Re-send until the ACK re-arms dhcp_renew_at, bounded so a dead server does
+     * not silently stop trying before the lease expires. */
+    uint64_t freq = read_cntfrq(); if (freq == 0) freq = 62500000;
+    uint32_t retry_s = dhcp_lease_secs > 0 ? (uint32_t)(dhcp_lease_secs / 8) : 30;
+    if (retry_s < 5) retry_s = 5;
+    dhcp_renew_at = read_cntpct() + (uint64_t)retry_s * freq;
+    printf("[net] DHCP renew REQUEST (lease=%ds, retry in %us)\n",
+           dhcp_lease_secs, (unsigned)retry_s);
+}
+
+/* Test hook (/proc/netstat.renew): force one immediate renewal regardless of the
+ * timer or whether the server sent a lease time. */
+void net_dhcp_force_renew(void) {
+    dhcp_force_renew = 1;
 }

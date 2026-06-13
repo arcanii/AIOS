@@ -261,13 +261,20 @@ void net_udp_deliver(uint16_t dst_port, uint16_t src_port,
                      const uint8_t *src_ip,
                      const uint8_t *data, uint32_t len);
 
-/* DHCP client (src/net/net_dhcp.c) -- run once at net_server startup */
-extern int net_dhcp_pending;   /* 1 while a lease is being acquired */
+/* DHCP client (src/net/net_dhcp.c) -- acquire at startup, then renew the lease */
+extern int net_dhcp_pending;   /* 1 while a lease is being acquired/renewed */
 int  net_dhcp_acquire(void);   /* 0 = bound (net_cfg_* updated), -1 = timeout */
 void net_dhcp_input(const uint8_t *p, uint32_t len, const uint8_t *src_ip);
+/* v0.4.233: lease renewal. net_dhcp_renew_check() is called every net_server loop
+ * iteration (cheap, early-returns until T1 is due); net_dhcp_force_renew() is the
+ * /proc/netstat.renew test hook that fires one immediate renewal. */
+void net_dhcp_renew_check(void);
+void net_dhcp_force_renew(void);
 
 /* v0.4.158: DHCP diagnostic counters (read via /proc/genet.ip; one short line
- * survives the lossy mini-UART). Pinpoint where DHCP fails. */
+ * survives the lossy mini-UART). Pinpoint where DHCP fails. v0.4.233 adds
+ * dhcp_lease_secs (option 51) and dhcp_renews (successful renewals). */
 extern int dhcp_replies, dhcp_offers, dhcp_acks, dhcp_naks, dhcp_mismatch, dhcp_bound;
+extern int dhcp_lease_secs, dhcp_renews;
 
 #endif /* AIOS_NET_H */
