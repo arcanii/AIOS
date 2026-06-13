@@ -186,6 +186,36 @@ harden the netconsole relay (bulk drain + reliable end-of-command framing) --
 
 ## Known bugs & limitations (low-priority)
 
+### GENET real-MAC read fails -> Pi takes .127 not .8 (HARMLESS)
+- **Symptom**: on the real RPi4 the board takes DHCP lease `.127` (the fake
+  fallback MAC dc:a6:32:01:02:03) instead of `.8` (the real MAC). HARMLESS -- the
+  Pi works at either IP; check both. Appears consistent since HDMI+v3d were
+  enabled (v0.4.168+); the older note in [[genet-umac-swinit]] called it
+  "intermittent".
+- **Root cause (HW-narrowed, build 2171)**: net_genet's mailbox MAC read
+  (`genet_mbox_call` / `read_mac_from_mailbox`) returns `ret=-1` EVERY time --
+  confirmed by a fully-settled post-boot `cat /proc/genet.mac` (so it is NOT a
+  boot-timing race). Yet `display_vc`'s `mbox_call` to the SAME VC property
+  mailbox (channel 8) SUCCEEDS at boot ("Display server ready 1024x768"). The
+  mailbox HW works; net_genet's CALL is broken.
+- **Ruled out** (all checked on HW): high DMA address (genet_dma is low ~4MB);
+  display contention (net inits at aios_root.c:384, before display at :387);
+  VC-not-ready / read-too-early (it fails fully post-boot too).
+- **Prime suspect**: tag-buffer region or cache coherency. `display_vc` PINS its
+  tag buffer low at `MBOX_TAG_PADDR=0x3A000000` (the v0.4.168 HDMI fix);
+  net_genet uses `genet_dma+0x10000`. Compare the two `mbox_call` paths: tag
+  placement, the `|0xC0000000` bus alias, cached-vs-cleaned tag write. Likely
+  fix: give net_genet a VC-reachable (pinned-low, non-cached, cleaned) tag buffer
+  like display_vc's.
+- **First step**: instrument `genet_mbox_call` (log WHICH poll fails + `buf[1]`),
+  or just point `read_mac_from_mailbox` at display_vc's proven tag region, then
+  one reflash.
+- **CLEANUP owed**: the v0.4.234 retry (genet_init, 3x) + v0.4.235 deferred
+  re-read (net_server, 5x) each spin the ~2s mailbox timeout for nothing (~14s of
+  wasted boot polling, all failing). REVERT both to a single attempt as part of
+  the real fix.
+- **Size**: ~1 instrumented reflash + ~20 LOC. **See**: [[genet-umac-swinit]].
+
 ### PTY/SSH: last command before `exit` can lose its output (queued 2026-06-06)
 - **Symptom**: in an interactive PTY session (observed over SSH), the LAST
   command's stdout immediately before `exit` can be dropped -- the client
