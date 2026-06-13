@@ -51,6 +51,14 @@ Architectures / Hardware Supported
   login shell, zsh (ZLE) interactive, 99 sbase utilities
 - **Microkernel-honest memory** -- demand-paged ELF text/BSS, shared read-only
   .text, COW fork, write-back block cache (4.5x faster eMMC writes)
+- **Fault-isolated networking (netd)** -- the whole net stack (socket server +
+  TCP/IP + NIC driver) can run in its own MMU-protected process behind the
+  `AIOS_NETD` build flag, with zero client ABI change; a deliberate net-stack
+  crash is contained and recovered (root + shell keep running) -- HW-verified on
+  a real Pi. The in-root path remains the default until the flag flips.
+- **Flash-free kernel updates over the LAN** -- `scripts/pi_flash.py` pushes a new
+  `kernel8.img` over netconsole, rewrites the FAT32 boot partition in place
+  (`fatswap`), sha-verifies, and reboots -- no SD card handling
 
 The full arc-by-arc history lives in [CHANGELOG.md](CHANGELOG.md).
 
@@ -66,7 +74,7 @@ External AI (Claude) is used as a development tool for code generation
 and review. This project is also a study in AI-assisted systems programming.
 The long-term goal is self-hosted development within AIOS itself.
 
-**Current version:** v0.4.187 (authoritative: `include/aios/version.h`; history: [CHANGELOG.md](CHANGELOG.md))
+**Current version:** v0.4.240 (authoritative: `include/aios/version.h`; history: [CHANGELOG.md](CHANGELOG.md))
 
 ## Quick Start
 
@@ -125,8 +133,9 @@ To run on a **real Raspberry Pi 4**, see
 - **Display server IPC** -- user programs draw to framebuffer via disp_ep (fbshow command)
 - **HDMI console** -- the interactive shell mirrors to the framebuffer (`tty_server` -> `display_server` -> `fb_console`), so a monitor + USB keyboard is a full standalone console (no serial)
 - **USB HID keyboard** -- xHCI host controller driver with USB hub enumeration + HID boot-protocol keymap; generic ECAM (QEMU) and brcmstb PCIe (RPi4 VL805); keystrokes feed the tty like serial input
-- **Networking** -- virtio-net (QEMU) + GENET Ethernet (RPi4), ARP/ICMP/UDP/TCP, DHCP, DNS (`nslookup`), SNTP, HTTP server, POSIX sockets
-- **Network control** -- netconsole: run commands, push/pull files (`pi_filexfer.py`), and reboot the Pi over the LAN
+- **Networking** -- virtio-net (QEMU) + GENET Ethernet (RPi4), ARP/ICMP/UDP/TCP, DHCP (+ T1 lease renewal), DNS (`nslookup`), SNTP, HTTP server, POSIX sockets
+- **netd (isolated network process)** -- behind `option(AIOS_NETD)`: the socket server + TCP/IP + NIC driver dev-half run in a separate MMU-protected CPIO process; root keeps device provisioning and serves the unchanged `net_ep`. A `/proc/net` cacheable heartbeat page is the IPC-free liveness detector; a net-stack crash is contained + a reply-sweep wakes parked callers. HW-verified on a real RPi4 (DHCP/ping/ssh/netconsole + crash recovery); default OFF (in-root path) until a future release flips it
+- **Network control** -- netconsole: run commands, push/pull files (`pi_filexfer.py`), and reboot the Pi over the LAN; flash a new kernel over the LAN (`pi_flash.py` + `fatswap`)
 - **Process tools** -- `pidof` / `pkill` / `killall` (process lookup + signalling via /proc/status)
 - **UART IRQ wakeup** -- PL011 interrupt-driven main loop (seL4_Wait replaces busy-polling)
 - **136+ programs** -- 99 sbase utilities, 30 AIOS programs, dash, zsh, tcc, sshd
@@ -143,7 +152,7 @@ To run on a **real Raspberry Pi 4**, see
 - **Linux compat layer** -- getrandom, futex, ppoll, pselect6, prlimit64, prctl, sysinfo, getrusage, membarrier
 - **O_NONBLOCK pipes** -- pipe2 flags, fcntl F_GETFL/F_SETFL, server-side EAGAIN for nonblocking reads
 - **Virtual devices** -- /dev/urandom (splitmix64 PRNG), /dev/random, /dev/zero
-- **Extended procfs** -- cpuinfo, stat, loadavg, /proc/self/exe, /proc/self/fd via readlinkat
+- **Extended procfs** -- cpuinfo, stat, loadavg, /proc/self/exe, /proc/self/fd via readlinkat; `/proc/cpufreq` + `/proc/temp` (live ARM clock + SoC temperature via the VC mailbox, RPi4); `/proc/net` (netd liveness heartbeat)
 - **POSIX core 55/55 (100%)** -- all core POSIX interfaces implemented
 - **PSCI shutdown** -- clean power-off via /bin/aios/shutdown
 - **getconf** -- sysconf, confstr, pathconf, limits (99/99 sbase tools)
@@ -178,6 +187,10 @@ capability-mediated access to servers.
     seL4 microkernel (AArch64, 4-core SMP -- QEMU + RPi4, HW-verified)
        |
     QEMU virt / Raspberry Pi 4
+
+Under `AIOS_NETD`, net_srv (the socket server + TCP/IP + NIC driver dev-half) is
+not a root thread but a separate MMU-isolated `netd` process; root retains device
+provisioning and hands netd a copy of the same `net_ep`, so clients are unchanged.
 
 ## Prerequisites
 
@@ -450,7 +463,13 @@ console over serial. After DHCP the Pi is on the LAN for SSH (port 2222) and net
 Re-flashing 193 MB per change is slow. Most development does not need it:
 
 ```bash
-# KERNEL / root-task changes -> swap just kernel8.img on the FAT partition:
+# KERNEL / root-task changes, OVER THE LAN (no card handling) -- preferred:
+ninja -C build-rpi4
+python3 scripts/pi_flash.py --build --host <pi-ip>  # push kernel8 over netconsole,
+                                                    # fatswap rewrites the FAT boot
+                                                    # partition, sha-verify, reboot
+
+# KERNEL change with the card in hand -> swap kernel8.img on the FAT partition:
 ninja -C build-rpi4
 python3 scripts/mkkernel8.py                        # -> disk/kernel8.img
 cp disk/kernel8.img /Volumes/AIOSBOOT/kernel8.img   # FAT partition mounts on macOS
@@ -487,6 +506,7 @@ See `hw/rpi4/BOOT_NOTES.md` for the firmware `config.txt` and boot details.
 - [LEARNINGS.md](docs/LEARNINGS.md) -- Hard-won lessons from seL4 development
 - [DASH_PORT.md](docs/DASH_PORT.md) -- dash shell porting guide
 - [DESIGN_NET.md](docs/DESIGN_NET.md) -- Networking subsystem design (virtio-net)
+- [DESIGN_NETD.md](docs/DESIGN_NETD.md) -- De-monolithizing the root task: the isolated netd network process
 - [DESIGN_TCC.md](docs/DESIGN_TCC.md) -- tcc self-hosted compilation design
 - [DESIGN_ZSH.md](docs/DESIGN_ZSH.md) -- zsh shell port design
 - [DESIGN_USB_HID.md](docs/DESIGN_USB_HID.md) -- USB HID keyboard: PCIe + xHCI + hub + HID
