@@ -10,10 +10,10 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
 ## Quick orientation
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4.
-* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.240**.
+* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.241**.
   Origin is at `a6b6473` (the 3b commit, pushed); everything after it (`532fccd`,
-  `bc590ef`, `b0a34fc`, `8b29d4d`, docs) is **ahead, pending Bryan's push**.
-  **The real Pi runs v0.4.240 at 192.168.0.8, deployed FLASH-FREE OVER THE NETWORK**
+  `bc590ef`, `b0a34fc`, `8b29d4d`, `eeb2785`, docs) is **ahead, pending Bryan's push**.
+  **The real Pi runs v0.4.241 at 192.168.0.8, deployed FLASH-FREE OVER THE NETWORK**
   (`scripts/pi_flash.py` + `fatswap`: push kernel8 over netconsole -> rewrite the
   FAT32 boot partition -> 3-way sha verify -> watchdog reboot, no SD shuffle).
   v0.4.240 adds `/proc/temp` + `/proc/cpufreq` (VC-mailbox SoC temp + ARM clock,
@@ -27,10 +27,11 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   byte-identical. **On the real Pi netd takes the REAL MAC lease .8** (the
   retry-for-low DMA fixed the long-standing `.127` fallback) and serves
   DHCP+ping+ssh+netconsole; the s10 crash demo recovered cleanly. All QEMU gates
-  closed (incl forced-degrade `f4aeda9`). Only Stage 4 (re-home, default ON)
-  remains -- see the DONE
-  section below + the seed `docs/NEXT_20260613e_netd_stage3_hw.md` (now with the HW
-  result) + the `project_demono_netd` memory. Earlier this arc: the Stage-3
+  closed (incl forced-degrade `f4aeda9`). **Stage 4 items 1-3 (re-home device diag
+  + SVC_PING) are DONE + HW-VERIFIED on the real Pi (v0.4.241, `eeb2785`)** -- see
+  the DONE section below; only the item-4 default flip remains. Next-session seed:
+  `docs/NEXT_20260614_netd_stage4_flip.md` + the `project_demono_netd` memory.
+  Earlier this arc: the Stage-3
   FOUNDATION (5 flag-OFF-inert commits `ec20d24`..`7cbee78`), netd Stages 0-2,
   stability A/B, and the RPi4 thermal cap (all HW-VERIFIED). The v0.4.188-228 arcs (USB HID, V3D, the Source-B
   32.4s stall CURE, fatswap flash-over-network, ext2 group layout, RPi4 4-core
@@ -133,14 +134,51 @@ Rollbacks on disk: `kernel8-oncard-v235-backup.img`, `kernel8-flagoff-rollback.i
 spawn_netd bounded wait times out -> "degrade (network off, boot continues)" ->
 login reached. The last open QEMU gate; all QEMU gates now closed.
 
-**Remaining = Stage 4 (re-home + default ON), DESIGN_NETD s9:** the `/proc/genet`
-root-local rewrite that is UMAC/MDIO-free (note: in the flag-ON root `genet_regs`
-is NULL, so `genet_diag_cmd` already returns "not present/initialized" -- safe but
-blind; the netd-software half renders from the stats page, the HW half needs a
-dead-netd-safe MMIO-only reader); NET_DIAG ops in `/bin/netdiag` (only the crash
-op is wired today); an explicit SVC_PING reply in netd (cosmetic); then flip
-`AIOS_NETD` default ON both targets; after one stable release delete the in-root
-net path + retire the flag. See the seed.
+**Remaining = item 4 only** -- see the dedicated DONE section just below for items 1-3.
+
+---
+
+## DONE: netd Stage 4 items 1-3 -- re-home device diag + SVC_PING -- HW-VERIFIED v0.4.241 (2026-06-14)
+
+The Stage-4 re-home prep (DESIGN_NETD s6/s9), flag-gated; `AIOS_NETD` default still
+OFF. Commit `eeb2785` (ahead of origin). All three items QEMU-verified AND
+HW-verified on the real Pi (v0.4.241 deployed flash-free).
+
+* **Item 1 -- `/proc/genet` root-local rewrite, UMAC/MDIO-free.** Under `AIOS_NETD`
+  root is prov-only (`genet_regs` NULL) but keeps its own GENET MMIO mapping at
+  `dev_genet_vaddr` (from `prealloc_rpi4_devices` -- valid in BOTH paths, so no new
+  mapping). `genet_diag_cmd` is `#ifdef AIOS_NETD` -> `genet_diag_readonly()` = a
+  READ-ONLY HW view (SYS/EXT/RBUF/INTRL2/RDMA/TDMA ctrl+ring + RX descriptors,
+  `.peek.OFF`), NEVER touching UMAC (`0x800-0xFFF`) or MDIO/PHY. Software state +
+  MAC + IP render from `/proc/net`. flag-OFF keeps the full active diag (`#else`).
+* **Item 2 -- active ops moved to `/bin/netdiag`.** peek/poke/mr/mw/tx/reinit/
+  irqon/irqoff/mac off `/proc/genet` into the userland netdiag tool, which Calls
+  `net_ep` with `NET_DIAG`(103) + a `NETD_DIAG_*` op (`netd_ctrl.h`). net_server
+  (netd) dispatches to a new `plat_net_diag()` HAL (net_genet.c live driver;
+  net_virtio.c peek/poke/tx/mac, `-2` for GENET-only ops). The fs thread NEVER
+  Calls netd -- netdiag is the sacrificial userland caller. New `aios_net_diag()`
+  lib helper + `NET_DIAG_L` mirror.
+* **Item 3 -- explicit `SVC_PING` -> 0 reply** in net_server (was falling through to
+  the unknown-op `-1`).
+
+**Verified QEMU:** all 4 trees build; NEW `scripts/netdiag_qemu_test.py` 6/6
+(peek=virtio magic, mac round-trip, mdio `-2`, tx); `netd_qemu_test` 10/10 (crash
+demo intact -- the NET_DIAG edit shares that path); `net_socket` 8/8 flag-ON +
+flag-OFF; `ssh` 6/6. **HW-VERIFIED on real GENET (v0.4.241, 2026-06-14):**
+`cat /proc/genet` = the read-only view (`SYS rev=06000000`, `EXT oob=f10050`,
+RDMA/TDMA `prod==cons`, RX descriptors, no UMAC); netdiag on the live device --
+`mr 1 2`=`600d` + `mr 1 3`=`84a2` (live MDIO reads the BCM54213 PHYID!),
+`mr 1 1`=`794d` (link up), `mac`=`dc:a6:32:1c:2e:e1`, `peek 0`=`06000000`, `tx`
+ret 0; ping 0%, netd heartbeat advanced (no crash). The new netdiag ELF was PUSHED
+to the Pi `/bin/netdiag` (`pi_filexfer`) since the kernel swap does not update disk
+apps -- the durable copy lands on the next SD rebuild.
+
+**Remaining = item 4 (the FINAL Stage-4 step):** flip `AIOS_NETD` default ON both
+targets (CMake `option` OFF->ON) + re-run the full gate suite (note the OFF/ON test
+matrix then needs an explicit `-DAIOS_NETD=OFF` tree); after one stable release
+delete the in-root net path + retire the flag. The behavioral + HW work of Stage 4
+is DONE; only the default flip + eventual in-root deletion remain. Seed:
+`docs/NEXT_20260614_netd_stage4_flip.md`.
 
 ---
 
