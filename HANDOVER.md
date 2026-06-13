@@ -10,8 +10,9 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
 ## Quick orientation
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4.
-* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.238**,
-  **ahead-2 of origin** (origin at `a6b6473`; Bryan pushes `532fccd` + `bc590ef`).
+* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.238**.
+  Origin is at `a6b6473` (the 3b commit, pushed); `532fccd` + `bc590ef` + the docs
+  are **ahead, pending Bryan's push**.
   **netd Stage 3 CUTOVER COMPLETE + QEMU-VERIFIED 2026-06-13e: the net stack now
   runs in the MMU-isolated `netd` process behind `AIOS_NETD`** -- 3b boot cutover
   (`a6b6473`), 3c `/proc/net` stats page + 3d crash-recovery sweep (`532fccd`),
@@ -64,7 +65,7 @@ MMU-isolated `netd` CPIO process; root keeps every allocator-touching duty
 flag-OFF stays byte-identical (the cutover is all `#ifdef AIOS_NETD`/`NETD_BUILD`;
 build-04 socket suite 8/8 confirms it). The first real netd boot WORKED on the
 first try. Full runway: `docs/NEXT_20260613e_netd_stage3_hw.md` + the
-`project_demono_netd` memory. The two commits are **ahead-2 of origin**.
+`project_demono_netd` memory.
 
 * **3b boot cutover (`a6b6473`, v0.4.237, PUSHED).** `spawn_netd.c`: `netd_prov()`
   (root-side DMA/IRQ/MAC + retained frame caps; sets `net_hw_present`, runs in
@@ -79,7 +80,7 @@ first try. Full runway: `docs/NEXT_20260613e_netd_stage3_hw.md` + the
   runs on both paths). `net_virtio` `plat_net_dev_attach` adds `slot*0x200`
   (QEMU per-slot base); `net_genet` `dma_init` gets the retry-for-low `<1GB` loop
   (RPi4-only). New `include/aios/netd_ctrl.h` (replaces `netd_skel.h`).
-* **3c stats page + 3d crash recovery (`532fccd`, v0.4.238, ahead-1).** 3c:
+* **3c stats page + 3d crash recovery (`532fccd`, v0.4.238, pending push).** 3c:
   `include/aios/netd_stats.h` -- one cacheable-both single-writer frame netd
   writes each loop iter (`netd_stats_update`); `/proc/net` renders it IPC-free
   (the only hung-netd detector); `serverstats` SRV_NET stops SVC_PING-ing netd --
@@ -88,7 +89,7 @@ first try. Full runway: `docs/NEXT_20260613e_netd_stage3_hw.md` + the
   `net_ep_cap`/`net_available`, sweeps the 24 reply slots (`CNode_Move` + Send
   `-EIO`), and clears the IRQ. Crash trigger: `cat /proc/netd.crash` ->
   fs-thread `NBSend` `NET_DIAG` -> `net_server` null-derefs (`NETD_BUILD` only).
-* **Capacity gate (`bc590ef`, ahead-1).** `smp_qemu_test.py` vs build-netd:
+* **Capacity gate (`bc590ef`, pending push).** `smp_qemu_test.py` vs build-netd:
   clean parallel-pipeline ceiling = **30** (W=32 Cannot fork), matching the
   build-04 ~30 -- netd's CPIO footprint does NOT erode the ceiling on QEMU.
 
