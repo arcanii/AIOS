@@ -99,6 +99,32 @@ harden the netconsole relay (bulk drain + reliable end-of-command framing) --
 
 ## Medium-risk
 
+### RPi4 power/thermal -- DVFS (lower ARM clock at idle, not WFI)
+- **Symptom**: the Pi runs very hot. The cause is AIOS's own idle policy, not the
+  firmware: to keep the v0.4.228 TLBI/DVM stall cured, all 4 A72 cores idle-SPIN
+  (no WFE/WFI) so the SCU stays clocked ([settings-rpi4.cmake:33-41](settings-rpi4.cmake);
+  the root idle is `while(1){ seL4_Yield(); }` at [aios_root.c:582](src/aios_root.c:582)).
+  So the cores never enter low-power idle -> ~full draw -> heat. The obvious fix
+  (WFI at idle) is exactly what RE-OPENS the stall, so it is off the table until
+  the stall is re-cracked (hard, separate; residual spawn-storm stall already open).
+- **What ships**: cut dynamic power WITHOUT deep idle by lowering the A72 CLOCK --
+  cores keep spinning at a lower freq, so the SCU stays clocked (stall-safe), and
+  the firmware drops voltage with frequency (power ~ f*V^2 falls well). Two tiers:
+  (a) a STATIC boot-time ARM-clock cap (immediate heat cut, throughput trade);
+  (b) a LOAD-DRIVEN governor -- drop to min when the root idle loop is hot, raise
+  to max under load. Reconciling rule: idle == LOW CLOCK, never WFI.
+- **Already half-built**: the VC-mailbox clock path exists --
+  [src/gpu/v3d.c:284-348](src/gpu/v3d.c:347) has VC_TAG_SET_CLOCK_RATE /
+  GET_CLOCK_RATE + a working `v3d_vc_tag()` helper. Reuse it with the ARM clock id
+  (CLK_ARM = 3). A static cap is a few LOC; the governor needs a load signal + a
+  small control loop. Temp read is just as easy (GET_TEMPERATURE tag 0x00030006).
+- **Size**: static cap ~1 session; load-driven governor ~1-2 sessions + real-Pi
+  thermal tuning.
+- **Risk/verify**: HW-only. Confirm a lower clock does NOT re-trigger the stall
+  (cores still spin, so it should hold) and does not disturb the mini-UART baud
+  (tied to the SEPARATE core_freq=250). Firmware already throttles ~80-85C, so
+  this is about running cool, not safety.
+
 ### COW Step 3 -- wc/shutdown post-promotion EPERM
 - **What ships**: enables `COW_STRIP_PARENT 1`. With strip on, dash forks
   for `wc`/`shutdown` post-promotion fail with EPERM. Mechanism is

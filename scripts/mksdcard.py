@@ -190,6 +190,19 @@ relocate:
             os.remove(p)
 
 
+# v0.4.235: cap the A72 ARM clock to cut heat. AIOS idle-SPINS all 4 cores (no
+# WFI/WFE -- the v0.4.228 TLBI-stall cure needs the SCU clocked), so the firmware
+# governor never sees idle and would otherwise pin the A72 at its 1500MHz max,
+# running hot doing no useful work. Capping arm_freq forces a lower steady clock
+# (the firmware drops voltage with it) -> much cooler. Trade: slower under real
+# load, acceptable on this idle-dominated system. Tune here; raise toward 1000+ if
+# interactive work feels slow. The load-driven governor is the BACKLOG follow-up.
+# RISK (HW-verify): a slower spin could change the SCU/DVM timing the stall cure
+# relies on -- watch for the 32s stall after capping; the tlbi_probe keepalive
+# should still hold it (it actively drives unmap/map traffic), but confirm.
+ARM_FREQ_CAP_MHZ = 600
+
+
 def create_config_txt(path, mem_mb, kernel_addr=None):
     """Create RPi4 config.txt for AIOS."""
     config = "# AIOS RPi4 boot config\n"
@@ -215,6 +228,8 @@ def create_config_txt(path, mem_mb, kernel_addr=None):
     config += "disable_overscan=1\n"
     config += f"total_mem={mem_mb}\n"
     config += "gpu_mem=64\n"
+    # v0.4.235: ARM-clock cap for thermals (see ARM_FREQ_CAP_MHZ above).
+    config += f"arm_freq={ARM_FREQ_CAP_MHZ}\n"
     with open(path, "w") as f:
         f.write(config)
 
