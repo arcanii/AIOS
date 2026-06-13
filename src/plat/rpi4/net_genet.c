@@ -29,6 +29,7 @@
 #include "aios/hw_info.h"
 #include "aios/device_map.h"
 #include "plat/net_hal.h"
+#include "aios/netd_ctrl.h"   /* NETD_DIAG_* op codes (Stage 4 netdiag) */
 
 /* ----------------------------------------------------------------
  * GENET register map (offsets within 64KB block)
@@ -1167,6 +1168,78 @@ static uint32_t diag_hex(const char **pp) {
     return v;
 }
 
+#ifdef AIOS_NETD
+/* Stage 4 (DESIGN_NETD s6): in the flag-ON build root does NOT drive GENET --
+ * netd owns the device, so genet_regs is NULL in root. But root keeps its own
+ * GENET MMIO mapping at dev_genet_vaddr (claimed in prealloc_rpi4_devices -- the
+ * same frames it copied into netd at spawn). /proc/genet renders a READ-ONLY,
+ * dead-netd-safe HW view from it: SYS / EXT / RBUF / INTRL2 / RDMA / TDMA ctrl +
+ * ring + the RX descriptor RAM. It NEVER touches UMAC or MDIO / PHY -- a UMAC
+ * access while SWINIT is latched bus-errors (kernel halt, v0.4.151), and root
+ * must not race the live MDIO engine in netd. Software counters, MAC and IP
+ * render from /proc/net (the netd stats page); the active poke / tx / mdio ops
+ * moved to /bin/netdiag -> NET_DIAG. */
+#define GRD(off)       (dev_genet_vaddr[(off) / 4])  /* read-only, root mapping */
+#define GENET_UMAC_LO  0x0800u                        /* UMAC core .. */
+#define GENET_UMAC_HI  0x0FFFu                        /* .. incl MDIO at 0xE14 */
+
+static int genet_diag_readonly(const char *args, char *buf, int bufsize) {
+    if (!dev_genet_vaddr)
+        return snprintf(buf, bufsize, "GENET not mapped in root\n");
+    arch_dmb();
+
+    if (args[0] == '.') {
+        const char *p = args + 1;
+        if (diag_pfx(&p, "peek.")) {
+            uint32_t off = diag_hex(&p) & ~3u;
+            if (off >= 0x10000u)
+                return snprintf(buf, bufsize, "off %05x out of range\n", off);
+            if (off >= GENET_UMAC_LO && off <= GENET_UMAC_HI)
+                return snprintf(buf, bufsize,
+                    "off %05x is UMAC/MDIO -- blocked (use netdiag mr/mac)\n", off);
+            return snprintf(buf, bufsize, "[%05x] = %08x\n", off, GRD(off));
+        }
+        return snprintf(buf, bufsize,
+            "root /proc/genet is read-only + UMAC/MDIO-free.  cmd: .peek.OFF\n"
+            "active ops moved to: netdiag {peek|poke|mr|mw|tx|reinit|irqon|irqoff|mac}\n");
+    }
+
+    int w = 0;
+    w += snprintf(buf + w, bufsize - w,
+        "GENET read-only HW view (root maps it; netd drives). .peek.OFF for more.\n");
+    w += snprintf(buf + w, bufsize - w,
+        "SYS  rev=%08x port=%x rbufflush=%x tbufflush=%x  EXT oob(8c)=%x  RBUF ctrl(300)=%x\n",
+        GRD(SYS_REV_CTRL), GRD(SYS_PORT_CTRL), GRD(SYS_RBUF_FLUSH_CTRL),
+        GRD(SYS_TBUF_FLUSH_CTRL), GRD(EXT_RGMII_OOB_CTRL), GRD(RBUF_CTRL));
+    w += snprintf(buf + w, bufsize - w,
+        "INTRL2 stat(200)=%x maskstat(20c)=%x\n",
+        GRD(INTRL2_STAT), GRD(INTRL2_MASK_STATUS));
+    w += snprintf(buf + w, bufsize - w,
+        "RDMA ctrl(3044)=%x cfg(3040)=%x scb(304c)=%x  prod(08)=%x cons(0c)=%x start=%x end=%x bufsz=%x\n",
+        GRD(RDMA_CTRL_BASE + DMA_CTRL), GRD(RDMA_CTRL_BASE + DMA_RING_CFG),
+        GRD(RDMA_CTRL_BASE + DMA_SCB_BURST_SIZE),
+        GRD(RDMA_RING_BASE + RDMA_PROD_INDEX), GRD(RDMA_RING_BASE + RDMA_CONS_INDEX),
+        GRD(RDMA_RING_BASE + DMA_START_ADDR), GRD(RDMA_RING_BASE + DMA_END_ADDR),
+        GRD(RDMA_RING_BASE + DMA_RING_BUF_SIZE));
+    w += snprintf(buf + w, bufsize - w,
+        "TDMA ctrl(5044)=%x cfg(5040)=%x  prod(0c)=%x cons(08)=%x\n",
+        GRD(TDMA_CTRL_BASE + DMA_CTRL), GRD(TDMA_CTRL_BASE + DMA_RING_CFG),
+        GRD(TDMA_RING_BASE + TDMA_PROD_INDEX), GRD(TDMA_RING_BASE + TDMA_CONS_INDEX));
+    w += snprintf(buf + w, bufsize - w, "RXdesc.ls:");
+    volatile struct genet_desc *rd =
+        (volatile struct genet_desc *)((uintptr_t)dev_genet_vaddr + GENET_RX_DESC_BASE);
+    for (int i = 0; i < 8 && i < GENET_RX_DESCS; i++)
+        w += snprintf(buf + w, bufsize - w, " %x", rd[i].length_status);
+    w += snprintf(buf + w, bufsize - w,
+        "\n(MAC / IP / irq counters / DHCP state -> /proc/net)\n");
+    return w;
+}
+#undef GRD
+#undef GENET_UMAC_LO
+#undef GENET_UMAC_HI
+#endif /* AIOS_NETD */
+
+#ifndef AIOS_NETD   /* active diag helpers below: flag-OFF only (root drives GENET) */
 static uint32_t diag_peek(uint32_t off) {
     if (off >= 0x10000) return 0xDEADBEEFu;
     arch_dmb();
@@ -1233,8 +1306,13 @@ static int diag_dump(char *buf, int bufsize) {
         genet_irq_count, genet_last_intstat, GENET_R(INTRL2_MASK_STATUS));
     return w;
 }
+#endif /* !AIOS_NETD (active diag helpers) */
 
 int genet_diag_cmd(const char *args, char *buf, int bufsize) {
+#ifdef AIOS_NETD
+    /* flag-ON: root is prov-only; render the read-only, UMAC/MDIO-free view. */
+    return genet_diag_readonly(args, buf, bufsize);
+#else
     if (!genet_regs)
         return snprintf(buf, bufsize, "GENET not present/initialized\n");
     if (args[0] == '\0')
@@ -1319,6 +1397,78 @@ int genet_diag_cmd(const char *args, char *buf, int bufsize) {
         return snprintf(buf, bufsize, "RX IRQ masked; net_server kicked (badge 2).\n");
     }
     return -1;
+#endif /* AIOS_NETD */
 }
 
 #endif /* !NETD_BUILD (root-local /proc/genet diag) */
+
+#ifdef NETD_BUILD
+/* netd Stage 4 (DESIGN_NETD s6): serialized live-device diagnostics for the
+ * userland /bin/netdiag tool. These touch the device netd owns (poke / MDIO / tx /
+ * irq), so they live HERE (netd), not in root /proc/genet. net_server dispatches
+ * NET_DIAG ops here; op codes in netd_ctrl.h. Reply: return = status, out[] =
+ * result words. This RACES the live net stack -- fine for interactive bring-up. */
+int plat_net_diag(int op, uint32_t a, uint32_t b, uint32_t c, uint32_t out[2]) {
+    out[0] = 0; out[1] = 0;
+    if (!genet_regs) return -1;
+    switch (op) {
+    case NETD_DIAG_PEEK: {
+        uint32_t off = a & ~3u;
+        if (off >= 0x10000u) return -1;
+        arch_dmb();
+        out[0] = GENET_R(off);
+        return 0;
+    }
+    case NETD_DIAG_POKE: {
+        uint32_t off = a & ~3u;
+        if (off >= 0x10000u) return -1;
+        GENET_W(off, b);
+        arch_dmb();
+        out[0] = GENET_R(off);
+        return 0;
+    }
+    case NETD_DIAG_MR:
+        out[0] = mdio_read((int)(a & 0x1f), (int)(b & 0x1f));
+        return 0;
+    case NETD_DIAG_MW:
+        mdio_write((int)(a & 0x1f), (int)(b & 0x1f), (uint16_t)c);
+        out[0] = mdio_read((int)(a & 0x1f), (int)(b & 0x1f));
+        return 0;
+    case NETD_DIAG_TX: {
+        /* 60-byte broadcast ARP request (sender = our MAC) to exercise TX. */
+        uint8_t f[60];
+        memset(f, 0, sizeof(f));
+        for (int i = 0; i < 6; i++) { f[i] = 0xFF; f[6 + i] = genet_mac[i]; }
+        f[12] = 0x08; f[13] = 0x06; f[14] = 0x00; f[15] = 0x01;
+        f[16] = 0x08; f[17] = 0x00; f[18] = 6; f[19] = 4; f[21] = 0x01;
+        for (int i = 0; i < 6; i++) f[22 + i] = genet_mac[i];
+        int r = plat_net_tx(f, sizeof(f));
+        arch_dmb();
+        out[0] = tx_prod_idx;
+        out[1] = (uint16_t)(GENET_R(TDMA_RING_BASE + TDMA_CONS_INDEX) & 0xFFFF);
+        return r;
+    }
+    case NETD_DIAG_REINIT:
+        ring_init();
+        return 0;
+    case NETD_DIAG_IRQON:
+        GENET_W(INTRL2_MASK_CLEAR, 0xFFFFFFFFu);   /* unmask all GENET interrupts */
+        if (genet_irq_handler) seL4_IRQHandler_Ack(genet_irq_handler);
+        net_rx_irq_mode = 1;
+        return 0;
+    case NETD_DIAG_IRQOFF:
+        GENET_W(INTRL2_MASK_SET, 0xFFFFFFFFu);     /* mask all GENET interrupts */
+        net_rx_irq_mode = 0;
+        if (net_kick_ntfn_cap) seL4_Signal(net_kick_ntfn_cap);
+        return 0;
+    case NETD_DIAG_MAC:
+        /* The MAC netd latched at attach (argv from the root mailbox read). */
+        out[0] = ((uint32_t)genet_mac[0] << 24) | ((uint32_t)genet_mac[1] << 16) |
+                 ((uint32_t)genet_mac[2] <<  8) |  (uint32_t)genet_mac[3];
+        out[1] = ((uint32_t)genet_mac[4] <<  8) |  (uint32_t)genet_mac[5];
+        return 0;
+    default:
+        return -1;
+    }
+}
+#endif /* NETD_BUILD */

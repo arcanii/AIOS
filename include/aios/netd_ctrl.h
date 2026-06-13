@@ -1,5 +1,6 @@
 #ifndef AIOS_NETD_CTRL_H
 #define AIOS_NETD_CTRL_H
+#include <stdint.h>
 /*
  * netd_ctrl.h -- Stage-3 netd <-> root spawn/handshake protocol (DESIGN_NETD
  * s3/s8). Replaces the throwaway Stage-2 netd_skel.h.
@@ -57,6 +58,31 @@ enum {
  * /proc/netd.crash; compiled into net_server ONLY under NETD_BUILD (the in-root
  * flag-OFF server never has a crash op). */
 #define NETD_DIAG_CRASH  0xC4A54   /* leetspeak "crash" */
+
+/* NET_DIAG (label 103) active sub-ops, passed in MR0 (DESIGN_NETD s6/s11). The
+ * userland /bin/netdiag tool Calls net_ep with one of these; net_server (netd)
+ * dispatches to plat_net_diag() against the LIVE device netd owns. The fs thread
+ * must NEVER Call net_ep -- a hung netd would wedge every /proc read -- so a
+ * sacrificial userland process is the only diag caller, and /proc/genet stays a
+ * read-only, UMAC/MDIO-free root view. Small ints, distinct from the
+ * NETD_DIAG_CRASH magic. Args travel in MR1..MR3; the reply carries MR0 = status
+ * (0 ok, <0 err) and MR1/MR2 = result words. */
+enum {
+    NETD_DIAG_PEEK = 1,  /* MR1=off                 -> MR1=value (device reg)  */
+    NETD_DIAG_POKE,      /* MR1=off MR2=val         -> MR1=readback            */
+    NETD_DIAG_MR,        /* MR1=phy MR2=reg         -> MR1=value (MDIO read)   */
+    NETD_DIAG_MW,        /* MR1=phy MR2=reg MR3=val -> MR1=readback (MDIO wr)  */
+    NETD_DIAG_TX,        /* send one test frame     -> MR1=txprod MR2=txcons   */
+    NETD_DIAG_REINIT,    /* re-run ring_init        -> status                  */
+    NETD_DIAG_IRQON,     /* unmask + IRQ-driven RX  -> status                  */
+    NETD_DIAG_IRQOFF,    /* mask IRQ + kick server  -> status                  */
+    NETD_DIAG_MAC,       /* read device MAC -> MR1=mac[0..3] MR2=mac[4..5]     */
+};
+
+/* Client helper (libaios_posix, src/lib/posix_net.c): issue one NET_DIAG op as a
+ * blocking Call to net_ep, return MR0 (status); out[0]/out[1] receive MR1/MR2.
+ * Used by /bin/netdiag. Returns -ENOTSUP if net is unavailable (net_ep == 0). */
+int aios_net_diag(int op, uint32_t a, uint32_t b, uint32_t c, uint32_t out[2]);
 
 /* SaveCaller reply slots netd carves out of its own cnode AFTER the cap
  * donations (DESIGN_NETD s3 row 6): 3 per socket (recv / accept / connect park)

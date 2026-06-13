@@ -28,6 +28,7 @@
 #include "arch.h"
 #include "plat/net_hal.h"
 #include "plat_virtio_probe.h"
+#include "aios/netd_ctrl.h"   /* NETD_DIAG_* op codes (Stage 4 netdiag) */
 
 /* ---- Private state (was extern in root_shared.h) ---- */
 
@@ -454,3 +455,46 @@ void plat_net_get_mac(uint8_t mac[6]) {
 }
 
 #endif /* !NETD_PROV */
+
+#ifdef NETD_BUILD
+/* netd Stage 4 (DESIGN_NETD s6): /bin/netdiag active ops. virtio-net has no
+ * MDIO / PHY / UMAC, so only peek / poke on the slot MMIO window, a tx test
+ * frame, and the MAC are meaningful; the GENET-only ops report unsupported.
+ * This lets the whole netdiag -> NET_DIAG -> netd IPC path be exercised on QEMU. */
+int plat_net_diag(int op, uint32_t a, uint32_t b, uint32_t c, uint32_t out[2]) {
+    (void)c;
+    out[0] = 0; out[1] = 0;
+    if (!net_vio_priv) return -1;
+    switch (op) {
+    case NETD_DIAG_PEEK: {
+        uint32_t off = a & ~3u;
+        if (off >= PLAT_VIRTIO_SLOT_SIZE) return -1;
+        out[0] = net_vio_priv[off / 4];
+        return 0;
+    }
+    case NETD_DIAG_POKE: {
+        uint32_t off = a & ~3u;
+        if (off >= PLAT_VIRTIO_SLOT_SIZE) return -1;
+        net_vio_priv[off / 4] = b;
+        out[0] = net_vio_priv[off / 4];
+        return 0;
+    }
+    case NETD_DIAG_TX: {
+        /* 60-byte broadcast ARP request (sender = our MAC) to exercise TX. */
+        uint8_t f[60] = {0};
+        for (int i = 0; i < 6; i++) { f[i] = 0xFF; f[6 + i] = net_mac[i]; }
+        f[12] = 0x08; f[13] = 0x06; f[14] = 0x00; f[15] = 0x01;
+        f[16] = 0x08; f[17] = 0x00; f[18] = 6; f[19] = 4; f[21] = 0x01;
+        for (int i = 0; i < 6; i++) f[22 + i] = net_mac[i];
+        return plat_net_tx(f, sizeof(f));
+    }
+    case NETD_DIAG_MAC:
+        out[0] = ((uint32_t)net_mac[0] << 24) | ((uint32_t)net_mac[1] << 16) |
+                 ((uint32_t)net_mac[2] <<  8) |  (uint32_t)net_mac[3];
+        out[1] = ((uint32_t)net_mac[4] <<  8) |  (uint32_t)net_mac[5];
+        return 0;
+    default:
+        return -2;   /* mdio / reinit / irq: GENET-only, not on virtio */
+    }
+}
+#endif /* NETD_BUILD */

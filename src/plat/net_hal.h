@@ -60,4 +60,14 @@ void plat_net_dev_attach(uintptr_t mmio_vaddr, int slot, uintptr_t dma_vaddr,
  * Writes a human-readable report into buf; returns bytes, or -1 on bad command. */
 int genet_diag_cmd(const char *args, char *buf, int bufsize);
 
+#ifdef NETD_BUILD
+/* netd Stage 4 (DESIGN_NETD s6/s11): serialized live-device diagnostics. The
+ * userland /bin/netdiag tool Calls net_ep with NET_DIAG (103) + a NETD_DIAG_* op
+ * in MR0; net_server dispatches the active ops (peek/poke/mdio/tx/reinit/irq/mac)
+ * here, against the device netd owns. out[0..1] carry result words. Returns 0 on
+ * success, negative on error. Compiled only in netd -- the fs thread never Calls
+ * netd, so /proc/genet stays a read-only root view. */
+int plat_net_diag(int op, uint32_t a, uint32_t b, uint32_t c, uint32_t out[2]);
+#endif
+
 #endif /* AIOS_NET_HAL_H */

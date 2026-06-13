@@ -940,18 +940,37 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
 
 #ifdef NETD_BUILD
         } else if (label == NET_DIAG) {
-            /* netd Stage 3 NET_DIAG surface (DESIGN_NETD s6/s11). Today only the
-             * crash-containment demo trigger: a fire-and-forget Send from
-             * /proc/netd.crash with MR0 = NETD_DIAG_CRASH null-derefs so the root
-             * fault listener can prove the s10 sweep. Any other diag op is a no-op
-             * reply for now (the /bin/netdiag ops land in Stage 4). */
-            if ((seL4_Word)seL4_GetMR(0) == NETD_DIAG_CRASH) {
+            /* netd Stage 4 NET_DIAG surface (DESIGN_NETD s6/s11). MR0 = op. The
+             * crash magic is the s10 containment demo (a fire-and-forget Send from
+             * /proc/netd.crash null-derefs so the root fault listener can prove the
+             * sweep); every other op is a /bin/netdiag active command dispatched to
+             * the live driver via plat_net_diag (reply MR0 = status, MR1/MR2 =
+             * result words). The fs thread never reaches this -- only the
+             * sacrificial userland tool Calls net_ep. */
+            seL4_Word op = (seL4_Word)seL4_GetMR(0);
+            if (op == NETD_DIAG_CRASH) {
                 printf("[netd] NET_DIAG crash trigger -- dereferencing NULL\n");
                 *(volatile int *)0 = 0;   /* fault -> root fault listener (s10) */
             }
-            seL4_SetMR(0, (seL4_Word)-1);
-            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            uint32_t da = (uint32_t)seL4_GetMR(1);
+            uint32_t db = (uint32_t)seL4_GetMR(2);
+            uint32_t dc = (uint32_t)seL4_GetMR(3);
+            uint32_t dout[2] = { 0, 0 };
+            int dret = plat_net_diag((int)op, da, db, dc, dout);
+            seL4_SetMR(0, (seL4_Word)dret);
+            seL4_SetMR(1, (seL4_Word)dout[0]);
+            seL4_SetMR(2, (seL4_Word)dout[1]);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 3));
 #endif
+
+        } else if (label == SVC_PING) {
+            /* netd Stage 4 (DESIGN_NETD s2): answer a liveness ping with 0 rather
+             * than letting it fall through to the unknown-op -1 below. Nothing
+             * pings netd today (serverstats reads the stats page IPC-free), so this
+             * is cosmetic -- but it also keeps the in-root flag-OFF net_server
+             * honest, and it is the right answer if any future probe Calls net_ep. */
+            seL4_SetMR(0, 0);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
 
         } else if (label != 0) {
             seL4_SetMR(0, (seL4_Word)-1);

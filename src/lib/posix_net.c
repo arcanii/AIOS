@@ -5,6 +5,25 @@
  * Data packed into message registers (MR path, up to ~900 bytes).
  */
 #include "posix_internal.h"
+#include "aios/netd_ctrl.h"   /* NETD_DIAG_* + aios_net_diag prototype */
+
+/* ---- aios_net_diag(op, a, b, c, out) -- NET_DIAG (DESIGN_NETD s6) ----
+ * One blocking Call to net_ep with a NETD_DIAG_* op in MR0 + args in MR1..MR3.
+ * The /bin/netdiag caller is SACRIFICIAL: a hung netd hangs only this process,
+ * never the fs thread or /proc. Returns MR0 (status); out[0..1] <- MR1/MR2. */
+int aios_net_diag(int op, uint32_t a, uint32_t b, uint32_t c, uint32_t out[2]) {
+    if (!net_ep) return -ENOTSUP;
+    seL4_SetMR(0, (seL4_Word)op);
+    seL4_SetMR(1, (seL4_Word)a);
+    seL4_SetMR(2, (seL4_Word)b);
+    seL4_SetMR(3, (seL4_Word)c);
+    seL4_Call(net_ep, seL4_MessageInfo_new(NET_DIAG_L, 0, 0, 4));
+    if (out) {
+        out[0] = (uint32_t)seL4_GetMR(1);
+        out[1] = (uint32_t)seL4_GetMR(2);
+    }
+    return (int)(long)seL4_GetMR(0);
+}
 
 /* ---- socket(domain, type, protocol) ---- */
 long aios_sys_socket(va_list ap) {

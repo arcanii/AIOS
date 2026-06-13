@@ -164,6 +164,7 @@
 #define NET_ACCEPT_L      93
 #define NET_CONNECT_L     94
 #define NET_CLOSE_SOCK_L  97
+#define NET_DIAG_L        103
 
 #include "aios/net_proto.h"
 _Static_assert(NET_SOCKET_L     == NET_SOCKET,     "NET_SOCKET label skew");
@@ -174,6 +175,7 @@ _Static_assert(NET_CONNECT_L    == NET_CONNECT,    "NET_CONNECT label skew");
 _Static_assert(NET_SENDTO_L     == NET_SENDTO,     "NET_SENDTO label skew");
 _Static_assert(NET_RECVFROM_L   == NET_RECVFROM,   "NET_RECVFROM label skew");
 _Static_assert(NET_CLOSE_SOCK_L == NET_CLOSE_SOCK, "NET_CLOSE_SOCK label skew");
+_Static_assert(NET_DIAG_L       == NET_DIAG,       "NET_DIAG label skew");
 
 
 /* Pipe IPC protocol labels */
