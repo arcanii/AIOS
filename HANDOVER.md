@@ -10,16 +10,19 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
 ## Quick orientation
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4.
-* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.235**,
-  **ahead-3 of origin** (Bryan pushes). netd Stages 0-2 + stability follow-ups
-  A/B/C + an RPi4 thermal cap -- see the DONE sections below. **A, B, and the
-  heat cap are HW-VERIFIED on the real Pi this session; C is NOT fixed (two
-  attempts failed) and is BACKLOGGED (harmless).** Stage 2 proved the reply-sweep
-  kernel bet; the big next thread is Stage 3, the real net cutover. The Pi last
-  ran v0.4.235 @ 600MHz at 192.168.0.127. The v0.4.188-228 arcs (USB HID,
-  V3D, the Source-B 32.4s stall CURE, fatswap flash-over-network, ext2 group
-  layout, RPi4 4-core SMP) are captured in the memory index + `docs/NEXT_*.md`,
-  not inline here.
+* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.236**,
+  **ahead-1 of origin** (Bryan pushes). **netd Stage 3 STARTED 2026-06-13b: the
+  prov/dev driver split + net-stack-into-netd link + prov handoff-plumbing
+  FOUNDATION is DONE + QEMU-verified on both platforms (5 flag-OFF-inert commits,
+  `ec20d24`..`7cbee78`); only the behavioral cutover (3b boot / 3c stats / 3d
+  sweep) remains** -- see the DONE section below + the seed
+  `docs/NEXT_20260613d_netd_stage3_cutover.md` + the `project_demono_netd` memory.
+  Earlier this arc: netd Stages 0-2 + stability A/B + the RPi4 thermal cap (all
+  HW-VERIFIED; C/GENET-MAC backlogged, harmless). The Pi last ran v0.4.235 @
+  600MHz at 192.168.0.127 (it has NOT run any Stage-3 build -- flag-OFF-inert, so
+  no reflash was warranted). The v0.4.188-228 arcs (USB HID, V3D, the Source-B
+  32.4s stall CURE, fatswap flash-over-network, ext2 group layout, RPi4 4-core
+  SMP) are captured in the memory index + `docs/NEXT_*.md`, not inline here.
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4).
 * **Host**: macOS Apple Silicon, cross-compile to aarch64-linux-gnu.
 * **Developer**: Bryan -- prefers Python patch scripts over sed/heredocs; no
@@ -47,6 +50,54 @@ Honor it; this session learned the hard way what happens when you do not.
 * **QEMU cannot model:** RPi4 cache attributes, the VC mailbox, eMMC single-block
   write latency, GENET timing, and the fork/pipe/socket event-loop path. Verify
   those on the Pi -- but via push-over-net + serial, not reflashes.
+
+---
+
+## DONE: netd Stage 3 FOUNDATION + handoff plumbing -- v0.4.236 (2026-06-13b)
+
+The compile/link/gating foundation for the Stage-3 net cutover (`DESIGN_NETD` s9),
+in 5 reviewable, **flag-OFF-inert** commits (`ec20d24`..`7cbee78`). Flag-OFF QEMU
+socket suite 8/8 + flag-ON `netd_qemu_test` 9/9 at EVERY step; both trees build;
+net_genet runtime is HW-deferred (QEMU has no GENET). **Only the behavioral cutover
+(3b/3c/3d) remains.** Full file-level runway: the seed
+`docs/NEXT_20260613d_netd_stage3_cutover.md` + the `project_demono_netd` memory.
+
+* **v0.4.236 (`ec20d24`)** -- reverted the FAILED GENET MAC-read fixes (v0.4.234
+  retry + v0.4.235 deferred re-read): they burned ~14s of boot polling and never
+  worked on HW (root cause backlogged in `BACKLOG.md`). Clears the ground for the
+  prov/dev refactor.
+* **1/n (`815659b`) + 2/n (`4f9b84c`) -- driver prov/dev split.** Two compile
+  defines: prov half `#ifndef NETD_BUILD` (slot resolve / DMA alloc / IRQ bind,
+  extracted into helpers CALLED IN PLACE so the monolithic order is byte-identical),
+  dev half `#ifndef NETD_PROV`. New `plat_net_prov()` (root) + `plat_net_dev_attach()`
+  (netd latches MMIO/DMA/IRQ/MAC from argv). net_genet got the STRIPPED prov MAC
+  query (UMAC writes gated `#ifndef NETD_PROV` -- the v0.4.151 SWINIT-halt fix); its
+  HW-verified register sequence is byte-identical (`git diff --ignore-all-space`).
+* **3/n (`e3a5418`) -- net stack compiles + LINKS into netd (`NETD_BUILD`).**
+  net_server.c + src/net/*.c + the platform driver dev half link into the netd
+  binary on BOTH platforms -- the isolation proof (a leaked root-only symbol = link
+  error; netd references no `vka`). net_server.c SaveCaller cnode is a
+  `NET_REPLY_CNODE` macro; new `src/apps/netd_shim.c` defines the root-owned net
+  globals for netd. CMake adds the net stack to the netd target, built
+  unconditionally so every build compile+link-checks the path. netd `main` is STILL
+  the Stage-2 skeleton (the cutover swaps it).
+* **4/n (`7cbee78`) -- prov handoff plumbing.** `include/aios/netd_handoff.h`
+  (`driver_handoff_t`); `plat_net_prov(driver_handoff_t*)` fills it; frame caps
+  RETAINED (probe `vio_frame_caps[4]`, boot_device_map `dev_genet_frame_caps[16]`,
+  the 32 DMA caps per driver). Still uncalled = inert.
+
+**Refinements vs DESIGN_NETD:** `NETD_PROV` is left UNUSED -- root keeps the full
+in-root driver for the flag-OFF path; the `#ifndef NETD_PROV` guards stay dormant,
+available for a Stage-4 prov-only root. retry-for-low DMA is a marked TODO in
+net_genet `dma_init`, DEFERRED to the cutover/HW pass (HW-only-verifiable). version
+stays v0.4.236 across the flag-OFF-inert sub-commits.
+
+**Remaining = the cutover (one ATOMIC arc; first real netd boot needs build-netd
+debugging):** 3b spawn cap-handoff (copy+map the MMIO/DMA frame sets into netd, 24
+reserved SaveCaller slots, the s3 argv protocol) + netd real `main` + the s8 READY
+handshake + boot_services `#ifdef AIOS_NETD` select; 3c stats page + `/proc/net`
+(serverstats reads it, no SVC_PING); 3d fault-listener reply-sweep [PROVEN in
+Stage 2]. Then the Step-4 HW pass.
 
 ---
 
