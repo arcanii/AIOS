@@ -336,6 +336,3 @@ void plat_net_drain(void) {
 void plat_net_get_mac(uint8_t mac[6]) {
     for (int i = 0; i < 6; i++) mac[i] = net_mac[i];
 }
-
-/* v0.4.235: virtio-net reads its MAC correctly at init -- no deferred re-read. */
-int plat_net_refresh_mac(void) { return 0; }

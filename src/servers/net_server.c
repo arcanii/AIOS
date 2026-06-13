@@ -466,10 +466,6 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
     /* v0.4.152: acquire an address via DHCP before announcing/using an IP.
      * Falls back to the static /etc/network.conf config on timeout. */
     if (net_available) {
-        /* v0.4.235: re-read the real MAC now that the VC mailbox is ready (RPi4:
-         * the early genet_init read can lose the race; QEMU: no-op). Must precede
-         * DHCP -- the lease + the unicast RX filter both key off the MAC. */
-        plat_net_refresh_mac();
         printf("[net] DHCP: discovering...\n");
         if (net_dhcp_acquire() == 0)
             printf("[net] DHCP: lease acquired\n");

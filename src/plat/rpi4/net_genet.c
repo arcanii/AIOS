@@ -691,26 +691,12 @@ int plat_net_init(void) {
 
     /* v0.4.158: now that the DMA buffer exists, read the REAL board MAC from the
      * VC firmware mailbox and override the fake fallback (so DHCP uses the real
-     * MAC). Falls back silently to whatever read_mac_from_umac set.
-     *
-     * v0.4.234: the mailbox read fails intermittently on the A72 (a late/dropped
-     * VC response trips genet_mbox_call's bounded poll). A SINGLE failure left the
-     * fake fallback dc:a6:32:01:02:03 in place, and because the DHCP xid is derived
-     * from the MAC the board then took a DIFFERENT lease (.127 instead of .8). The
-     * failure is transient, so retry before giving up. Bounded to 3 attempts: each
-     * failed genet_mbox_call costs up to its 2s poll deadline, so the rare
-     * persistent-failure case adds ~6s to boot while the common intermittent case
-     * clears on the 2nd attempt (~2s); a success on the 1st adds nothing. */
-    int mac_ok = 0;
-    for (int attempt = 0; attempt < 3 && !mac_ok; attempt++) {
-        if (read_mac_from_mailbox() == 0) { mac_ok = 1; break; }
-        genet_delay(1000);   /* ~1ms settle to let the VC mailbox recover */
-    }
-    if (mac_ok)
+     * MAC). Falls back silently to whatever read_mac_from_umac set. */
+    if (read_mac_from_mailbox() == 0)
         printf("[net] real MAC (mailbox): %02x:%02x:%02x:%02x:%02x:%02x\n",
                net_mac[0], net_mac[1], net_mac[2], net_mac[3], net_mac[4], net_mac[5]);
     else
-        printf("[net] mailbox MAC read failed after 3 attempts, keeping fallback\n");
+        printf("[net] mailbox MAC read failed, keeping fallback\n");
 
     /* Set up descriptor rings */
     ring_init();
@@ -954,32 +940,6 @@ void plat_net_drain(void) {
  * ================================================================ */
 void plat_net_get_mac(uint8_t mac[6]) {
     for (int i = 0; i < 6; i++) mac[i] = genet_mac[i];
-}
-
-/* v0.4.235: deferred MAC read. genet_init's early read_mac_from_mailbox() loses a
- * race with VC firmware readiness -- HW-confirmed (build 2169): the mailbox MAC
- * read times out 3x at genet_init, yet the display server's mailbox calls a moment
- * later succeed. DHCP runs in the net_server thread AFTER display init, so re-read
- * the real MAC here, when the VC is proven ready -- this fixes the fake fallback
- * (dc:a6:32:01:02:03) -> wrong lease (.127 instead of .8). Only re-reads if still
- * on the fallback; read_mac_from_mailbox re-programs UMAC_MAC0/1 so the unicast RX
- * filter follows the real MAC too. */
-int plat_net_refresh_mac(void) {
-    static const uint8_t fb[6] = { 0xDC, 0xA6, 0x32, 0x01, 0x02, 0x03 };
-    int is_fallback = 1;
-    for (int i = 0; i < 6; i++) if (genet_mac[i] != fb[i]) { is_fallback = 0; break; }
-    if (!is_fallback) return 0;   /* the early read already won */
-
-    for (int attempt = 0; attempt < 5; attempt++) {
-        if (read_mac_from_mailbox() == 0) {
-            printf("[net] real MAC (mailbox, deferred): %02x:%02x:%02x:%02x:%02x:%02x\n",
-                   net_mac[0], net_mac[1], net_mac[2], net_mac[3], net_mac[4], net_mac[5]);
-            return 0;
-        }
-        genet_delay(2000);   /* ~2ms settle between attempts */
-    }
-    printf("[net] deferred mailbox MAC read still failed -- keeping fallback\n");
-    return -1;
 }
 
 /* ================================================================
