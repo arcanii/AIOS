@@ -12,7 +12,9 @@ No `>` redirects (they break the netconsole relay). Outputs are kept SHORT/atomi
 import os, socket, subprocess, sys, time, threading
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-KERNEL = os.path.join(REPO, "build-04/images/aios_root-image-arm-qemu-arm-virt")
+KERNEL = os.environ.get(
+    "AIOS_KERNEL",
+    os.path.join(REPO, "build-04/images/aios_root-image-arm-qemu-arm-virt"))
 DISK = os.path.join(REPO, "disk/disk_ext2.img")
 LOGDISK = os.path.join(REPO, "disk/log_ext2.img")
 SERIAL_LOG = "/tmp/smp_boot_serial.log"
@@ -114,7 +116,7 @@ def main():
         # ---- fork-width probe: find the max parallel pipelines (new ceiling) ----
         print("--- fork-width probe (find ceiling) ---", flush=True)
         max_ok = 0
-        for W in (2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24):
+        for W in (2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32):
             loop = " ".join("seq 1 200 | wc -l &" for _ in range(W)) + " wait"
             out = nc.cmd(loop, to=40)
             n = out.split().count("200"); clean = "Cannot fork" not in out
