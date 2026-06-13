@@ -356,7 +356,7 @@ int cow_setup_segment(int child_idx,
     }
 #endif
 
-    AIOS_LOG_INFO_V("cow_setup pages_shared=", (unsigned long)shared);
+    AIOS_LOG_DEBUG_V("cow_setup pages_shared=", (unsigned long)shared);
     return 0;
 }
 

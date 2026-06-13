@@ -632,7 +632,7 @@ static text_entry_t *text_cache_fill(const char *path, uintptr_t vaddr,
     e->frame_base = base;
     e->npages = npages;
     e->refcount = 0;
-    AIOS_LOG_INFO_V("text cached pages=", (unsigned long)npages);
+    AIOS_LOG_DEBUG_V("text cached pages=", (unsigned long)npages);
     return e;
 }
 
@@ -758,7 +758,7 @@ int setup_shared_text(int ci, elf_t *elf, const char *path) {
         }
         ent->refcount++;
         text_share_slot[ci] = (int)(ent - text_cache) + 1;
-        AIOS_LOG_INFO_V("text shared pages=", (unsigned long)mapped);
+        AIOS_LOG_DEBUG_V("text shared pages=", (unsigned long)mapped);
         return pages;   /* whole RO segment now handled (shared + any holes) */
     }
     return 0;
@@ -811,7 +811,7 @@ int setup_demand_text(int ci, elf_t *elf, const char *path) {
         int p = 0;
         for (; path[p] && p < 127; p++) file_vmas[slot].path[p] = path[p];
         file_vmas[slot].path[p] = 0;
-        AIOS_LOG_INFO_V("text lazy pages=", (unsigned long)pages);
+        AIOS_LOG_DEBUG_V("text lazy pages=", (unsigned long)pages);
         return (int)pages;   /* one RO code segment is the norm */
     }
     return 0;
@@ -1491,7 +1491,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                         ap->bss_lazy_start = bs;
                         ap->bss_lazy_end   = be;
                         ap->bss_reservation = bres;
-                        AIOS_LOG_INFO_V("BSS lazy pages=", (unsigned long)pages);
+                        AIOS_LOG_DEBUG_V("BSS lazy pages=", (unsigned long)pages);
                     }
                 }
             }

@@ -169,8 +169,9 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
         }
 
         int elf_size = vfs_read(elf_path, elf_buf, sizeof(elf_buf));
-        printf("[exec] %s: elf_size=%d\n", elf_path, elf_size);
-        AIOS_LOG_INFO_V("loaded elf bytes=", (unsigned long)elf_size);
+        /* Routine per-exec stat: DEBUG so it does not flood the serial console
+         * on every command (the path is also tracked in /proc/filehits). */
+        AIOS_LOG_DEBUG_V(elf_path, (unsigned long)elf_size);
         if (elf_size <= 0) {
             seL4_SetMR(0, (seL4_Word)-1);
             seL4_Send(reply_slot, seL4_MessageInfo_new(0, 0, 0, 1));
@@ -280,7 +281,7 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
                     ap->bss_lazy_start = bs;
                     ap->bss_lazy_end   = be;
                     ap->bss_reservation = bres;
-                    AIOS_LOG_INFO_V("BSS lazy pages=", (unsigned long)pages);
+                    AIOS_LOG_DEBUG_V("BSS lazy pages=", (unsigned long)pages);
                 } else {
                     AIOS_LOG_WARN("BSS reservation failed, BSS will fault-fail");
                 }
