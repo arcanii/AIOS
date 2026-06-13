@@ -281,8 +281,12 @@ static int v3d_power_seq(int only_step, char *buf, int bufsize) {
 #define MBOX_EMPTY          0x40000000U
 #define MBOX_CH_PROP        8
 #define MBOX_RESP_OK        0x80000000U
-#define VC_TAG_GET_CLOCK_RATE  0x00030002u
-#define VC_TAG_SET_CLOCK_RATE  0x00038002u
+#define VC_TAG_GET_CLOCK_RATE      0x00030002u
+#define VC_TAG_GET_MAX_CLOCK_RATE  0x00030004u
+#define VC_TAG_SET_CLOCK_RATE      0x00038002u
+#define VC_TAG_GET_TEMPERATURE     0x00030006u
+#define VC_TAG_GET_MAX_TEMPERATURE 0x0003000Au
+#define VC_CLOCK_ID_ARM        3u
 #define VC_CLOCK_ID_V3D        5u
 
 static volatile uint32_t *v3d_mbox_regs;
@@ -354,9 +358,36 @@ static int v3d_clock_verb(int set, uint32_t mhz, char *buf, int bufsize) {
     return snprintf(buf, bufsize, "v3d: clock = %u Hz (id=5)\n", v[1]);
 }
 
+/* Live SoC readouts over the SAME VC mailbox (reused by /proc/cpufreq + /proc/temp).
+ * They live here because v3d.c owns the HW-verified, low-pinned tag-buffer mailbox
+ * path; the readouts are not V3D-specific. Fill *cur (and *max if non-NULL); return
+ * 0 on success, -1 if the mailbox is unavailable. */
+int hw_arm_clock_hz(unsigned int *cur_hz, unsigned int *max_hz) {
+    uint32_t v[2] = { VC_CLOCK_ID_ARM, 0 };
+    if (v3d_vc_tag(VC_TAG_GET_CLOCK_RATE, v, 2)) return -1;
+    if (cur_hz) *cur_hz = v[1];
+    if (max_hz) {
+        uint32_t m[2] = { VC_CLOCK_ID_ARM, 0 };
+        *max_hz = v3d_vc_tag(VC_TAG_GET_MAX_CLOCK_RATE, m, 2) ? 0u : m[1];
+    }
+    return 0;
+}
+int hw_soc_temp_mc(int *cur_mc, int *max_mc) {
+    uint32_t v[2] = { 0u, 0u };   /* temperature id 0 */
+    if (v3d_vc_tag(VC_TAG_GET_TEMPERATURE, v, 2)) return -1;
+    if (cur_mc) *cur_mc = (int)v[1];
+    if (max_mc) {
+        uint32_t m[2] = { 0u, 0u };
+        *max_mc = v3d_vc_tag(VC_TAG_GET_MAX_TEMPERATURE, m, 2) ? 0 : (int)m[1];
+    }
+    return 0;
+}
+
 #else  /* !PLAT_RPI4 -- QEMU has no V3D model; these are never reached (has_v3d=0) */
 
 static void v3d_mbox_init(void) {}
+int hw_arm_clock_hz(unsigned int *c, unsigned int *m) { (void)c; (void)m; return -1; }
+int hw_soc_temp_mc(int *c, int *m) { (void)c; (void)m; return -1; }
 static int  v3d_power_seq(int only_step, char *buf, int bufsize) {
     (void)only_step;
     return snprintf(buf, bufsize, "v3d: power sequence unavailable (not RPi4)\n");

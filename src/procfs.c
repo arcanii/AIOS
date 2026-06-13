@@ -92,7 +92,7 @@ static int procfs_list(void *ctx, uint32_t ino, char *buf, int bufsize) {
     (void)ctx; (void)ino;
     int w = 0;
     /* List virtual files */
-    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- netstat\n", "- filehits\n", "- serverstats\n", "- flush\n", "- cow\n", "- cmdline\n", "- xhci\n", "- mouse\n", "- fbcon\n", "- v3d\n",
+    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- netstat\n", "- filehits\n", "- serverstats\n", "- flush\n", "- cow\n", "- cmdline\n", "- xhci\n", "- mouse\n", "- fbcon\n", "- v3d\n", "- cpufreq\n", "- temp\n",
 #if defined(PLAT_RPI4)
         "- genet\n",
 #endif
@@ -310,6 +310,35 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         APPEND_KV("PoolFree:       ", free_kb);
         APPEND_KV("PoolPeak:       ", peak_kb);
         #undef APPEND_KV
+    } else if (path[0] == 't' && path[1] == 'e' && path[2] == 'm'
+            && path[3] == 'p') {
+        /* /proc/temp -- SoC temperature via the VC firmware mailbox (RPi4), in
+         * degrees C. "unavailable" on QEMU (no VC mailbox / thermal sensor). */
+        int cur = 0, max = 0;
+        if (hw_soc_temp_mc(&cur, &max) == 0) {
+            w += snprintf(buf + w, bufsize - w,
+                "soc_temp_c: %d.%03d\nsoc_temp_max_c: %d.%03d\n",
+                cur / 1000, cur % 1000, max / 1000, max % 1000);
+        } else {
+            w += snprintf(buf + w, bufsize - w,
+                "soc temperature: unavailable (no VC mailbox)\n");
+        }
+    } else if (path[0] == 'c' && path[1] == 'p' && path[2] == 'u'
+            && path[3] == 'f') {
+        /* /proc/cpufreq -- live ARM core clock via the VC firmware mailbox (RPi4).
+         * The static ceiling is arm_freq in config.txt (the heat cap); this reads
+         * what the firmware is actually clocking. AIOS spins all cores (no WFI --
+         * the stall cure), so the firmware holds the A72 at the cap. "unavailable"
+         * on QEMU (no VC mailbox). */
+        unsigned int cur = 0, max = 0;
+        if (hw_arm_clock_hz(&cur, &max) == 0) {
+            w += snprintf(buf + w, bufsize - w,
+                "arm_cur_hz: %u\narm_cur_mhz: %u\narm_max_hz: %u\narm_max_mhz: %u\n",
+                cur, cur / 1000000u, max, max / 1000000u);
+        } else {
+            w += snprintf(buf + w, bufsize - w,
+                "cpu clock: unavailable (no VC mailbox)\n");
+        }
     } else if (path[0] == 'c' && path[1] == 'p') {
         /* /proc/cpuinfo */
         for (int ci = 0; ci < hw_info.cpu_count && ci < 9; ci++) {

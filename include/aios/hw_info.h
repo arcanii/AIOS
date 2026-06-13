@@ -73,4 +73,12 @@ void boot_dtb_init(void);
 /* Print discovered hardware inventory to serial */
 void boot_hw_report(void);
 
+/* Live SoC readouts via the VC firmware mailbox (RPi4; impl src/gpu/v3d.c, which
+ * owns the HW-verified low-pinned tag buffer). Fill *cur (+ *max if non-NULL) and
+ * return 0 on success, or -1 if unavailable (QEMU has no mailbox). cur/max are in
+ * Hz for the ARM clock and millidegrees C for the SoC temperature. Surfaced via
+ * /proc/cpufreq and /proc/temp. */
+int hw_arm_clock_hz(unsigned int *cur_hz, unsigned int *max_hz);
+int hw_soc_temp_mc(int *cur_mc, int *max_mc);
+
 #endif /* AIOS_HW_INFO_H */
