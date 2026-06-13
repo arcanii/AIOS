@@ -76,19 +76,49 @@ detect via a counter rather than a serial sentinel, or shorten the cap.
 - Variant kernels on disk: disk/kernel8-V{0,1,2a,2b,2c,3,4,5}-*.img (builds
   2107-2116, all v0.4.227).
 
-## NEXT (the cure)
+## MECHANISM PINNED + cure attempt 1 refuted (2026-06-13, builds 2120/2122)
 
-1. **Confirm the fabric/retention mechanism + find the knob.** A72 CPUECTLR_EL1
-   / L2CTLR_EL1 are EL1 -- the EL0 root task cannot read them, so this needs a
-   KERNEL probe (MRS at boot/EL2, print, try clearing any retention/clock-gate
-   field; CPUECTLR may be EL3-locked on Pi4 -> may need armstub/config.txt).
-2. **Bound the non-PCIe UBUS/fabric timeout** like v0.4.213 did for the PCIe RC
-   (0x40a8 -> 0x1000). With PCIe AND GENET ruled out, the wedging master is the
-   mini-UART (AUX) or the main-peripheral/VPU bus -- find that bus's timeout
-   register (mine Linux/U-Boot bcm2711). Bounding it turns the 32s freeze into
-   a sub-ms blip regardless of load -- the most promising CURE.
-3. Optional: a console-suppressed variant to settle the mini-UART question,
-   but it needs a non-UART detector (hard on a GENET-off board).
+- **D1 (build 2120) split-DSB diag:** instrumented invalidateLocalTLB_VAASID
+  (`dsb; tlbi vae1; dsb; isb`) to time each half. Result, 3x consistent:
+  **`lead_dsb=0ms  tlbi+trail_dsb=32399ms`.** The leading drain is INSTANT --
+  there is NO wedged Device-memory write -- and the entire 32.4s is the TLBI
+  COMPLETING. (Bounding a device/bus WRITE timeout would have been wrong.)
+- **D2 (build 2122) dsb-scope cure REFUTED:** changed the trailing `dsb sy` ->
+  `dsb nsh` (architecturally sufficient for a non-shareable `tlbi vae1`).
+  It hangs the SAME 32399ms. So the completion-barrier scope is irrelevant;
+  the `tlbi vae1` itself generates a fabric/DVM transaction that hangs when the
+  interconnect has quiesced (idle), and ANY dsb after it waits. Reverted.
+- The fixed 32399ms == 0x80000 ticks == a UBUS-class timeout (same default
+  v0.4.213 measured at the PCIe RC's UBUS_TIMEOUT 0xFD500000+0x40a8). But that
+  register is the PCIe RC's port; the TLBI/DVM hits a DIFFERENT fabric port's
+  timeout (ARM/coherency side), whose register AIOS does not map and the
+  BCM2711 TRM does not publicly document.
+
+## NEXT (the cure) -- three candidate paths, by risk
+
+1. **Keep the cluster/SCU/fabric awake (lowest risk, partly proven).** nodes=4
+   (V5) was CLEAN at idle/boot/light-load because 4 yield-looping cores keep the
+   cluster from quiescing -> the TLBI DVM completes fast. On nodes=1, cores 1-3
+   sit in the armstub WFE spin-table and quiesce the cluster. Options: (a) ship
+   nodes=4 as the practical fix and separately chase its heavy-load residual
+   (which may be the SMP IPI/remote-TLBI path, a different sub-bug); (b) on
+   nodes=1, release cores 1-3 into a spin (not WFE) -- needs elfloader/armstub
+   work. Re-run D1's split-DSB diag under nodes=4 to confirm trail~0 at idle.
+2. **Find + bound the ARM-fabric UBUS/DVM timeout register (medium risk).** Not
+   the PCIe 0x40a8. Candidates: a SCB/GISB-arbiter timeout, or an ARM-control
+   (0xFD000000 region) fabric register. Needs the bcm2711 TRM / Linux
+   drivers/bus/brcmstb_gisb.c + empirical MMIO probing. Risk: a timeout that
+   ERRORS the transaction instead of completing it could turn the hang into an
+   SError. EL0 MMIO (no kernel brick), recoverable by reflash.
+3. **L2/SCU clock-gate / retention disable via L2CTLR_EL1 / L2ECTLR_EL1 /
+   CPUECTLR_EL1 (highest risk).** Needs a KERNEL-EL1 probe (EL0 root task can't
+   MRS these); a faulting/EL3-trapped access at boot bricks until reflash.
+   Read FIRST (print), never blind-write.
+
+Diag kernels: disk/kernel8-D1-tlbisplit.img (2120, split-DSB), D2-dsbnsh-cure
+(2122, refuted). The split-DSB instrumentation ([KUTLBI] print) lives in
+deps/kernel machine.h + vspace.c -- UNTRACKED (capture into deps/patches or it
+is lost on a deps reset); remove before shipping a release kernel.
 
 ## HARDWARE STATE / RECOVERY (important)
 
