@@ -9,16 +9,21 @@
 #define PLAT_VIRTIO_PROBE_H
 
 #include <stdint.h>
+#include <sel4/sel4.h>
 
 #define PLAT_VIRTIO_SLOT_SIZE  0x200
 #define PLAT_VIRTIO_NUM_SLOTS  32
 #define PLAT_MAX_BLK_DEVS      4
+#define PLAT_VIRTIO_PAGES      4   /* virtio MMIO window mapped by the probe */
 
 typedef struct {
     void *vio_vaddr;
     int blk_slots[PLAT_MAX_BLK_DEVS];
     int num_blk;
     int net_slot;   /* -1 if not found */
+    /* netd Stage 3: the probe maps the virtio MMIO window once; retain its frame
+     * caps so spawn_netd can copy + re-map them into netd (DESIGN_NETD s7). */
+    seL4_CPtr vio_frame_caps[PLAT_VIRTIO_PAGES];
 } plat_virtio_info_t;
 
 /* Probe virtio MMIO bus. Idempotent (second call is a no-op).

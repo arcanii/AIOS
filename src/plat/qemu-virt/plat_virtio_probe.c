@@ -32,6 +32,7 @@ int plat_virtio_probe(void) {
             hw_info.virtio_base + p * 0x1000, seL4_PageBits, &vio_frames[p]);
         if (error) { vio_ok = 0; break; }
         vio_caps[p] = vio_frames[p].cptr;
+        probe_info.vio_frame_caps[p] = vio_frames[p].cptr;  /* retain for netd */
     }
     if (!vio_ok) {
         AIOS_LOG_ERROR("Failed to alloc virtio MMIO frames");

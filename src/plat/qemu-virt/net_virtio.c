@@ -43,6 +43,11 @@ static seL4_CPtr net_irq_handler_priv;
  * receives the results via plat_net_dev_attach(). DESIGN_NETD s7.
  * ============================================================ */
 #ifndef NETD_BUILD
+#include "aios/netd_handoff.h"
+
+/* Retained DMA frame caps (32 x 4K) -- plat_net_prov hands these to spawn_netd
+ * to copy + map into netd (DESIGN_NETD s3). */
+static seL4_CPtr net_dma_caps_priv[NET_DMA_FRAMES];
 
 /* Resolve the virtio-net slot from the shared probe and latch the MMIO base. */
 static int net_slot_resolve(void) {
@@ -70,7 +75,6 @@ static int net_dma_alloc(void) {
         return -1;
     }
 
-    seL4_CPtr dma_caps[NET_DMA_FRAMES];
     for (int i = 0; i < NET_DMA_FRAMES; i++) {
         seL4_CPtr slot;
         error = vka_cspace_alloc(&vka, &slot);
@@ -87,10 +91,10 @@ static int net_dma_alloc(void) {
             net_available = 0;
             return -1;
         }
-        dma_caps[i] = slot;
+        net_dma_caps_priv[i] = slot;
     }
 
-    void *dma_vaddr = vspace_map_pages(&vspace, dma_caps, NULL,
+    void *dma_vaddr = vspace_map_pages(&vspace, net_dma_caps_priv, NULL,
         seL4_AllRights, NET_DMA_FRAMES, seL4_PageBits, 0);
     if (!dma_vaddr) {
         AIOS_LOG_ERROR("DMA map failed");
@@ -98,7 +102,7 @@ static int net_dma_alloc(void) {
         return -1;
     }
 
-    seL4_ARM_Page_GetAddress_t ga = seL4_ARM_Page_GetAddress(dma_caps[0]);
+    seL4_ARM_Page_GetAddress_t ga = seL4_ARM_Page_GetAddress(net_dma_caps_priv[0]);
     if (ga.error) {
         AIOS_LOG_ERROR("DMA GetAddress failed");
         net_available = 0;
@@ -166,11 +170,30 @@ static int net_irq_bind(void) {
 /* plat_net_prov -- root-side provisioning for the flag-ON netd path
  * (DESIGN_NETD s7). Resolves the slot, allocates DMA, binds the IRQ. netd then
  * programs the device itself in plat_net_init() after plat_net_dev_attach(). */
-int plat_net_prov(void) {
+int plat_net_prov(driver_handoff_t *ho) {
     if (!net_available) return -1;
     if (net_slot_resolve() != 0) return -1;
     if (net_dma_alloc() != 0) return -1;
     if (net_irq_bind() != 0) return -1;
+
+    /* Fill the handoff for spawn_netd (DESIGN_NETD s3). The MMIO frames are the
+     * 4 virtio-window pages the shared probe mapped; netd re-maps them at the
+     * same vaddr and uses slot to find the per-slot register base. QEMU reads its
+     * MAC from config space in dev-init, so ho->mac stays 0. */
+    const plat_virtio_info_t *vinfo = plat_virtio_get_info();
+    for (int i = 0; i < PLAT_VIRTIO_PAGES; i++)
+        ho->mmio_frames[i] = vinfo ? vinfo->vio_frame_caps[i] : 0;
+    ho->mmio_nframes = PLAT_VIRTIO_PAGES;
+    ho->mmio_vaddr   = (uintptr_t)(vinfo ? vinfo->vio_vaddr : 0);
+    ho->slot         = net_vio_slot_priv;
+    for (int i = 0; i < NET_DMA_FRAMES; i++)
+        ho->dma_frames[i] = net_dma_caps_priv[i];
+    ho->dma_nframes  = NET_DMA_FRAMES;
+    ho->dma_vaddr    = (uintptr_t)net_dma_priv;
+    ho->dma_paddr    = net_dma_pa_priv;
+    ho->irq_handler  = net_irq_handler_priv;
+    ho->irq_ntfn     = net_drv_ntfn_cap;
+    for (int i = 0; i < 6; i++) ho->mac[i] = net_mac[i];
     return 0;
 }
 

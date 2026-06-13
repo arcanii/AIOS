@@ -1,6 +1,7 @@
 #ifndef AIOS_DEVICE_MAP_H
 #define AIOS_DEVICE_MAP_H
 #include <stdint.h>
+#include <sel4/sel4.h>
 
 /* v0.4.149: RPi4 device-MMIO pre-mapping.
  *
@@ -22,6 +23,7 @@ extern volatile uint32_t *dev_gpio_vaddr;    /* 0xFE200000, 1 page (ACT LED) */
 extern volatile uint32_t *dev_uart_vaddr;    /* 0xFE215000, 1 page (mini UART) */
 extern volatile uint32_t *dev_emmc_vaddr;    /* eMMC SDHCI, 1 page */
 extern volatile uint32_t *dev_genet_vaddr;   /* GENET, 16 pages (64KB) */
+extern seL4_CPtr dev_genet_frame_caps[16];   /* netd Stage 3: retained GENET MMIO frame caps */
 extern volatile uint32_t *dev_vcmbox_vaddr;  /* VC mailbox, page base */
 extern uint32_t dev_vcmbox_off;              /* mailbox reg byte offset in page */
 extern volatile uint32_t *dev_pm_vaddr;      /* 0xFE100000, 1 page (PM/watchdog; PM_GRAFX at +0x10C) */

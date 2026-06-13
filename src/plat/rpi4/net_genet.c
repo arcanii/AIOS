@@ -379,9 +379,19 @@ static void read_mac_from_umac(void) {
  * and stays byte-identical -- only its prov sub-steps are gated.
  * ================================================================ */
 #ifndef NETD_BUILD
+#include "aios/netd_handoff.h"
+
+/* Retained DMA frame caps (32 x 4K) for the netd handoff (DESIGN_NETD s3). */
+static seL4_CPtr genet_dma_caps[GENET_DMA_FRAMES];
 
 /* ----------------------------------------------------------------
- * dma_init -- allocate the 128KB DMA region
+ * dma_init -- allocate the 128KB DMA region.
+ * TODO(netd Stage 3b/HW pass, DESIGN_NETD s3): add the retry-for-low <1GB loop
+ * (xhci_dma_reserve pattern, src/usb/xhci.c) so genet_dma_pa lands below
+ * 0x40000000 -- the VC-mailbox bus alias (| 0xC0000000) and the GENET SCB master
+ * both need a low region. HW-only-verifiable (QEMU DMA is unrestricted), so it
+ * lands with the HW pass, fail-loud on no low region. The current single alloc
+ * has worked on HW to date (early boot -> low RAM still plentiful).
  * ---------------------------------------------------------------- */
 static int dma_init(void) {
     int error;
@@ -395,7 +405,6 @@ static int dma_init(void) {
         return -1;
     }
 
-    seL4_CPtr dma_caps[GENET_DMA_FRAMES];
     for (int i = 0; i < GENET_DMA_FRAMES; i++) {
         seL4_CPtr slot;
         error = vka_cspace_alloc(&vka, &slot);
@@ -410,17 +419,17 @@ static int dma_init(void) {
             printf("[net] DMA retype %d failed: %d\n", i, error);
             return -1;
         }
-        dma_caps[i] = slot;
+        genet_dma_caps[i] = slot;
     }
 
-    void *dma_vaddr = vspace_map_pages(&vspace, dma_caps, NULL,
+    void *dma_vaddr = vspace_map_pages(&vspace, genet_dma_caps, NULL,
         seL4_AllRights, GENET_DMA_FRAMES, seL4_PageBits, 0);
     if (!dma_vaddr) {
         printf("[net] DMA map failed\n");
         return -1;
     }
 
-    seL4_ARM_Page_GetAddress_t ga = seL4_ARM_Page_GetAddress(dma_caps[0]);
+    seL4_ARM_Page_GetAddress_t ga = seL4_ARM_Page_GetAddress(genet_dma_caps[0]);
     if (ga.error) {
         printf("[net] DMA GetAddress failed\n");
         return -1;
@@ -666,7 +675,7 @@ static int genet_irq_bind(void) {
  * only -- the UMAC programming is gated out at prov time), bind the IRQ. netd
  * runs the GENET register sequence itself in plat_net_init() after
  * plat_net_dev_attach(). */
-int plat_net_prov(void) {
+int plat_net_prov(driver_handoff_t *ho) {
     if (!hw_info.has_genet) {
         printf("[net] No GENET in DTB\n");
         return -1;
@@ -681,6 +690,25 @@ int plat_net_prov(void) {
     else
         printf("[net] mailbox MAC read failed at prov, keeping fallback\n");
     if (genet_irq_bind() != 0) return -1;
+
+    /* Fill the handoff for spawn_netd (DESIGN_NETD s3). GENET is one fixed device:
+     * the 16 MMIO frame caps come from boot_device_map (dev_genet_frame_caps);
+     * netd maps them at dev_genet_vaddr and uses that as genet_regs (slot 0). The
+     * MAC was read here via the mailbox (bytes only -- UMAC programming is gated
+     * out at prov); netd programs UMAC from it after its own SWINIT release. */
+    for (int i = 0; i < GENET_NUM_PAGES; i++)
+        ho->mmio_frames[i] = dev_genet_frame_caps[i];
+    ho->mmio_nframes = GENET_NUM_PAGES;
+    ho->mmio_vaddr   = (uintptr_t)dev_genet_vaddr;
+    ho->slot         = 0;
+    for (int i = 0; i < GENET_DMA_FRAMES; i++)
+        ho->dma_frames[i] = genet_dma_caps[i];
+    ho->dma_nframes  = GENET_DMA_FRAMES;
+    ho->dma_vaddr    = (uintptr_t)genet_dma;
+    ho->dma_paddr    = genet_dma_pa;
+    ho->irq_handler  = genet_irq_handler;
+    ho->irq_ntfn     = net_drv_ntfn_cap;
+    for (int i = 0; i < 6; i++) ho->mac[i] = genet_mac[i];
     return 0;
 }
 

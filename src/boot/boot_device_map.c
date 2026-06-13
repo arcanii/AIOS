@@ -17,6 +17,7 @@ volatile uint32_t *dev_gpio_vaddr;
 volatile uint32_t *dev_uart_vaddr;
 volatile uint32_t *dev_emmc_vaddr;
 volatile uint32_t *dev_genet_vaddr;
+seL4_CPtr dev_genet_frame_caps[16];   /* netd Stage 3: retained GENET MMIO frame caps */
 volatile uint32_t *dev_vcmbox_vaddr;
 uint32_t dev_vcmbox_off;
 volatile uint32_t *dev_pm_vaddr;
@@ -36,11 +37,14 @@ struct dev_req {
     int npages;
     volatile uint32_t **out;
     const char *name;
+    seL4_CPtr *caps_out;     /* netd Stage 3: if non-NULL, retain the frame caps here */
 };
 
 /* Allocate npages contiguous device frames starting at paddr and map them
- * into the root vspace (non-cacheable). Returns the vaddr, or NULL on error. */
-static void *map_dev(uint64_t paddr, int npages)
+ * into the root vspace (non-cacheable). Returns the vaddr, or NULL on error.
+ * If out_caps is non-NULL, the npages frame caps are also stored there (so
+ * spawn_netd can copy + re-map the GENET MMIO into netd). */
+static void *map_dev(uint64_t paddr, int npages, seL4_CPtr *out_caps)
 {
     seL4_CPtr caps[16];
     if (npages > 16) npages = 16;
@@ -54,6 +58,7 @@ static void *map_dev(uint64_t paddr, int npages)
             return NULL;
         }
         caps[p] = f.cptr;
+        if (out_caps) out_caps[p] = f.cptr;
     }
     return vspace_map_pages(&vspace, caps, NULL, seL4_AllRights,
                             npages, seL4_PageBits, 0);
@@ -75,7 +80,7 @@ void prealloc_rpi4_devices(void)
                                       &dev_emmc_vaddr, "emmc" };
     if (hw_info.has_genet)
         reqs[n++] = (struct dev_req){ hw_info.genet_paddr & ~0xFFFUL, 16,
-                                      &dev_genet_vaddr, "genet" };
+                                      &dev_genet_vaddr, "genet", dev_genet_frame_caps };
     if (hw_info.has_vc_mbox) {
         dev_vcmbox_off = (uint32_t)(hw_info.vc_mbox_paddr & 0xFFF);
         reqs[n++] = (struct dev_req){ hw_info.vc_mbox_paddr & ~0xFFFUL, 1,
@@ -110,7 +115,7 @@ void prealloc_rpi4_devices(void)
     }
 
     for (int i = 0; i < n; i++) {
-        void *v = map_dev(reqs[i].paddr, reqs[i].npages);
+        void *v = map_dev(reqs[i].paddr, reqs[i].npages, reqs[i].caps_out);
         *(reqs[i].out) = (volatile uint32_t *)v;
         printf("[devmap] %-6s 0x%lx -> %p (%d pg)\n",
                reqs[i].name, (unsigned long)reqs[i].paddr, v, reqs[i].npages);

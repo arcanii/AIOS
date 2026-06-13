@@ -37,10 +37,13 @@ void plat_net_get_mac(uint8_t mac[6]);
  *   - NETD_BUILD (flag-ON netd):  only the dev half; netd calls
  *       plat_net_dev_attach() then plat_net_init(). */
 #ifndef NETD_BUILD
-/* Root-side provisioning: resolve the device, allocate DMA, bind the IRQ.
- * Returns 0 on success. Sets the driver file statics so the monolithic
- * plat_net_init() shares one alloc path. */
-int plat_net_prov(void);
+/* Root-side provisioning (DESIGN_NETD s3/s7): resolve the device, allocate DMA,
+ * bind the IRQ, and fill *ho with the frame caps / vaddrs / paddr / IRQ caps /
+ * MAC that spawn_netd hands to netd. Also sets the driver file statics so the
+ * monolithic plat_net_init() shares one alloc path. Returns 0 on success.
+ * driver_handoff defined in aios/netd_handoff.h. */
+struct driver_handoff;
+int plat_net_prov(struct driver_handoff *ho);
 #endif
 
 #ifdef NETD_BUILD
