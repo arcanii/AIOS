@@ -10,17 +10,19 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
 ## Quick orientation
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4.
-* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.236**,
-  **ahead-1 of origin** (Bryan pushes). **netd Stage 3 STARTED 2026-06-13b: the
-  prov/dev driver split + net-stack-into-netd link + prov handoff-plumbing
-  FOUNDATION is DONE + QEMU-verified on both platforms (5 flag-OFF-inert commits,
-  `ec20d24`..`7cbee78`); only the behavioral cutover (3b boot / 3c stats / 3d
-  sweep) remains** -- see the DONE section below + the seed
-  `docs/NEXT_20260613d_netd_stage3_cutover.md` + the `project_demono_netd` memory.
-  Earlier this arc: netd Stages 0-2 + stability A/B + the RPi4 thermal cap (all
-  HW-VERIFIED; C/GENET-MAC backlogged, harmless). The Pi last ran v0.4.235 @
-  600MHz at 192.168.0.127 (it has NOT run any Stage-3 build -- flag-OFF-inert, so
-  no reflash was warranted). The v0.4.188-228 arcs (USB HID, V3D, the Source-B
+* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.238**,
+  **ahead-2 of origin** (origin at `a6b6473`; Bryan pushes `532fccd` + `bc590ef`).
+  **netd Stage 3 CUTOVER COMPLETE + QEMU-VERIFIED 2026-06-13e: the net stack now
+  runs in the MMU-isolated `netd` process behind `AIOS_NETD`** -- 3b boot cutover
+  (`a6b6473`), 3c `/proc/net` stats page + 3d crash-recovery sweep (`532fccd`),
+  capacity gate (`bc590ef`). flag-OFF stays byte-identical. **Only a real-RPi4
+  Step-4 HW pass + a forced-degrade QEMU gate remain** -- see the DONE section
+  below + the seed `docs/NEXT_20260613e_netd_stage3_hw.md` + the
+  `project_demono_netd` memory. Earlier this arc: the Stage-3 FOUNDATION (5
+  flag-OFF-inert commits `ec20d24`..`7cbee78`), netd Stages 0-2, stability A/B,
+  and the RPi4 thermal cap (all HW-VERIFIED; C/GENET-MAC backlogged, harmless).
+  The Pi last ran v0.4.235 @ 600MHz at 192.168.0.127 (it has NOT run any Stage-3
+  build -- the HW pass is the first netd-on-Pi boot). The v0.4.188-228 arcs (USB HID, V3D, the Source-B
   32.4s stall CURE, fatswap flash-over-network, ext2 group layout, RPi4 4-core
   SMP) are captured in the memory index + `docs/NEXT_*.md`, not inline here.
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4).
@@ -50,6 +52,61 @@ Honor it; this session learned the hard way what happens when you do not.
 * **QEMU cannot model:** RPi4 cache attributes, the VC mailbox, eMMC single-block
   write latency, GENET timing, and the fork/pipe/socket event-loop path. Verify
   those on the Pi -- but via push-over-net + serial, not reflashes.
+
+---
+
+## DONE: netd Stage 3 CUTOVER -- net runs in netd -- v0.4.237/238 (2026-06-13e)
+
+The behavioral cutover (`DESIGN_NETD` s3/s8/s9/s10). With `AIOS_NETD=ON` the net
+stack -- socket server + TCP/UDP/DHCP + the NIC driver dev half -- runs in the
+MMU-isolated `netd` CPIO process; root keeps every allocator-touching duty
+(prov) and serves the SAME `net_ep` object so the client ABI is unchanged.
+flag-OFF stays byte-identical (the cutover is all `#ifdef AIOS_NETD`/`NETD_BUILD`;
+build-04 socket suite 8/8 confirms it). The first real netd boot WORKED on the
+first try. Full runway: `docs/NEXT_20260613e_netd_stage3_hw.md` + the
+`project_demono_netd` memory. The two commits are **ahead-2 of origin**.
+
+* **3b boot cutover (`a6b6473`, v0.4.237, PUSHED).** `spawn_netd.c`: `netd_prov()`
+  (root-side DMA/IRQ/MAC + retained frame caps; sets `net_hw_present`, runs in
+  `boot_net_init` before the banner) + `spawn_netd(net_ep)` (donate `net_ep` +
+  ctrl/fault EP + IRQHandler + the unbadged RX ntfn; COPY+MAP the MMIO/DMA frame
+  sets into the netd vspace non-cacheable; reserve 24 SaveCaller reply slots;
+  cntpct-bounded `DEVD_READY` wait -> publish `net_ep_cap`+`net_available`, else
+  degrade-and-continue). `netd.c` real main (argv parse, self-bind ntfn TCB slot
+  5, `plat_net_dev_attach`, `plat_net_init`, `DEVD_READY` Send BEFORE DHCP, then
+  `net_server_fn`). `boot_services.c` `#ifdef AIOS_NETD` select (else = the
+  in-root thread; the cleanup proxy is factored to `start_net_cleanup_proxy` and
+  runs on both paths). `net_virtio` `plat_net_dev_attach` adds `slot*0x200`
+  (QEMU per-slot base); `net_genet` `dma_init` gets the retry-for-low `<1GB` loop
+  (RPi4-only). New `include/aios/netd_ctrl.h` (replaces `netd_skel.h`).
+* **3c stats page + 3d crash recovery (`532fccd`, v0.4.238, ahead-1).** 3c:
+  `include/aios/netd_stats.h` -- one cacheable-both single-writer frame netd
+  writes each loop iter (`netd_stats_update`); `/proc/net` renders it IPC-free
+  (the only hung-netd detector); `serverstats` SRV_NET stops SVC_PING-ing netd --
+  it Signals the badge-2 kick (idle netd still beats) + reads the heartbeat
+  IPC-free. 3d: the fault listener (in `spawn_netd.c`) zeroes
+  `net_ep_cap`/`net_available`, sweeps the 24 reply slots (`CNode_Move` + Send
+  `-EIO`), and clears the IRQ. Crash trigger: `cat /proc/netd.crash` ->
+  fs-thread `NBSend` `NET_DIAG` -> `net_server` null-derefs (`NETD_BUILD` only).
+* **Capacity gate (`bc590ef`, ahead-1).** `smp_qemu_test.py` vs build-netd:
+  clean parallel-pipeline ceiling = **30** (W=32 Cannot fork), matching the
+  build-04 ~30 -- netd's CPIO footprint does NOT erode the ceiling on QEMU.
+
+**Verified (QEMU, flag-ON):** `netd_qemu_test.py` 10/10 (bring-up + `/proc/net` +
+serverstats + the s10 crash demo over SERIAL: fault contained, sweep woke 2
+parked callers = sshd+netconsole, IRQ cleared, shell alive, net dead); socket
+suite 8/8; ssh 6/6; no-`--net` -> netd never spawns (zero delta, clean login);
+30-pipeline ceiling 30. **flag-OFF parity:** build-04 socket 8/8. All three trees
+build (build-04 + build-rpi4 + build-netd).
+
+**Remaining (next session):** (1) the real-RPi4 **Step-4 HW pass** (build-rpi4 +
+flash-free kernel8 swap, SD shuffle for rollback, capture SERIAL): DHCP+ping+ssh,
+`/proc/net` heartbeat, retry-for-low DMA, GENET IRQ-RX + s10 crash recovery on
+real GENET, a soak with USB+HDMI attached (a netd crash on a standalone Pi needs
+the serial cable -- the HDMI console freezes on first scroll). (2) a
+**forced-DEVD_FAIL / delayed-READY** QEMU gate (the degrade tail is shared with
+the verified no-net route; wants a small `NETD_TEST_NO_READY` hook). (3) **Stage 4**
+re-home + default ON. See the seed.
 
 ---
 
