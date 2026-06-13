@@ -10,17 +10,25 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
 ## Quick orientation
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4.
-* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.239**.
+* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.240**.
   Origin is at `a6b6473` (the 3b commit, pushed); everything after it (`532fccd`,
-  `bc590ef`, `b0a34fc`, docs) is **ahead, pending Bryan's push**.
+  `bc590ef`, `b0a34fc`, `8b29d4d`, docs) is **ahead, pending Bryan's push**.
+  **The real Pi runs v0.4.240 at 192.168.0.8, deployed FLASH-FREE OVER THE NETWORK**
+  (`scripts/pi_flash.py` + `fatswap`: push kernel8 over netconsole -> rewrite the
+  FAT32 boot partition -> 3-way sha verify -> watchdog reboot, no SD shuffle).
+  v0.4.240 adds `/proc/temp` + `/proc/cpufreq` (VC-mailbox SoC temp + ARM clock,
+  RPi4): the Pi reads **~57C @ 600MHz** (the `arm_freq=600` heat cap; throttle is
+  85C; `cur==max==600` because the no-WFI spin keeps the firmware at the cap -- a
+  DVFS governor is the power lever, core-parking is off the table = stall cure).
   **netd Stage 3 CUTOVER HW-VERIFIED on a real RPi4 2026-06-13f: the net stack now
   runs in the MMU-isolated `netd` process behind `AIOS_NETD`** -- 3b boot cutover
   (`a6b6473`), 3c `/proc/net` stats page + 3d crash-recovery sweep (`532fccd`),
   capacity gate (`bc590ef`), and the prov-UMAC HW fix (`b0a34fc`). flag-OFF stays
-  byte-identical. **The real Pi now runs v0.4.239 at 192.168.0.8 (the REAL MAC --
-  the retry-for-low DMA fixed the long-standing `.127` fallback) with netd serving
-  DHCP+ping+ssh+netconsole; the s10 crash demo recovered cleanly.** Only a
-  forced-degrade QEMU gate + Stage 4 (re-home, default ON) remain -- see the DONE
+  byte-identical. **On the real Pi netd takes the REAL MAC lease .8** (the
+  retry-for-low DMA fixed the long-standing `.127` fallback) and serves
+  DHCP+ping+ssh+netconsole; the s10 crash demo recovered cleanly. All QEMU gates
+  closed (incl forced-degrade `f4aeda9`). Only Stage 4 (re-home, default ON)
+  remains -- see the DONE
   section below + the seed `docs/NEXT_20260613e_netd_stage3_hw.md` (now with the HW
   result) + the `project_demono_netd` memory. Earlier this arc: the Stage-3
   FOUNDATION (5 flag-OFF-inert commits `ec20d24`..`7cbee78`), netd Stages 0-2,
