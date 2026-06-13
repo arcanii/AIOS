@@ -2,7 +2,8 @@
  * net_hal.h -- Network device Hardware Abstraction Layer
  *
  * Platform-agnostic interface for Ethernet frame TX/RX.
- * RX: driver thread writes to net_rx_ring (SPSC).
+ * RX: net_server drains the HW ring into net_rx_ring via plat_net_drain()
+ *     (v0.4.230 merged the old dedicated driver thread into net_server).
  * TX: protocol stack calls plat_net_tx().
  */
 #ifndef AIOS_NET_HAL_H
@@ -19,11 +20,12 @@ int plat_net_init(void);
  * Returns 0 on success, -1 on error. */
 int plat_net_tx(const uint8_t *frame, uint32_t len);
 
-/* Driver thread main loop.
- * Waits on hardware IRQ, drains RX into net_rx_ring,
- * signals net_server notification.
- * Signature matches seL4 thread entry. */
-void plat_net_driver_fn(void *arg0, void *arg1, void *ipc_buf);
+/* Drain the hardware RX ring into net_rx_ring (SPSC), then re-check + re-drain
+ * after acking the IRQ (closes the completion-during-ack window). Called by
+ * net_server at its loop top and by dhcp_poll_rx during bring-up; the merged
+ * net_server's bound IRQ notification wakes its seL4_Recv, so there is no longer
+ * a dedicated driver thread or cross-thread signal. v0.4.230 (netd Stage 1). */
+void plat_net_drain(void);
 
 /* Get hardware MAC address (6 bytes). */
 void plat_net_get_mac(uint8_t mac[6]);

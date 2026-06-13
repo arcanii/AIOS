@@ -170,22 +170,16 @@ int plat_net_init(void) {
         VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK;
     net_vio_priv[VIRTIO_MMIO_QUEUE_NOTIFY / 4] = 0;
 
-    /* Allocate notification objects for driver/server IPC */
-    vka_object_t drv_ntfn_obj, srv_ntfn_obj;
+    /* RX IRQ notification (v0.4.230: bound to the net_server TCB in
+     * boot_services; the old separate net_srv_ntfn / driver thread are gone). */
+    vka_object_t drv_ntfn_obj;
     error = vka_alloc_notification(&vka, &drv_ntfn_obj);
     if (error) {
         AIOS_LOG_ERROR("drv notification alloc failed");
         net_available = 0;
         return -1;
     }
-    error = vka_alloc_notification(&vka, &srv_ntfn_obj);
-    if (error) {
-        AIOS_LOG_ERROR("srv notification alloc failed");
-        net_available = 0;
-        return -1;
-    }
     net_drv_ntfn_cap = drv_ntfn_obj.cptr;
-    net_srv_ntfn_cap = srv_ntfn_obj.cptr;
 
     /* Bind virtio-net IRQ to driver notification */
     {
@@ -196,8 +190,20 @@ int plat_net_init(void) {
             irq_err = simple_get_IRQ_handler(&simple, net_irq, nirq_path);
             if (!irq_err) {
                 net_irq_handler_priv = nirq_path.capPtr;
+                /* v0.4.230 (Stage 1): the IRQ signals a badge=1 minted copy so
+                 * the merged net_server's seL4_Recv wakes with a non-zero badge
+                 * (its wake test). The unbadged net_drv_ntfn_cap stays bound to
+                 * the server TCB; this badged copy is what the IRQ delivers. */
+                seL4_CPtr irq_ntfn = net_drv_ntfn_cap;
+                cspacepath_t b1src, b1;
+                vka_cspace_make_path(&vka, net_drv_ntfn_cap, &b1src);
+                if (!vka_cspace_alloc_path(&vka, &b1) &&
+                    !seL4_CNode_Mint(b1.root, b1.capPtr, b1.capDepth,
+                                     b1src.root, b1src.capPtr, b1src.capDepth,
+                                     seL4_AllRights, (seL4_Word)1))
+                    irq_ntfn = b1.capPtr;
                 irq_err = seL4_IRQHandler_SetNotification(
-                    net_irq_handler_priv, net_drv_ntfn_cap);
+                    net_irq_handler_priv, irq_ntfn);
                 if (!irq_err) {
                     seL4_IRQHandler_Ack(net_irq_handler_priv);
                     printf("[boot] virtio-net IRQ %u bound to driver\n", net_irq);
@@ -252,11 +258,16 @@ int plat_net_tx(const uint8_t *frame, uint32_t len) {
 }
 
 /* ============================================================
- * plat_net_driver_fn -- RX driver thread (virtio-net)
+ * plat_net_drain -- drain the virtio-net RX used-ring into net_rx_ring.
+ *
+ * v0.4.230 (netd Stage 1): this is the old driver-thread body, minus the
+ * seL4_Wait (the merged net_server's bound notification wakes its Recv) and the
+ * cross-thread Signal (it processes net_rx_ring itself right after this call).
+ * The do/while re-check after the IRQ ack consumes a frame that completed
+ * during the ack window instead of waiting for the next IRQ (DESIGN_NETD s2).
  * ============================================================ */
-void plat_net_driver_fn(void *arg0, void *arg1, void *ipc_buf) {
-    seL4_CPtr drv_ntfn = (seL4_CPtr)(uintptr_t)arg0;
-    (void)arg1; (void)ipc_buf;
+void plat_net_drain(void) {
+    static uint16_t rx_last_used = 0;   /* persists across calls (was thread-local) */
 
     struct virtq_desc  *rx_desc  =
         (struct virtq_desc  *)(net_dma_priv + NET_RX_DESC_OFF);
@@ -265,15 +276,7 @@ void plat_net_driver_fn(void *arg0, void *arg1, void *ipc_buf) {
     struct virtq_used  *rx_used  =
         (struct virtq_used  *)(net_dma_priv + NET_RX_USED_OFF);
 
-    uint16_t rx_last_used = 0;
-    uint32_t rx_dropped = 0;
-
-    printf("[net-drv] Driver thread ready\n");
-
-    while (1) {
-        seL4_Word badge;
-        seL4_Wait(drv_ntfn, &badge);
-
+    do {
         int drained = 0;
         while (rx_used->idx != rx_last_used) {
             uint16_t used_slot = rx_last_used % NET_QUEUE_SIZE;
@@ -300,7 +303,6 @@ void plat_net_driver_fn(void *arg0, void *arg1, void *ipc_buf) {
                     net_rx_ring.head = h + 1;
                     drained++;
                 } else {
-                    rx_dropped++;
                     net_rx_stats.ring_overflow_drops++;
                 }
             }
@@ -317,17 +319,15 @@ void plat_net_driver_fn(void *arg0, void *arg1, void *ipc_buf) {
             rx_last_used++;
         }
 
-        if (drained > 0) {
+        if (drained > 0)
             net_vio_priv[VIRTIO_MMIO_QUEUE_NOTIFY / 4] = 0;
-            seL4_Signal(net_srv_ntfn_cap);
-        }
 
         uint32_t isr = net_vio_priv[VIRTIO_MMIO_INTERRUPT_STATUS / 4];
         if (isr)
             net_vio_priv[VIRTIO_MMIO_INTERRUPT_ACK / 4] = isr;
         if (net_irq_handler_priv)
             seL4_IRQHandler_Ack(net_irq_handler_priv);
-    }
+    } while (rx_used->idx != rx_last_used);
 }
 
 /* ============================================================

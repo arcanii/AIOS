@@ -119,6 +119,27 @@ static int do_dblclose(const uint8_t *ip, int port) {
     return 1;
 }
 
+static int do_bulk(const uint8_t *ip, int port) {
+    /* Receive a large TCP stream and report the byte count. Stresses the RX
+     * path / the merged-drain NAPI re-check (v0.4.230): frames pile into the HW
+     * ring faster than one read() drains the socket buffer, so the ring fills
+     * and the re-check must consume what completed during the IRQ-ack window.
+     * TCP must still deliver every byte (peer retransmit covers any HW drop). */
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) { printf("NETTEST bulk FAIL socket errno=%d\n", errno); return 1; }
+    struct sockaddr_in sa; fill_addr(&sa, ip, port);
+    if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+        printf("NETTEST bulk FAIL connect errno=%d\n", errno); close(fd); return 1;
+    }
+    char buf[1024];
+    long total = 0;
+    int n;
+    while ((n = (int)read(fd, buf, sizeof(buf))) > 0) total += n;
+    printf("NETTEST bulk recv=%ld last=%d\n", total, n);
+    close(fd);
+    return 0;
+}
+
 static int do_count(void) {
     int fds[MAXS], n = 0;
     for (int i = 0; i < MAXS; i++) {
@@ -160,6 +181,7 @@ int main(int argc, char **argv) {
     if (!strcmp(cmd, "udp"))      return do_udp(ip, port);
     if (!strcmp(cmd, "recvrst"))  return do_recvrst(ip, port);
     if (!strcmp(cmd, "dblclose")) return do_dblclose(ip, port);
+    if (!strcmp(cmd, "bulk"))     return do_bulk(ip, port);
     if (!strcmp(cmd, "count"))    return do_count();
     if (!strcmp(cmd, "hog"))      return do_hog();
     printf("NETTEST FAIL unknown-subcommand %s\n", cmd);

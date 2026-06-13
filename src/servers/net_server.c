@@ -7,6 +7,7 @@
 #include "aios/root_shared.h"
 #include "aios/net.h"
 #include "aios/config.h"
+#include "plat/net_hal.h"
 #include <stdio.h>
 
 #define MAX_NET_SOCKETS  8
@@ -481,6 +482,13 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
     int selftest_done = 0;
 
     while (1) {
+        /* v0.4.230 (Stage 1): drain the HW RX ring into net_rx_ring ourselves --
+         * the dedicated driver thread is gone, so this runs every loop iteration
+         * (after each IPC and after an IRQ/kick wake of our bound notification).
+         * plat_net_drain() also acks the IRQ and re-checks for a frame that
+         * completed during the ack. Then we process what it produced below. */
+        plat_net_drain();
+
         /* Poll rx_ring */
         while (net_rx_ring.tail != net_rx_ring.head) {
             uint32_t t = net_rx_ring.tail % NET_RX_RING_SIZE;

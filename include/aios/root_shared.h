@@ -262,8 +262,8 @@ extern volatile uint32_t *uart;
 extern uint8_t net_mac[6];
 extern int net_available;
 extern seL4_CPtr net_ep_cap;
-extern seL4_CPtr net_drv_ntfn_cap;
-extern seL4_CPtr net_srv_ntfn_cap;
+extern seL4_CPtr net_drv_ntfn_cap;   /* RX IRQ ntfn; bound to the net_server TCB (v0.4.230) */
+extern seL4_CPtr net_kick_ntfn_cap;  /* badge=2 kick copy of net_drv_ntfn (GENET .irqoff) */
 
 struct net_rx_ring;
 extern struct net_rx_ring net_rx_ring;
@@ -346,7 +346,8 @@ void net_cleanup_proxy_fn(void *arg0, void *arg1, void *ipc_buf);
 void pipe_set_net_cleanup_ntfn(seL4_CPtr ntfn);
 void boot_net_init(void);
 void boot_display_init(void);
-/* net_driver_fn moved to plat/qemu-virt/net_virtio.c as plat_net_driver_fn */
+/* v0.4.230: the net driver thread merged into net_server, which drains the HW
+ * RX ring via plat_net_drain() (plat/net_hal.h) at its loop top. */
 void net_server_fn(void *arg0, void *arg1, void *ipc_buf);
 void display_server_fn(void *arg0, void *arg1, void *ipc_buf);
 void crypto_server_main(void *arg0, void *arg1, void *ipc_buf);

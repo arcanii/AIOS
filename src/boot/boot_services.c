@@ -117,12 +117,11 @@ void boot_start_services(vka_object_t *fault_ep) {
         vka_alloc_endpoint(&vka, &net_ep_obj);
         net_ep_cap = net_ep_obj.cptr;
 
-        /* Driver thread: receives notification cap as arg0 */
-        start_server_thread((sel4utils_thread_entry_fn)plat_net_driver_fn,
-                            net_drv_ntfn_cap);
-
-        /* Server thread: receives IPC endpoint as arg0,
-         * notification bound to TCB for RX delivery */
+        /* Server thread: receives the net_ep as arg0; the RX IRQ notification
+         * (net_drv_ntfn) is bound to its TCB so its blocking seL4_Recv wakes on
+         * BOTH client IPC and packet arrival -- the bound-notification trick.
+         * v0.4.230 (netd Stage 1): the dedicated driver thread is gone;
+         * net_server_fn drains the HW ring itself via plat_net_drain(). */
         {
             sel4utils_thread_t net_srv;
             error = sel4utils_configure_thread(&vka, &vspace, &vspace, 0,
@@ -134,14 +133,13 @@ void boot_start_services(vka_object_t *fault_ep) {
                 seL4_TCB_SetAffinity(net_srv.tcb.cptr, ROOT_CORE);
                 #endif
                 int bind_err = seL4_TCB_BindNotification(
-                    net_srv.tcb.cptr, net_srv_ntfn_cap);
+                    net_srv.tcb.cptr, net_drv_ntfn_cap);
                 AIOS_LOG_INFO_V("net srv ntfn bind err=", bind_err);
                 sel4utils_start_thread(&net_srv,
                     (sel4utils_thread_entry_fn)net_server_fn,
                     (void *)(uintptr_t)net_ep_cap, NULL, 1);
             }
         }
-        proc_add("net_driver", 200);
         proc_add("net_server", 200);
 
         /* v0.4.229 (netd Stage 0): sacrificial net-socket cleanup proxy. Drains

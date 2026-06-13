@@ -18,6 +18,7 @@
 #include "aios/root_shared.h"
 #include "aios/net.h"
 #include "aios/config.h"
+#include "plat/net_hal.h"
 #include <stdio.h>
 
 #define DHCP_SPORT   68
@@ -188,6 +189,10 @@ void net_dhcp_input(const uint8_t *p, uint32_t len, const uint8_t *src_ip) {
 
 /* Drain rx_ring once, feeding the dispatcher (routes port 68 -> net_dhcp_input). */
 static void dhcp_poll_rx(void) {
+    /* v0.4.230 (Stage 1): DHCP runs on the net_server thread before its main
+     * loop, and there is no longer a separate driver thread filling net_rx_ring
+     * -- drain the HW ring ourselves first. */
+    plat_net_drain();
     while (net_rx_ring.tail != net_rx_ring.head) {
         uint32_t t = net_rx_ring.tail % NET_RX_RING_SIZE;
         struct rx_pkt_entry *entry = &net_rx_ring.pkts[t];

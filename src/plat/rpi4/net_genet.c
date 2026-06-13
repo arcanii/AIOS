@@ -247,10 +247,11 @@ static seL4_CPtr genet_irq_handler;
 static volatile uint32_t genet_irq_count;
 static volatile uint32_t genet_last_intstat;
 
-/* v0.4.159/162: RX IRQ-driven mode. 1 = block on the GENET IRQ (DEFAULT as of
- * v0.4.162, verified working on HW); 0 = poll. Toggle live via /proc/genet.irqon
- * / .irqoff -- .irqoff masks INTRL2, sets 0, and signals net_drv_ntfn to wake a
- * blocked driver: the live escape hatch if the IRQ path ever wedges. */
+/* v0.4.159/162: RX IRQ status flag (HW-verified IRQ-driven RX since v0.4.162).
+ * 1 = INTRL2 unmasked (RX IRQs wake the merged net_server's bound notification);
+ * 0 = masked. Toggle live via /proc/genet.irqon / .irqoff. v0.4.230 merged the
+ * driver into net_server, so the old poll-mode loop is gone -- this is now a
+ * status indicator for the INTRL2 mask, not a poll-vs-IRQ selector. */
 static volatile int net_rx_irq_mode = 1;
 
 /* MAC address storage */
@@ -700,22 +701,31 @@ int plat_net_init(void) {
     /* Set up descriptor rings */
     ring_init();
 
-    /* Allocate notification objects for driver/server IPC */
-    vka_object_t drv_ntfn_obj, srv_ntfn_obj;
+    /* RX IRQ notification (v0.4.230 Stage 1: bound to the net_server TCB in
+     * boot_services; the old separate net_srv_ntfn / driver thread are gone). */
+    vka_object_t drv_ntfn_obj;
     error = vka_alloc_notification(&vka, &drv_ntfn_obj);
     if (error) {
         printf("[net] drv notification alloc failed\n");
         return -1;
     }
-    error = vka_alloc_notification(&vka, &srv_ntfn_obj);
-    if (error) {
-        printf("[net] srv notification alloc failed\n");
-        return -1;
-    }
     net_drv_ntfn_cap = drv_ntfn_obj.cptr;
-    net_srv_ntfn_cap = srv_ntfn_obj.cptr;
 
-    /* Bind GENET IRQ to driver notification */
+    /* Mint a badge=2 RX-kick copy of net_drv_ntfn for /proc/genet.irqoff (the
+     * unwedge that wakes the merged net_server when its IRQ path is masked). */
+    {
+        cspacepath_t ksrc, k2;
+        vka_cspace_make_path(&vka, net_drv_ntfn_cap, &ksrc);
+        if (!vka_cspace_alloc_path(&vka, &k2) &&
+            !seL4_CNode_Mint(k2.root, k2.capPtr, k2.capDepth,
+                             ksrc.root, ksrc.capPtr, ksrc.capDepth,
+                             seL4_AllRights, (seL4_Word)2))
+            net_kick_ntfn_cap = k2.capPtr;
+    }
+
+    /* Bind GENET IRQ to a badge=1 minted copy so the merged net_server's
+     * seL4_Recv wakes with a non-zero badge (its IRQ wake test). The unbadged
+     * net_drv_ntfn_cap stays bound to the server TCB. */
     {
         cspacepath_t irq_path;
         int irq_err = vka_cspace_alloc_path(&vka, &irq_path);
@@ -724,8 +734,16 @@ int plat_net_init(void) {
                                               irq_path);
             if (!irq_err) {
                 genet_irq_handler = irq_path.capPtr;
+                seL4_CPtr irq_ntfn = net_drv_ntfn_cap;
+                cspacepath_t b1src, b1;
+                vka_cspace_make_path(&vka, net_drv_ntfn_cap, &b1src);
+                if (!vka_cspace_alloc_path(&vka, &b1) &&
+                    !seL4_CNode_Mint(b1.root, b1.capPtr, b1.capDepth,
+                                     b1src.root, b1src.capPtr, b1src.capDepth,
+                                     seL4_AllRights, (seL4_Word)1))
+                    irq_ntfn = b1.capPtr;
                 irq_err = seL4_IRQHandler_SetNotification(
-                    genet_irq_handler, net_drv_ntfn_cap);
+                    genet_irq_handler, irq_ntfn);
                 if (!irq_err) {
                     seL4_IRQHandler_Ack(genet_irq_handler);
                     printf("[net] IRQ %u bound to driver\n",
@@ -817,28 +835,28 @@ int plat_net_tx(const uint8_t *frame, uint32_t len) {
 }
 
 /* ================================================================
- * plat_net_driver_fn -- RX driver thread (polling + IRQ)
+ * plat_net_drain -- drain the GENET RX ring into net_rx_ring (SPSC).
  *
- * Polls the RX ring for completed descriptors, copies frames
- * into the shared net_rx_ring (SPSC) for net_server.
+ * v0.4.230 (netd Stage 1): this is the old driver-thread body, minus the
+ * seL4_Wait/Yield (the merged net_server's bound notification wakes its Recv)
+ * and the cross-thread Signal (net_server processes net_rx_ring right after).
+ * The NAPI re-check is now the do/while condition: after clearing INTRL2 and
+ * acking the seL4 IRQ, re-read RDMA_PROD_INDEX and re-drain until producer ==
+ * consumer, so a frame that completed during the ack window (its completion IRQ
+ * cleared) is consumed here instead of deadlocking the ring. seL4 notifications
+ * latch, so a frame arriving after this loop still wakes net_server's Recv --
+ * no lost wakeup. The MMIO register sequence is unchanged from the driver
+ * thread (HW-verified); only the blocking/signalling around it moved.
  * ================================================================ */
-void plat_net_driver_fn(void *arg0, void *arg1, void *ipc_buf) {
-    (void)arg0; (void)arg1; (void)ipc_buf;
-
+void plat_net_drain(void) {
     volatile struct genet_desc *rx_descs =
         (volatile struct genet_desc *)((uintptr_t)genet_regs + GENET_RX_DESC_BASE);
 
-    /* v0.4.153: poll the RX ring instead of waiting on the GENET IRQ. The IRQ
-     * path was never proven on hardware (no frame was ever received -- DHCP got
-     * no reply on a real LAN). Polling decouples RX bring-up from the INTRL2
-     * interrupt-enable question and prints the ring producer/consumer indices so
-     * we can see whether the RX/TX DMA engines actually advance. Go back to
-     * IRQ-driven once the datapath is proven. */
-    printf("[net-drv] GENET driver thread ready (polling RX)\n");
-    uint16_t last_rxp = 0xFFFF, last_txc = 0xFFFF, last_txp = 0xFFFF;
-    int diag = 0;
+    /* Bring-up diagnostic state -- persists across calls (was thread-local). */
+    static uint16_t last_rxp = 0xFFFF, last_txc = 0xFFFF, last_txp = 0xFFFF;
+    static int diag = 0;
 
-    while (1) {
+    do {
         arch_dmb();
         uint16_t hw_prod = (uint16_t)(GENET_R(RDMA_RING_BASE + RDMA_PROD_INDEX) & 0xFFFF);
         uint16_t tx_cons = (uint16_t)(GENET_R(TDMA_RING_BASE + TDMA_CONS_INDEX) & 0xFFFF);
@@ -854,7 +872,6 @@ void plat_net_driver_fn(void *arg0, void *arg1, void *ipc_buf) {
         }
 
         uint16_t cons_before = rx_cons_idx;
-        int drained = 0;
 
         while (rx_cons_idx != hw_prod) {
             uint16_t idx = rx_cons_idx % GENET_RX_DESCS;
@@ -881,7 +898,6 @@ void plat_net_driver_fn(void *arg0, void *arg1, void *ipc_buf) {
                         entry->len = (uint16_t)pkt_len;
                         __asm__ volatile("dmb sy" ::: "memory");
                         net_rx_ring.head = h + 1;
-                        drained++;
                     } else {
                         /* v0.4.225: count the silent drop -- a frozen
                          * consumer (stall quantum) backs the ring up fast */
@@ -900,8 +916,8 @@ void plat_net_driver_fn(void *arg0, void *arg1, void *ipc_buf) {
             GENET_W(RDMA_RING_BASE + RDMA_CONS_INDEX, rx_cons_idx);
 
         /* v0.4.157/159: handle the GENET interrupt. Count + clear asserted bits
-         * and re-arm the seL4 IRQ. In poll mode (INTRL2 masked at boot) STAT reads
-         * 0 -> no-op. In IRQ mode we ack every wake to re-arm delivery. */
+         * and re-arm the seL4 IRQ. INTRL2 is unmasked at init, so in steady
+         * state ist carries the RX-done bit; .irqoff masks it. */
         {
             uint32_t ist = GENET_R(INTRL2_STAT);
             if (ist) {
@@ -909,29 +925,14 @@ void plat_net_driver_fn(void *arg0, void *arg1, void *ipc_buf) {
                 GENET_W(INTRL2_CLEAR, ist);
                 genet_irq_count++;
             }
-            if (genet_irq_handler && (ist || net_rx_irq_mode))
+            if (genet_irq_handler)
                 seL4_IRQHandler_Ack(genet_irq_handler);
         }
 
-        if (drained > 0)
-            seL4_Signal(net_srv_ntfn_cap);
-
-        /* v0.4.159/160: IRQ-driven when enabled. Block on the GENET IRQ ONLY if
-         * the ring is truly empty -- re-read the producer after clearing the IRQ.
-         * Frames that arrived during the drain had their completion IRQ cleared;
-         * without this re-check the ring fills and we deadlock waiting for an IRQ
-         * that cannot come (no free slots -> no new completion). seL4 notifications
-         * latch, so a frame arriving between this check and the Wait still wakes
-         * us -- no lost-wakeup. (NAPI-style re-check.) */
-        if (net_rx_irq_mode) {
-            arch_dmb();
-            uint16_t p2 = (uint16_t)(GENET_R(RDMA_RING_BASE + RDMA_PROD_INDEX) & 0xFFFF);
-            if (p2 == rx_cons_idx)
-                seL4_Wait(net_drv_ntfn_cap, NULL);
-        } else {
-            seL4_Yield();
-        }
-    }
+        /* NAPI-style re-check (DESIGN_NETD s2): re-read the producer after the
+         * ack; if it advanced during the clear window, loop and re-drain. */
+        arch_dmb();
+    } while ((uint16_t)(GENET_R(RDMA_RING_BASE + RDMA_PROD_INDEX) & 0xFFFF) != rx_cons_idx);
 }
 
 /* ================================================================
@@ -1126,8 +1127,11 @@ int genet_diag_cmd(const char *args, char *buf, int bufsize) {
     if (diag_pfx(&p, "irqoff")) {
         GENET_W(INTRL2_MASK_SET, 0xFFFFFFFFu);     /* mask all GENET interrupts */
         net_rx_irq_mode = 0;
-        seL4_Signal(net_drv_ntfn_cap);             /* wake the driver if blocked */
-        return snprintf(buf, bufsize, "RX IRQ-driven OFF: polling, driver woken.\n");
+        /* v0.4.230 (Stage 1): kick the merged net_server via the badge=2 copy
+         * of its bound notification -- there is no separate driver thread. With
+         * INTRL2 masked, RX no longer auto-wakes; .irqon reverts. */
+        if (net_kick_ntfn_cap) seL4_Signal(net_kick_ntfn_cap);
+        return snprintf(buf, bufsize, "RX IRQ masked; net_server kicked (badge 2).\n");
     }
     return -1;
 }

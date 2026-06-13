@@ -115,7 +115,7 @@ uint8_t net_mac[6] = {0};
 int net_available = 0;
 seL4_CPtr net_ep_cap = 0;
 seL4_CPtr net_drv_ntfn_cap = 0;
-seL4_CPtr net_srv_ntfn_cap = 0;
+seL4_CPtr net_kick_ntfn_cap = 0;   /* v0.4.230 (Stage 1): badge=2 RX-kick copy */
 struct net_rx_ring net_rx_ring;
 
 /* Display state (virtio-gpu) */

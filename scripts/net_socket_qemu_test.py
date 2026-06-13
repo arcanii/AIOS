@@ -54,6 +54,8 @@ P_UDP = PORT_BASE + 1        # host UDP echo server
 P_RST = PORT_BASE + 2        # host TCP server that RSTs a parked reader
 P_REFUSED = PORT_BASE + 3    # deliberately unbound -> connect is refused
 P_NETCON = PORT_BASE + 4     # host-side forwarded port -> guest netconsole 2323
+P_BULK = PORT_BASE + 5       # host TCP server that streams a large blob (burst RX)
+BULK_BYTES = 200000          # ~140 frames; exceeds the 32KB rx window + HW ring
 
 GUEST_HOST = "10.0.2.2"      # SLIRP alias for the host, as seen by the guest
 BIND = "127.0.0.1"
@@ -105,6 +107,30 @@ def tcp_rst_server(stop):
         time.sleep(4.0)
         c.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
         c.close()
+    s.close()
+
+
+def tcp_bulk_server(stop):
+    """Accept, stream BULK_BYTES, then FIN -- a burst RX stress for the guest."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind((BIND, P_BULK)); s.listen(8); s.settimeout(0.5)
+    blob = bytes((i * 7) & 0xFF for i in range(4096))
+    while not stop.is_set():
+        try:
+            c, _ = s.accept()
+        except socket.timeout:
+            continue
+        try:
+            sent = 0
+            while sent < BULK_BYTES:
+                chunk = min(len(blob), BULK_BYTES - sent)
+                c.sendall(blob[:chunk])
+                sent += chunk
+        except OSError:
+            pass
+        finally:
+            c.close()   # FIN -> guest read() sees EOF
     s.close()
 
 
@@ -204,7 +230,7 @@ def main():
         logdisk = None
 
     stop = threading.Event()
-    for fn in (tcp_echo_server, tcp_rst_server, udp_echo_server):
+    for fn in (tcp_echo_server, tcp_rst_server, udp_echo_server, tcp_bulk_server):
         threading.Thread(target=fn, args=(stop,), daemon=True).start()
     time.sleep(0.3)
 
@@ -230,7 +256,7 @@ def main():
         # netconsole auto-starts at boot (getty forks it). Poll the forwarded
         # port until it answers -- this also waits out the (slow) boot.
         print("=== waiting for netconsole (boot can take ~90s) ===", flush=True)
-        deadline = time.time() + 150
+        deadline = time.time() + 240   # boot is slow under VKA/morecore pressure
         while time.time() < deadline:
             try:
                 nc = Netcon("127.0.0.1", P_NETCON)
@@ -254,7 +280,8 @@ def main():
         check("connect", net_up, "" if net_up else repr(out.replace("aios# ", "").strip()[:120]))
 
         if not net_up:
-            for n in ("refused", "udp", "recvrst", "dblclose", "op98_cleanup"):
+            for n in ("refused", "udp", "recvrst", "dblclose", "bulk_burst",
+                      "op98_cleanup"):
                 check(n, False, "(skipped: no outbound connectivity)")
         else:
             out = nc.run("nettest refused %s %d" % (GUEST_HOST, P_REFUSED), 20)
@@ -274,6 +301,15 @@ def main():
             out = nc.run("nettest dblclose %s %d" % (GUEST_HOST, P_ECHO), 20)
             check("dblclose", "NETTEST dblclose PASS" in out,
                   "" if "PASS" in out else repr(out.replace("aios# ", "").strip()[:120]))
+
+            # burst RX (v0.4.230 Stage 1): receive a large stream. TCP must
+            # deliver every byte (peer retransmit covers any HW-ring drop); this
+            # stresses the merged plat_net_drain() NAPI re-check under sustained
+            # RX where the ring fills faster than one read() drains the socket.
+            out = nc.run("nettest bulk %s %d" % (GUEST_HOST, P_BULK), 45)
+            m = re.search(r"NETTEST bulk recv=(\d+)", out)
+            rb = int(m.group(1)) if m else -1
+            check("bulk_burst", rb == BULK_BYTES, "(recv=%d/%d)" % (rb, BULK_BYTES))
 
             # op-98 cleanup: baseline free slots, leak them all in a child that
             # exits, confirm the count recovers (proxy-driven NET_CLEANUP_PID).
