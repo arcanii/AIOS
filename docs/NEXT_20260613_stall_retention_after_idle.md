@@ -5,6 +5,22 @@ theory is DEAD. This session re-baselined the 32.4s whole-system freeze hunt
 from scratch with a compile-time bisect gate + a standardized soak harness,
 and the picture changed completely.
 
+## STATUS: CURED for normal use -- v0.4.228 (KernelMaxNumNodes=4), committed 5fa21eb
+
+Root cause (pinned this session): the kernel `tlbi vae1` DVM COMPLETION hangs
+when the A72 SCU/L2 interconnect has quiesced. The SCU low-powers while cores
+sit in the armstub WFE standby; nodes=1 parks cores 1-3 in WFE -> the first
+post-idle teardown TLBI hangs to the ~32.4s UBUS timeout. nodes=4 keeps all
+cores idle-spinning (no WFE) -> SCU stays clocked -> TLBI completes. HW-verified
+clean (build 2125) at idle/boot/L1/L2 where nodes=1 was pervasively dirty.
+The diagnostic instrumentation has been REMOVED from the shipped kernel.
+
+THE ONLY REMAINING OPEN ITEM is the heavy-spawn-storm RESIDUAL (see end): on
+nodes=4 a soak L3 (~120 rapid teardowns) still hits 32.4s quanta -- a SEPARATE
+SMP IPI/remote-TLBI path (doRemoteInvalidateTranslationSingle), distinct from
+the now-cured SCU-quiesce mechanism. Everything below is the (now historical)
+hunt that established the cure.
+
 ## What the freeze IS (re-confirmed)
 
 A process-TEARDOWN unmap stalls the whole system: the kernel `unmapPage`
