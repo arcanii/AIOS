@@ -55,6 +55,13 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
      no-fork-of-fork). Deployed flash-free (push `/bin/aios/getty` + reboot).
      Recovers a CRASH, not the kernel TLBI stall. Open: does it fix ssh
      one-session-per-boot? See `project_netconsole`.
+  5. **FAT config-over-network** (`ca595ce`, QEMU + HW verified) -- `fat32.c`
+     generalized from kernel8-swap-only to read+write ANY root-dir file:
+     `fatswap --read <t>` + `fatswap <src> [t]`. config.txt is now editable
+     flash-free (`fatswap --read config.txt > /tmp/c; <edit>; fatswap /tmp/c
+     config.txt`); `mksdcard` bakes `arm_freq_min=300` in. Engine is root-task
+     (kernel flash, build 2268 on the Pi) + the `fatswap` CLI is a disk app
+     (push `/bin/aios/fatswap`). See `project_fatswap` + `BACKLOG.md`.
   Earlier: **netd Stage 3 CUTOVER** (net runs in the MMU-isolated `netd` behind
   `AIOS_NETD`, HW-VERIFIED, real-MAC `.8`), the netd FOUNDATION + Stages 0-2, and
   `/proc/temp`+`/proc/cpufreq` (v0.4.240). The v0.4.188-228 arcs (USB HID, V3D, the

@@ -21,20 +21,22 @@ say so in the deploy notes.
 
 ---
 
-## General FAT32 mount / file read-write (queued 2026-06-14)
+## DONE: General FAT32 file read+write (config.txt over the network) -- 2026-06-14 (ca595ce)
 
-Today `src/fat32.c` is single-purpose -- KERNEL8.IMG swap only (`find_kernel_dirent`
-is hardcoded), and there is NO FAT mount (the running Pi `/proc/mounts` is ext2 +
-proc only; no `/boot`). A general FAT read/write -- or a real mount at `/boot` --
-would let `config.txt` and other boot files be edited OVER THE NETWORK (flash-free
-boot-config tweaks: `arm_freq`, DVFS `arm_freq_min`, overclock, `enable_uart`)
-instead of pulling the SD. The primitives already exist in fat32.c (BPB parse,
-dirent find, cluster-chain read/alloc, FAT write, dirent commit + the sha verify) --
-generalize `find_kernel_dirent` to an arbitrary 8.3 name, add a small
-read/append/rewrite for a file that fits its existing cluster(s), and a CLI. MUST be
-crash-ordered like the kernel swap (a bad config.txt write stops boot -> physical
-recovery). Motivated 2026-06-14 by the DVFS `arm_freq_min=300` edit, which had to be
-done via a physical SD mount because AIOS could not edit config.txt itself.
+DONE + QEMU-verified + HW-verified on the real Pi. `find_kernel_dirent` is now
+`find_dirent(name83)`; `fat32_swap_kernel` -> `fat32_write_file(target_name, ...)`;
+new `fat32_read_file`. `FS_FATREAD` + `fatswap --read <target>` + `fatswap <src>
+[target]` (default kernel8.img). Edit flow is plain shell: `fatswap --read
+config.txt > /tmp/c; <edit>; fatswap /tmp/c config.txt`. Crash-ordered + sha-verified
+like the kernel swap; edits an EXISTING root-dir file only (no create/move/reformat).
+`mksdcard` now bakes `arm_freq_min=300` into config.txt. Tests: `fatconfig_qemu_test.py`
+(round-trip on a partitioned MBR+FAT+ext2 disk) + `fatconfig_hw.py` (read/write/revert
+on the live boot partition, marker is a harmless comment so a mid-fail still boots).
+DEPLOY NOTE: the engine is in the ROOT TASK -> a kernel flash, AND the `fatswap`
+command is a DISK app -> a `pi_filexfer push /bin/aios/fatswap` (the first HW attempt
+failed because only the kernel was flashed, leaving the old fatswap CLI -- harmless,
+the old CLI rejected the new args with a usage error, no FAT write). NOT a real mount
+at `/boot` (still single-file, root-dir only); a full mount stays a future item.
 
 ---
 
