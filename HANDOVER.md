@@ -38,9 +38,11 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
      switch-out so always-running spinners under-report** -- switched to a positive
      sum of the event-driven work servers. HW: `sets=5 bmin=0 set=600` under load,
      idle->300 in the boot trace. Thresholds runtime-tunable: `/proc/cpufreq.tune.
-     LO.HI.IT`. Still to capture: the cooling temperature over a disconnected soak
-     (the `/proc/temp` read keeps wedging on the known TLBI/netconsole transient).
-     See `feedback_rpi4_thermal_clock`.
+     LO.HI.IT`. **Cooling CONFIRMED + governor fully verified** (`gov_cooling.py`):
+     ~4-5C delta (idle ~64C vs forced-600 ~68.6C), and `gov_dbg sets` increments +2
+     per sample with the governor on but freezes with it off -- proof of idle
+     downclocking that the observer effect cannot hide. See
+     `feedback_rpi4_thermal_clock`.
   3. **CPU accounting** (`5b09d6f` + v0.4.244) -- `KernelBenchmarks=
      track_utilisation` + `/proc/cpuacct`. Now wrap-aware (the 32-bit CCNT wraps
      ~7s -> the pct base falls back + unaccounted reads n/a past 7s). The idle
@@ -180,10 +182,16 @@ spinners under-report (their cycles are in the PMCCNTR total, not their TCB; `bm
 stuck ~442 over a disconnected idle) -> fix is a POSITIVE sum of the event-driven work
 servers (pipe/fs/exec/net), which block + read ~0 at idle. HW proof (build 2245):
 `gov_dbg sets=5 bmin=0 set=600` under the relay load, idle->300 in the boot trace.
-**Still to capture:** the cooling temperature over a disconnected soak (the post-idle
-`/proc/temp` read wedges on the known TLBI/netconsole transient -- NOT a mailbox race;
-the VC mailbox is lock-serialized). Verify tool: `scripts/gov_verify.py`. Known gap: a
-pure-compute-no-IO loop will not boost (no work-server traffic).
+**Cooling CONFIRMED + governor fully verified** (`scripts/gov_cooling.py`, 2026-06-14):
+governor-idle ~64C vs forced-600-held ~68.6C (still rising) = a conservative ~4-5C
+delta (passive board, idle power not clock-dominated -> modest, true delta larger). The
+decisive, observer-effect-immune proof: `gov_dbg sets` increments +2 per 72s sample with
+the governor ON (downclock-on-disconnect + boost-on-reconnect) but FREEZES with it OFF,
+and +2-exactly proves it HOLDS 300 (no periodic bounce); `bmin=0` throughout. The wedges
+during the run were all the ~32s TLBI stall (NOT a mailbox race; the VC mailbox is
+lock-serialized) -- the `gov_cooling.py` driver rode them out (fresh conn -> escalating
+backoff past 32s -> reboot last resort, never blind pkill). Known gap: a pure-compute-
+no-IO loop will not boost (no work-server traffic).
 
 **CPU accounting (works -- `5b09d6f` v0.4.243), built to diagnose the governor.**
 `KernelBenchmarks=track_utilisation` (settings-rpi4.cmake + settings.cmake) makes the
