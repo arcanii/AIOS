@@ -4,6 +4,13 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.248 (2026-06-14)
+**ext2 truncate-shrink frees + discards (was a block leak).** `ext2_truncate`
+previously set only `i_size`/`i_blocks` and leaked every block beyond the new
+size. A shrink now frees them (direct + single- + double-indirect partial walk)
+and, via the discard accumulator, CMD38-discards the freed runs. Verified
+byte-exact across an indirect-block truncate (no corruption of retained data).
+
 ## v0.4.247 (2026-06-14)
 **eMMC/SD-aware filesystem -- read path + longevity.** Brings the read path and
 longevity up to par with the already-optimized write path (CMD25 multi-block +
