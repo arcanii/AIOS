@@ -49,6 +49,12 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
      thread reading 0 is EXPECTED (the root spins, so it never deschedules to the
      core-0 idle thread); the idle spin shows as (unaccounted) since the spinner
      under-reports. Feeds the governor via `aios_acct_busy_permille`.
+  4. **getty respawn-supervisor** (`a5b7273`, QEMU 4/4 + HW 4/4) -- getty respawns
+     netconsole/sshd if they crash, via a `/proc/status` name-poll in its idle
+     login wait (getty re-forks; the v0.4.171 supervisor-child was reverted for
+     no-fork-of-fork). Deployed flash-free (push `/bin/aios/getty` + reboot).
+     Recovers a CRASH, not the kernel TLBI stall. Open: does it fix ssh
+     one-session-per-boot? See `project_netconsole`.
   Earlier: **netd Stage 3 CUTOVER** (net runs in the MMU-isolated `netd` behind
   `AIOS_NETD`, HW-VERIFIED, real-MAC `.8`), the netd FOUNDATION + Stages 0-2, and
   `/proc/temp`+`/proc/cpufreq` (v0.4.240). The v0.4.188-228 arcs (USB HID, V3D, the
