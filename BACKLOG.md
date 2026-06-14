@@ -7,6 +7,20 @@ they're up next.
 
 ---
 
+## Process requirement -- deeper pre-flash smoke (queued 2026-06-14)
+
+**Before flashing ANY kernel to the real Pi, run the FULL QEMU gate suite**, not a
+targeted smoke: `netd_qemu_test.py` 10/10, `net_socket_qemu_test.py` 8/8 (flag-ON
+AND flag-OFF), `ssh_qemu_test.py` 6/6 (+ `smp_qemu_test.py` for the >=30-pipeline
+ceiling when capacity could move). The DVFS Phase-0 flash (v0.4.241 build 2217,
+2026-06-14) shipped with only a `cat /proc/cpufreq` smoke -- consciously, a research
+kernel under heat pressure -- but root-task changes (the main-loop counter + procfs)
+can regress boot/net/fork in ways a targeted smoke misses. Make the full suite the
+default gate; skip it only with an explicit "research kernel, proceeding" call and
+say so in the deploy notes.
+
+---
+
 ## Next up -- recommended order (queued 2026-06-03)
 
 Execution order set after the v0.4.143 pipe-EOF fix shipped: reliability
