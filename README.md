@@ -74,7 +74,7 @@ External AI (Claude) is used as a development tool for code generation
 and review. This project is also a study in AI-assisted systems programming.
 The long-term goal is self-hosted development within AIOS itself.
 
-**Current version:** v0.4.240 (authoritative: `include/aios/version.h`; history: [CHANGELOG.md](CHANGELOG.md))
+**Current version:** v0.4.242 (authoritative: `include/aios/version.h`; history: [CHANGELOG.md](CHANGELOG.md))
 
 ## Quick Start
 
@@ -134,7 +134,7 @@ To run on a **real Raspberry Pi 4**, see
 - **HDMI console** -- the interactive shell mirrors to the framebuffer (`tty_server` -> `display_server` -> `fb_console`), so a monitor + USB keyboard is a full standalone console (no serial)
 - **USB HID keyboard** -- xHCI host controller driver with USB hub enumeration + HID boot-protocol keymap; generic ECAM (QEMU) and brcmstb PCIe (RPi4 VL805); keystrokes feed the tty like serial input
 - **Networking** -- virtio-net (QEMU) + GENET Ethernet (RPi4), ARP/ICMP/UDP/TCP, DHCP (+ T1 lease renewal), DNS (`nslookup`), SNTP, HTTP server, POSIX sockets
-- **netd (isolated network process)** -- behind `option(AIOS_NETD)`: the socket server + TCP/IP + NIC driver dev-half run in a separate MMU-protected CPIO process; root keeps device provisioning and serves the unchanged `net_ep`. A `/proc/net` cacheable heartbeat page is the IPC-free liveness detector; a net-stack crash is contained + a reply-sweep wakes parked callers. HW-verified on a real RPi4 (DHCP/ping/ssh/netconsole + crash recovery); default OFF (in-root path) until a future release flips it
+- **netd (isolated network process)** -- behind `option(AIOS_NETD)`: the socket server + TCP/IP + NIC driver dev-half run in a separate MMU-protected CPIO process; root keeps device provisioning and serves the unchanged `net_ep`. A `/proc/net` cacheable heartbeat page is the IPC-free liveness detector; a net-stack crash is contained + a reply-sweep wakes parked callers. HW-verified on a real RPi4 (DHCP/ping/ssh/netconsole + crash recovery; live NIC diagnostics via the sacrificial userland `/bin/netdiag` tool over NET_DIAG, with `/proc/genet` a read-only UMAC/MDIO-free register view); default OFF (in-root path) until a future release flips it
 - **Network control** -- netconsole: run commands, push/pull files (`pi_filexfer.py`), and reboot the Pi over the LAN; flash a new kernel over the LAN (`pi_flash.py` + `fatswap`)
 - **Process tools** -- `pidof` / `pkill` / `killall` (process lookup + signalling via /proc/status)
 - **UART IRQ wakeup** -- PL011 interrupt-driven main loop (seL4_Wait replaces busy-polling)
@@ -152,7 +152,7 @@ To run on a **real Raspberry Pi 4**, see
 - **Linux compat layer** -- getrandom, futex, ppoll, pselect6, prlimit64, prctl, sysinfo, getrusage, membarrier
 - **O_NONBLOCK pipes** -- pipe2 flags, fcntl F_GETFL/F_SETFL, server-side EAGAIN for nonblocking reads
 - **Virtual devices** -- /dev/urandom (splitmix64 PRNG), /dev/random, /dev/zero
-- **Extended procfs** -- cpuinfo, stat, loadavg, /proc/self/exe, /proc/self/fd via readlinkat; `/proc/cpufreq` + `/proc/temp` (live ARM clock + SoC temperature via the VC mailbox, RPi4); `/proc/net` (netd liveness heartbeat)
+- **Extended procfs** -- cpuinfo, stat, loadavg, /proc/self/exe, /proc/self/fd via readlinkat; `/proc/cpufreq` + `/proc/temp` (live ARM clock + SoC temperature via the VC mailbox, RPi4; `/proc/cpufreq.set.MHZ` sets the cluster-wide ARM clock for manual DVFS, with `arm_freq_min` in `config.txt` opening the floor -- a load-driven auto-governor is in progress); `/proc/net` (netd liveness heartbeat)
 - **POSIX core 55/55 (100%)** -- all core POSIX interfaces implemented
 - **PSCI shutdown** -- clean power-off via /bin/aios/shutdown
 - **getconf** -- sysconf, confstr, pathconf, limits (99/99 sbase tools)
