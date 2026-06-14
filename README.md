@@ -74,7 +74,7 @@ External AI (Claude) is used as a development tool for code generation
 and review. This project is also a study in AI-assisted systems programming.
 The long-term goal is self-hosted development within AIOS itself.
 
-**Current version:** v0.4.242 (authoritative: `include/aios/version.h`; history: [CHANGELOG.md](CHANGELOG.md))
+**Current version:** v0.4.244 (authoritative: `include/aios/version.h`; history: [CHANGELOG.md](CHANGELOG.md))
 
 ## Quick Start
 

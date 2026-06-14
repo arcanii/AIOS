@@ -4,6 +4,38 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.244 (2026-06-14)
+Catch-up across the netd de-monolithization and RPi4 power/resilience arcs
+(v0.4.229-244). Four headline features, all HW-verified on a real RPi4.
+
+**netd de-monolithization (DESIGN_NETD) -- DONE, default ON.** The whole net
+stack (socket server + TCP/UDP/DHCP + the NIC driver device half) now runs in an
+MMU-isolated `netd` process; root keeps only the allocator-touching provisioning
+and serves the same `net_ep`, so the client ABI is unchanged. Staged behind
+`AIOS_NETD` (Stages 0-3 cutover -- HW-verified on real GENET incl. fault
+containment + reply-slot crash recovery), then Stage 4 flipped the default ON:
+netd is the production net path. A netd crash no longer takes down root.
+
+**RPi4 DVFS governor -- working.** A load-driven ARM-clock governor downclocks to
+300MHz at idle and boosts to 600 under load -- the only power lever compatible
+with the no-WFI stall cure (core-parking re-triggers the 32.4s TLBI freeze). Two
+HW-only bugs fixed: it never actuated (it compared against an init guess instead
+of the last-set clock), and the load metric read the no-WFI idle spin as work
+(seL4 `track_utilisation` under-reports always-running spinners -> switched to a
+positive sum of the event-driven work servers). Idle cooling confirmed (~4-5C).
+Adds `/proc/temp`, `/proc/cpufreq` (+ runtime `.tune`), and a `/proc/cpuacct`
+per-thread cycle table.
+
+**getty respawn-supervisor.** getty respawns netconsole/sshd if they crash, via a
+`/proc/status` name-poll in its idle login wait (getty re-forks -- no infra
+change, no `waitpid` WNOHANG needed). A crashed network shell no longer needs a
+reboot to recover.
+
+**FAT config-over-network.** `fat32.c` generalized from kernel8.img-swap-only to a
+crash-safe, sha-verified read+write of ANY boot-partition file: `fatswap --read`
+/ `fatswap <src> [target]`. So `config.txt` edits (e.g. the DVFS `arm_freq_min`
+floor) are flash-free over the network instead of needing a physical SD mount.
+
 ## v0.4.228 (2026-06-13)
 Source-B 32.4s whole-system freeze ROOT-CAUSED and CURED for normal use:
 restored 4-core SMP (KernelMaxNumNodes=4). The freeze is the kernel's
