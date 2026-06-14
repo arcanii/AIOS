@@ -81,4 +81,18 @@ void boot_hw_report(void);
 int hw_arm_clock_hz(unsigned int *cur_hz, unsigned int *max_hz);
 int hw_soc_temp_mc(int *cur_mc, int *max_mc);
 
+/* RPi4 DVFS power lever: set the ARM core clock (VC mailbox SET_CLOCK_RATE, clock
+ * id 3). The firmware clamps to [arm_freq_min, arm_freq] from config.txt; *new_hz
+ * (if non-NULL) receives the actual rate applied. Returns 0 on success, -1 if
+ * unavailable (QEMU). Driven by /proc/cpufreq.set.MHZ and the DVFS governor.
+ * cntpct (the generic timer) is clock-independent, so this never breaks timeouts. */
+int hw_arm_clock_set(unsigned int mhz, unsigned int *new_hz);
+
+/* DVFS load probe: the root main-loop iteration counter (defined in aios_root.c).
+ * On RPi4 the root thread spins (no-WFI stall cure), so the per-second rate of
+ * this counter drops as real work preempts core 0 -- a cheap, clock-aware proxy
+ * for system load. Sampled by /proc/cpufreq (raw counter + a cntpct timestamp so
+ * a reader can compute the rate across two reads). */
+extern volatile unsigned long g_root_loop_iters;
+
 #endif /* AIOS_HW_INFO_H */

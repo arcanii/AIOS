@@ -109,6 +109,7 @@ volatile int fg_pid = -1;
 volatile seL4_CPtr fg_fault_ep = 0;
 volatile int fg_killed = 0;
 volatile int fg_sigint_sent = 0;  /* v0.4.85: root-side two-stage Ctrl-C */
+volatile unsigned long g_root_loop_iters = 0;  /* DVFS load probe (hw_info.h) */
 
 /* Network state (virtio-net) */
 uint8_t net_mac[6] = {0};
@@ -493,6 +494,10 @@ int main(int argc, char *argv[]) {
 
     /* Main loop: event-driven or polling fallback */
     while (1) {
+        /* DVFS load probe: on RPi4 the root spins here (no-WFI stall cure), so
+         * this counter advances at the spin rate when idle and slows as real work
+         * preempts core 0 -- /proc/cpufreq samples its rate. Harmless on QEMU. */
+        g_root_loop_iters++;
         /* Poll UART for keyboard -- drain FIFO in burst for paste */
         int uart_batch = 0;
 #ifdef PLAT_RPI4

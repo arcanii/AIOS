@@ -382,12 +382,27 @@ int hw_soc_temp_mc(int *cur_mc, int *max_mc) {
     }
     return 0;
 }
+/* Set the ARM core clock via the VC mailbox -- the RPi4 DVFS power lever (the
+ * only one compatible with the no-WFI stall cure; core-parking re-triggers the
+ * 32.4s tlbi stall). The firmware clamps the request to its allowed range
+ * ([arm_freq_min, arm_freq] from config.txt) and returns the actual rate set in
+ * *new_hz. IMPORTANT: cntpct_el0 (the generic timer) runs at a FIXED rate
+ * independent of this clock, so lowering the ARM clock slows computation but does
+ * NOT break timeouts / scheduling. Returns 0 on success, -1 if the mailbox is
+ * unavailable. */
+int hw_arm_clock_set(unsigned int mhz, unsigned int *new_hz) {
+    uint32_t v[3] = { VC_CLOCK_ID_ARM, mhz * 1000000u, 0 };  /* [2]=0: clamp turbo */
+    if (v3d_vc_tag(VC_TAG_SET_CLOCK_RATE, v, 3)) return -1;
+    if (new_hz) *new_hz = v[1];   /* firmware returns the actual rate it set */
+    return 0;
+}
 
 #else  /* !PLAT_RPI4 -- QEMU has no V3D model; these are never reached (has_v3d=0) */
 
 static void v3d_mbox_init(void) {}
 int hw_arm_clock_hz(unsigned int *c, unsigned int *m) { (void)c; (void)m; return -1; }
 int hw_soc_temp_mc(int *c, int *m) { (void)c; (void)m; return -1; }
+int hw_arm_clock_set(unsigned int m, unsigned int *n) { (void)m; (void)n; return -1; }
 static int  v3d_power_seq(int only_step, char *buf, int bufsize) {
     (void)only_step;
     return snprintf(buf, bufsize, "v3d: power sequence unavailable (not RPi4)\n");

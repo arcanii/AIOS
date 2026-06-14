@@ -326,18 +326,47 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
     } else if (path[0] == 'c' && path[1] == 'p' && path[2] == 'u'
             && path[3] == 'f') {
         /* /proc/cpufreq -- live ARM core clock via the VC firmware mailbox (RPi4).
-         * The static ceiling is arm_freq in config.txt (the heat cap); this reads
-         * what the firmware is actually clocking. AIOS spins all cores (no WFI --
-         * the stall cure), so the firmware holds the A72 at the cap. "unavailable"
-         * on QEMU (no VC mailbox). */
-        unsigned int cur = 0, max = 0;
-        if (hw_arm_clock_hz(&cur, &max) == 0) {
-            w += snprintf(buf + w, bufsize - w,
-                "arm_cur_hz: %u\narm_cur_mhz: %u\narm_max_hz: %u\narm_max_mhz: %u\n",
-                cur, cur / 1000000u, max, max / 1000000u);
+         * Read: clock (cur/max) + the DVFS load probe (loop_iters + a cntpct
+         * timestamp; the rate across two reads tracks load). Write: .set.MHZ
+         * manually sets the ARM clock (the DVFS power lever; the governor will use
+         * the same hw_arm_clock_set call). "unavailable" on QEMU (no VC mailbox).
+         * The static ceiling is arm_freq in config.txt (the heat cap); AIOS spins
+         * all cores (no WFI -- the stall cure), so absent DVFS the firmware holds
+         * the A72 at the cap. */
+        const char *arg = path + 7;   /* text after "cpufreq" */
+        if (arg[0] == '.' && arg[1] == 's' && arg[2] == 'e' && arg[3] == 't'
+                && arg[4] == '.') {
+            /* /proc/cpufreq.set.MHZ -- manual DVFS control (RPi4 HW experiment). */
+            unsigned int mhz = 0;
+            for (const char *p = arg + 5; *p >= '0' && *p <= '9'; p++)
+                mhz = mhz * 10u + (unsigned int)(*p - '0');
+            if (mhz < 100u) mhz = 100u;        /* sanity floor */
+            if (mhz > 2000u) mhz = 2000u;       /* sanity ceiling (firmware clamps) */
+            unsigned int got = 0;
+            if (hw_arm_clock_set(mhz, &got) == 0)
+                w += snprintf(buf + w, bufsize - w,
+                    "arm clock set: req %u MHz -> got %u Hz (%u MHz)\n",
+                    mhz, got, got / 1000000u);
+            else
+                w += snprintf(buf + w, bufsize - w,
+                    "arm clock set: unavailable (no VC mailbox)\n");
         } else {
+            unsigned int cur = 0, max = 0;
+            if (hw_arm_clock_hz(&cur, &max) == 0) {
+                w += snprintf(buf + w, bufsize - w,
+                    "arm_cur_hz: %u\narm_cur_mhz: %u\narm_max_hz: %u\narm_max_mhz: %u\n",
+                    cur, cur / 1000000u, max, max / 1000000u);
+            } else {
+                w += snprintf(buf + w, bufsize - w,
+                    "cpu clock: unavailable (no VC mailbox)\n");
+            }
+            /* DVFS load probe: raw root-loop counter + a cntpct timestamp. cntpct
+             * (the generic timer) is fixed-rate / clock-independent, so two reads N
+             * apart yield the loop rate -- which falls as work preempts core 0. */
+            unsigned long long cnt = 0;
+            __asm__ volatile("mrs %0, cntpct_el0" : "=r"(cnt));
             w += snprintf(buf + w, bufsize - w,
-                "cpu clock: unavailable (no VC mailbox)\n");
+                "loop_iters: %lu\ncntpct: %llu\n", g_root_loop_iters, cnt);
         }
     } else if (path[0] == 'c' && path[1] == 'p') {
         /* /proc/cpuinfo */
