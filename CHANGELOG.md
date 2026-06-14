@@ -4,6 +4,15 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.246 (2026-06-14)
+**V3D Phase 2 (in progress) -- in-kernel CL build + framebuffer mapping.** The
+clear control-list emitters now run in the kernel: a BO bump allocator carves the
+bin/render CLs + tile buffers from the GPU pool, `v3d_mmu_init` maps the live
+scanout framebuffer into GPU VA `0x10000000` (reading `gpu_fb_pa` live), and a new
+no-kick `/proc/v3d.cl` dry-run builds the CLs + reports their bytes for cross-check
+against the host golden gate. The GPU is not yet started -- the actual submission
+(bin/render kick) is next. QEMU smoke 8/8; host golden-CL gate byte-exact.
+
 ## v0.4.245 (2026-06-14)
 **V3D Phase 1 -- MMU fault VIO_ADDR decode fixed (HW-confirmed).** The V3D MMU
 reports the faulting GPU VA in `(va_width - 32)`-bit units, with `va_width` read

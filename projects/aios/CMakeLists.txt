@@ -200,6 +200,7 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/crypto/crypto_server.c
     ${AIOS_ROOT}/src/usb/xhci.c
     ${AIOS_ROOT}/src/gpu/v3d.c
+    ${AIOS_ROOT}/src/gpu/v3d_cl.c
     ${PLAT_SOURCES}
     apps_cpio.o
 )

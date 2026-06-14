@@ -88,6 +88,10 @@ def main():
         check("/proc/v3d.mmu refuses gracefully", "not present" in mmu, repr(mmu[-80:]))
         flt = con.run("cat /proc/v3d.fault", 10)
         check("/proc/v3d.fault refuses gracefully", "not present" in flt, repr(flt[-80:]))
+        # 3c. Phase 2 dry-run verb (.cl builds the clear control lists + maps the FB)
+        # must also refuse gracefully on QEMU (no GPU, no VideoCore framebuffer).
+        clp = con.run("cat /proc/v3d.cl", 10)
+        check("/proc/v3d.cl refuses gracefully", "not present" in clp, repr(clp[-80:]))
 
         # 4. fbshow --cube -- the CPU demo must still run (display path not regressed).
         cube = con.run("fbshow --cube", 30)

@@ -29,6 +29,7 @@
 #include "arch.h"                  /* arch_dmb / arch_dsb */
 #include "v3d_regs.h"
 #include "v3d.h"
+#include "v3d_cl.h"
 #define LOG_MODULE "v3d"
 #define LOG_LEVEL LOG_LEVEL_INFO
 #include "aios/aios_log.h"
@@ -63,6 +64,7 @@ static int       v3d_asb_m_to, v3d_asb_s_to, v3d_asb_timeout;
 /* GPU VA layout (single 4 GB space; VA 0 never mapped). */
 #define V3D_VA_DATA       0x00100000u        /* -> pool+SCRATCH (scratch + bump)      */
 #define V3D_VA_FAULT      0x20000000u        /* deliberately UNMAPPED (Phase 1 probe) */
+#define V3D_VA_FB         0x10000000u        /* live scanout FB mapped here (Phase 2) */
 
 static uint8_t  *v3d_pool_va;                /* CPU base of the 8 MB pool (non-cacheable) */
 static uint64_t  v3d_pool_pa;                /* phys base (2 MB aligned, contiguous)  */
@@ -471,6 +473,23 @@ int v3d_mem_reserve(void) {
 }
 
 #ifdef PLAT_RPI4
+/* ---- Phase 2: BO bump allocator over the pool bump region ----
+ * The data window maps pool+SCRATCH onward at V3D_VA_DATA, so the GPU VA of a
+ * pool offset is V3D_VA_DATA + (off - V3D_SCRATCH_OFF). Reset per submitted frame. */
+struct v3d_bo { uint8_t *cpu; uint64_t pa; uint32_t gpu_va; uint32_t size; };
+static uint32_t v3d_bump_off = V3D_BUMP_OFF;
+static void v3d_bo_reset_frame(void) { v3d_bump_off = V3D_BUMP_OFF; }
+static int v3d_bo_alloc(struct v3d_bo *bo, uint32_t size, uint32_t align) {
+    uint32_t off = (v3d_bump_off + (align - 1)) & ~(align - 1);
+    if (off + size > V3D_POOL_SIZE) return -1;
+    bo->cpu    = v3d_pool_va + off;
+    bo->pa     = v3d_pool_pa + off;
+    bo->gpu_va = V3D_VA_DATA + (off - V3D_SCRATCH_OFF);
+    bo->size   = size;
+    v3d_bump_off = off + size;
+    return 0;
+}
+
 /* Two-step MMU flush (Linux v3d_mmu_flush_all order, deadline-bounded). */
 static int v3d_mmuc_flush_clear(void) { return !(v3d_rd(V3D_MMUC_CONTROL) & V3D_MMUC_CONTROL_FLUSHING); }
 static int v3d_tlb_clear_done(void)   { return !(v3d_rd(V3D_MMU_CTL) & V3D_MMU_CTL_TLB_CLEARING); }
@@ -505,6 +524,12 @@ static int v3d_mmu_init(void) {
      *    0x20000000 is left UNMAPPED on purpose -- the Phase 1 fault target. */
     v3d_mmu_map(V3D_VA_DATA, v3d_pool_pa + V3D_SCRATCH_OFF,
                 (V3D_POOL_SIZE - V3D_SCRATCH_OFF) >> V3D_MMU_PAGE_SHIFT, 1);
+    /* 2b. map the live scanout framebuffer at V3D_VA_FB so the render CL can store
+     *     pixels to it. gpu_fb_pa is firmware-chosen -- read live, never a constant. */
+    if (gpu_available && gpu_fb_pa) {
+        uint32_t fb_pages = ((gpu_width * gpu_height * 4u) + 0xfffu) >> V3D_MMU_PAGE_SHIFT;
+        v3d_mmu_map(V3D_VA_FB, gpu_fb_pa, fb_pages, 1);
+    }
 
     /* 3. program the MMU (exact Linux order + bit list). */
     v3d_wr(V3D_MMU_PT_PA_BASE, (uint32_t)(v3d_pool_pa >> V3D_MMU_PAGE_SHIFT));
@@ -632,12 +657,62 @@ static int v3d_fault_probe(char *buf, int bufsize) {
         vraw, (unsigned long long)vio_full, vio_page, vsh, cliname, vid, ct1ca,
         ident_ok ? "PASS" : "FAIL", pass ? "PASS" : "FAIL");
 }
+/* /proc/v3d.cl : Phase 2 dry-run. Map the FB, allocate the CL + tile buffers from
+ * the pool via the BO allocator, build the bin + render clear CLs, and report
+ * sizes + GPU VAs + first bytes (cross-check vs the host golden gate). The GPU is
+ * NOT kicked and the framebuffer is NOT written -- pure construction + MMU map. */
+static int v3d_cl_probe(char *buf, int bufsize) {
+    if (!v3d_ok_state) {
+        char id[160]; v3d_report_ident(id, sizeof(id), 0, 0);
+        if (!v3d_ok_state)
+            return snprintf(buf, bufsize, "v3d.cl: core not powered -- run cat /proc/v3d.power first\n");
+    }
+    if (v3d_mmu_init()) return snprintf(buf, bufsize, "v3d.cl: mmu_init failed (see log)\n");
+    if (!gpu_available || !gpu_fb_pa)
+        return snprintf(buf, bufsize, "v3d.cl: no framebuffer (gpu_available=%d fb_pa=0x%llx)\n",
+                        gpu_available, (unsigned long long)gpu_fb_pa);
+
+    v3d_bo_reset_frame();
+    struct v3d_bo ts, ta, bcl, rcl;
+    if (v3d_bo_alloc(&ts, 48u * 1024, 4096) || v3d_bo_alloc(&ta, 40u * 1024, 4096) ||
+        v3d_bo_alloc(&bcl, 256, 128) || v3d_bo_alloc(&rcl, 4096, 128))
+        return snprintf(buf, bufsize, "v3d.cl: BO alloc failed (pool exhausted)\n");
+
+    struct v3d_clear_params cp = {
+        .width = (uint16_t)gpu_width, .height = (uint16_t)gpu_height,
+        .clear_color = 0xFFFF8000u, .fb_va = V3D_VA_FB,
+        .fb_stride = gpu_width * 4u, .tile_alloc_va = ta.gpu_va,
+    };
+    int bn = v3d_build_bin_cl(bcl.cpu, (int)bcl.size, &cp);
+    int rn = v3d_build_render_cl(rcl.cpu, (int)rcl.size, rcl.gpu_va, &cp);
+    if (bn < 0 || rn < 0)
+        return snprintf(buf, bufsize, "v3d.cl: emit failed (bn=%d rn=%d -- buffer too small)\n", bn, rn);
+
+    uint32_t fb_pages = ((gpu_width * gpu_height * 4u) + 0xfffu) >> V3D_MMU_PAGE_SHIFT;
+    int w = 0;
+    w += snprintf(buf + w, bufsize - w,
+        "v3d.cl: %ux%u clear=0x%08x  FB va=0x%08x pa=0x%llx (%u pages, mapped)\n",
+        gpu_width, gpu_height, cp.clear_color, V3D_VA_FB,
+        (unsigned long long)gpu_fb_pa, fb_pages);
+    w += snprintf(buf + w, bufsize - w,
+        "  tile_state va=0x%08x  tile_alloc va=0x%08x\n", ts.gpu_va, ta.gpu_va);
+    w += snprintf(buf + w, bufsize - w, "  bin_cl  va=0x%08x len=%d :", bcl.gpu_va, bn);
+    for (int i = 0; i < bn; i++) w += snprintf(buf + w, bufsize - w, " %02x", bcl.cpu[i]);
+    w += snprintf(buf + w, bufsize - w, "\n  rend_cl va=0x%08x len=%d :", rcl.gpu_va, rn);
+    for (int i = 0; i < rn && i < 24; i++) w += snprintf(buf + w, bufsize - w, " %02x", rcl.cpu[i]);
+    w += snprintf(buf + w, bufsize - w,
+        "\n  built OK, NOT kicked -- submission (bin/render kick) is the next step\n");
+    return w;
+}
 #else  /* !PLAT_RPI4 -- never reached (has_v3d=0); stubs keep the dispatcher common */
 static int v3d_mmu_verb(char *buf, int bufsize) {
     return snprintf(buf, bufsize, "v3d.mmu: unavailable (not RPi4)\n");
 }
 static int v3d_fault_probe(char *buf, int bufsize) {
     return snprintf(buf, bufsize, "v3d.fault: unavailable (not RPi4)\n");
+}
+static int v3d_cl_probe(char *buf, int bufsize) {
+    return snprintf(buf, bufsize, "v3d.cl: unavailable (not RPi4)\n");
 }
 #endif /* PLAT_RPI4 */
 
@@ -715,6 +790,7 @@ int v3d_diag_cmd(const char *args, char *buf, int bufsize) {
         }
         if (v3d_pfx(p, "fault") && p[5] == 0) return v3d_fault_probe(buf, bufsize);
         if (v3d_pfx(p, "mmu")   && p[3] == 0) return v3d_mmu_verb(buf, bufsize);
+        if (v3d_pfx(p, "cl")    && p[2] == 0) return v3d_cl_probe(buf, bufsize);
         if (p[0] == 'r' && p[1] == '.') {
             uint32_t off = v3d_hex(p + 2) & 0x3ffc;
             return snprintf(buf, bufsize, "v3d hub[0x%03x] = 0x%08x\n", off, v3d_rd(off));
@@ -735,7 +811,7 @@ int v3d_diag_cmd(const char *args, char *buf, int bufsize) {
                             off, val, v3d_rd(off));
         }
         return snprintf(buf, bufsize,
-            "v3d: verbs: (none) .power[.N] .clock[.MHz] .mmu .fault "
+            "v3d: verbs: (none) .power[.N] .clock[.MHz] .mmu .fault .cl "
             ".r.<off> .c.<off> .w.<off>.<val>\n");
     }
     return v3d_summary(buf, bufsize);
