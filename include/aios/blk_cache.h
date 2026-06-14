@@ -40,6 +40,8 @@ typedef int (*blk_backend_write_multi_fn)(uint64_t sector, const void *buf,
 /* optional multi-sector read for fast cache line-fills (RPi4 CMD18 / one
  * virtio chain). When set, a miss fills a whole 8-sector line in one call. */
 typedef int (*blk_backend_read_multi_fn)(uint64_t sector, void *buf, int count);
+/* optional: discard (erase) a run of sectors the filesystem just freed. */
+typedef int (*blk_backend_discard_fn)(uint64_t sector, int count);
 
 /* Initialize cache with up to max_pages 4 KB lines. Must be called
  * after vka is up but before ext2_init. Pass 0 to use the default. */
@@ -58,6 +60,15 @@ void blk_cache_register_write_multi(int drive, blk_backend_write_multi_fn fn);
 /* Register an optional multi-sector read backend for a drive. When set, a
  * cache line-fill on a miss reads all 8 sectors in one transfer. */
 void blk_cache_register_read_multi(int drive, blk_backend_read_multi_fn fn);
+
+/* Register an optional discard backend for a drive. */
+void blk_cache_register_discard(int drive, blk_backend_discard_fn fn);
+
+/* Invalidate any fully-covered cached lines for [sector, sector+count) (a
+ * fully-covered dirty line is dropped WITHOUT write-back -- the blocks are
+ * freed) and issue a best-effort backend discard. drive implicit in *0. */
+int blk_cache_discard(uint32_t drive, uint64_t sector, int count);
+int blk_cache_discard0(uint64_t sector, int count);
 
 /* The read/write entry points used as the blk_read_fn / blk_write_fn
  * passed to ext2_init / ext2_init_write. drive_id is implicit -- use
@@ -89,6 +100,7 @@ typedef struct {
     uint32_t dirty;          /* v0.4.172: lines currently dirty (live) */
     uint32_t read_multi;     /* cumulative line-fills served by a multi-sector read */
     uint32_t prefetch;       /* cumulative read-ahead line fills */
+    uint32_t discarded;      /* cumulative cache lines dropped by discard */
 } blk_cache_stats_t;
 
 void blk_cache_stats(blk_cache_stats_t *out);

@@ -43,9 +43,12 @@ int boot_fs_init(void) {
     /* cache line-fills use multi-block reads (RPi4 CMD18). Drive 1 (log) is
      * left unregistered -- it keeps the single-sector fill by design. */
     blk_cache_register_read_multi(0, plat_blk_read_multi);
+    /* discard freed blocks (RPi4 CMD38 erase; no-op on QEMU + the log drive). */
+    blk_cache_register_discard(0, plat_blk_discard);
     int fs_err = ext2_init(&ext2, blk_cache_read0, 0);
     if (fs_err == 0) {
         ext2_init_write(&ext2, blk_cache_write0);
+        ext2_set_discard(&ext2, blk_cache_discard0);
         vfs_mount("/", &ext2_fs_ops, &ext2);
         vfs_mount("/proc", &procfs_ops, NULL);
         proc_add("fs_thread", 200);

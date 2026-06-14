@@ -561,10 +561,10 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         w += snprintf(buf + w, bufsize - w,
             "hits: %u\nmisses: %u\nhit_rate_pct: %u\n"
             "pages: %u\npages_max: %u\n"
-            "evicted: %u\nwrites: %u\nflushes: %u\ndirty: %u\nread_multi: %u\nprefetch: %u\n",
+            "evicted: %u\nwrites: %u\nflushes: %u\ndirty: %u\nread_multi: %u\nprefetch: %u\ndiscarded: %u\n",
             s.hits, s.misses, hit_pct,
             s.pages, s.pages_max,
-            s.evicted, s.writes, s.flushes, s.dirty, s.read_multi, s.prefetch);
+            s.evicted, s.writes, s.flushes, s.dirty, s.read_multi, s.prefetch, s.discarded);
         extern volatile uint32_t blk_poll_renotifies;
         w += snprintf(buf + w, bufsize - w,
             "blk_read_renotifies: %u\n", (unsigned)blk_poll_renotifies);

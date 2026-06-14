@@ -619,6 +619,39 @@ int ext2_init_write(ext2_ctx_t *ctx, blk_write_fn write) {
     return 0;
 }
 
+int ext2_set_discard(ext2_ctx_t *ctx, blk_discard_fn discard) {
+    ctx->discard_sectors = discard;
+    return 0;
+}
+
+/* Discard accumulator: coalesce contiguous freed ext2 blocks into runs so the
+ * backend erases each run with one command (a per-block erase would be far too
+ * slow on a large delete). The fs is single-threaded, so file-static state is
+ * safe; flushed at the end of the unlink that drives the frees. */
+static uint32_t disc_run_start;
+static uint32_t disc_run_len;
+
+static void ext2_discard_flush(ext2_ctx_t *ctx) {
+    if (!disc_run_len) return;
+    if (ctx->discard_sectors) {
+        uint32_t spb = ctx->block_size / 512;        /* sectors per ext2 block */
+        ctx->discard_sectors((uint64_t)disc_run_start * spb, (int)(disc_run_len * spb));
+    }
+    disc_run_start = 0;
+    disc_run_len = 0;
+}
+
+static void ext2_discard_block(ext2_ctx_t *ctx, uint32_t block) {
+    if (!ctx->discard_sectors) return;
+    if (disc_run_len && block == disc_run_start + disc_run_len) {
+        disc_run_len++;
+        return;
+    }
+    ext2_discard_flush(ctx);
+    disc_run_start = block;
+    disc_run_len = 1;
+}
+
 static int write_block(ext2_ctx_t *ctx, uint32_t block, const void *buf) {
     if (!ctx->write_sector) return -1;
     int sectors = ctx->block_size / 512;
@@ -670,6 +703,7 @@ static int ext2_free_block(ext2_ctx_t *ctx, uint32_t block_num) {
     }
 
     cache_invalidate(ctx->dev_id, block_num);
+    ext2_discard_block(ctx, block_num);   /* coalesced discard, flushed by caller */
     return 0;
 }
 
@@ -1037,6 +1071,7 @@ int ext2_unlink(ext2_ctx_t *ctx, uint32_t parent_ino, const char *name) {
                             ext2_free_inode(ctx, d_ino);
                         }
                     }
+                    ext2_discard_flush(ctx);   /* erase the freed data-block runs */
                     return 0;
                 }
             }

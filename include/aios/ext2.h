@@ -93,6 +93,8 @@ struct __attribute__((packed)) ext2_dir_entry {
 /* Block read function type (provided by caller) */
 typedef int (*blk_read_fn)(uint64_t sector, void *buf);
 typedef int (*blk_write_fn)(uint64_t sector, const void *buf);
+/* optional: tell the block layer that `count` sectors are now free (discard). */
+typedef int (*blk_discard_fn)(uint64_t sector, int count);
 
 /* ext2 context */
 typedef struct {
@@ -105,6 +107,7 @@ typedef struct {
     uint32_t first_data_block;
     blk_write_fn write_sector;
     int dev_id;
+    blk_discard_fn discard_sectors;   /* NULL = no discard backend */
 } ext2_ctx_t;
 
 int ext2_init(ext2_ctx_t *ctx, blk_read_fn read, int dev_id);
@@ -117,6 +120,10 @@ int ext2_resolve_path(ext2_ctx_t *ctx, const char *path, uint32_t *out_ino);
 
 /* Write operations */
 int ext2_init_write(ext2_ctx_t *ctx, blk_write_fn write);
+
+/* Register an optional discard backend. When set, freed data-block runs are
+ * discarded (coalesced) on unlink. NULL leaves discard disabled. */
+int ext2_set_discard(ext2_ctx_t *ctx, blk_discard_fn discard);
 int ext2_write_block(ext2_ctx_t *ctx, uint32_t block, const void *buf);
 int ext2_alloc_block(ext2_ctx_t *ctx);
 int ext2_alloc_inode(ext2_ctx_t *ctx);

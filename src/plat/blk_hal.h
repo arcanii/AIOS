@@ -32,6 +32,11 @@ int plat_blk_write_multi(uint64_t sector, const void *buf, int count);
  * plat_blk_write_multi. Returns 0 on success. */
 int plat_blk_read_multi(uint64_t sector, void *buf, int count);
 
+/* Discard (erase) `count` contiguous sectors the filesystem just freed
+ * (RPi4 CMD38 ERASE). Best-effort -- a failure is never data loss. No-op on
+ * backends without discard support. Returns 0 on success. */
+int plat_blk_discard(uint64_t sector, int count);
+
 /* Sector I/O for log device. */
 int plat_blk_read_log(uint64_t sector, void *buf);
 int plat_blk_write_log(uint64_t sector, const void *buf);

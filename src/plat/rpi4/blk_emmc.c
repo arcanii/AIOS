@@ -109,6 +109,7 @@
 static volatile uint32_t *emmc_regs;
 static uint32_t card_rca;
 static int card_is_sdhc;
+static int card_discard_ok;   /* CMD38 ERASE enabled (set at init for SDHC) */
 static uint32_t part_offset;
 static int emmc_initialized;
 
@@ -146,6 +147,7 @@ static void emmc_delay(int us) {
  * ---------------------------------------------------------------- */
 #define EMMC_CMD_MS    1000   /* command response / line-free          */
 #define EMMC_DATA_MS   2000   /* data phase (buffer ready / xfer done)  */
+#define EMMC_ERASE_MS  8000   /* CMD38 erase R1b busy can take seconds  */
 
 static inline uint64_t emmc_ticks(void) {
     uint64_t c; __asm__ volatile("mrs %0, cntpct_el0" : "=r"(c)); return c;
@@ -705,8 +707,9 @@ int plat_blk_init(void) {
     }
 
     emmc_initialized = 1;
-    printf("[blk] RPi4 SD card ready (SDHC=%d, part=%u, ext2 OK)\n",
-           card_is_sdhc, part_offset);
+    card_discard_ok = card_is_sdhc;   /* CMD38 ERASE is mandatory on SD; enable for SDHC */
+    printf("[blk] RPi4 SD card ready (SDHC=%d, part=%u, ext2 OK, discard=%d)\n",
+           card_is_sdhc, part_offset, card_discard_ok);
     return 0;
 }
 
@@ -917,6 +920,39 @@ int plat_blk_write_multi(uint64_t sector, const void *buf, int count) {
 int plat_blk_read_multi(uint64_t sector, void *buf, int count) {
     if (!emmc_initialized) return -1;
     return emmc_read_multi(part_offset + sector, buf, count);
+}
+
+/* erase `count` contiguous sectors [lba, lba+count-1]: CMD32 ERASE_WR_BLK_START
+ * -> CMD33 ERASE_WR_BLK_END -> CMD38 ERASE (arg 0, mandatory on SD; the card
+ * preserves partial erase-group live data). Best-effort: a failure logs and
+ * returns -1 but is never data loss (the blocks are already freed). The CMD38
+ * R1b DAT0-busy wait is cntpct-bounded by EMMC_ERASE_MS (erase can take seconds). */
+static int emmc_discard(uint64_t lba, int count) {
+    if (count <= 0) return 0;
+    if (emmc_wait_dat() != 0) return -1;
+    uint32_t a0 = card_is_sdhc ? (uint32_t)lba : (uint32_t)(lba * 512);
+    uint32_t a1 = card_is_sdhc ? (uint32_t)(lba + count - 1)
+                               : (uint32_t)((lba + count - 1) * 512);
+    if (emmc_send_cmd(CMD_INDEX(32) | CMD_RESP_48 | CMD_CRC_EN | CMD_IDX_EN, a0) != 0)
+        return -1;
+    if (emmc_send_cmd(CMD_INDEX(33) | CMD_RESP_48 | CMD_CRC_EN | CMD_IDX_EN, a1) != 0)
+        return -1;
+    if (emmc_send_cmd(CMD_INDEX(38) | CMD_RESP_48B | CMD_CRC_EN | CMD_IDX_EN, 0) != 0)
+        return -1;
+    /* CMD38 is R1b: the card holds DAT0 busy while erasing. Wait, bounded. */
+    uint64_t dl = emmc_deadline(EMMC_ERASE_MS);
+    do {
+        arch_dmb();
+        if (!(EMMC_R(REG_PRESENT) & PRES_DAT_INHIBIT)) return 0;
+    } while (emmc_ticks() < dl);
+    printf("[blk] erase LBA %u busy timeout\n", (uint32_t)lba);
+    return -1;
+}
+
+/* HAL: plat_blk_discard -- erase freed sectors (best-effort; gated on SDHC). */
+int plat_blk_discard(uint64_t sector, int count) {
+    if (!emmc_initialized || !card_discard_ok) return 0;   /* no-op if unsupported */
+    return emmc_discard(part_offset + sector, count);
 }
 
 /* ----------------------------------------------------------------

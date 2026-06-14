@@ -62,6 +62,7 @@ static blk_backend_read_fn  backend_read[2]  = { NULL, NULL };
 static blk_backend_write_fn backend_write[2] = { NULL, NULL };
 static blk_backend_write_multi_fn backend_write_multi[2] = { NULL, NULL };
 static blk_backend_read_multi_fn  backend_read_multi[2]  = { NULL, NULL };
+static blk_backend_discard_fn     backend_discard[2]     = { NULL, NULL };
 
 /* v0.4.172: write-back policy per drive. Drive 0 (system disk) is write-back
  * -- the big file-write speedup: it coalesces the inode/bitmap rewrites and
@@ -252,6 +253,11 @@ void blk_cache_register_read_multi(int drive, blk_backend_read_multi_fn fn) {
     backend_read_multi[drive] = fn;
 }
 
+void blk_cache_register_discard(int drive, blk_backend_discard_fn fn) {
+    if (drive < 0 || drive > 1) return;
+    backend_discard[drive] = fn;
+}
+
 /* Ensure a line exists for (drive, line_sector). Reads from backend
  * on miss. Returns the line, or NULL on hard failure. */
 static cache_line_t *get_line(uint32_t drive, uint64_t line_sector) {
@@ -394,6 +400,31 @@ int blk_cache_evict(int n_pages) {
     while (freed < n_pages && evict_one()) freed++;
     return freed;
 }
+
+/* Discard a run of just-freed sectors. Invalidate every FULLY-covered cache
+ * line (a dirty one is dropped WITHOUT write-back -- the inverse of eviction:
+ * the blocks are freed, so the stale dirty data must NOT be written back), then
+ * issue a best-effort backend discard. Partially-covered lines are left resident
+ * (defensive -- ext2 frees whole blocks, so partial overlap should not occur). */
+int blk_cache_discard(uint32_t drive, uint64_t sector, int count) {
+    if (drive > 1 || count <= 0) return -1;
+    uint64_t end = sector + (uint64_t)count;
+    uint64_t ls  = sector & ~(uint64_t)(BLK_CACHE_LINE_SECTORS - 1);
+    for (; ls < end; ls += BLK_CACHE_LINE_SECTORS) {
+        if (ls < sector || ls + BLK_CACHE_LINE_SECTORS > end) continue;  /* partial */
+        cache_line_t *l = lookup(drive, ls);
+        if (!l) continue;
+        if (l->dirty) { l->dirty = 0; if (dirty_count > 0) dirty_count--; }
+        lru_unlink(l);
+        hash_remove(l);
+        line_free(l);
+        stats.discarded++;
+    }
+    blk_backend_discard_fn dc = backend_discard[drive];
+    return dc ? dc(sector, count) : 0;
+}
+
+int blk_cache_discard0(uint64_t sector, int count) { return blk_cache_discard(0, sector, count); }
 
 void blk_cache_flush(void) {
     /* v0.4.172: write back all dirty lines. Called before shutdown/reboot. */

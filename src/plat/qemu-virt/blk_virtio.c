@@ -461,6 +461,14 @@ int plat_blk_read_multi(uint64_t sector, void *buf, int count) {
     return blk_read_multi_abs(part_offset + sector, buf, count);
 }
 
+/* Discard: virtio discard negotiation is not implemented here, so this is a
+ * clean no-op. The cache-invalidate + ext2 free path still run on QEMU (so the
+ * plumbing is exercised); real erase is verified on RPi4 (CMD38). */
+int plat_blk_discard(uint64_t sector, int count) {
+    (void)sector; (void)count;
+    return 0;
+}
+
 /* Absolute-LBA HAL (v0.4.222 fatswap) -- see blk_hal.h. */
 int plat_blk_read_abs(uint64_t sector, void *buf) {
     return blk_xfer_abs(0, sector, buf);
