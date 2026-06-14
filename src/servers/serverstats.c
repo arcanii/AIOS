@@ -30,6 +30,7 @@
 #define LOG_MODULE "srvstat"
 #define LOG_LEVEL  LOG_LEVEL_INFO
 #include "aios/aios_log.h"
+#include "aios/cpuacct.h"
 
 /* Probe period in seconds. 5s is frequent enough to spot a hang within
  * a few user actions, infrequent enough that the Yield loop does not
@@ -168,6 +169,7 @@ void serverstats_init(void) {
         AIOS_LOG_WARN_V("serverstats: thread start failed err=", (unsigned long)err);
         return;
     }
+    aios_acct_register("serverstats", thread.tcb.cptr);   /* /proc/cpuacct */
     AIOS_LOG_INFO("serverstats probe thread started");
 }
 

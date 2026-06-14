@@ -157,6 +157,7 @@ endif()
 add_executable(aios_root
     ${AIOS_ROOT}/src/aios_root.c
     ${AIOS_ROOT}/src/cpu_gov.c
+    ${AIOS_ROOT}/src/cpuacct.c
     ${AIOS_ROOT}/src/ext2.c
     ${AIOS_ROOT}/src/vfs.c
     ${AIOS_ROOT}/src/procfs.c

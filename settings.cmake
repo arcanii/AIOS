@@ -29,6 +29,8 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fvisibility=default" CACHE STRING "" FORCE)
 set(KernelArmHypervisorSupport ON CACHE BOOL "" FORCE)
 set(KernelRootCNodeSizeBits 16 CACHE STRING "" FORCE)
 set(KernelArmExportPCNTUser ON CACHE BOOL "" FORCE)
+# Per-thread CPU-cycle accounting (see settings-rpi4.cmake). /proc/cpuacct + governor.
+set(KernelBenchmarks track_utilisation CACHE STRING "" FORCE)
 
 # Heap: 6MB morecore (pipes + TCC compilation within 8000-page pool)
 # 6MB = ~1536 pages/process. 3 procs (pipe) = ~4900 < 8000. TCC -c works.

@@ -8,6 +8,7 @@
 #include "aios/root_shared.h"
 #define LOG_MODULE "tlbi"
 #include "aios/aios_log.h"
+#include "aios/cpuacct.h"
 
 static uint64_t tp_ticks(void) {
     uint64_t c; __asm__ volatile("mrs %0, cntpct_el0" : "=r"(c)); return c;
@@ -68,4 +69,5 @@ void tlbi_probe_start(void) {
     }
     seL4_TCB_SetPriority(thread.tcb.cptr, simple_get_tcb(&simple), 200);
     sel4utils_start_thread(&thread, tlbi_probe_fn, NULL, NULL, 1);
+    aios_acct_register("tlbi_probe", thread.tcb.cptr);   /* /proc/cpuacct */
 }

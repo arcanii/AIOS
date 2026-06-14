@@ -11,6 +11,7 @@
 #include "aios/config.h"
 #include "plat/net_hal.h"
 #include "aios/procfs.h"
+#include "aios/cpuacct.h"
 #include <sel4utils/thread.h>
 #define LOG_MODULE "boot"
 #define LOG_LEVEL LOG_LEVEL_DEBUG
@@ -34,8 +35,9 @@
  * smallest correct change. */
 #define ROOT_CORE 0
 
-/* Start an internal server thread at priority 200, pinned to ROOT_CORE */
-static int start_server_thread(sel4utils_thread_entry_fn fn,
+/* Start an internal server thread at priority 200, pinned to ROOT_CORE. name is
+ * registered for /proc/cpuacct (per-thread CPU accounting). */
+static int start_server_thread(const char *name, sel4utils_thread_entry_fn fn,
                                seL4_CPtr ep_cap) {
     sel4utils_thread_t thread;
     int error = sel4utils_configure_thread(&vka, &vspace, &vspace, 0,
@@ -45,8 +47,10 @@ static int start_server_thread(sel4utils_thread_entry_fn fn,
     #if CONFIG_MAX_NUM_NODES > 1
     seL4_TCB_SetAffinity(thread.tcb.cptr, ROOT_CORE);
     #endif
-    return sel4utils_start_thread(&thread, fn,
+    int rc = sel4utils_start_thread(&thread, fn,
         (void *)(uintptr_t)ep_cap, NULL, 1);
+    if (rc == 0) aios_acct_register(name, thread.tcb.cptr);
+    return rc;
 }
 
 /* v0.4.229 (netd Stage 0): start the sacrificial net-socket cleanup proxy. It
@@ -60,7 +64,7 @@ static void start_net_cleanup_proxy(void) {
     vka_object_t cleanup_ntfn_obj;
     if (!vka_alloc_notification(&vka, &cleanup_ntfn_obj)) {
         pipe_set_net_cleanup_ntfn(cleanup_ntfn_obj.cptr);
-        start_server_thread(
+        start_server_thread("net_cleanup",
             (sel4utils_thread_entry_fn)net_cleanup_proxy_fn,
             cleanup_ntfn_obj.cptr);
         proc_add("net_cleanup", 200);
@@ -77,6 +81,10 @@ void boot_start_services(vka_object_t *fault_ep) {
     #if CONFIG_MAX_NUM_NODES > 1
     seL4_TCB_SetAffinity(simple_get_tcb(&simple), ROOT_CORE);
     #endif
+
+    /* Register the root task's own thread for /proc/cpuacct (index 0). It runs the
+     * boot flow then the no-WFI idle spin (aios_root.c). */
+    aios_acct_register("root", seL4_CapInitThreadTCB);
 
     /* v0.4.80: load configuration from /etc/ before starting servers */
     boot_load_config();
@@ -108,11 +116,11 @@ void boot_start_services(vka_object_t *fault_ep) {
     pipe_ep_cap = pipe_ep_obj.cptr;
 
     /* Start internal server threads */
-    start_server_thread((sel4utils_thread_entry_fn)fs_thread_fn, fs_ep_cap);
-    start_server_thread((sel4utils_thread_entry_fn)exec_thread_fn, exec_ep_cap);
+    start_server_thread("fs", (sel4utils_thread_entry_fn)fs_thread_fn, fs_ep_cap);
+    start_server_thread("exec", (sel4utils_thread_entry_fn)exec_thread_fn, exec_ep_cap);
     LOG_INFO("Thread server started");
-    start_server_thread((sel4utils_thread_entry_fn)thread_server_fn, thread_ep_cap);
-    start_server_thread((sel4utils_thread_entry_fn)pipe_server_fn, pipe_ep_cap);
+    start_server_thread("thread", (sel4utils_thread_entry_fn)thread_server_fn, thread_ep_cap);
+    start_server_thread("pipe", (sel4utils_thread_entry_fn)pipe_server_fn, pipe_ep_cap);
 
     /* v0.4.219: TLBI keepalive (tlbi_probe.c). Steady unmap/map traffic keeps
      * the TLB/DVM path exercised -- empirically suppresses the BCM2711 stall
@@ -127,7 +135,7 @@ void boot_start_services(vka_object_t *fault_ep) {
         extern int xhci_kbd_ok;
         extern void xhci_kbd_driver_fn(void *, void *, void *);
         if (xhci_kbd_ok)
-            start_server_thread((sel4utils_thread_entry_fn)xhci_kbd_driver_fn, 0);
+            start_server_thread("xhci", (sel4utils_thread_entry_fn)xhci_kbd_driver_fn, 0);
     }
 
     /* Start the network path. DESIGN_NETD Stage 3: under AIOS_NETD the net stack
@@ -176,6 +184,7 @@ void boot_start_services(vka_object_t *fault_ep) {
                 sel4utils_start_thread(&net_srv,
                     (sel4utils_thread_entry_fn)net_server_fn,
                     (void *)(uintptr_t)net_ep_cap, NULL, 1);
+                aios_acct_register("net", net_srv.tcb.cptr);
             }
         }
         proc_add("net_server", 200);
@@ -190,7 +199,7 @@ void boot_start_services(vka_object_t *fault_ep) {
         vka_audit_endpoint(VKA_SUB_BOOT);
         vka_alloc_endpoint(&vka, &disp_ep_obj);
         disp_ep_cap = disp_ep_obj.cptr;
-        start_server_thread((sel4utils_thread_entry_fn)display_server_fn,
+        start_server_thread("display", (sel4utils_thread_entry_fn)display_server_fn,
                             disp_ep_cap);
         proc_add("display_server", 200);
     }
@@ -201,7 +210,7 @@ void boot_start_services(vka_object_t *fault_ep) {
         vka_audit_endpoint(VKA_SUB_BOOT);
         vka_alloc_endpoint(&vka, &crypto_ep_obj);
         crypto_ep_cap = crypto_ep_obj.cptr;
-        start_server_thread(
+        start_server_thread("crypto",
             (sel4utils_thread_entry_fn)crypto_server_main,
             crypto_ep_cap);
         proc_add("crypto_server", 200);

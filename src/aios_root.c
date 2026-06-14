@@ -24,6 +24,7 @@
 #include "aios/blk_cache.h"
 #include "aios/vfs.h"
 #include "aios/procfs.h"
+#include "aios/cpuacct.h"
 #define LOG_MODULE "root"
 #define LOG_LEVEL LOG_LEVEL_DEBUG
 #include "aios/aios_log.h"
@@ -444,6 +445,9 @@ int main(int argc, char *argv[]) {
 
     /* Phase 3: Server threads + process spawning */
     boot_start_services(&fault_ep);
+    /* Enable per-thread CPU-cycle accounting now that the server threads are
+     * registered (/proc/cpuacct + the DVFS governor read it). */
+    aios_acct_init();
     fb_console_printf("[boot] Services started\n");
 
     /* --- UART IRQ + notification setup --- */

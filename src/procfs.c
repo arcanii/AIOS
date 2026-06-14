@@ -3,6 +3,7 @@
 #include "aios/root_shared.h"
 #include "aios/vka_audit.h"
 #include "aios/hw_info.h"
+#include "aios/cpuacct.h"
 #include "aios/aios_log.h"
 #include "aios/blk_cache.h"
 #include "aios/filehits.h"
@@ -92,7 +93,7 @@ static int procfs_list(void *ctx, uint32_t ino, char *buf, int bufsize) {
     (void)ctx; (void)ino;
     int w = 0;
     /* List virtual files */
-    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- netstat\n", "- filehits\n", "- serverstats\n", "- flush\n", "- cow\n", "- cmdline\n", "- xhci\n", "- mouse\n", "- fbcon\n", "- v3d\n", "- cpufreq\n", "- temp\n",
+    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- netstat\n", "- filehits\n", "- serverstats\n", "- flush\n", "- cow\n", "- cmdline\n", "- xhci\n", "- mouse\n", "- fbcon\n", "- v3d\n", "- cpufreq\n", "- temp\n", "- cpuacct\n",
 #if defined(PLAT_RPI4)
         "- genet\n",
 #endif
@@ -379,6 +380,12 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
                 "loop_iters: %lu\ncntpct: %llu\n", g_root_loop_iters, cnt);
             w += cpu_gov_status(buf + w, bufsize - w);
         }
+    } else if (path[0] == 'c' && path[1] == 'p' && path[2] == 'u'
+            && path[3] == 'a') {
+        /* /proc/cpuacct -- per-thread CPU-cycle accounting (seL4 utilisation).
+         * Deltas since the last read, so read twice to see an interval. Finds
+         * core-0 hogs + is the DVFS governor's real all-core idle signal. */
+        w += cpuacct_render(buf + w, bufsize - w);
     } else if (path[0] == 'c' && path[1] == 'p') {
         /* /proc/cpuinfo */
         for (int ci = 0; ci < hw_info.cpu_count && ci < 9; ci++) {

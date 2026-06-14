@@ -57,6 +57,12 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fvisibility=default" CACHE STRING "" FORCE)
 set(KernelArmHypervisorSupport OFF CACHE BOOL "" FORCE)
 set(KernelRootCNodeSizeBits 16 CACHE STRING "" FORCE)
 set(KernelArmExportPCNTUser ON CACHE BOOL "" FORCE)
+# Per-thread CPU-cycle accounting (the scheduler records cycles + schedules per TCB
+# on every context switch). Surfaced by /proc/cpuacct + used by the DVFS governor.
+# BCM2711 has no KERNEL_PMU_IRQ, so the 32-bit CCNT overflow is unhandled -- the
+# 64-bit per-TCB accumulator loses ~0.1% (one straddled wrap per ~7s), fine for
+# accounting; readers use deltas over short windows.
+set(KernelBenchmarks track_utilisation CACHE STRING "" FORCE)
 
 # Heap: 8MB morecore
 set(LibSel4MuslcSysMorecoreBytes 8388608 CACHE STRING "" FORCE)

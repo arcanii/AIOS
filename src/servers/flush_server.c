@@ -29,6 +29,7 @@
 #define LOG_MODULE "flush"
 #define LOG_LEVEL  LOG_LEVEL_INFO
 #include "aios/aios_log.h"
+#include "aios/cpuacct.h"
 
 /* Write-back durability window. 30s bounds the worst-case loss of sub-threshold
  * dirty data to the last half-minute, while keeping eMMC wear and the IPC
@@ -85,6 +86,7 @@ void flush_server_init(void) {
         AIOS_LOG_WARN_V("flush: thread start failed err=", (unsigned long)err);
         return;
     }
+    aios_acct_register("flush", thread.tcb.cptr);   /* /proc/cpuacct */
     AIOS_LOG_INFO("write-back flusher thread started");
 }
 

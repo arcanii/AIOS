@@ -49,6 +49,7 @@
 #define LOG_MODULE "netd"
 #define LOG_LEVEL  LOG_LEVEL_DEBUG
 #include "aios/aios_log.h"
+#include "aios/cpuacct.h"
 
 #define NETD_READY_MS 10000   /* bounded DEVD_READY wait ceiling (non-MCS, s8) */
 
@@ -76,7 +77,9 @@ static int netd_start_root_thread(sel4utils_thread_entry_fn fn, seL4_CPtr arg_ca
     #if CONFIG_MAX_NUM_NODES > 1
     seL4_TCB_SetAffinity(th.tcb.cptr, 0);   /* ROOT_CORE: shares the global vka */
     #endif
-    return sel4utils_start_thread(&th, fn, (void *)(uintptr_t)arg_cap, NULL, 1);
+    int rc = sel4utils_start_thread(&th, fn, (void *)(uintptr_t)arg_cap, NULL, 1);
+    if (rc == 0) aios_acct_register("netd_listener", th.tcb.cptr);   /* /proc/cpuacct */
+    return rc;
 }
 
 /* ---- netd_prov: root-side provisioning. Runs in boot_net_init BEFORE the boot
