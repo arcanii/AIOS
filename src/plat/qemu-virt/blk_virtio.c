@@ -390,6 +390,51 @@ static int blk_xfer_abs(int is_write, uint64_t sector, void *buf) {
     return 0;
 }
 
+/* Multi-sector read at an ABSOLUTE LBA -- one virtio chain with a count*512
+ * device-writable data buffer (mirrors the RPi4 CMD18). The block cache uses
+ * this to fill a whole 4 KB line in one transfer. The DMA data scratch at
+ * +0x3000 holds 8 sectors (4 KB) -- larger requests fall back to a loop. */
+static int blk_read_multi_abs(uint64_t sector, void *buf, int count) {
+    if (!blk_vio) return -1;
+    if (count <= 0) return 0;
+    if (count == 1) return blk_xfer_abs(0, sector, buf);
+    if (count > 8) {
+        uint8_t *p = (uint8_t *)buf;
+        for (int i = 0; i < count; i++)
+            if (blk_xfer_abs(0, sector + i, p + i * 512) != 0) return -1;
+        return 0;
+    }
+    struct virtq_desc  *desc  = (struct virtq_desc *)(blk_dma);
+    struct virtq_avail *avail = (struct virtq_avail *)(blk_dma + 0x100);
+    struct virtq_used  *used  = (struct virtq_used  *)(blk_dma + 0x1000);
+    struct virtio_blk_req *req = (struct virtio_blk_req *)(blk_dma + 0x2000);
+    uint64_t req_pa = blk_dma_pa + 0x2000;
+    uint8_t  *data    = blk_dma + 0x3000;
+    uint64_t  data_pa = blk_dma_pa + 0x3000;
+
+    req->type = VIRTIO_BLK_T_IN;
+    req->reserved = 0;
+    req->sector = sector;
+    req->status = 0xFF;
+
+    desc[0].addr = req_pa;            desc[0].len = 16;
+    desc[0].flags = VIRTQ_DESC_F_NEXT; desc[0].next = 1;
+    desc[1].addr = data_pa;           desc[1].len = (uint32_t)count * 512;
+    desc[1].flags = VIRTQ_DESC_F_WRITE | VIRTQ_DESC_F_NEXT; desc[1].next = 2;
+    desc[2].addr = req_pa + 16 + 512; desc[2].len = 1;
+    desc[2].flags = VIRTQ_DESC_F_WRITE; desc[2].next = 0;
+
+    arch_dmb();
+    avail->ring[avail->idx % 16] = 0;
+    arch_dmb();
+    avail->idx += 1;
+    arch_dmb();
+    if (!blk_complete(blk_vio, used) || req->status != 0) return -1;
+    uint8_t *dst = (uint8_t *)buf;
+    for (int i = 0; i < count * 512; i++) dst[i] = data[i];
+    return 0;
+}
+
 int plat_blk_read(uint64_t sector, void *buf) {
     return blk_xfer_abs(0, part_offset + sector, buf);
 }
@@ -410,6 +455,12 @@ int plat_blk_write_multi(uint64_t sector, const void *buf, int count) {
     return 0;
 }
 
+/* Multi-sector read -- a genuine one-shot count*512 transfer (unlike the write
+ * loop above) so QEMU faithfully mirrors CMD18 and demonstrates the op drop. */
+int plat_blk_read_multi(uint64_t sector, void *buf, int count) {
+    return blk_read_multi_abs(part_offset + sector, buf, count);
+}
+
 /* Absolute-LBA HAL (v0.4.222 fatswap) -- see blk_hal.h. */
 int plat_blk_read_abs(uint64_t sector, void *buf) {
     return blk_xfer_abs(0, sector, buf);
@@ -425,6 +476,10 @@ int plat_blk_write_multi_abs(uint64_t sector, const void *buf, int count) {
         if (blk_xfer_abs(1, sector + i, (void *)(p + i * 512)) != 0) return -1;
     }
     return 0;
+}
+
+int plat_blk_read_multi_abs(uint64_t sector, void *buf, int count) {
+    return blk_read_multi_abs(sector, buf, count);
 }
 
 uint64_t plat_blk_boot_part_start(void)   { return boot_part_start; }

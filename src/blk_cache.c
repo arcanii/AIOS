@@ -61,6 +61,7 @@ static uint32_t     monotonic_tick = 0;
 static blk_backend_read_fn  backend_read[2]  = { NULL, NULL };
 static blk_backend_write_fn backend_write[2] = { NULL, NULL };
 static blk_backend_write_multi_fn backend_write_multi[2] = { NULL, NULL };
+static blk_backend_read_multi_fn  backend_read_multi[2]  = { NULL, NULL };
 
 /* v0.4.172: write-back policy per drive. Drive 0 (system disk) is write-back
  * -- the big file-write speedup: it coalesces the inode/bitmap rewrites and
@@ -240,6 +241,11 @@ void blk_cache_register_write_multi(int drive, blk_backend_write_multi_fn fn) {
     backend_write_multi[drive] = fn;
 }
 
+void blk_cache_register_read_multi(int drive, blk_backend_read_multi_fn fn) {
+    if (drive < 0 || drive > 1) return;
+    backend_read_multi[drive] = fn;
+}
+
 /* Ensure a line exists for (drive, line_sector). Reads from backend
  * on miss. Returns the line, or NULL on hard failure. */
 static cache_line_t *get_line(uint32_t drive, uint64_t line_sector) {
@@ -266,13 +272,24 @@ static cache_line_t *get_line(uint32_t drive, uint64_t line_sector) {
     l->drive = drive;
     l->line_sector = line_sector;
 
-    /* Read all 8 sectors of the line from backend */
-    blk_backend_read_fn rd = backend_read[drive];
-    if (!rd) { line_free(l); return NULL; }
-    for (int i = 0; i < BLK_CACHE_LINE_SECTORS; i++) {
-        if (rd(line_sector + i, l->data + i * 512) != 0) {
+    /* Fill the line: prefer a single multi-sector read (one CMD18 / virtio
+     * chain) when a multi backend is registered, else fall back to per-sector
+     * reads (log drive, or any backend without read-multi). Mirrors flush_line. */
+    blk_backend_read_multi_fn rm = backend_read_multi[drive];
+    if (rm) {
+        if (rm(line_sector, l->data, BLK_CACHE_LINE_SECTORS) != 0) {
             line_free(l);
             return NULL;
+        }
+        stats.read_multi++;
+    } else {
+        blk_backend_read_fn rd = backend_read[drive];
+        if (!rd) { line_free(l); return NULL; }
+        for (int i = 0; i < BLK_CACHE_LINE_SECTORS; i++) {
+            if (rd(line_sector + i, l->data + i * 512) != 0) {
+                line_free(l);
+                return NULL;
+            }
         }
     }
     l->valid = 1;

@@ -396,6 +396,95 @@ static int emmc_read_raw_sector(uint64_t lba, void *buf) {
 }
 
 /* ----------------------------------------------------------------
+ * emmc_read_multi -- read `count` contiguous 512-byte sectors via PIO using
+ * CMD18 READ_MULTIPLE_BLOCK + CMD12 STOP. One command covers all blocks, far
+ * fewer per-sector overheads than count separate CMD17 reads -- the read-side
+ * mirror of the v0.4.172 CMD25 write speedup. Every wait is cntpct-bounded.
+ * ---------------------------------------------------------------- */
+/* One CMD18 attempt. Returns 0 = ok, -1 = hard error, -2 = a completion wait
+ * timed out (CMD12 stop sent best-effort so the retry starts from a stopped
+ * card). Mirror of emmc_write_multi_attempt with the read deltas. */
+static int emmc_read_multi_attempt(uint64_t lba, void *buf, int count) {
+    if (emmc_wait_dat() != 0) return -1;
+
+    EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
+    EMMC_W(REG_BLKSIZECNT, ((uint32_t)count << 16) | 0x200);
+    uint32_t arg = card_is_sdhc ? (uint32_t)lba : (uint32_t)(lba * 512);
+    EMMC_W(REG_ARGUMENT, arg);
+    /* CMD18: multi-block read (XFER_READ + XFER_MULTI, block-count enabled) */
+    EMMC_W(REG_XFER_CMD,
+        CMD_INDEX(18) | CMD_RESP_48 | CMD_CRC_EN | CMD_IDX_EN |
+        CMD_DATA | XFER_READ | XFER_MULTI | XFER_BLKCNT_EN);
+
+    int r = emmc_wait_int(INT_CMD_DONE, EMMC_CMD_MS);
+    if (r < 0) {
+        printf("[blk] ReadM LBA %u cmd err: 0x%x\n", (uint32_t)lba, EMMC_R(REG_INT_STATUS));
+        EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
+        return -1;
+    }
+    if (r == 0) return -2;
+    EMMC_W(REG_INT_STATUS, INT_CMD_DONE);
+
+    /* Drain each block: the controller signals buffer-read-ready one block at
+     * a time, so re-wait INT_BUF_RD per block, then pull 128 words. Never drain
+     * an un-ready FIFO (it reads back 0xFFFFFFFF) -- a timeout fails the run. */
+    uint8_t *p = (uint8_t *)buf;
+    for (int b = 0; b < count; b++) {
+        r = emmc_wait_int(INT_BUF_RD, EMMC_DATA_MS);
+        if (r < 0) {
+            printf("[blk] ReadM LBA %u buf err: 0x%x\n", (uint32_t)lba, EMMC_R(REG_INT_STATUS));
+            EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
+            return -1;
+        }
+        if (r == 0) {
+            emmc_send_cmd(CMD_INDEX(12) | CMD_RESP_48B | CMD_CRC_EN | CMD_IDX_EN, 0);
+            return -2;
+        }
+        EMMC_W(REG_INT_STATUS, INT_BUF_RD);
+        for (int i = 0; i < 128; i++) {
+            arch_dmb();
+            sector_buf[i] = EMMC_R(REG_BUFFER);
+        }
+        memcpy(p + b * 512, sector_buf, 512);
+    }
+
+    /* Wait for transfer complete; on timeout stop the card before a retry. */
+    r = emmc_wait_int(INT_XFER_DONE, EMMC_DATA_MS);
+    if (r < 0) {
+        printf("[blk] ReadM LBA %u xfer err: 0x%x\n", (uint32_t)lba, EMMC_R(REG_INT_STATUS));
+        EMMC_W(REG_INT_STATUS, 0xFFFFFFFF);
+        return -1;
+    }
+    if (r == 0) {
+        emmc_send_cmd(CMD_INDEX(12) | CMD_RESP_48B | CMD_CRC_EN | CMD_IDX_EN, 0);
+        return -2;
+    }
+    EMMC_W(REG_INT_STATUS, INT_XFER_DONE);
+
+    /* CMD12 STOP_TRANSMISSION ends the open-ended multi-block read. */
+    if (emmc_send_cmd(CMD_INDEX(12) | CMD_RESP_48B | CMD_CRC_EN | CMD_IDX_EN, 0) != 0)
+        return -1;
+    return 0;
+}
+
+static int emmc_read_multi(uint64_t lba, void *buf, int count) {
+    if (count <= 0) return 0;
+    if (count == 1) return emmc_read_raw_sector(lba, buf);
+    int r = emmc_read_multi_attempt(lba, buf, count);
+    if (r == -2) {
+        blk_emmc_timeout_retries++;
+        printf("[blk] ReadM LBA %u completion timeout -- retrying once\n", (uint32_t)lba);
+        r = emmc_read_multi_attempt(lba, buf, count);
+        if (r == -2) {
+            blk_emmc_timeout_fails++;
+            printf("[blk] ReadM LBA %u timed out twice -- FAILED\n", (uint32_t)lba);
+            return -1;
+        }
+    }
+    return r == 0 ? 0 : -1;
+}
+
+/* ----------------------------------------------------------------
  * plat_blk_init -- Initialize BCM2711 EMMC2 and detect SD card
  * ---------------------------------------------------------------- */
 int plat_blk_init(void) {
@@ -824,6 +913,12 @@ int plat_blk_write_multi(uint64_t sector, const void *buf, int count) {
     return emmc_write_multi(part_offset + sector, buf, count);
 }
 
+/* HAL: plat_blk_read_multi -- read `count` contiguous sectors at once (CMD18). */
+int plat_blk_read_multi(uint64_t sector, void *buf, int count) {
+    if (!emmc_initialized) return -1;
+    return emmc_read_multi(part_offset + sector, buf, count);
+}
+
 /* ----------------------------------------------------------------
  * HAL: absolute-LBA I/O (v0.4.222 fatswap) -- whole-card sector
  * space, no partition offset, no block cache. fs_thread only (the
@@ -842,6 +937,11 @@ int plat_blk_write_abs(uint64_t sector, const void *buf) {
 int plat_blk_write_multi_abs(uint64_t sector, const void *buf, int count) {
     if (!emmc_initialized) return -1;
     return emmc_write_multi(sector, buf, count);
+}
+
+int plat_blk_read_multi_abs(uint64_t sector, void *buf, int count) {
+    if (!emmc_initialized) return -1;
+    return emmc_read_multi(sector, buf, count);
 }
 
 uint64_t plat_blk_boot_part_start(void)   { return boot_part_start; }

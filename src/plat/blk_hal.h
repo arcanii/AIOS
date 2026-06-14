@@ -27,6 +27,11 @@ int plat_blk_write(uint64_t sector, const void *buf);
  * the core of the write-back file-write speedup. Returns 0 on success. */
 int plat_blk_write_multi(uint64_t sector, const void *buf, int count);
 
+/* Read `count` contiguous sectors in one operation (multi-block). Lets the
+ * block cache fill a whole 4 KB line as one transfer (RPi4 CMD18). Mirrors
+ * plat_blk_write_multi. Returns 0 on success. */
+int plat_blk_read_multi(uint64_t sector, void *buf, int count);
+
 /* Sector I/O for log device. */
 int plat_blk_read_log(uint64_t sector, void *buf);
 int plat_blk_write_log(uint64_t sector, const void *buf);
@@ -40,6 +45,7 @@ int plat_blk_write_log(uint64_t sector, const void *buf);
 int plat_blk_read_abs(uint64_t sector, void *buf);
 int plat_blk_write_abs(uint64_t sector, const void *buf);
 int plat_blk_write_multi_abs(uint64_t sector, const void *buf, int count);
+int plat_blk_read_multi_abs(uint64_t sector, void *buf, int count);
 
 /* FAT32/FAT16 boot partition (MBR type 0x0b/0x0c) discovered at
  * plat_blk_init. start==0 means no boot partition on this disk. */
