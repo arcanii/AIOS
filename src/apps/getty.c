@@ -11,6 +11,7 @@
 #include <sel4/sel4.h>
 #include "aios/version.h"
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include "aios_posix.h"
@@ -74,6 +75,86 @@ static void tty_set_cooked(void) {
     seL4_Call(serial_ep, seL4_MessageInfo_new(TTY_IOCTL, 0, 0, 1));
 }
 
+/* ---- Service supervisor ----
+ * Respawn a crashed long-lived network service (netconsole, sshd). getty is a
+ * direct spawn (NOT a forked child), so it can re-fork -- the reverted v0.4.171
+ * attempt failed only because it used a separate supervisor child, which hit the
+ * AIOS no-fork-of-fork rule. Death is detected by a /proc/status NAME poll (a
+ * non-blocking file read), because the waitpid shim has no WNOHANG (PIPE_WAIT
+ * blocks). Rate-limited: poll ~every 4s, never respawn within ~10s of a spawn, so
+ * a crash-looping service cannot spin getty. Runs only while idle at the login
+ * prompt -- never during a serial session. This recovers a CRASHED service; it
+ * cannot help the ~32s kernel TLBI stall (that freezes getty too). */
+static uint64_t rd_cntpct(void) {
+    uint64_t v; __asm__ volatile("mrs %0, cntpct_el0" : "=r"(v)); return v;
+}
+static uint64_t sup_hz = 0;     /* cntfrq, cached */
+static uint64_t sup_last = 0;   /* last /proc/status poll */
+static uint64_t nc_at = 0;      /* last netconsole (re)spawn */
+static uint64_t sd_at = 0;      /* last sshd (re)spawn */
+
+/* minimal substring match (getty avoids string.h, see str_len/str_cpy above). */
+static int str_has(const char *hay, const char *ndl) {
+    for (; *hay; hay++) {
+        const char *h = hay, *n = ndl;
+        while (*n && *h == *n) { h++; n++; }
+        if (!*n) return 1;
+    }
+    return 0;
+}
+
+static char sup_buf[8192];
+static const char *read_proc_status(void) {
+    int fd = open("/proc/status", O_RDONLY);
+    if (fd < 0) return (const char *)0;
+    int total = 0, n;
+    while (total < (int)sizeof(sup_buf) - 1 &&
+           (n = (int)read(fd, sup_buf + total, sizeof(sup_buf) - 1 - total)) > 0)
+        total += n;
+    close(fd);
+    sup_buf[total] = '\0';
+    return sup_buf;
+}
+
+static pid_t spawn_service(const char *path, const char *name) {
+    pid_t p = fork();
+    if (p == 0) {
+        char *av[] = { (char *)name, (void *)0 };
+        execv(path, av);
+        _exit(127);
+    }
+    return p;
+}
+
+static void supervise(void) {
+    uint64_t now = rd_cntpct();
+    if (!sup_hz) {
+        __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(sup_hz));
+        if (!sup_hz) sup_hz = 54000000u;
+    }
+    if (sup_last && (now - sup_last) < sup_hz * 4) return;   /* poll ~every 4s */
+    sup_last = now;
+    const char *st = read_proc_status();
+    if (!st) return;                                          /* cannot tell -> skip */
+    if (!str_has(st, "netconsole") && (now - nc_at) > sup_hz * 10) {
+        ser_puts("getty: netconsole down -- respawning\n");
+        spawn_service("/bin/netconsole", "netconsole");
+        nc_at = now;
+    }
+    if (!str_has(st, "sshd") && (now - sd_at) > sup_hz * 10) {
+        ser_puts("getty: sshd down -- respawning\n");
+        spawn_service("/bin/sshd", "sshd");
+        sd_at = now;
+    }
+}
+
+/* ser_getc that supervises while the serial line is idle (returns -1). */
+static int ser_getc_idle(void) {
+    int c = ser_getc();
+    if (c < 0) supervise();
+    return c;
+}
+
 /* ---- Password input with masking ---- */
 
 static void read_password(char *buf, int max) {
@@ -117,7 +198,7 @@ static int do_login(uint32_t *uid, uint32_t *gid,
         tty_set_raw();
         ser_puts("\nAIOS login: ");
         while (ulen < 31) {
-            int c = ser_getc();
+            int c = ser_getc_idle();   /* supervises crashed services while idle */
             if (c < 0) continue;
             if (c == '\r' || c == '\n') { ser_putc('\n'); break; }
             if ((c == 0x7f || c == '\b') && ulen > 0) {
@@ -276,67 +357,27 @@ int main(int argc, char *argv[]) {
     ser_puts("  " AIOS_VERSION_FULL "\n");
     ser_puts("============================================\n");
 
-    /* v0.4.163: auto-start netconsole (background TCP command shell on port
-     * 2323) once, so the Pi is controllable over the LAN right after boot --
-     * no serial needed, including after a reboot. Spawned from getty (a
-     * running, post-boot-settle process) via the normal fork+exec path, the
-     * way a shell would background it; the child inherits the standard server
-     * caps (incl net) from the spawn machinery. NOT spawned from boot_services
-     * -- a back-to-back boot-time spawn there raced frame reclamation and
-     * aborted the root server. A failure here is non-fatal: login still runs.
-     * NOTE: this is an UNAUTHENTICATED root shell -- trusted LAN / dev use only. */
-    {
-        pid_t nc = fork();
-        if (nc == 0) {
-            char *nc_argv[] = { (char *)"netconsole", (void *)0 };
-            execv("/bin/netconsole", nc_argv);
-            _exit(127);
-        }
-        /* Parent: do not waitpid -- netconsole runs in the background for the
-         * whole boot session (orphaned but alive). v0.4.171: a supervisor-child
-         * respawn was tried and REVERTED -- AIOS fork-of-fork fails (a forked
-         * process cannot fork again), so a supervisor cannot spawn netconsole.
-         * Auto-respawn is deferred; it needs a getty event loop using
-         * waitpid(-1) that does not block on serial login-auth, or fork-of-fork
-         * support. v2 netconsole cannot wedge, so this only loses control on a
-         * hard crash (unlikely). See docs/DESIGN_NETCONSOLE_V2.md. */
-        if (nc < 0)
-            ser_puts("getty: netconsole spawn failed (network shell off)\n");
-    }
-
-    /* v0.4.177: auto-start sshd (ENCRYPTED + authenticated shell on port 2222),
-     * the same fork+exec pattern as netconsole above. The child inherits the
-     * standard server caps (net, crypto, auth) AND fd1 = the tty -- which the
-     * shell relay needs: spawn_shell does dup2(pipe, 1), and AIOS dup2 routes
-     * tty->pipe fine but NOT file->pipe, so sshd must NOT be launched with a
-     * >FILE / >/dev/null redirect (that would leak the shell output to the file).
-     * sshd generates its ECDSA host key at startup (reads /dev/urandom via the
-     * crypto server). Non-fatal if it fails: login + netconsole still run. This
-     * is the only encrypted remote path (netconsole is plaintext, LAN-only). */
-    {
-        pid_t sd = fork();
-        if (sd == 0) {
-            char *sd_argv[] = { (char *)"sshd", (void *)0 };
-            execv("/bin/sshd", sd_argv);
-            _exit(127);
-        }
-        if (sd < 0)
-            ser_puts("getty: sshd spawn failed (ssh off)\n");
-    }
-
-    /* v0.4.166: one-shot SNTP at boot to set the wall clock (the RPi4 has no
-     * RTC, so time otherwise starts at the epoch). Fork-and-forget; non-fatal
-     * if the network is not up yet -- time just stays uptime-based and sntp
-     * can be re-run by hand. */
-    {
-        pid_t tp = fork();
-        if (tp == 0) {
-            char *tp_argv[] = { (char *)"sntp", (void *)0 };
-            execv("/bin/aios/sntp", tp_argv);
-            _exit(127);
-        }
-        (void)tp;
-    }
+    /* Auto-start the background network services (v0.4.163 netconsole :2323 --
+     * UNAUTHENTICATED root, trusted LAN/dev only; v0.4.177 sshd :2222 -- encrypted;
+     * v0.4.166 one-shot SNTP wall-clock sync). Spawned HERE from getty (a
+     * post-boot-settle process) via the normal fork+exec, NOT from boot_services --
+     * a back-to-back boot-time spawn there raced frame reclamation and aborted the
+     * root server. The children inherit the standard server caps (net/crypto/auth)
+     * from the spawn machinery; sshd also gets fd1 = the tty (it must NOT be given
+     * a >FILE / >/dev/null redirect -- AIOS dup2 does not route file->pipe, so that
+     * would leak the shell relay output). Non-fatal: login still runs if any fail.
+     * netconsole + sshd are SUPERVISED (respawned if they crash, see supervise());
+     * sntp is one-shot (meant to exit after the sync) so it is not supervised. The
+     * v0.4.171 supervisor-CHILD attempt was reverted (a forked child cannot fork);
+     * getty itself re-forks fine, which is why the respawn lives here. */
+    if (spawn_service("/bin/netconsole", "netconsole") < 0)
+        ser_puts("getty: netconsole spawn failed (network shell off)\n");
+    if (spawn_service("/bin/sshd", "sshd") < 0)
+        ser_puts("getty: sshd spawn failed (ssh off)\n");
+    spawn_service("/bin/aios/sntp", "sntp");
+    /* Seed the supervisor clock so the boot grace (~10s) holds -- gives the freshly
+     * spawned services time to appear in /proc/status before the first poll. */
+    nc_at = sd_at = sup_last = rd_cntpct();
 
     while (1) {
         uint32_t uid = 0, gid = 0, token = 0;
