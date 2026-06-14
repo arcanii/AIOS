@@ -10,32 +10,35 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
 ## Quick orientation
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4.
-* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.241**.
-  Origin is at `a6b6473` (the 3b commit, pushed); everything after it (`532fccd`,
-  `bc590ef`, `b0a34fc`, `8b29d4d`, `eeb2785`, docs) is **ahead, pending Bryan's push**.
-  **The real Pi runs v0.4.241 at 192.168.0.8, deployed FLASH-FREE OVER THE NETWORK**
-  (`scripts/pi_flash.py` + `fatswap`: push kernel8 over netconsole -> rewrite the
-  FAT32 boot partition -> 3-way sha verify -> watchdog reboot, no SD shuffle).
-  v0.4.240 adds `/proc/temp` + `/proc/cpufreq` (VC-mailbox SoC temp + ARM clock,
-  RPi4): the Pi reads **~57C @ 600MHz** (the `arm_freq=600` heat cap; throttle is
-  85C; `cur==max==600` because the no-WFI spin keeps the firmware at the cap -- a
-  DVFS governor is the power lever, core-parking is off the table = stall cure).
-  **netd Stage 3 CUTOVER HW-VERIFIED on a real RPi4 2026-06-13f: the net stack now
-  runs in the MMU-isolated `netd` process behind `AIOS_NETD`** -- 3b boot cutover
-  (`a6b6473`), 3c `/proc/net` stats page + 3d crash-recovery sweep (`532fccd`),
-  capacity gate (`bc590ef`), and the prov-UMAC HW fix (`b0a34fc`). flag-OFF stays
-  byte-identical. **On the real Pi netd takes the REAL MAC lease .8** (the
-  retry-for-low DMA fixed the long-standing `.127` fallback) and serves
-  DHCP+ping+ssh+netconsole; the s10 crash demo recovered cleanly. All QEMU gates
-  closed (incl forced-degrade `f4aeda9`). **Stage 4 items 1-3 (re-home device diag
-  + SVC_PING) are DONE + HW-VERIFIED on the real Pi (v0.4.241, `eeb2785`)** -- see
-  the DONE section below; only the item-4 default flip remains. Next-session seed:
-  `docs/NEXT_20260614_netd_stage4_flip.md` + the `project_demono_netd` memory.
-  Earlier this arc: the Stage-3
-  FOUNDATION (5 flag-OFF-inert commits `ec20d24`..`7cbee78`), netd Stages 0-2,
-  stability A/B, and the RPi4 thermal cap (all HW-VERIFIED). The v0.4.188-228 arcs (USB HID, V3D, the Source-B
-  32.4s stall CURE, fatswap flash-over-network, ext2 group layout, RPi4 4-core
-  SMP) are captured in the memory index + `docs/NEXT_*.md`, not inline here.
+* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.243**. Origin
+  is at `555d915` (Bryan pushed mid-session); `5b09d6f` + `e0cbb3a` are **ahead,
+  pending Bryan's push**. **The real Pi runs build 2231 at 192.168.0.8**, deployed
+  flash-free (`scripts/pi_flash.py` + `fatswap`), and is **parked at 300MHz /
+  governor OFF / ~64C** (the auto-governor is buggy -- arc 2 below).
+* **This session (v0.4.241 -> v0.4.243), three arcs -- DONE sections below + the
+  seed `docs/NEXT_20260614b_dvfs_cpuacct.md`:**
+  1. **netd Stage 4 items 1-3 DONE + HW-VERIFIED** (`eeb2785`, v0.4.241):
+     `/proc/genet` is now a read-only UMAC/MDIO-free root view; the active NIC ops
+     (peek/poke/mdio/tx/mac/irq) moved to the sacrificial userland `/bin/netdiag`
+     over NET_DIAG; explicit SVC_PING reply. Live MDIO read the BCM54213 PHYID on
+     real GENET. Only the **item-4 AIOS_NETD default flip** remains
+     (`docs/NEXT_20260614_netd_stage4_flip.md` + `project_demono_netd`).
+  2. **RPi4 DVFS** -- `config.txt arm_freq_min=300` (physical SD edit) opened the
+     clock floor, so the VC mailbox `SET_CLOCK_RATE` now pins 300/450/600 and manual
+     `/proc/cpufreq.set.MHZ` works. BUT the **load-driven governor (`ee655e7`,
+     v0.4.242) is BUGGY -- it holds 600 in idle. DO NOT PUSH AS WORKING.** The
+     root-loop-rate metric is confounded.
+  3. **CPU accounting shipped** (`5b09d6f`, v0.4.243) -- `KernelBenchmarks=
+     track_utilisation` + a `/proc/cpuacct` per-thread cycle table, built to find
+     the governor's core-0 confound. VERDICT: **no single hog** -- it is the
+     netconsole relay (observer effect) + the spread of background threads. Two
+     measurement bugs remain (PMCCNTR 32-bit ~7s wrap; idle thread reads 0). See
+     `feedback_rpi4_thermal_clock`.
+  Earlier: **netd Stage 3 CUTOVER** (net runs in the MMU-isolated `netd` behind
+  `AIOS_NETD`, HW-VERIFIED, real-MAC `.8`), the netd FOUNDATION + Stages 0-2, and
+  `/proc/temp`+`/proc/cpufreq` (v0.4.240). The v0.4.188-228 arcs (USB HID, V3D, the
+  32.4s stall CURE, fatswap flash-over-network, ext2 group layout, 4-core SMP) are
+  in the memory index + `docs/NEXT_*.md`, not inline here.
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4).
 * **Host**: macOS Apple Silicon, cross-compile to aarch64-linux-gnu.
 * **Developer**: Bryan -- prefers Python patch scripts over sed/heredocs; no
@@ -135,6 +138,52 @@ spawn_netd bounded wait times out -> "degrade (network off, boot continues)" ->
 login reached. The last open QEMU gate; all QEMU gates now closed.
 
 **Remaining = item 4 only** -- see the dedicated DONE section just below for items 1-3.
+
+---
+
+## DONE/WIP: RPi4 DVFS + CPU accounting -- v0.4.242-243 (2026-06-14)
+
+The power-lever arc. **The governor is NOT working yet -- this is the live open thread.**
+
+**DVFS mechanism (works).** `config.txt arm_freq_min=300` (added via a physical SD
+mount at `/Volumes/AIOSBOOT` -- AIOS cannot edit the FAT itself; general FAT mount is
+backlogged) opened the ARM clock floor. The VC mailbox `SET_CLOCK_RATE` (id 3) now
+PINS 300/450/600 (HW-confirmed); before, `arm_freq=600` pinned both ends and every set
+clamped to 600. Manual control: `/proc/cpufreq.set.MHZ` (`hw_arm_clock_set` in v3d.c,
+DVFS Phase 0 `f12eddc`). The firmware does NOT auto-boost back under load (a 400k dash
+loop stayed 21s at 300), so an explicit governor IS required. cntpct is
+clock-independent, so lowering the clock never breaks timeouts.
+
+**Governor (BUGGY -- `ee655e7` v0.4.242, diagnostics `3e55ec8`; DO NOT PUSH AS
+WORKING).** `src/cpu_gov.c`: a root-main-loop tick samples the root loop-iteration
+rate and sets 300 (idle) / 600 (load). On HW it HOLDS 600 in idle (never cools). The
+loop-rate metric is confounded: the root runs only ~11% during idle (not a clean idle
+proxy), and a connected netconsole session pegs core 0.
+
+**CPU accounting (works -- `5b09d6f` v0.4.243), built to diagnose the governor.**
+`KernelBenchmarks=track_utilisation` (settings-rpi4.cmake + settings.cmake) makes the
+seL4 scheduler accumulate cycles + schedules per TCB on every context switch.
+`src/cpuacct.c` = a name->TCB registry (root + every long-lived root thread, registered
+at spawn via `start_server_thread` + the individual sites) + `/proc/cpuacct`, which
+renders cycle DELTAS since the last read (`seL4_BenchmarkGetThreadUtilisation`) + idle
++ an unaccounted remainder. Gate-verified (netd 10/10, socket 8/8, ssh 6/6); HW-flashed
+(build 2231). **HOG-HUNT VERDICT: NO single hog.** tlbi_probe (the stall-cure TLBI
+keepalive) is only ~11%, EQUAL to root/serverstats/flush; the ~50% core-0 "stall"
+confounding the governor is (1) the netconsole RELAY (a connected session = pipe ~42%
++ unaccounted ~32% -- the observer effect, proven) and (2) the collective background
+threads. **TWO MEASUREMENT BUGS to fix:** (a) the `%` total is from PMCCNTR -- 32-bit,
+WRAPS ~7s (no `KERNEL_PMU_IRQ` on BCM2711) -- so only <7s windows give sane % (a 30s
+read gave >100% per-thread); use sum-of-threads or short windows. (b) the kernel idle
+thread reads 0 (`BENCHMARK_IDLE_LOCALCPU`) yet root is only ~11%, so the no-WFI idle
+path needs investigating: does the RPi4 root actually spin (`seL4_Yield`) or block
+(`seL4_Wait`) at idle? The accounting suggests it BLOCKS, contradicting the long-held
+"no-WFI spin" assumption (which underpins the stall cure -- so this matters).
+
+**Open thread (the seed):** fix the two measurement bugs, resolve idle=0, then rewire
+the governor onto a work-thread load metric (load = pipe+fs+net+user-procs EXCL the
+background root/tlbi/serverstats/flush, over a <7s window; low -> downclock -- sidesteps
+idle=0). Pi parked 300/gov-off (~64C). Seed `docs/NEXT_20260614b_dvfs_cpuacct.md`,
+memory `feedback_rpi4_thermal_clock`.
 
 ---
 
