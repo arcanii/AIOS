@@ -30,8 +30,13 @@
 #define GOV_MAX_MHZ    600u
 #define GOV_LOW_RATE   2000u   /* loop rate below this => BUSY -> boost to MAX */
 #define GOV_HIGH_RATE  6000u   /* above this => idle candidate -> may drop to MIN */
-#define GOV_IDLE_TICKS 4       /* consecutive idle ticks before downclock (~1s) */
-#define GOV_TICK_MS    250u
+#define GOV_IDLE_TICKS 2       /* consecutive idle windows before downclock (~2s) */
+/* 1s averaging window. The per-250ms loop rate is wildly noisy on HW (HW-measured
+ * rmin=95 .. rmax=75903) -- a single ~250ms core-0 stall (scheduler / serverstats /
+ * periodic) reads as fully busy and, with the immediate single-tick upclock, kept
+ * bouncing the clock off 300. A 1s window dilutes any sub-second stall to a small
+ * fraction, so genuine idle reads >>HIGH and the downclock sticks. */
+#define GOV_TICK_MS    1000u
 
 static uint64_t rd_cntpct(void) {
     uint64_t v; __asm__ volatile("mrs %0, cntpct_el0" : "=r"(v)); return v;
@@ -45,6 +50,15 @@ static uint64_t gov_last_ct   = 0;
 static unsigned long gov_last_iters = 0;
 static int      gov_idle_run  = 0;
 static unsigned gov_last_rate = 0;
+/* diagnostics: why does the governor hold 600 in idle? frq/span check the tick
+ * timing math; ticks confirms it fires ~4/s; sets/setfail show transitions vs
+ * mailbox failures; rmin/rmax show the rate distribution it actually measures
+ * (rmax ~37000 => it sees idle but will not act; rmax ~270 => never measures idle). */
+static uint64_t gov_ticks    = 0;
+static uint64_t gov_sets     = 0;
+static uint64_t gov_setfail  = 0;
+static unsigned gov_rate_min = 0xFFFFFFFFu;
+static unsigned gov_rate_max = 0;
 
 void cpu_gov_tick(void) {
     if (!gov_frq) {
@@ -60,6 +74,9 @@ void cpu_gov_tick(void) {
     uint64_t dct = now - gov_last_ct;
     unsigned rate = (unsigned)(((uint64_t)(iters - gov_last_iters) * gov_frq) / dct);
     gov_last_rate = rate;
+    gov_ticks++;
+    if (rate < gov_rate_min) gov_rate_min = rate;
+    if (rate > gov_rate_max) gov_rate_max = rate;
     gov_last_ct = now;
     gov_last_iters = iters;
 
@@ -75,8 +92,8 @@ void cpu_gov_tick(void) {
     if (want != gov_target) {
         if (gov_enabled) {
             unsigned got = 0;
-            if (hw_arm_clock_set(want, &got) == 0) gov_target = want;
-            /* set failed (mailbox busy / clamped): keep the old target, retry next tick */
+            if (hw_arm_clock_set(want, &got) == 0) { gov_target = want; gov_sets++; }
+            else gov_setfail++;   /* mailbox busy / clamped: keep target, retry next tick */
         } else {
             gov_target = want;                       /* track intent, do not actuate */
         }
@@ -87,8 +104,12 @@ int cpu_gov_enable(int on) { gov_enabled = on ? 1 : 0; return gov_enabled; }
 
 int cpu_gov_status(char *buf, int sz) {
     return snprintf(buf, sz,
-        "governor: %s  target_mhz: %u  loop_rate: %u/s  idle_run: %d\n",
-        gov_enabled ? "on" : "off", gov_target, gov_last_rate, gov_idle_run);
+        "governor: %s  target_mhz: %u  loop_rate: %u/s  idle_run: %d\n"
+        "gov_dbg: frq=%llu span=%llu ticks=%llu sets=%llu setfail=%llu rmin=%u rmax=%u\n",
+        gov_enabled ? "on" : "off", gov_target, gov_last_rate, gov_idle_run,
+        (unsigned long long)gov_frq, (unsigned long long)gov_span,
+        (unsigned long long)gov_ticks, (unsigned long long)gov_sets,
+        (unsigned long long)gov_setfail, gov_rate_min, gov_rate_max);
 }
 
 #else  /* !PLAT_RPI4 -- no VC mailbox clock control; governor is RPi4-only */
