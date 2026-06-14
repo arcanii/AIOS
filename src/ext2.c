@@ -8,6 +8,7 @@ extern long aios_wall_now(void);
 /* Read uint16/uint32 from raw buffer (little-endian) */
 static uint16_t rd16(const uint8_t *p) { return p[0] | (p[1] << 8); }
 static uint32_t rd32(const uint8_t *p) { return p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24); }
+static void wr32(uint8_t *p, uint32_t v) { p[0] = v; p[1] = v >> 8; p[2] = v >> 16; p[3] = v >> 24; }
 
 /* ---- Block cache: write-through, round-robin ----
  * 2048 entries (~2MB) needed: tcc output write involves ~1400
@@ -971,16 +972,101 @@ int ext2_create_file(ext2_ctx_t *ctx, uint32_t parent_ino, const char *name,
     return new_ino;
 }
 
-/* v0.4.130: set inode i_size + i_blocks. Shrink leaks the freed
- * blocks; grow does not zero-fill (caller must pwrite if it cares).
- * Block-bitmap deallocation is deferred. */
+/* Free every data block of `inode` at logical index >= keep, zeroing the freed
+ * pointers (direct, single-indirect, double-indirect -- triple is unsupported,
+ * as in the unlink walk). Frees feed the discard accumulator; the caller flushes.
+ * keep=0 frees everything (the truncate-to-0 / unlink-equivalent case). */
+static void ext2_free_from(ext2_ctx_t *ctx, struct ext2_inode *inode, uint32_t keep) {
+    uint32_t ptrs = ctx->block_size / 4;
+    uint8_t buf[1024];
+
+    /* direct blocks 0..11 */
+    for (uint32_t db = keep; db < 12; db++) {
+        if (inode->i_block[db]) {
+            ext2_free_block(ctx, inode->i_block[db]);
+            inode->i_block[db] = 0;
+        }
+    }
+
+    /* single indirect: logical blocks [12, 12+ptrs) */
+    if (inode->i_block[12]) {
+        uint32_t base = 12;
+        if (keep <= base) {
+            if (read_block(ctx, inode->i_block[12], buf) == 0)
+                for (uint32_t ip = 0; ip < ptrs; ip++) {
+                    uint32_t pb = rd32(buf + ip * 4);
+                    if (pb) ext2_free_block(ctx, pb);
+                }
+            ext2_free_block(ctx, inode->i_block[12]);
+            inode->i_block[12] = 0;
+        } else if (keep < base + ptrs) {
+            if (read_block(ctx, inode->i_block[12], buf) == 0) {
+                int changed = 0;
+                for (uint32_t ip = keep - base; ip < ptrs; ip++) {
+                    uint32_t pb = rd32(buf + ip * 4);
+                    if (pb) { ext2_free_block(ctx, pb); wr32(buf + ip * 4, 0); changed = 1; }
+                }
+                if (changed) write_block(ctx, inode->i_block[12], buf);
+            }
+        }
+    }
+
+    /* double indirect: logical blocks [12+ptrs, 12+ptrs+ptrs*ptrs) */
+    if (inode->i_block[13]) {
+        uint32_t dbase = 12 + ptrs;
+        uint8_t dind[1024];
+        if (read_block(ctx, inode->i_block[13], dind) == 0) {
+            int dchanged = 0;
+            for (uint32_t di = 0; di < ptrs; di++) {
+                uint32_t ib2 = rd32(dind + di * 4);
+                if (!ib2) continue;
+                uint32_t l2base = dbase + di * ptrs;       /* first logical block this L2 covers */
+                if (keep >= l2base + ptrs) continue;       /* entirely kept */
+                if (keep <= l2base) {
+                    /* whole L2 gone: free its entries + the L2 block, clear the pointer */
+                    if (read_block(ctx, ib2, buf) == 0)
+                        for (uint32_t ip = 0; ip < ptrs; ip++) {
+                            uint32_t pb = rd32(buf + ip * 4);
+                            if (pb) ext2_free_block(ctx, pb);
+                        }
+                    ext2_free_block(ctx, ib2);
+                    wr32(dind + di * 4, 0);
+                    dchanged = 1;
+                } else {
+                    /* boundary L2: trim entries from (keep - l2base) onward */
+                    if (read_block(ctx, ib2, buf) == 0) {
+                        int changed = 0;
+                        for (uint32_t ip = keep - l2base; ip < ptrs; ip++) {
+                            uint32_t pb = rd32(buf + ip * 4);
+                            if (pb) { ext2_free_block(ctx, pb); wr32(buf + ip * 4, 0); changed = 1; }
+                        }
+                        if (changed) write_block(ctx, ib2, buf);
+                    }
+                }
+            }
+            if (dchanged) write_block(ctx, inode->i_block[13], dind);
+        }
+        if (keep <= dbase) {
+            ext2_free_block(ctx, inode->i_block[13]);
+            inode->i_block[13] = 0;
+        }
+    }
+}
+
+/* Set inode size; on shrink, free + discard the blocks beyond the new end (was
+ * a leak before v0.4.248). Grow does not zero-fill (caller pwrites if it cares). */
 int ext2_truncate(ext2_ctx_t *ctx, uint32_t ino, uint32_t new_size) {
     struct ext2_inode inode;
     if (ext2_read_inode(ctx, ino, &inode) != 0) return -1;
-    inode.i_size = new_size;
     int block_size = (int)ctx->block_size;
-    int blocks_used = ((int)new_size + block_size - 1) / block_size;
-    inode.i_blocks = (uint32_t)(blocks_used * (block_size / 512));
+    uint32_t old_blocks = (inode.i_size + (uint32_t)block_size - 1) / (uint32_t)block_size;
+    uint32_t new_blocks = (new_size  + (uint32_t)block_size - 1) / (uint32_t)block_size;
+    if (new_blocks < old_blocks) {
+        ext2_free_from(ctx, &inode, new_blocks);   /* free + discard the tail */
+        ext2_discard_flush(ctx);
+    }
+    inode.i_size = new_size;
+    inode.i_blocks = (uint32_t)(new_blocks * (block_size / 512));
     write_inode(ctx, ino, &inode);
     return 0;
 }
