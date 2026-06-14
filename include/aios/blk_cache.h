@@ -88,6 +88,7 @@ typedef struct {
     uint32_t flushes;        /* v0.4.172: cumulative dirty-line write-backs */
     uint32_t dirty;          /* v0.4.172: lines currently dirty (live) */
     uint32_t read_multi;     /* cumulative line-fills served by a multi-sector read */
+    uint32_t prefetch;       /* cumulative read-ahead line fills */
 } blk_cache_stats_t;
 
 void blk_cache_stats(blk_cache_stats_t *out);

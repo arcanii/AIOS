@@ -72,6 +72,10 @@ static const int drive_writeback[2] = { 1, 0 };
 static int dirty_count = 0;
 #define BLK_DIRTY_FLUSH_LINES 16   /* flush all dirty once this many accrue */
 
+/* read-ahead state (per drive); reset in blk_cache_init. */
+static uint64_t ra_last_line[2];
+static int      ra_run[2];
+
 static blk_cache_stats_t stats;
 
 static inline uint32_t hash_key(uint32_t drive, uint64_t line_sector) {
@@ -223,6 +227,8 @@ void blk_cache_init(int max_pages) {
     line_count = 0;
     dirty_count = 0;
     monotonic_tick = 0;
+    ra_last_line[0] = ra_last_line[1] = (uint64_t)-1;   /* sentinel: line 0 is not a false match */
+    ra_run[0] = ra_run[1] = 0;
     line_max = max_pages > 0 ? max_pages : BLK_CACHE_DEFAULT_MAX_PAGES;
     stats.pages_max = (uint32_t)line_max;
     AIOS_LOG_INFO_V("init max_pages=", (unsigned long)line_max);
@@ -300,6 +306,36 @@ static cache_line_t *get_line(uint32_t drive, uint64_t line_sector) {
     return l;
 }
 
+/* Sequential read-ahead. After a read settles on a line, if this is the Nth
+ * consecutive forward line-step on this drive, prefetch the next few lines via
+ * the multi backend (cheap one-shot fills). Budget-gated so prefetch never
+ * forces an eviction -- and so never writes back a dirty line; a non-sequential
+ * access resets the run so random workloads prefetch nothing. */
+#define RA_TRIGGER  2     /* consecutive forward line-steps before prefetch starts */
+#define RA_WINDOW   3     /* lines to prefetch ahead */
+#define RA_RESERVE  16    /* headroom kept below line_max so prefetch never evicts */
+
+static void prefetch_after(uint32_t drive, uint64_t line_sector) {
+    if (drive > 1 || !backend_read_multi[drive]) return;   /* no cheap multi-fill */
+    /* cache_read_sector runs per sector, so 8 calls hit the same line -- only a
+     * change of line counts as a step (else the run can never accrue). */
+    if (line_sector == ra_last_line[drive]) return;
+    if (line_sector == ra_last_line[drive] + BLK_CACHE_LINE_SECTORS)
+        ra_run[drive]++;
+    else
+        ra_run[drive] = 0;
+    ra_last_line[drive] = line_sector;
+    if (ra_run[drive] < RA_TRIGGER) return;
+
+    uint64_t next = line_sector + BLK_CACHE_LINE_SECTORS;
+    for (int i = 0; i < RA_WINDOW; i++) {
+        if (line_count >= line_max - RA_RESERVE) break;
+        if (!lookup(drive, next) && get_line(drive, next))
+            stats.prefetch++;
+        next += BLK_CACHE_LINE_SECTORS;
+    }
+}
+
 /* Read one sector via the cache. Computes the containing line, fills
  * if needed, copies the sector slice out. */
 static int cache_read_sector(uint32_t drive, uint64_t sector, void *buf) {
@@ -308,6 +344,7 @@ static int cache_read_sector(uint32_t drive, uint64_t sector, void *buf) {
     cache_line_t *l = get_line(drive, line_sector);
     if (!l) return -1;
     memcpy(buf, l->data + offset * 512, 512);
+    prefetch_after(drive, line_sector);
     return 0;
 }
 
