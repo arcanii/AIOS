@@ -18,12 +18,17 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   (idle->300, load->600 -- arc 2 below).
 * **This session (v0.4.241 -> v0.4.244), arcs -- DONE sections below + the
   seed `docs/NEXT_20260614b_dvfs_cpuacct.md`:**
-  1. **netd Stage 4 items 1-3 DONE + HW-VERIFIED** (`eeb2785`, v0.4.241):
-     `/proc/genet` is now a read-only UMAC/MDIO-free root view; the active NIC ops
-     (peek/poke/mdio/tx/mac/irq) moved to the sacrificial userland `/bin/netdiag`
-     over NET_DIAG; explicit SVC_PING reply. Live MDIO read the BCM54213 PHYID on
-     real GENET. Only the **item-4 AIOS_NETD default flip** remains
-     (`docs/NEXT_20260614_netd_stage4_flip.md` + `project_demono_netd`).
+  1. **netd Stage 4 COMPLETE -- `AIOS_NETD` now defaults ON (netd is the production
+     net path).** Items 1-3 (`eeb2785`, v0.4.241): `/proc/genet` read-only
+     UMAC/MDIO-free root view; active NIC ops (peek/poke/mdio/tx/mac/irq) in the
+     sacrificial userland `/bin/netdiag` over NET_DIAG; explicit SVC_PING. **Item 4
+     (this session): flipped the `option(AIOS_NETD)` default OFF->ON.** A fresh
+     no-flag configure now builds netd (verified); the flag-OFF trees (`build-04`,
+     `build-rpi4`) keep the legacy in-root path via an explicit `-DAIOS_NETD=OFF`
+     (pinned in `setup-linux.py`; existing caches preserved across the flip). Full
+     gate suite green (netd 10/10, netdiag 6/6, socket 8/8 ON+OFF, ssh 6/6, smp
+     ceiling 30). NOT yet done (DESIGN_NETD s9 end state): delete the in-root net
+     path + retire the flag -- after the default-ON release soaks.
   2. **RPi4 DVFS GOVERNOR -- WORKING + HW-verified (v0.4.244).** `config.txt
      arm_freq_min=300` opened the clock floor; the load-driven governor now
      actuates (idle->300, load->600) on a **work-server load metric**. Two HW-only
@@ -759,11 +764,15 @@ records are in **`docs/HANDOVER_HISTORY.md`**, with full per-session detail in
 
 ### Full rebuild (when CPIO contents change)
 
+`AIOS_NETD` now defaults **ON** (netd is the production net path). `build-04` is the
+flag-OFF regression tree, so it needs an explicit `-DAIOS_NETD=OFF`; a bare configure
+(or `build-netd`) builds the default-ON netd path.
+
 ```
 cd ~/Desktop/github_repos/AIOS
 rm -rf build-04 && mkdir build-04 && cd build-04
 cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=../deps/kernel/gcc.cmake \
-    -DCROSS_COMPILER_PREFIX=aarch64-linux-gnu- ..
+    -DCROSS_COMPILER_PREFIX=aarch64-linux-gnu- -DAIOS_NETD=OFF ..
 ninja
 ```
 

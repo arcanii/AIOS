@@ -298,6 +298,11 @@ def do_build():
         run(["cmake", "-G", "Ninja",
              f"-DCMAKE_TOOLCHAIN_FILE=../deps/kernel/gcc.cmake",
              "-DCROSS_COMPILER_PREFIX=aarch64-linux-gnu-",
+             # build-04 is the flag-OFF regression tree (the legacy in-root net
+             # path). AIOS_NETD now defaults ON (netd is production), so pin OFF
+             # explicitly. Production / netd builds use the -netd trees or a bare
+             # configure (DESIGN_NETD Stage 4).
+             "-DAIOS_NETD=OFF",
              ".."], cwd=build_dir)
 
     setup_build_number()

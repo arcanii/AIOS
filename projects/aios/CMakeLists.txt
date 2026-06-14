@@ -106,11 +106,13 @@ AiosPosixApp(posix_verify
     SRCS ${CMAKE_CURRENT_SOURCE_DIR}/../../src/apps/posix_verify.c
 )
 
-# netd de-monolithization (DESIGN_NETD). OFF = the net stack runs in the root
-# task as today (zero change; the CPIO and root binary are unaffected). ON =
-# bundle + spawn the isolated netd skeleton and drive its Stage-2 selftests;
-# Stage 3 will move the net stack itself behind this same flag.
-option(AIOS_NETD "Spawn the isolated netd process (DESIGN_NETD)" OFF)
+# netd de-monolithization (DESIGN_NETD). ON (default, production) = the net stack
+# -- socket server + TCP/UDP/DHCP + the NIC driver device half -- runs in the
+# isolated, MMU-protected netd process (Stage 3 cutover, HW-verified on real
+# GENET). OFF = the legacy path with the net stack in the root task, kept for
+# regression testing; the flag-OFF trees (build-04, build-rpi4) must be configured
+# with an explicit -DAIOS_NETD=OFF so they stay OFF now that the default is ON.
+option(AIOS_NETD "Spawn the isolated netd process (DESIGN_NETD)" ON)
 # Test-only: build netd so it comes up but never sends DEVD_READY, to exercise the
 # DESIGN_NETD s8 degrade-and-continue path (a wedged netd init must not brick boot).
 # Default OFF; turn ON only in a throwaway build (e.g. build-netd-degrade).
