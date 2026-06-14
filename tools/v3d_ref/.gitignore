@@ -1,0 +1,4 @@
+# build artifacts + regenerable goldens (canonical goldens live in tests/fixtures/)
+gen
+gen.dSYM/
+*.bin

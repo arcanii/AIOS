@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Host golden-CL gate for the V3D Phase 2 clear emitters.
+"""Host golden-CL gate for the V3D emitters (Phase 2 clear + Phase 3 triangle).
 
-Compiles src/gpu/v3d_cl.c + tools/v3d_host_clgen.c on the host, runs it to emit
-our bin + render control lists, and byte-diffs them against the captured golden
-fixtures (tests/fixtures/v3d_clear_*.golden). Since QEMU has zero V3D model, this
-is the only correctness check that exists before the Pi -- so a CL-touching change
-must pass it before any kernel flash. OK/FAIL, nonzero exit on FAIL.
+Compiles src/gpu/v3d_cl.c + tools/v3d_host_clgen.c on the host, runs it to emit our
+control lists + GL Shader State records, and byte-diffs them against the captured
+golden fixtures (tests/fixtures/v3d_{clear,triangle}_*.golden). Since QEMU has zero
+V3D model, this is the only correctness check that exists before the Pi -- so a
+CL-touching change must pass it before any kernel flash. The triangle set also gates
+the indirect-buffer sub-objects (shader record, attribute records, generic tile list)
+which no CL stream contains -- a bug there would otherwise reach HW unverified.
+OK/FAIL, nonzero exit on FAIL.
 
 Usage: v3d_clcheck.py        (no args)
 """
@@ -19,9 +22,16 @@ CL_SRC = os.path.join(ROOT, "src", "gpu", "v3d_cl.c")
 CLGEN = os.path.join(ROOT, "tools", "v3d_host_clgen.c")
 INC = os.path.join(ROOT, "src", "gpu")
 FIX = os.path.join(ROOT, "tests", "fixtures")
+# emitted-file basename (written by clgen into the outdir) -> golden fixture
 GOLDEN = {
-    "bin": os.path.join(FIX, "v3d_clear_bin.golden"),
-    "render": os.path.join(FIX, "v3d_clear_render.golden"),
+    "clear_bin.bin":     os.path.join(FIX, "v3d_clear_bin.golden"),
+    "clear_render.bin":  os.path.join(FIX, "v3d_clear_render.golden"),
+    "tri_bin.bin":       os.path.join(FIX, "v3d_triangle_bin.golden"),
+    "tri_render.bin":    os.path.join(FIX, "v3d_triangle_render.golden"),
+    "tri_record.bin":    os.path.join(FIX, "v3d_triangle_record.golden"),
+    "tri_attr0.bin":     os.path.join(FIX, "v3d_triangle_attr0.golden"),
+    "tri_attr1.bin":     os.path.join(FIX, "v3d_triangle_attr1.golden"),
+    "tri_tilelist.bin":  os.path.join(FIX, "v3d_triangle_tilelist.golden"),
 }
 
 fails = 0
@@ -56,8 +66,6 @@ def main():
     cc = os.environ.get("CC", "cc")
     td = tempfile.mkdtemp(prefix="v3d_clcheck_")
     exe = os.path.join(td, "clgen")
-    our = {"bin": os.path.join(td, "our_bin.bin"),
-           "render": os.path.join(td, "our_render.bin")}
 
     build = [cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-O0", "-g",
              "-I", INC, CLGEN, CL_SRC, "-o", exe]
@@ -67,19 +75,19 @@ def main():
         print("=== v3d_clcheck: FAIL (build) ===")
         return 1
 
-    r = subprocess.run([exe, our["bin"], our["render"]], capture_output=True, text=True)
+    r = subprocess.run([exe, td], capture_output=True, text=True)
     check("clgen run", r.returncode == 0, r.stderr.strip()[-200:])
     if r.returncode != 0:
         print("=== v3d_clcheck: FAIL (run) ===")
         return 1
 
-    for which in ("bin", "render"):
-        with open(our[which], "rb") as f:
+    for name, golden in GOLDEN.items():
+        with open(os.path.join(td, name), "rb") as f:
             ours = f.read()
-        with open(GOLDEN[which], "rb") as f:
+        with open(golden, "rb") as f:
             gold = f.read()
         ok = ours == gold
-        check("%s CL byte-exact vs golden" % which, ok,
+        check("%s byte-exact vs golden" % name, ok,
               "" if ok else hexdump_diff(ours, gold))
 
     print("=== v3d_clcheck: %s ===" % ("PASS" if fails == 0 else "FAIL"))
