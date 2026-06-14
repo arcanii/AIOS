@@ -193,14 +193,61 @@ void boot_start_services(vka_object_t *fault_ep) {
     }
 #endif
 
-    /* Start display server */
+    /* Start display server. Configured manually (not via start_server_thread) so we
+     * can bind a notification to its TCB: the V3D kick (/proc/v3d.test) runs on this
+     * thread, posted by the fs thread via a non-blocking seL4_Signal on disp_wake_ntfn
+     * (a Call would clobber the fs reply cap on non-MCS). The bound notification makes
+     * its blocking seL4_Recv wake on the signal -- the net_server pattern. */
     {
         vka_object_t disp_ep_obj;
         vka_audit_endpoint(VKA_SUB_BOOT);
         vka_alloc_endpoint(&vka, &disp_ep_obj);
         disp_ep_cap = disp_ep_obj.cptr;
-        start_server_thread("display", (sel4utils_thread_entry_fn)display_server_fn,
-                            disp_ep_cap);
+
+        /* wake notification: bind the BASE cap to the TCB; the fs thread signals a
+         * BADGED mint so the Recv-side badge is nonzero (net_drv/net_kick split). */
+        vka_object_t disp_wake_obj;
+        seL4_CPtr disp_wake_base = 0;
+        if (!vka_alloc_notification(&vka, &disp_wake_obj)) {
+            disp_wake_base = disp_wake_obj.cptr;
+            cspacepath_t src, dst;
+            vka_cspace_make_path(&vka, disp_wake_base, &src);
+            if (!vka_cspace_alloc_path(&vka, &dst) &&
+                !seL4_CNode_Mint(dst.root, dst.capPtr, dst.capDepth,
+                                 src.root, src.capPtr, src.capDepth,
+                                 seL4_AllRights, 0x1D /* nonzero wake badge */)) {
+                disp_wake_ntfn_cap = dst.capPtr;
+            } else {
+                AIOS_LOG_WARN("display wake ntfn mint failed (.test wake disabled)");
+            }
+        } else {
+            AIOS_LOG_WARN("display wake ntfn alloc failed (.test wake disabled)");
+        }
+
+        sel4utils_thread_t disp_srv;
+        int derr = sel4utils_configure_thread(&vka, &vspace, &vspace, 0,
+            simple_get_cnode(&simple), seL4_NilData, &disp_srv);
+        if (!derr) {
+            seL4_TCB_SetPriority(disp_srv.tcb.cptr, simple_get_tcb(&simple), 200);
+            #if CONFIG_MAX_NUM_NODES > 1
+            seL4_TCB_SetAffinity(disp_srv.tcb.cptr, ROOT_CORE);
+            #endif
+            if (disp_wake_base) {
+                int berr = seL4_TCB_BindNotification(disp_srv.tcb.cptr, disp_wake_base);
+                if (berr) {
+                    /* bind failed -- clear the cap so v3d_test_post skips the Signal
+                     * (an unbound notification would never wake the Recv). */
+                    AIOS_LOG_WARN_V("display wake ntfn bind err=", berr);
+                    disp_wake_ntfn_cap = 0;
+                }
+            }
+            sel4utils_start_thread(&disp_srv,
+                (sel4utils_thread_entry_fn)display_server_fn,
+                (void *)(uintptr_t)disp_ep_cap, NULL, 1);
+            aios_acct_register("display", disp_srv.tcb.cptr);
+        } else {
+            AIOS_LOG_ERROR_V("display thread config failed err=", derr);
+        }
         proc_add("display_server", 200);
     }
 

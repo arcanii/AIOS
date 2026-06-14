@@ -166,8 +166,11 @@
 #define V3D_CLE_CT1QBA            0x164     /* render queued buffer addr (start) */
 #define V3D_CLE_CT0QEA            0x168
 #define V3D_CLE_CT1QEA            0x16c     /* render queued end addr -- WRITE = kick */
-#define V3D_CLE_CT0QMA            0x170     /* bin tile-state addr  (Phase 2) */
-#define V3D_CLE_CT0QMS            0x174     /* bin tile-state size  (Phase 2) */
+#define V3D_CLE_CT0QMA            0x170     /* bin tile-alloc base  (Phase 2) */
+#define V3D_CLE_CT0QMS            0x174     /* bin tile-alloc size  (Phase 2) */
+/* CT0QTS holds the bin tile-state base; ENABLE = BIT(1) (Linux V3D_CLE_CT0QTS_ENABLE,
+ * NOT the BIT(0) SETQB of a different register -- the design's flagged trap). */
+#define V3D_CLE_CT0QTS_ENABLE     (1u << 1)
 
 /* ---- CLE: Phase 2 additions (tile-state base + return/list/prim counters).
  * Offsets transcribed VERBATIM from Linux drivers/gpu/drm/v3d/v3d_regs.h
@@ -196,6 +199,9 @@
 #define V3D_L2TCACTL_FLM_FLUSH    0u
 #define V3D_L2TCACTL_FLM_CLEAR    1u
 #define V3D_L2TCACTL_FLM_CLEAN    2u
+/* SLCACTL all-slice invalidate: 0xf into each of TVCCS[27:24] TDCCS[19:16]
+ * UCC[11:8] ICC[3:0] (Linux v3d_invalidate_slices) -> 0x0f0f0f0f. */
+#define V3D_SLCACTL_ALL_INVALIDATE 0x0f0f0f0fu
 
 /* ---- GCA (global cache/shutdown; Phase 2+ reset path) ---- */
 #define V3D_GCA_CACHE_CTRL        0x00c

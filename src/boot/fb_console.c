@@ -31,6 +31,7 @@ static int con_row;
 static int con_cols;        /* actual columns for current resolution */
 static int con_rows;        /* actual rows for current resolution */
 static int fb_con_active;
+static int fb_con_suspended; /* 1 while the GPU owns the FB (V3D job in flight) */
 
 /* Dirty pixel-row range [y0, y1) accumulated since the last flush. The framebuffer
  * is cacheable, so writes must be cleaned to PoC for the display to see them --
@@ -155,6 +156,7 @@ void fb_console_init(void) {
  * fb_console_puts and by the display server after a DISP_CONSOLE batch) so the
  * cached cell writes become visible without a clean-per-character cost. */
 void fb_console_flush(void) {
+    if (fb_con_suspended) { con_dirty = 0; return; }
     if (!con_dirty || !gpu_fb) { con_dirty = 0; return; }
     uint32_t w = gpu_width;
     fbcon_phase = 4;   /* flush (per-page clean; fbflush_pages_done shows progress) */
@@ -177,8 +179,18 @@ int fb_console_diag(char *buf, int bufsize) {
         fbflush_seq, fbflush_pages_done, fbflush_pages_total);
 }
 
+/* Suspend/resume console rendering. While suspended the GPU owns the framebuffer
+ * (a V3D job is in flight), so every FB-touching console op no-ops -- a dirty CPU
+ * line write must never land over GPU pixels (the FB cache-ownership protocol,
+ * DESIGN sec 5). Serial still carries every byte: tty_server writes serial
+ * independently of the HDMI mirror. */
+void fb_console_set_suspend(int on) {
+    fb_con_suspended = on ? 1 : 0;
+    if (fb_con_suspended) con_dirty = 0;   /* drop any pending dirty range */
+}
+
 void fb_console_putc(char c) {
-    if (!fb_con_active) return;
+    if (!fb_con_active || fb_con_suspended) return;
 
     switch (c) {
     case '\n':
@@ -228,7 +240,7 @@ void fb_console_printf(const char *fmt, ...) {
 }
 
 void fb_console_clear(void) {
-    if (!fb_con_active) return;
+    if (!fb_con_active || fb_con_suspended) return;
 
     uint32_t total = gpu_width * gpu_height;
     for (uint32_t i = 0; i < total; i++)

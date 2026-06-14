@@ -152,6 +152,19 @@ void gpu_fb_flush_all(void) {
     gpu_fb_flush(gpu_fb, gpu_width * gpu_height * 4);
 }
 
+/* Clean+invalidate ONE framebuffer page (4 KB) so a subsequent CPU read sees what
+ * the GPU wrote to physical RAM. Used by the V3D pixel probe. CleanInvalidate is
+ * safe -- the FB lines are clean under GPU ownership (console suspended + flush-all
+ * first), so no dirty line is written back over GPU pixels; the invalidate then
+ * forces the read to miss the cache and fetch from RAM. Never crosses a page
+ * boundary (the seL4 per-page limit, same rule as gpu_fb_flush). page_idx is a
+ * 4 KB page index from the gpu_fb base. */
+void gpu_fb_invalidate_page(uint32_t page_idx) {
+    if (!gpu_fb) return;
+    seL4_Word s = (seL4_Word)gpu_fb + (seL4_Word)page_idx * 0x1000;
+    seL4_ARM_VSpace_CleanInvalidate_Data(seL4_CapInitThreadVSpace, s, s + 0x1000);
+}
+
 /* ---- Text rendering ---- */
 
 void gpu_draw_char(int x, int y, char ch,

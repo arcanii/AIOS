@@ -13,6 +13,13 @@
 #include "aios/aios_log.h"
 #include <stdio.h>
 
+/* V3D GPU kick (Phase 2) -- impl src/gpu/v3d.c. Both run on THIS (display_server)
+ * thread only: the single FB writer. v3d_clear_and_probe takes FB ownership
+ * internally; v3d_service_display_request drains a pending /proc/v3d.test request
+ * when our seL4_Recv wakes on the bound display notification. QEMU stubs are inert. */
+int  v3d_clear_and_probe(uint32_t color);
+void v3d_service_display_request(void);
+
 /* Font and drawing functions from boot_display_init.c */
 extern const uint8_t font8x8[95][8];
 extern void gpu_draw_char(int x, int y, char ch,
@@ -96,6 +103,18 @@ void display_server_fn(void *arg0, void *arg1, void *ipc_buf) {
         seL4_MessageInfo_t msg = seL4_Recv(ep, &badge);
         seL4_Word label = seL4_MessageInfo_get_label(msg);
 
+        /* Drain any pending /proc/v3d.test clear request. The fs thread posts it
+         * (g_v3d_req) and signals the bound notification disp_wake_ntfn to wake this
+         * Recv; we drain on ANY wake (no badge dependency) so the request still runs
+         * if the notification badge is delivered as 0 or another IPC arrives first.
+         * No-op when nothing is pending. (net_server bound-notification pattern.) */
+        (void)badge;
+        v3d_service_display_request();
+
+        /* A pure notification wake carries no sender/reply cap -- do not reply. No
+         * real DISP_* IPC uses label 0. */
+        if (label == 0) continue;
+
         switch (label) {
 
         case DISP_CONSOLE: {
@@ -132,6 +151,7 @@ void display_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 break;
             }
 
+            fb_console_set_suspend(0);   /* a legacy draw relinquishes GPU FB ownership */
             int img_size = vfs_read(path, elf_buf, 8 * 1024 * 1024);
             if (img_size < 16) {
                 printf("[disp] %s: not found or too small (%d)\n", path, img_size);
@@ -173,6 +193,7 @@ void display_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                 break;
             }
+            fb_console_set_suspend(0);   /* a legacy draw relinquishes GPU FB ownership */
             int x     = (int)seL4_GetMR(0);
             int y     = (int)seL4_GetMR(1);
             int scale = (int)seL4_GetMR(2);
@@ -194,6 +215,7 @@ void display_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                 break;
             }
+            fb_console_set_suspend(0);   /* a legacy draw relinquishes GPU FB ownership */
             uint32_t rx = (uint32_t)seL4_GetMR(0);
             uint32_t ry = (uint32_t)seL4_GetMR(1);
             uint32_t rw = (uint32_t)seL4_GetMR(2);
@@ -216,6 +238,7 @@ void display_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                 break;
             }
+            fb_console_set_suspend(0);   /* a legacy draw relinquishes GPU FB ownership */
             uint32_t cc = (uint32_t)seL4_GetMR(0);
             uint32_t total = gpu_width * gpu_height;
             for (uint32_t i = 0; i < total; i++)
@@ -232,7 +255,30 @@ void display_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                 break;
             }
+            fb_console_set_suspend(0);   /* a legacy draw relinquishes GPU FB ownership */
             gfx_demo_cube();
+            seL4_SetMR(0, 0);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+
+        case DISP_V3D_CLEAR: {
+            /* Phase 2: GPU clear to the live FB. MR0 = FB-order pixel value (default
+             * orange if 0). Ownership/probe/recovery all handled inside the driver
+             * (runs on this thread). MR0 reply = job status (0 = PASS, <0 = failure). */
+            uint32_t color = (uint32_t)seL4_GetMR(0);
+            if (color == 0) color = 0xFFFF8000u;
+            int st = v3d_clear_and_probe(color);
+            seL4_SetMR(0, (seL4_Word)st);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+
+        case DISP_V3D_RELEASE: {
+            /* Resume the console after a GPU clear: un-suspend + clear (overdraws GPU
+             * remnants). Harmless if the console was never suspended. */
+            fb_console_set_suspend(0);
+            fb_console_clear();
             seL4_SetMR(0, 0);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;

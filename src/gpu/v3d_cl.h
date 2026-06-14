@@ -23,6 +23,9 @@ struct v3d_clear_params {
     uint32_t fb_va;         /* GPU VA of the render target / framebuffer         */
     uint32_t fb_stride;     /* render-target row stride in bytes (width * 4)     */
     uint32_t tile_alloc_va; /* GPU VA of the tile-allocation (PTB) pool; 64B aligned */
+    uint8_t  rb_swap;       /* STORE r_b_swap: 1 for an RGB FB (Random06457 golden),
+                             * 0 for AIOS's BGR FB (pixel-ord 0). HW-confirmed: with
+                             * rb_swap=1 the orange clear stores R/B-swapped (azure). */
 };
 
 /* Build the binning control list into buf (cap bytes). Address-independent --

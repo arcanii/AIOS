@@ -93,6 +93,22 @@ def main():
         clp = con.run("cat /proc/v3d.cl", 10)
         check("/proc/v3d.cl refuses gracefully", "not present" in clp, repr(clp[-80:]))
 
+        # 3d. Phase 2 GPU kick (.test posts a clear request to display_server) must
+        # ALSO refuse gracefully on QEMU -- the dispatcher's not-present guard fires
+        # before it ever signals the display thread. NEVER assert a pixel on QEMU.
+        tst = con.run("cat /proc/v3d.test", 10)
+        check("/proc/v3d.test refuses gracefully", "not present" in tst, repr(tst[-80:]))
+
+        # 3e. fbshow --gpu-clear sends DISP_V3D_CLEAR to display_server; the QEMU
+        # v3d_clear_and_probe stub returns -5 (no GPU). Must report a non-zero status
+        # WITHOUT crashing or claiming a pixel PASS.
+        gc = con.run("fbshow --gpu-clear", 15)
+        check("fbshow --gpu-clear refuses gracefully",
+              "status=" in gc and "PASS" not in gc, repr(gc[-80:]))
+        # 3f. --gpu-release must be benign (un-suspend is a no-op when not suspended).
+        gr = con.run("fbshow --gpu-release", 10)
+        check("fbshow --gpu-release benign", "not found" not in gr, repr(gr[-80:]))
+
         # 4. fbshow --cube -- the CPU demo must still run (display path not regressed).
         cube = con.run("fbshow --cube", 30)
         check("fbshow --cube still runs", "not found" not in cube and "error" not in cube.lower(), repr(cube[-80:]))

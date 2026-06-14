@@ -23,14 +23,14 @@ static void w64(uint8_t **p, uint64_t v) { w32(p, (uint32_t)v); w32(p, (uint32_t
 
 /* STORE_TILE_BUFFER_GENERAL (opcode 29, 13 B): store RT0 -> framebuffer.
  * b1   : buffer_to_store=0(RT0) | mem_format=0(RASTER) | flip_y=0
- * b2..3: output_image_format=27(RGBA8) at [4:6] | r_b_swap=1 at [12]  -> 0x11B0
+ * b2..3: output_image_format=27(RGBA8) at [4:6] | r_b_swap at [12]
  * b4..6: height_or_stride at [4:20]  = stride << 4  (24-bit)
  * b7..8: height = 0
  * b9..12: address = fb_va */
-static void emit_store_rt0(uint8_t **q, uint32_t stride, uint32_t fb_va) {
+static void emit_store_rt0(uint8_t **q, uint32_t stride, uint32_t fb_va, int rb_swap) {
     w8(q, 29);
     w8(q, 0x00);
-    w16(q, (27u << 4) | (1u << 12));
+    w16(q, (27u << 4) | (rb_swap ? (1u << 12) : 0u));
     w24(q, stride << 4);
     w16(q, 0);
     w32(q, fb_va);
@@ -122,7 +122,7 @@ int v3d_build_render_cl(uint8_t *buf, int cap, uint32_t render_cl_va,
     w8(&q, 56); w8(&q, 0x02);   /* PRIM_LIST_FORMAT: triangles */
     w8(&q, 54); w32(&q, 0);     /* SET_INSTANCEID 0 */
     w8(&q, 21); w8(&q, 0);      /* BRANCH_TO_IMPLICIT_TILE_LIST, set 0 */
-    emit_store_rt0(&q, p->fb_stride, p->fb_va);
+    emit_store_rt0(&q, p->fb_stride, p->fb_va, p->rb_swap);
     w8(&q, 27);                 /* END_OF_TILE_MARKER */
     w8(&q, 18);                 /* RETURN_FROM_SUB_LIST */
     uint32_t sub_end = (uint32_t)(q - buf);

@@ -42,6 +42,20 @@ static uint32_t hex_to_u32(const char *s) {
     return v;
 }
 
+/* Parse up to 8 hex digits (a raw 32-bit FB-order pixel value, e.g. FFFF8000). */
+static uint32_t hex32(const char *s) {
+    uint32_t v = 0;
+    for (int i = 0; i < 8 && s[i]; i++) {
+        char c = s[i];
+        int d = 0;
+        if (c >= '0' && c <= '9') d = c - '0';
+        else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+        v = (v << 4) | d;
+    }
+    return v;
+}
+
 int main(int argc, char *argv[]) {
     if (!disp_ep) {
         printf("fbshow: no display endpoint\n");
@@ -49,7 +63,8 @@ int main(int argc, char *argv[]) {
     }
 
     if (argc < 2) {
-        printf("Usage: fbshow <file.raw> | --info | --clear [RRGGBB] | --cube\n");
+        printf("Usage: fbshow <file.raw> | --info | --clear [RRGGBB] | --cube\n"
+               "             | --gpu-clear [AABBGGRR] | --gpu-release\n");
         return 1;
     }
 
@@ -75,6 +90,26 @@ int main(int argc, char *argv[]) {
     if (streq(argv[1], "--cube")) {
         /* software 3D: spinning wireframe cube animation on the framebuffer */
         seL4_Call(disp_ep, seL4_MessageInfo_new(DISP_CUBE, 0, 0, 0));
+        return 0;
+    }
+
+    if (streq(argv[1], "--gpu-clear")) {
+        /* Phase 2: GPU clear to the live framebuffer. Optional arg = raw FB-order
+         * pixel value (8 hex digits); default 0 -> the server clears to orange. */
+        uint32_t color = (argc > 2) ? hex32(argv[2]) : 0;
+        seL4_SetMR(0, color);
+        seL4_MessageInfo_t r = seL4_Call(disp_ep,
+            seL4_MessageInfo_new(DISP_V3D_CLEAR, 0, 0, 1));
+        (void)r;
+        int st = (int)seL4_GetMR(0);
+        printf("gpu-clear: status=%d %s (cat /proc/v3d for the pixel-probe line)\n",
+               st, st == 0 ? "PASS" : "FAIL");
+        return st == 0 ? 0 : 1;
+    }
+
+    if (streq(argv[1], "--gpu-release")) {
+        /* resume the console after a GPU clear (un-suspend + clear) */
+        seL4_Call(disp_ep, seL4_MessageInfo_new(DISP_V3D_RELEASE, 0, 0, 0));
         return 0;
     }
 

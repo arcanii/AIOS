@@ -19,6 +19,7 @@
  * rendering: those are Phases 1-3 (docs/DESIGN_V3D_IMPLEMENTATION.md).
  */
 #include "aios/root_shared.h"      /* vka, vspace, simple globals */
+#include "aios/fb_console.h"        /* fb_console_set_suspend / fb_console_clear (FB ownership) */
 #include "aios/device_map.h"       /* dev_v3d_vaddr, dev_v3d_asb_vaddr, dev_pm_vaddr, dev_vcmbox_* */
 #include "aios/hw_info.h"          /* hw_info.has_v3d / v3d_paddr / v3d_irq */
 #include "aios/mono_wait.h"        /* mono_deadline_ms / mono_before / mono_ticks */
@@ -75,6 +76,36 @@ static int       v3d_mmu_inited;
 /* Phase 1 probe results (surfaced via /proc/v3d). */
 static uint32_t  v3d_fault_vio_addr, v3d_fault_vio_id;
 static uint32_t  v3d_mmu_faults_seen;
+
+/* ---- Phase 2: the GPU kick (clear job + recovery + pixel probe) ----
+ * The clear runs on the display_server thread (the single FB writer). The fs-thread
+ * /proc/v3d.test verb posts g_v3d_req + signals disp_wake_ntfn_cap; display_server's
+ * bound-notification Recv wakes, calls v3d_service_display_request() -> the takeover +
+ * v3d_submit_frame + pixel probe (all on its own thread). Result lands in v3d_test,
+ * harvested by the .test poll or a later `cat /proc/v3d`. */
+static volatile uint32_t g_v3d_req;          /* 1 = a clear is requested */
+static volatile uint32_t g_v3d_req_color;    /* FB-order pixel value to clear to */
+static volatile uint32_t v3d_test_seq;       /* bumped after each job completes (poll) */
+static uint32_t v3d_tests_run;               /* total clear jobs attempted */
+static uint32_t v3d_resets;                  /* dump-and-reset count */
+
+/* Last clear-job result + (on failure) the dump-and-reset register snapshot.
+ * status: 0 ok, -1 bin timeout, -2 double-OUTOMEM, -3 MMU fault, -4 render timeout,
+ *         -5 not powered / no FB. */
+static struct {
+    int      valid;
+    int      status;
+    uint32_t bfc0, bfc1, rfc0, rfc1;
+    uint64_t bin_us, rend_us;
+    int      oom;
+    uint32_t color;
+    uint32_t pixel;       /* probed center pixel (CleanInvalidate then read) */
+    int      pixel_pass;
+    uint32_t scratch0;    /* MMU scratch first word (R3 silent-redirect check) */
+    /* dump-and-reset snapshot (valid when status != 0) */
+    uint32_t ct0cs, ct1cs, ct0ca, ct1ca, ct0ra, ct1ra, ct0qba, ct1qba;
+    uint32_t hub_ist, core_ist, vio_addr, vio_id, dbg, pt_base;
+} v3d_test;
 
 /* ---- register accessors (device memory; explicit barriers) ---- */
 static inline uint32_t v3d_rd(uint32_t off)        { arch_dmb(); return v3d_base[off >> 2]; }
@@ -682,6 +713,7 @@ static int v3d_cl_probe(char *buf, int bufsize) {
         .width = (uint16_t)gpu_width, .height = (uint16_t)gpu_height,
         .clear_color = 0xFFFF8000u, .fb_va = V3D_VA_FB,
         .fb_stride = gpu_width * 4u, .tile_alloc_va = ta.gpu_va,
+        .rb_swap = 0,   /* AIOS FB is BGR (pixel-ord 0): store verbatim, no R/B swap */
     };
     int bn = v3d_build_bin_cl(bcl.cpu, (int)bcl.size, &cp);
     int rn = v3d_build_render_cl(rcl.cpu, (int)rcl.size, rcl.gpu_va, &cp);
@@ -704,7 +736,245 @@ static int v3d_cl_probe(char *buf, int bufsize) {
         "\n  built OK, NOT kicked -- submission (bin/render kick) is the next step\n");
     return w;
 }
+
+/* ============================================================ *
+ *  Phase 2 -- the GPU kick: submit + recovery + pixel probe     *
+ *  (display_server thread only; FB ownership taken internally)  *
+ * ============================================================ */
+
+struct v3d_clear_result {
+    uint32_t bfc0, bfc1, rfc0, rfc1;
+    uint64_t bin_us, rend_us;
+    int      oom;
+};
+
+/* Invalidate the GPU-internal caches before a kick so the CLE re-reads the CLs/PT we
+ * just wrote (the non-cacheable pool guarantees CPU->RAM; this drops the GPU's own
+ * stale slice/L2T lines from a prior job). Deadline-bounded on the L2T flush. */
+static int v3d_l2t_flush_done(void) {
+    return !(v3d_rd(V3D_CORE0_OFFSET + V3D_CTL_L2TCACTL) & V3D_L2TCACTL_L2TFLS);
+}
+/* Full-range L2T flush (clean+invalidate), deadline-bounded. Before a kick this
+ * drops stale CL/PT lines; AFTER render it pushes the GPU's FB stores out to RAM so
+ * scanout + the CPU pixel probe see them (Linux v3d_clean_caches readback path). */
+static void v3d_l2t_flush(void) {
+    v3d_wr(V3D_CORE0_OFFSET + V3D_CTL_L2TFLSTA, 0);
+    v3d_wr(V3D_CORE0_OFFSET + V3D_CTL_L2TFLEND, 0xffffffffu);
+    v3d_wr(V3D_CORE0_OFFSET + V3D_CTL_L2TCACTL,
+           V3D_L2TCACTL_L2TFLS | (V3D_L2TCACTL_FLM_FLUSH << V3D_L2TCACTL_FLM_SHIFT));
+    v3d_wait(v3d_l2t_flush_done, 100);
+}
+/* Pre-kick invalidate, "outside in" like Linux v3d_invalidate_caches: flush the L2T
+ * FIRST, then invalidate the slices, so a nearby line cannot be pulled back into an
+ * inner cache leaving stale data. (The non-cacheable pool already guarantees CPU->RAM
+ * for the CLs/PT; this drops the GPU's own stale lines from a prior job.) */
+static void v3d_invalidate_gpu_caches(void) {
+    v3d_l2t_flush();
+    v3d_wr(V3D_CORE0_OFFSET + V3D_CTL_SLCACTL, V3D_SLCACTL_ALL_INVALIDATE);
+}
+
+/* Poll a CLE frame counter (BFC/RFC) for an increment. 1 = advanced, 0 = deadline,
+ * -3 = MMU fault latched on the hub. Deadline-bounded on cntpct, never iterations. */
+static int v3d_poll_frame(uint32_t cnt_off, uint32_t base, int ms) {
+    for (uint64_t dl = mono_deadline_ms(ms); mono_before(dl); ) {
+        arch_dmb();
+        if (v3d_rd(V3D_HUB_INT_STS) &
+            (V3D_HUB_INT_MMU_PTI | V3D_HUB_INT_MMU_WRV | V3D_HUB_INT_MMU_CAP)) return -3;
+        if ((v3d_rd(cnt_off) & 0xff) != (base & 0xff)) return 1;
+    }
+    arch_dmb();
+    return ((v3d_rd(cnt_off) & 0xff) != (base & 0xff)) ? 1 : 0;
+}
+
+/* Poll BFC for bin-done, supplying overflow memory on OUTOMEM (W1C-clear the bit, else
+ * the latched status re-triggers the supply every pass). A SECOND OUTOMEM in one frame
+ * aborts -- the single reserve must not be handed out twice. 1 = done, 0 = deadline,
+ * -2 = double OUTOMEM, -3 = MMU fault. */
+static int v3d_poll_bin(uint32_t bfc0, uint32_t ovf_va, uint32_t ovf_size, int *oom_out) {
+    int oom = 0;
+    for (uint64_t dl = mono_deadline_ms(100); mono_before(dl); ) {
+        arch_dmb();
+        if (v3d_rd(V3D_HUB_INT_STS) &
+            (V3D_HUB_INT_MMU_PTI | V3D_HUB_INT_MMU_WRV | V3D_HUB_INT_MMU_CAP)) {
+            *oom_out = oom; return -3;
+        }
+        if (v3d_rd(V3D_CORE0_OFFSET + V3D_CTL_INT_STS) & V3D_CTL_INT_OUTOMEM) {
+            if (oom >= 1) { *oom_out = oom; return -2; }
+            v3d_wr(V3D_CORE0_OFFSET + V3D_PTB_BPOA, ovf_va);
+            v3d_wr(V3D_CORE0_OFFSET + V3D_PTB_BPOS, ovf_size);
+            v3d_wr(V3D_CORE0_OFFSET + V3D_CTL_INT_CLR, V3D_CTL_INT_OUTOMEM);
+            arch_dsb();
+            oom++;
+        }
+        if ((v3d_rd(V3D_CORE0_OFFSET + V3D_CLE_BFC) & 0xff) != (bfc0 & 0xff)) {
+            *oom_out = oom; return 1;
+        }
+    }
+    *oom_out = oom;
+    return 0;
+}
+
+/* Capture the CLE/MMU postmortem into v3d_test, then full-reset the GPU (assert
+ * V3DRSTN, re-run the power sequence + MMU init) so the next job starts clean. The
+ * single most useful number is CT*CA minus QBA -- the byte offset of the hung packet. */
+static void v3d_dump_and_reset(uint32_t ct0qba, uint32_t ct1qba) {
+    v3d_test.ct0cs = v3d_rd(V3D_CORE0_OFFSET + V3D_CLE_CT0CS);
+    v3d_test.ct1cs = v3d_rd(V3D_CORE0_OFFSET + V3D_CLE_CT1CS);
+    v3d_test.ct0ca = v3d_rd(V3D_CORE0_OFFSET + V3D_CLE_CT0CA);
+    v3d_test.ct1ca = v3d_rd(V3D_CORE0_OFFSET + V3D_CLE_CT1CA);
+    v3d_test.ct0ra = v3d_rd(V3D_CORE0_OFFSET + V3D_CLE_CT0RA);
+    v3d_test.ct1ra = v3d_rd(V3D_CORE0_OFFSET + V3D_CLE_CT1RA);
+    v3d_test.ct0qba = ct0qba; v3d_test.ct1qba = ct1qba;
+    v3d_test.hub_ist  = v3d_rd(V3D_HUB_INT_STS);
+    v3d_test.core_ist = v3d_rd(V3D_CORE0_OFFSET + V3D_CTL_INT_STS);
+    v3d_test.vio_addr = v3d_rd(V3D_MMU_VIO_ADDR);
+    v3d_test.vio_id   = v3d_rd(V3D_MMU_VIO_ID);
+    v3d_test.dbg      = v3d_rd(V3D_MMU_DEBUG_INFO);
+    v3d_test.pt_base  = v3d_rd(V3D_MMU_PT_PA_BASE);
+    AIOS_LOG_WARN("V3D job failed -- dump captured, resetting GPU");
+
+    uint32_t pm = dev_pm_vaddr[V3D_PM_GRAFX / 4];
+    dev_pm_vaddr[V3D_PM_GRAFX / 4] = V3D_PM_PASSWORD | (pm & ~V3D_PM_V3DRSTN);  /* assert reset */
+    arch_dsb();
+    v3d_udelay(10);
+    char tmp[256];
+    v3d_power_seq(0, tmp, sizeof(tmp));   /* deassert + ASB unstop + IDENT (sets v3d_ok_state) */
+    v3d_mmu_inited = 0;
+    v3d_mmu_init();
+    v3d_resets++;
+}
+
+/* Build the bin+render clear CLs into pool BOs and run the empty-bin + render pair.
+ * Bracket = pool/PT writes -> dsb -> CT*Q* setup -> dsb -> CT*QEA (kick = write end
+ * addr) -> dsb (DESIGN sec 5). Every wait deadline-bounded. On any failure dumps +
+ * resets the GPU and returns the negative status; *res carries the counter deltas. */
+static int v3d_submit_frame(uint32_t color, struct v3d_clear_result *res) {
+    res->oom = 0; res->bin_us = res->rend_us = 0;
+    res->bfc0 = res->bfc1 = res->rfc0 = res->rfc1 = 0;
+    if (v3d_mmu_init()) return -5;
+    v3d_ensure_clock();
+
+    v3d_bo_reset_frame();
+    struct v3d_bo ts, ta, ovf, bcl, rcl;
+    if (v3d_bo_alloc(&ts, 48u * 1024, 4096) || v3d_bo_alloc(&ta, 40u * 1024, 4096) ||
+        v3d_bo_alloc(&ovf, 256u * 1024, 4096) ||
+        v3d_bo_alloc(&bcl, 256, 128) || v3d_bo_alloc(&rcl, 4096, 128))
+        return -5;
+
+    struct v3d_clear_params cp = {
+        .width = (uint16_t)gpu_width, .height = (uint16_t)gpu_height,
+        .clear_color = color, .fb_va = V3D_VA_FB,
+        .fb_stride = gpu_width * 4u, .tile_alloc_va = ta.gpu_va,
+        .rb_swap = 0,   /* AIOS FB is BGR (pixel-ord 0): store verbatim, no R/B swap */
+    };
+    int bn = v3d_build_bin_cl(bcl.cpu, (int)bcl.size, &cp);
+    int rn = v3d_build_render_cl(rcl.cpu, (int)rcl.size, rcl.gpu_va, &cp);
+    if (bn < 0 || rn < 0) return -5;
+    /* zero the MMU scratch word so the post-job redirect check (scratch0 != 0 => a
+     * store landed on the ILLEGAL_ADDR sink) reflects THIS job only -- a prior failed
+     * job's redirect would otherwise leave it nonzero forever. Non-cacheable pool. */
+    *(volatile uint32_t *)(v3d_pool_va + V3D_SCRATCH_OFF) = 0;
+    arch_dsb();   /* CLs live in the non-cacheable pool; order them before the doorbell */
+
+    v3d_invalidate_gpu_caches();
+
+    /* capture frame counters BEFORE the kick (capture-before-notify, v0.4.147). */
+    res->bfc0 = v3d_rd(V3D_CORE0_OFFSET + V3D_CLE_BFC);
+    res->rfc0 = v3d_rd(V3D_CORE0_OFFSET + V3D_CLE_RFC);
+    v3d_wr(V3D_CORE0_OFFSET + V3D_CTL_INT_CLR, 0xffffffffu);   /* stale OUTOMEM/done */
+    v3d_wr(V3D_HUB_INT_CLR, V3D_HUB_INT_MMU_PTI | V3D_HUB_INT_MMU_WRV | V3D_HUB_INT_MMU_CAP);
+    arch_dsb();
+
+    /* ---- bin bracket (CT0) ---- */
+    v3d_wr(V3D_CORE0_OFFSET + V3D_PTB_BPOS, 0);              /* clear stale overflow size */
+    v3d_wr(V3D_CORE0_OFFSET + V3D_CLE_CT0QMA, ta.gpu_va);   /* tile-alloc base */
+    v3d_wr(V3D_CORE0_OFFSET + V3D_CLE_CT0QMS, ta.size);     /* tile-alloc size */
+    v3d_wr(V3D_CORE0_OFFSET + V3D_CLE_CT0QTS, ts.gpu_va | V3D_CLE_CT0QTS_ENABLE);
+    arch_dsb();
+    v3d_wr(V3D_CORE0_OFFSET + V3D_CLE_CT0QBA, bcl.gpu_va);
+    arch_dsb();
+    uint64_t t0 = mono_ticks();
+    v3d_wr(V3D_CORE0_OFFSET + V3D_CLE_CT0QEA, bcl.gpu_va + (uint32_t)bn);   /* KICK */
+    arch_dsb();
+    int br = v3d_poll_bin(res->bfc0, ovf.gpu_va, ovf.size, &res->oom);
+    res->bin_us = mono_us_since(t0);
+    res->bfc1 = v3d_rd(V3D_CORE0_OFFSET + V3D_CLE_BFC);
+    if (br != 1) {
+        v3d_dump_and_reset(bcl.gpu_va, 0);
+        return (br == -2) ? -2 : (br == -3) ? -3 : -1;
+    }
+
+    /* ---- render bracket (CT1) ---- */
+    arch_dsb();
+    v3d_wr(V3D_CORE0_OFFSET + V3D_CLE_CT1QBA, rcl.gpu_va);
+    arch_dsb();
+    uint64_t t1 = mono_ticks();
+    v3d_wr(V3D_CORE0_OFFSET + V3D_CLE_CT1QEA, rcl.gpu_va + (uint32_t)rn);   /* KICK */
+    arch_dsb();
+    int rr = v3d_poll_frame(V3D_CORE0_OFFSET + V3D_CLE_RFC, res->rfc0, 250);
+    res->rend_us = mono_us_since(t1);
+    res->rfc1 = v3d_rd(V3D_CORE0_OFFSET + V3D_CLE_RFC);
+    if (rr != 1) {
+        v3d_dump_and_reset(bcl.gpu_va, rcl.gpu_va);
+        return (rr == -3) ? -3 : -4;
+    }
+    /* render done: flush the GPU L2T so the FB stores land in RAM for the display
+     * controller (scanout reads RAM) and the CPU pixel probe. Without this RFC can
+     * advance with the pixels still in the GPU cache -- "RFC++ but no orange". */
+    v3d_l2t_flush();
+    return 0;
+}
+
+/* Probe the live FB after a clear: CleanInvalidate the page holding the center pixel,
+ * read it, compare to the requested FB-order value. Also sample the MMU scratch first
+ * word -- non-zero means the GPU silently redirected stores there (a wrong RT VA,
+ * design risk R3): RFC can advance with no visible pixels, so never trust RFC alone. */
+static void v3d_pixel_probe(uint32_t color) {
+    uint32_t idx  = (gpu_height / 2) * gpu_width + (gpu_width / 2);
+    uint32_t page = (uint32_t)(((uint64_t)idx * 4) >> 12);
+    gpu_fb_invalidate_page(page);
+    arch_dmb();
+    v3d_test.pixel      = gpu_fb[idx];
+    v3d_test.pixel_pass = (v3d_test.pixel == color);
+    v3d_test.scratch0   = v3d_pool_va
+        ? *(volatile uint32_t *)(v3d_pool_va + V3D_SCRATCH_OFF) : 0;
+}
+
+/* The full kick, display_server thread only: take FB ownership (clean every line to
+ * RAM, then suspend the console so no dirty CPU line writes back over GPU pixels),
+ * submit the clear, probe the center pixel. On failure recover the console (the GPU
+ * was reset). Fills v3d_test. Returns 0 on PASS. */
+int v3d_clear_and_probe(uint32_t color) {
+    v3d_tests_run++;
+    v3d_test.valid = 1;
+    v3d_test.color = color;
+    v3d_test.pixel = 0; v3d_test.pixel_pass = 0; v3d_test.scratch0 = 0;
+    if (!v3d_ok_state) { char id[160]; v3d_report_ident(id, sizeof(id), 0, 0); }
+    if (!v3d_present || !v3d_ok_state || !gpu_available || !gpu_fb_pa || !v3d_pool_va) {
+        v3d_test.status = -5;
+        return -5;
+    }
+    gpu_fb_flush_all();          /* every FB line clean -> evictions cannot clobber pixels */
+    fb_console_set_suspend(1);   /* gate the console for the duration of GPU ownership   */
+
+    struct v3d_clear_result res;
+    int st = v3d_submit_frame(color, &res);
+    v3d_test.status = st;
+    v3d_test.bfc0 = res.bfc0; v3d_test.bfc1 = res.bfc1;
+    v3d_test.rfc0 = res.rfc0; v3d_test.rfc1 = res.rfc1;
+    v3d_test.bin_us = res.bin_us; v3d_test.rend_us = res.rend_us;
+    v3d_test.oom = res.oom;
+
+    if (st == 0) {
+        v3d_pixel_probe(color);                 /* orange should be visible now */
+    } else {
+        fb_console_set_suspend(0);              /* GPU was reset -- restore the console */
+        fb_console_clear();
+    }
+    return st;
+}
 #else  /* !PLAT_RPI4 -- never reached (has_v3d=0); stubs keep the dispatcher common */
+int v3d_clear_and_probe(uint32_t color) { (void)color; return -5; }
 static int v3d_mmu_verb(char *buf, int bufsize) {
     return snprintf(buf, bufsize, "v3d.mmu: unavailable (not RPi4)\n");
 }
@@ -715,6 +985,71 @@ static int v3d_cl_probe(char *buf, int bufsize) {
     return snprintf(buf, bufsize, "v3d.cl: unavailable (not RPi4)\n");
 }
 #endif /* PLAT_RPI4 */
+
+/* ---- Phase 2 trigger glue (common: dispatcher + display_server both call in) ---- */
+
+/* Format the last clear-job result (the .test PASS/FAIL line + dump on failure). */
+static int v3d_format_test_result(char *buf, int bufsize) {
+    if (!v3d_test.valid)
+        return snprintf(buf, bufsize, "v3d.test: no result yet -- run cat /proc/v3d.test\n");
+    const char *st = (v3d_test.status ==  0) ? "OK"
+                   : (v3d_test.status == -1) ? "BIN_TIMEOUT"
+                   : (v3d_test.status == -2) ? "DOUBLE_OUTOMEM"
+                   : (v3d_test.status == -3) ? "MMU_FAULT"
+                   : (v3d_test.status == -4) ? "RENDER_TIMEOUT"
+                   :                           "NO_GPU";
+    int w = snprintf(buf, bufsize,
+        "v3d.test: clear=0x%08x status=%s  bfc %u->%u rfc %u->%u  bin=%lluus rend=%lluus oom=%d\n",
+        v3d_test.color, st, v3d_test.bfc0 & 0xff, v3d_test.bfc1 & 0xff,
+        v3d_test.rfc0 & 0xff, v3d_test.rfc1 & 0xff,
+        (unsigned long long)v3d_test.bin_us, (unsigned long long)v3d_test.rend_us, v3d_test.oom);
+    if (v3d_test.status == 0)
+        w += snprintf(buf + w, bufsize - w,
+            "  pixel[%u,%u]=0x%08x expect 0x%08x scratch0=0x%08x -- %s\n",
+            gpu_width / 2, gpu_height / 2, v3d_test.pixel, v3d_test.color, v3d_test.scratch0,
+            (v3d_test.pixel_pass && v3d_test.scratch0 == 0) ? "PASS" : "FAIL");
+    else
+        w += snprintf(buf + w, bufsize - w,
+            "  CT0CA-QBA=0x%x CT1CA-QBA=0x%x CT0CS=0x%08x CT1CS=0x%08x\n"
+            "  hub_int=0x%08x core_int=0x%08x VIO_ADDR=0x%08x VIO_ID=0x%08x DEBUG=0x%08x PT_BASE=0x%08x resets=%u\n",
+            v3d_test.ct0ca - v3d_test.ct0qba, v3d_test.ct1ca - v3d_test.ct1qba,
+            v3d_test.ct0cs, v3d_test.ct1cs, v3d_test.hub_ist, v3d_test.core_ist,
+            v3d_test.vio_addr, v3d_test.vio_id, v3d_test.dbg, v3d_test.pt_base, v3d_resets);
+    return w;
+}
+
+/* Called on the display_server thread when it wakes on its bound notification: run a
+ * pending /proc/v3d.test clear request. No-op if none pending. */
+void v3d_service_display_request(void) {
+    if (!g_v3d_req) return;
+    g_v3d_req = 0;
+    v3d_clear_and_probe(g_v3d_req_color);   /* fills v3d_test (RPi4); QEMU stub -> -5 */
+    arch_dsb();
+    v3d_test_seq++;                          /* unblock the .test poller */
+}
+
+/* /proc/v3d.test (fs thread): post the canned-orange clear request + wake
+ * display_server via the bound notification, then yield-poll for the result so it
+ * prints inline. NO seL4_Call here -- a nested Call from the fs thread (mid procfs
+ * read) would clobber the reply cap on non-MCS (see feedback_sel4_nested_call); the
+ * flag + Signal pattern keeps the reply cap intact. */
+static int v3d_test_post(char *buf, int bufsize) {
+    g_v3d_req_color = 0xFFFF8000u;   /* orange, R/B-asymmetric in BGR memory */
+    uint32_t seq0 = v3d_test_seq;
+    arch_dsb();
+    g_v3d_req = 1;
+    arch_dsb();
+    if (disp_wake_ntfn_cap) seL4_Signal(disp_wake_ntfn_cap);
+    for (uint64_t dl = mono_deadline_ms(2000); mono_before(dl); ) {
+        if (v3d_test_seq != seq0) break;
+        seL4_Yield();                /* let display_server (same core) run the job */
+    }
+    if (v3d_test_seq == seq0)
+        return snprintf(buf, bufsize,
+            "v3d.test: queued, display_server did not finish in 2s -- "
+            "cat /proc/v3d for the result\n");
+    return v3d_format_test_result(buf, bufsize);
+}
 
 /* ---- boot init: claims + IRQ bind + tag pin; ZERO V3D MMIO ---- */
 void v3d_init(void) {
@@ -770,6 +1105,9 @@ static int v3d_summary(char *buf, int bufsize) {
                   "pool=%s mmu=%s mmu_faults_seen=%u last_vio_addr=0x%08x vio_id=0x%08x\n",
                   v3d_pool_va ? "8MB" : "none", v3d_mmu_inited ? "ON" : "off",
                   v3d_mmu_faults_seen, v3d_fault_vio_addr, v3d_fault_vio_id);
+    w += snprintf(buf + w, bufsize - w, "tests_run=%u resets=%u\n",
+                  v3d_tests_run, v3d_resets);
+    if (v3d_test.valid) w += v3d_format_test_result(buf + w, bufsize - w);
     return w;
 }
 
@@ -791,6 +1129,7 @@ int v3d_diag_cmd(const char *args, char *buf, int bufsize) {
         if (v3d_pfx(p, "fault") && p[5] == 0) return v3d_fault_probe(buf, bufsize);
         if (v3d_pfx(p, "mmu")   && p[3] == 0) return v3d_mmu_verb(buf, bufsize);
         if (v3d_pfx(p, "cl")    && p[2] == 0) return v3d_cl_probe(buf, bufsize);
+        if (v3d_pfx(p, "test")  && p[4] == 0) return v3d_test_post(buf, bufsize);
         if (p[0] == 'r' && p[1] == '.') {
             uint32_t off = v3d_hex(p + 2) & 0x3ffc;
             return snprintf(buf, bufsize, "v3d hub[0x%03x] = 0x%08x\n", off, v3d_rd(off));
@@ -811,7 +1150,7 @@ int v3d_diag_cmd(const char *args, char *buf, int bufsize) {
                             off, val, v3d_rd(off));
         }
         return snprintf(buf, bufsize,
-            "v3d: verbs: (none) .power[.N] .clock[.MHz] .mmu .fault .cl "
+            "v3d: verbs: (none) .power[.N] .clock[.MHz] .mmu .fault .cl .test "
             ".r.<off> .c.<off> .w.<off>.<val>\n");
     }
     return v3d_summary(buf, bufsize);

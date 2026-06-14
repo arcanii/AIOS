@@ -38,6 +38,7 @@ int main(int argc, char **argv) {
         .fb_va         = 0x10000000u,
         .fb_stride     = 4096u,
         .tile_alloc_va = 0x00110000u,
+        .rb_swap       = 1,   /* the golden capture (Random06457) stores R/B-swapped */
     };
     uint8_t bin[256], rend[1024];
     int bn = v3d_build_bin_cl(bin, (int)sizeof bin, &p);

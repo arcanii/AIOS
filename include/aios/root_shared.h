@@ -80,7 +80,7 @@
  * that collided with NET_CLEANUP_PID at 98. ---- */
 #include "aios/net_proto.h"
 
-/* ---- DISPLAY IPC labels (110-119) ---- */
+/* ---- DISPLAY IPC labels (110-129) ---- */
 #define DISP_FB_INFO     110
 #define DISP_SHOW_FILE   111
 #define DISP_TEXT        112
@@ -88,6 +88,8 @@
 #define DISP_CLEAR       114
 #define DISP_CUBE        115   /* software 3D: spinning wireframe cube demo */
 #define DISP_CONSOLE     116   /* mirror tty output to the HDMI fb_console (len in MR0, chars MR1+) */
+#define DISP_V3D_CLEAR   118   /* Phase 2: GPU clear to the live FB (MR0=FB-order color) + pixel probe; MR0=status */
+#define DISP_V3D_RELEASE 121   /* resume the console after a GPU clear (un-suspend + clear) */
 
 /* ── Limits ── */
 
@@ -286,6 +288,10 @@ extern int gpu_available;
 extern uint32_t gpu_width;
 extern uint32_t gpu_height;
 extern seL4_CPtr disp_ep_cap;
+/* Badged notification bound to the display_server TCB: the fs-thread /proc/v3d.test
+ * verb seL4_Signals it (NOT a Call -- non-MCS reply-cap safety) to wake display_server
+ * so it runs the pending GPU clear. 0 until the display thread is started. */
+extern seL4_CPtr disp_wake_ntfn_cap;
 
 /* The framebuffer is mapped CACHEABLE (writes are ~10x faster than non-cacheable,
  * which matters for the scrolling HDMI console). After writing gpu_fb, the dirty
@@ -294,6 +300,9 @@ extern seL4_CPtr disp_ep_cap;
  * range; gpu_fb_flush_all cleans the whole framebuffer. */
 void gpu_fb_flush(void *start, uint32_t bytes);
 void gpu_fb_flush_all(void);
+/* Clean+invalidate one 4 KB FB page (page_idx from gpu_fb base) for the V3D pixel
+ * probe -- forces a CPU read to fetch GPU-written pixels from RAM. */
+void gpu_fb_invalidate_page(uint32_t page_idx);
 
 /* Crypto server endpoint (crypto_server thread) */
 extern seL4_CPtr crypto_ep_cap;

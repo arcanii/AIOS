@@ -30,4 +30,16 @@ int v3d_mem_reserve(void);
  * framebuffer). Writes the human-readable result into buf; returns its length. */
 int v3d_diag_cmd(const char *args, char *buf, int bufsize);
 
+/* Phase 2 (the GPU kick). Run a full GPU clear to the live HDMI framebuffer + a
+ * center-pixel probe. MUST run on the display_server thread (the single FB writer):
+ * it takes FB ownership internally (flush-all + console suspend) and, on a job
+ * failure, resets the GPU and restores the console. Returns 0 on PASS, negative on
+ * failure (-5 = no GPU / not powered). QEMU stub returns -5 and touches nothing. */
+int v3d_clear_and_probe(uint32_t color);
+
+/* Called by display_server when its blocking seL4_Recv wakes on the bound display
+ * notification: services a pending /proc/v3d.test clear request (no-op if none).
+ * Mirrors the net_server bound-notification wake. */
+void v3d_service_display_request(void);
+
 #endif /* AIOS_GPU_V3D_H */

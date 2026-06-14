@@ -18,6 +18,11 @@ void fb_console_clear(void);
  * many fb_console_putc then call this once. */
 void fb_console_flush(void);
 
+/* Suspend/resume console rendering while the GPU owns the framebuffer (V3D job in
+ * flight). When suspended every FB-touching console op no-ops so a dirty CPU line
+ * never overwrites GPU pixels (the FB cache-ownership protocol). */
+void fb_console_set_suspend(int on);
+
 /* /proc/fbcon -- scroll/flush diagnostics (phase + flush page progress) for debugging the
  * cacheable-framebuffer scroll freeze on real HW. Writes a snapshot into buf. */
 int fb_console_diag(char *buf, int bufsize);
