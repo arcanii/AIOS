@@ -496,8 +496,12 @@ int main(int argc, char *argv[]) {
     while (1) {
         /* DVFS load probe: on RPi4 the root spins here (no-WFI stall cure), so
          * this counter advances at the spin rate when idle and slows as real work
-         * preempts core 0 -- /proc/cpufreq samples its rate. Harmless on QEMU. */
+         * preempts core 0 -- the governor samples its rate. Harmless on QEMU. */
         g_root_loop_iters++;
+        /* RPi4 load-driven DVFS: lower the ARM clock at idle, raise under load
+         * (never WFI). Cheap per-iteration (a cntpct read + a compare); only Calls
+         * the VC mailbox on a clock transition. No-op on QEMU. */
+        cpu_gov_tick();
         /* Poll UART for keyboard -- drain FIFO in burst for paste */
         int uart_batch = 0;
 #ifdef PLAT_RPI4

@@ -330,7 +330,7 @@ static int v3d_mbox_send(void) {
     }
     return -1;
 }
-static int v3d_vc_tag(uint32_t tag, uint32_t *vals, int nwords) {
+static int v3d_vc_tag_raw(uint32_t tag, uint32_t *vals, int nwords) {
     if (!v3d_mbox_ready) { v3d_mbox_init(); if (!v3d_mbox_ready) return -1; }
     volatile uint32_t *b = v3d_mbox_buf;
     b[0] = (uint32_t)((6 + nwords) * 4);
@@ -344,6 +344,19 @@ static int v3d_vc_tag(uint32_t tag, uint32_t *vals, int nwords) {
     if (v3d_mbox_send()) return -1;
     for (int k = 0; k < nwords; k++) vals[k] = b[5 + k];
     return 0;
+}
+/* The VC mailbox tag buffer is shared but is now Called from TWO threads: the fs
+ * thread (/proc/temp, /proc/cpufreq, /proc/v3d) and the root main thread (the DVFS
+ * governor via hw_arm_clock_set). Serialize with a non-blocking test-and-set so a
+ * concurrent caller cannot corrupt a transaction mid-flight; the loser gets -1
+ * (treated as "mailbox unavailable", which both callers already handle -- the
+ * governor skips the tick, a /proc read shows unavailable). */
+static volatile unsigned char vc_lock = 0;
+static int v3d_vc_tag(uint32_t tag, uint32_t *vals, int nwords) {
+    if (__atomic_test_and_set(&vc_lock, __ATOMIC_ACQUIRE)) return -1;
+    int rc = v3d_vc_tag_raw(tag, vals, nwords);
+    __atomic_clear(&vc_lock, __ATOMIC_RELEASE);
+    return rc;
 }
 static int v3d_clock_verb(int set, uint32_t mhz, char *buf, int bufsize) {
     if (set) {

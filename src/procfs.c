@@ -350,6 +350,16 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
             else
                 w += snprintf(buf + w, bufsize - w,
                     "arm clock set: unavailable (no VC mailbox)\n");
+        } else if (arg[0] == '.' && arg[1] == 'g' && arg[2] == 'o' && arg[3] == 'v'
+                && arg[4] == '.') {
+            /* /proc/cpufreq.gov.0 | .gov.1 -- toggle the load-driven DVFS governor.
+             * When ON it owns the clock (a manual .set is overridden on the next
+             * tick); turn it OFF to drive the clock manually with .set. */
+            int on = (arg[5] == '1');
+            cpu_gov_enable(on);
+            w += snprintf(buf + w, bufsize - w, "governor %s\n",
+                          on ? "enabled" : "disabled");
+            w += cpu_gov_status(buf + w, bufsize - w);
         } else {
             unsigned int cur = 0, max = 0;
             if (hw_arm_clock_hz(&cur, &max) == 0) {
@@ -367,6 +377,7 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
             __asm__ volatile("mrs %0, cntpct_el0" : "=r"(cnt));
             w += snprintf(buf + w, bufsize - w,
                 "loop_iters: %lu\ncntpct: %llu\n", g_root_loop_iters, cnt);
+            w += cpu_gov_status(buf + w, bufsize - w);
         }
     } else if (path[0] == 'c' && path[1] == 'p') {
         /* /proc/cpuinfo */
