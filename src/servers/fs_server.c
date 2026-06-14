@@ -459,14 +459,20 @@ void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
              *          MR8-11=sha256(readback). */
             seL4_Word fw_pathlen = seL4_GetMR(0);
             seL4_Word fw_abort   = seL4_GetMR(1);
-            char fw_path[128];
-            int fw_pl = (fw_pathlen > 127) ? 127 : (int)fw_pathlen;
+            char fw_buf[160];
+            int fw_pl = (fw_pathlen > 159) ? 159 : (int)fw_pathlen;
             int fw_mr = 2;
             for (int i = 0; i < fw_pl; i++) {
                 if (i % 8 == 0 && i > 0) fw_mr++;
-                fw_path[i] = (char)((seL4_GetMR(fw_mr) >> ((i % 8) * 8)) & 0xFF);
+                fw_buf[i] = (char)((seL4_GetMR(fw_mr) >> ((i % 8) * 8)) & 0xFF);
             }
-            fw_path[fw_pl] = '\0';
+            fw_buf[fw_pl] = '\0';
+            /* optional target packed after the src path as "path\0target";
+             * default kernel8.img for the original flash-over-network use. */
+            const char *fw_path   = fw_buf;
+            int fw_plen = (int)strlen(fw_buf);
+            const char *fw_target = (fw_plen + 1 < fw_pl) ? (fw_buf + fw_plen + 1)
+                                                          : "kernel8.img";
 
             fat32_swap_result_t fr;
             memset(&fr, 0, sizeof(fr));
@@ -474,8 +480,8 @@ void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             if (!fs_check_write_perm(fs_badge)) {
                 frc = -1;   /* permission denied: root only */
             } else {
-                frc = fat32_swap_kernel(&ext2, fw_path,
-                                        (uint32_t)fw_abort, &fr);
+                frc = fat32_write_file(&ext2, fw_path, fw_target,
+                                       (uint32_t)fw_abort, &fr);
             }
             seL4_SetMR(0, (seL4_Word)frc);
             seL4_SetMR(1, (seL4_Word)fr.bytes);
@@ -494,6 +500,46 @@ void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
                 seL4_SetMR(8 + i, w);
             }
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 12));
+            break;
+        }
+        case FS_FATREAD: {
+            /* Read an existing FAT32 boot-partition file INLINE (small files,
+             * e.g. config.txt -- pull it, edit, write back via FS_FATSWAP).
+             * Request: MR0=target_len, MR2..=target name (8.3, e.g. config.txt).
+             * Reply: MR0=status, MR1=size, MR2..=file bytes (8/MR, up to 896).
+             * Root only -- a low-level raw-partition op. */
+            seL4_Word tlen = seL4_GetMR(0);
+            char tname[64];
+            int tl = (tlen > 63) ? 63 : (int)tlen;
+            int tmr = 2;
+            for (int i = 0; i < tl; i++) {
+                if (i % 8 == 0 && i > 0) tmr++;
+                tname[i] = (char)((seL4_GetMR(tmr) >> ((i % 8) * 8)) & 0xFF);
+            }
+            tname[tl] = '\0';
+            static uint8_t fr_rdbuf[896];
+            uint32_t rsize = 0;
+            long rrc;
+            if (!fs_check_write_perm(fs_badge)) {
+                rrc = -1;   /* root only */
+            } else {
+                rrc = fat32_read_file(tname, fr_rdbuf, sizeof(fr_rdbuf), &rsize);
+            }
+            seL4_SetMR(0, (seL4_Word)rrc);
+            seL4_SetMR(1, (seL4_Word)rsize);
+            int rnw = 0;
+            if (rrc == 0) {
+                rnw = (int)((rsize + 7) / 8);
+                for (int i = 0; i < rnw; i++) {
+                    seL4_Word w = 0;
+                    for (int j = 0; j < 8; j++) {
+                        uint32_t idx = (uint32_t)(i * 8 + j);
+                        if (idx < rsize) w |= ((seL4_Word)fr_rdbuf[idx]) << (j * 8);
+                    }
+                    seL4_SetMR(2 + i, w);
+                }
+            }
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 2 + rnw));
             break;
         }
         default:

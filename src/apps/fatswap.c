@@ -17,6 +17,7 @@
 #include "aios_posix.h"
 
 #define FS_FATSWAP 23
+#define FS_FATREAD 24
 
 static const char *err_str(long rc) {
     switch (rc) {
@@ -24,14 +25,45 @@ static const char *err_str(long rc) {
     case -2:  return "no FAT boot partition on this disk";
     case -3:  return "unsupported or corrupt FAT32 BPB";
     case -4:  return "source file missing, empty, or unreadable";
-    case -5:  return "KERNEL8.IMG not found in the FAT root directory";
+    case -5:  return "target file not found in the FAT root directory";
     case -6:  return "not enough free clusters on the boot partition";
     case -7:  return "sector I/O failed";
     case -8:  return "readback verification FAILED after commit";
     case -9:  return "corrupt FAT chain";
-    case -10: return "source file too large";
+    case -10: return "file too large (source / read buffer)";
+    case -11: return "target name not 8.3-representable";
     default:  return "unknown error";
     }
+}
+
+/* fatswap --read <target>: dump an existing FAT boot-partition file (config.txt)
+ * to stdout, so it can be pulled over netconsole, edited, and written back. */
+static int do_read(seL4_CPtr fs, const char *target) {
+    int tn = (int)strlen(target);
+    if (tn < 1 || tn > 63) {
+        fprintf(stderr, "fatswap: bad target name\n");
+        return 2;
+    }
+    seL4_SetMR(0, (seL4_Word)tn);
+    int mr = 2;
+    seL4_Word w = 0;
+    for (int i = 0; i < tn; i++) {
+        w |= ((seL4_Word)(unsigned char)target[i]) << ((i % 8) * 8);
+        if (i % 8 == 7) { seL4_SetMR(mr++, w); w = 0; }
+    }
+    if (tn % 8) seL4_SetMR(mr++, w);
+    seL4_Call(fs, seL4_MessageInfo_new(FS_FATREAD, 0, 0, mr));
+    long rc = (long)seL4_GetMR(0);
+    if (rc != 0) {
+        fprintf(stderr, "fatswap --read: FAIL (%ld): %s\n", rc, err_str(rc));
+        return 1;
+    }
+    unsigned long size = (unsigned long)seL4_GetMR(1);
+    for (unsigned long i = 0; i < size; i++) {
+        seL4_Word v = seL4_GetMR(2 + (i / 8));
+        putchar((int)(unsigned char)(v >> ((i % 8) * 8)));
+    }
+    return 0;
 }
 
 static void sha_hex(const unsigned char *sha, char *out) {
@@ -44,18 +76,18 @@ static void sha_hex(const unsigned char *sha, char *out) {
 }
 
 int main(int argc, char *argv[]) {
-    const char *path = NULL;
+    const char *path = NULL, *target = NULL, *readname = NULL;
     unsigned long abort_phase = 0;
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--abort-after-data") == 0)   abort_phase = 1;
+        if (strcmp(argv[i], "--abort-after-data") == 0)        abort_phase = 1;
         else if (strcmp(argv[i], "--abort-after-fat") == 0)    abort_phase = 2;
         else if (strcmp(argv[i], "--abort-after-dirent") == 0) abort_phase = 3;
-        else path = argv[i];
-    }
-    if (!path || path[0] != '/') {
-        fprintf(stderr, "usage: fatswap <absolute-path>\n");
-        return 2;
+        else if (strcmp(argv[i], "--read") == 0) {
+            if (i + 1 < argc) readname = argv[++i];
+        }
+        else if (!path)   path = argv[i];
+        else if (!target) target = argv[i];
     }
 
     seL4_CPtr fs = aios_get_fs_ep();
@@ -64,10 +96,22 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    int len = (int)strlen(path);
-    if (len > 127) {
-        fprintf(stderr, "fatswap: path too long\n");
+    if (readname) return do_read(fs, readname);
+
+    if (!path || path[0] != '/') {
+        fprintf(stderr, "usage: fatswap <abs-src-path> [target-name]\n");
+        fprintf(stderr, "       fatswap --read <target-name>\n");
+        fprintf(stderr, "  target defaults to kernel8.img; e.g. fatswap /tmp/config.txt config.txt\n");
         return 2;
+    }
+
+    /* Pack "path" or "path\0target" (target optional -> kernel8.img default). */
+    char buf[160];
+    int len = 0;
+    for (const char *p = path; *p && len < 158; p++) buf[len++] = *p;
+    if (target) {
+        buf[len++] = '\0';
+        for (const char *p = target; *p && len < 159; p++) buf[len++] = *p;
     }
 
     seL4_SetMR(0, (seL4_Word)len);
@@ -75,7 +119,7 @@ int main(int argc, char *argv[]) {
     int mr = 2;
     seL4_Word w = 0;
     for (int i = 0; i < len; i++) {
-        w |= ((seL4_Word)(unsigned char)path[i]) << ((i % 8) * 8);
+        w |= ((seL4_Word)(unsigned char)buf[i]) << ((i % 8) * 8);
         if (i % 8 == 7) { seL4_SetMR(mr++, w); w = 0; }
     }
     if (len % 8) seL4_SetMR(mr++, w);

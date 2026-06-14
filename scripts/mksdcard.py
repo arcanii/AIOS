@@ -230,6 +230,11 @@ def create_config_txt(path, mem_mb, kernel_addr=None):
     config += "gpu_mem=64\n"
     # v0.4.235: ARM-clock cap for thermals (see ARM_FREQ_CAP_MHZ above).
     config += f"arm_freq={ARM_FREQ_CAP_MHZ}\n"
+    # Open the ARM clock FLOOR so the DVFS governor can downclock to 300 at idle
+    # (the firmware clamps SET_CLOCK_RATE to [arm_freq_min, arm_freq]; without a
+    # floor it pins at arm_freq). Previously added by hand via a physical SD mount;
+    # now baked in (and editable flash-free via `fatswap --read/write config.txt`).
+    config += "arm_freq_min=300\n"
     with open(path, "w") as f:
         f.write(config)
 

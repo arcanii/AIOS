@@ -273,8 +273,31 @@ typedef struct {
     uint32_t size;
 } dirent_loc_t;
 
-static int find_kernel_dirent(dirent_loc_t *loc) {
-    static const char target[11] = "KERNEL8 IMG";
+/* Convert a friendly name ("config.txt") to the 11-byte 8.3 dirent field
+ * ("CONFIG  TXT"). Returns 0, or -1 if not 8.3-representable (>8 name / >3 ext).
+ * config.txt and kernel8.img are both 8.3-clean, so their dirents match directly
+ * (we never create entries, so LFN-only names are out of scope by design). */
+static int name_to_83(const char *name, char out[11]) {
+    for (int k = 0; k < 11; k++) out[k] = ' ';
+    int i = 0, o = 0;
+    while (name[i] && name[i] != '.') {
+        if (o >= 8) return -1;
+        char c = name[i++];
+        out[o++] = (c >= 'a' && c <= 'z') ? (char)(c - 32) : c;
+    }
+    if (name[i] == '.') {
+        i++; o = 8;
+        while (name[i]) {
+            if (o >= 11) return -1;
+            char c = name[i++];
+            out[o++] = (c >= 'a' && c <= 'z') ? (char)(c - 32) : c;
+        }
+    }
+    return 0;
+}
+
+/* Locate a root-directory dirent by its 11-byte 8.3 name (LFNs skipped). */
+static int find_dirent(const char target[11], dirent_loc_t *loc) {
     uint32_t cl = g.root_cluster;
     uint32_t hops = 0;
 
@@ -472,10 +495,17 @@ static int hash_chain(uint32_t first, uint32_t size, uint8_t out[32]) {
 /* ---------------------------------------------------------------- */
 /* fat32_swap_kernel -- the orchestration                            */
 /* ---------------------------------------------------------------- */
-int fat32_swap_kernel(ext2_ctx_t *src_fs, const char *src_path,
-                      uint32_t abort_phase, fat32_swap_result_t *out)
+int fat32_write_file(ext2_ctx_t *src_fs, const char *src_path,
+                     const char *target_name, uint32_t abort_phase,
+                     fat32_swap_result_t *out)
 {
     memset(out, 0, sizeof(*out));
+
+    char t83[11];
+    if (name_to_83(target_name, t83) != 0) {
+        AIOS_LOG_WARN("target name not 8.3-representable");
+        return FAT32_ERR_NAME;
+    }
 
     int rc = parse_bpb();
     if (rc) return rc;
@@ -496,7 +526,7 @@ int fat32_swap_kernel(ext2_ctx_t *src_fs, const char *src_path,
 
     /* Existing dirent + old chain */
     dirent_loc_t de;
-    rc = find_kernel_dirent(&de);
+    rc = find_dirent(t83, &de);
     if (rc) return rc;
     int n_old = collect_chain(de.first, old_chain);
     if (n_old < 0) return n_old;
@@ -580,7 +610,7 @@ int fat32_swap_kernel(ext2_ctx_t *src_fs, const char *src_path,
 
     /* Verify: re-read the dirent, hash the chain it references. */
     dirent_loc_t check;
-    rc = find_kernel_dirent(&check);
+    rc = find_dirent(t83, &check);
     if (rc) return rc;
     rc = hash_chain(check.first, check.size, out->sha_disk);
     if (rc) return rc;
@@ -590,5 +620,46 @@ int fat32_swap_kernel(ext2_ctx_t *src_fs, const char *src_path,
         return FAT32_ERR_VERIFY;
     }
     AIOS_LOG_INFO("swap complete, readback verified");
+    return 0;
+}
+
+/* ---------------------------------------------------------------- */
+/* fat32_read_file -- copy an existing root-dir file off the FAT     */
+/* into dst (up to max bytes). Read-only: walks the dirent + chain,  */
+/* never writes. Used to pull config.txt for an edit over the net.   */
+/* ---------------------------------------------------------------- */
+int fat32_read_file(const char *target_name, uint8_t *dst, uint32_t max,
+                    uint32_t *out_size)
+{
+    char t83[11];
+    if (name_to_83(target_name, t83) != 0) return FAT32_ERR_NAME;
+
+    int rc = parse_bpb();
+    if (rc) return rc;
+
+    dirent_loc_t de;
+    rc = find_dirent(t83, &de);
+    if (rc) return rc;
+    if (de.size > max) return FAT32_ERR_TOOBIG;
+
+    uint32_t cl = de.first, off = 0;
+    while (off < de.size) {
+        if (!cluster_valid(cl)) return FAT32_ERR_CHAIN;
+        uint64_t lba = cluster_lba(cl);
+        for (uint32_t s = 0; s < g.spc && off < de.size; s++) {
+            if (plat_blk_read_abs(lba + s, sec_buf) != 0) return FAT32_ERR_IO;
+            uint32_t take = de.size - off;
+            if (take > 512) take = 512;
+            memcpy(dst + off, sec_buf, take);
+            off += take;
+        }
+        uint32_t next;
+        rc = fat_entry(cl, &next);
+        if (rc) return rc;
+        if (next >= FAT_EOC_MIN) break;
+        cl = next;
+    }
+    *out_size = de.size;
+    AIOS_LOG_INFO_V("fat read bytes=", (unsigned long)de.size);
     return 0;
 }
