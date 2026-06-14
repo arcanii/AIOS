@@ -4,6 +4,22 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.247 (2026-06-14)
+**eMMC/SD-aware filesystem -- read path + longevity.** Brings the read path and
+longevity up to par with the already-optimized write path (CMD25 multi-block +
+write-back):
+- **Multi-block reads (CMD18):** cache line-fills fetch a whole 4 KB / 8-sector
+  line in one transfer instead of 8 single-block reads -- the read-side mirror of
+  the CMD25 write win.
+- **Sequential read-ahead:** a sustained sequential read prefetches the next
+  lines, budget-gated so it never evicts the working set.
+- **Discard on unlink (CMD38 erase):** ext2 unlink tells the SD card which blocks
+  are freed (coalesced into contiguous runs), reducing FTL write amplification;
+  the block cache drops freed lines without write-back.
+AU-aligned allocation deferred (ext2 layout is fixed at mkfs; the real lever is
+write coalescing, already mostly built). New QEMU tests for multi-read /
+read-ahead / discard, plus the sync + reboot-flush regressions.
+
 ## v0.4.246 (2026-06-14)
 **V3D Phase 2 (in progress) -- in-kernel CL build + framebuffer mapping.** The
 clear control-list emitters now run in the kernel: a BO bump allocator carves the
