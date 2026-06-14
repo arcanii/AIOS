@@ -89,7 +89,8 @@
 #define DISP_CUBE        115   /* software 3D: spinning wireframe cube demo */
 #define DISP_CONSOLE     116   /* mirror tty output to the HDMI fb_console (len in MR0, chars MR1+) */
 #define DISP_V3D_CLEAR   118   /* Phase 2: GPU clear to the live FB (MR0=FB-order color) + pixel probe; MR0=status */
-#define DISP_V3D_RELEASE 121   /* resume the console after a GPU clear (un-suspend + clear) */
+#define DISP_V3D_TRI     119   /* Phase 3: GPU rainbow triangle to the live FB + probe; MR0=status */
+#define DISP_V3D_RELEASE 121   /* resume the console after a GPU op (un-suspend + clear) */
 
 /* ── Limits ── */
 

@@ -64,7 +64,7 @@ int main(int argc, char *argv[]) {
 
     if (argc < 2) {
         printf("Usage: fbshow <file.raw> | --info | --clear [RRGGBB] | --cube\n"
-               "             | --gpu-clear [AABBGGRR] | --gpu-release\n");
+               "             | --gpu-clear [AABBGGRR] | --gpu-tri | --gpu-release\n");
         return 1;
     }
 
@@ -107,8 +107,19 @@ int main(int argc, char *argv[]) {
         return st == 0 ? 0 : 1;
     }
 
+    if (streq(argv[1], "--gpu-tri")) {
+        /* Phase 3: GPU-rendered rainbow triangle on the live framebuffer. */
+        seL4_MessageInfo_t r = seL4_Call(disp_ep,
+            seL4_MessageInfo_new(DISP_V3D_TRI, 0, 0, 0));
+        (void)r;
+        int st = (int)seL4_GetMR(0);
+        printf("gpu-tri: status=%d %s (cat /proc/v3d for the probe line)\n",
+               st, st == 0 ? "PASS" : "FAIL");
+        return st == 0 ? 0 : 1;
+    }
+
     if (streq(argv[1], "--gpu-release")) {
-        /* resume the console after a GPU clear (un-suspend + clear) */
+        /* resume the console after a GPU op (un-suspend + clear) */
         seL4_Call(disp_ep, seL4_MessageInfo_new(DISP_V3D_RELEASE, 0, 0, 0));
         return 0;
     }

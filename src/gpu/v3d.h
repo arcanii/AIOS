@@ -37,8 +37,13 @@ int v3d_diag_cmd(const char *args, char *buf, int bufsize);
  * failure (-5 = no GPU / not powered). QEMU stub returns -5 and touches nothing. */
 int v3d_clear_and_probe(uint32_t color);
 
+/* Phase 3: render the rainbow triangle (GL Shader State path) to the live FB +
+ * center/corner probe. Same thread + ownership rules as v3d_clear_and_probe.
+ * Returns 0 on PASS (center pixel != clear color), negative on failure. QEMU: -5. */
+int v3d_triangle_and_probe(void);
+
 /* Called by display_server when its blocking seL4_Recv wakes on the bound display
- * notification: services a pending /proc/v3d.test clear request (no-op if none).
+ * notification: services a pending /proc/v3d.{test,tri} request (no-op if none).
  * Mirrors the net_server bound-notification wake. */
 void v3d_service_display_request(void);
 

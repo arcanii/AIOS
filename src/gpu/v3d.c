@@ -31,6 +31,7 @@
 #include "v3d_regs.h"
 #include "v3d.h"
 #include "v3d_cl.h"
+#include "v3d_shaders.h"           /* the 3 QPU blobs + triangle geometry (Phase 3) */
 #define LOG_MODULE "v3d"
 #define LOG_LEVEL LOG_LEVEL_INFO
 #include "aios/aios_log.h"
@@ -83,10 +84,10 @@ static uint32_t  v3d_mmu_faults_seen;
  * bound-notification Recv wakes, calls v3d_service_display_request() -> the takeover +
  * v3d_submit_frame + pixel probe (all on its own thread). Result lands in v3d_test,
  * harvested by the .test poll or a later `cat /proc/v3d`. */
-static volatile uint32_t g_v3d_req;          /* 1 = a clear is requested */
+static volatile uint32_t g_v3d_req;          /* request kind: 1 = clear, 2 = triangle */
 static volatile uint32_t g_v3d_req_color;    /* FB-order pixel value to clear to */
 static volatile uint32_t v3d_test_seq;       /* bumped after each job completes (poll) */
-static uint32_t v3d_tests_run;               /* total clear jobs attempted */
+static uint32_t v3d_tests_run;               /* total jobs attempted */
 static uint32_t v3d_resets;                  /* dump-and-reset count */
 
 /* Last clear-job result + (on failure) the dump-and-reset register snapshot.
@@ -102,6 +103,8 @@ static struct {
     uint32_t pixel;       /* probed center pixel (CleanInvalidate then read) */
     int      pixel_pass;
     uint32_t scratch0;    /* MMU scratch first word (R3 silent-redirect check) */
+    int      is_tri;      /* 1 = triangle job (center != clear is PASS); 0 = clear */
+    uint32_t corner_tl, corner_br;  /* triangle: a couple corner samples (visual aid) */
     /* dump-and-reset snapshot (valid when status != 0) */
     uint32_t ct0cs, ct1cs, ct0ca, ct1ca, ct0ra, ct1ra, ct0qba, ct1qba;
     uint32_t hub_ist, core_ist, vio_addr, vio_id, dbg, pt_base;
@@ -844,10 +847,69 @@ static void v3d_dump_and_reset(uint32_t ct0qba, uint32_t ct1qba) {
     v3d_resets++;
 }
 
-/* Build the bin+render clear CLs into pool BOs and run the empty-bin + render pair.
+/* Run the bin + render doorbell brackets for already-built CLs (clear or triangle).
  * Bracket = pool/PT writes -> dsb -> CT*Q* setup -> dsb -> CT*QEA (kick = write end
  * addr) -> dsb (DESIGN sec 5). Every wait deadline-bounded. On any failure dumps +
- * resets the GPU and returns the negative status; *res carries the counter deltas. */
+ * resets the GPU and returns the negative status; *res carries the counter deltas.
+ * Shared submit core so the triangle reuses the HW-proven Phase 2 path verbatim. */
+static int v3d_run_cls(struct v3d_bo *ts, struct v3d_bo *ta, struct v3d_bo *ovf,
+                       struct v3d_bo *bcl, int bn, struct v3d_bo *rcl, int rn,
+                       struct v3d_clear_result *res) {
+    /* zero the MMU scratch word so the post-job redirect check (scratch0 != 0 => a
+     * store landed on the ILLEGAL_ADDR sink) reflects THIS job only. Non-cacheable. */
+    *(volatile uint32_t *)(v3d_pool_va + V3D_SCRATCH_OFF) = 0;
+    arch_dsb();   /* CLs live in the non-cacheable pool; order them before the doorbell */
+
+    v3d_invalidate_gpu_caches();
+
+    /* capture frame counters BEFORE the kick (capture-before-notify, v0.4.147). */
+    res->bfc0 = v3d_rd(V3D_CORE0_OFFSET + V3D_CLE_BFC);
+    res->rfc0 = v3d_rd(V3D_CORE0_OFFSET + V3D_CLE_RFC);
+    v3d_wr(V3D_CORE0_OFFSET + V3D_CTL_INT_CLR, 0xffffffffu);   /* stale OUTOMEM/done */
+    v3d_wr(V3D_HUB_INT_CLR, V3D_HUB_INT_MMU_PTI | V3D_HUB_INT_MMU_WRV | V3D_HUB_INT_MMU_CAP);
+    arch_dsb();
+
+    /* ---- bin bracket (CT0) ---- */
+    v3d_wr(V3D_CORE0_OFFSET + V3D_PTB_BPOS, 0);              /* clear stale overflow size */
+    v3d_wr(V3D_CORE0_OFFSET + V3D_CLE_CT0QMA, ta->gpu_va);  /* tile-alloc base */
+    v3d_wr(V3D_CORE0_OFFSET + V3D_CLE_CT0QMS, ta->size);    /* tile-alloc size */
+    v3d_wr(V3D_CORE0_OFFSET + V3D_CLE_CT0QTS, ts->gpu_va | V3D_CLE_CT0QTS_ENABLE);
+    arch_dsb();
+    v3d_wr(V3D_CORE0_OFFSET + V3D_CLE_CT0QBA, bcl->gpu_va);
+    arch_dsb();
+    uint64_t t0 = mono_ticks();
+    v3d_wr(V3D_CORE0_OFFSET + V3D_CLE_CT0QEA, bcl->gpu_va + (uint32_t)bn);   /* KICK */
+    arch_dsb();
+    int br = v3d_poll_bin(res->bfc0, ovf->gpu_va, ovf->size, &res->oom);
+    res->bin_us = mono_us_since(t0);
+    res->bfc1 = v3d_rd(V3D_CORE0_OFFSET + V3D_CLE_BFC);
+    if (br != 1) {
+        v3d_dump_and_reset(bcl->gpu_va, 0);
+        return (br == -2) ? -2 : (br == -3) ? -3 : -1;
+    }
+
+    /* ---- render bracket (CT1) ---- */
+    arch_dsb();
+    v3d_wr(V3D_CORE0_OFFSET + V3D_CLE_CT1QBA, rcl->gpu_va);
+    arch_dsb();
+    uint64_t t1 = mono_ticks();
+    v3d_wr(V3D_CORE0_OFFSET + V3D_CLE_CT1QEA, rcl->gpu_va + (uint32_t)rn);   /* KICK */
+    arch_dsb();
+    int rr = v3d_poll_frame(V3D_CORE0_OFFSET + V3D_CLE_RFC, res->rfc0, 250);
+    res->rend_us = mono_us_since(t1);
+    res->rfc1 = v3d_rd(V3D_CORE0_OFFSET + V3D_CLE_RFC);
+    if (rr != 1) {
+        v3d_dump_and_reset(bcl->gpu_va, rcl->gpu_va);
+        return (rr == -3) ? -3 : -4;
+    }
+    /* render done: flush the GPU L2T so the FB stores land in RAM for the display
+     * controller (scanout reads RAM) and the CPU pixel probe. Without this RFC can
+     * advance with the pixels still in the GPU cache -- "RFC++ but no orange". */
+    v3d_l2t_flush();
+    return 0;
+}
+
+/* Build the bin+render clear CLs into pool BOs and run the empty-bin + render pair. */
 static int v3d_submit_frame(uint32_t color, struct v3d_clear_result *res) {
     res->oom = 0; res->bin_us = res->rend_us = 0;
     res->bfc0 = res->bfc1 = res->rfc0 = res->rfc1 = 0;
@@ -870,59 +932,100 @@ static int v3d_submit_frame(uint32_t color, struct v3d_clear_result *res) {
     int bn = v3d_build_bin_cl(bcl.cpu, (int)bcl.size, &cp);
     int rn = v3d_build_render_cl(rcl.cpu, (int)rcl.size, rcl.gpu_va, &cp);
     if (bn < 0 || rn < 0) return -5;
-    /* zero the MMU scratch word so the post-job redirect check (scratch0 != 0 => a
-     * store landed on the ILLEGAL_ADDR sink) reflects THIS job only -- a prior failed
-     * job's redirect would otherwise leave it nonzero forever. Non-cacheable pool. */
-    *(volatile uint32_t *)(v3d_pool_va + V3D_SCRATCH_OFF) = 0;
-    arch_dsb();   /* CLs live in the non-cacheable pool; order them before the doorbell */
+    return v3d_run_cls(&ts, &ta, &ovf, &bcl, bn, &rcl, rn, res);
+}
 
-    v3d_invalidate_gpu_caches();
+/* ---- Phase 3: build the triangle BOs (shaders/records/uniforms/geometry/CLs) and
+ * submit via the shared core. Reuses v3d_run_cls verbatim. ---- */
+#define V3D_TRI_CLEAR_COLOR  0xff101010u   /* dark gray, so the rainbow stands out */
 
-    /* capture frame counters BEFORE the kick (capture-before-notify, v0.4.147). */
-    res->bfc0 = v3d_rd(V3D_CORE0_OFFSET + V3D_CLE_BFC);
-    res->rfc0 = v3d_rd(V3D_CORE0_OFFSET + V3D_CLE_RFC);
-    v3d_wr(V3D_CORE0_OFFSET + V3D_CTL_INT_CLR, 0xffffffffu);   /* stale OUTOMEM/done */
-    v3d_wr(V3D_HUB_INT_CLR, V3D_HUB_INT_MMU_PTI | V3D_HUB_INT_MMU_WRV | V3D_HUB_INT_MMU_CAP);
-    arch_dsb();
+static void v3d_load_words(uint8_t *dst, const uint64_t *src, unsigned nwords) {
+    volatile uint32_t *d = (volatile uint32_t *)dst;
+    for (unsigned i = 0; i < nwords; i++) { d[2 * i] = (uint32_t)src[i]; d[2 * i + 1] = (uint32_t)(src[i] >> 32); }
+}
 
-    /* ---- bin bracket (CT0) ---- */
-    v3d_wr(V3D_CORE0_OFFSET + V3D_PTB_BPOS, 0);              /* clear stale overflow size */
-    v3d_wr(V3D_CORE0_OFFSET + V3D_CLE_CT0QMA, ta.gpu_va);   /* tile-alloc base */
-    v3d_wr(V3D_CORE0_OFFSET + V3D_CLE_CT0QMS, ta.size);     /* tile-alloc size */
-    v3d_wr(V3D_CORE0_OFFSET + V3D_CLE_CT0QTS, ts.gpu_va | V3D_CLE_CT0QTS_ENABLE);
-    arch_dsb();
-    v3d_wr(V3D_CORE0_OFFSET + V3D_CLE_CT0QBA, bcl.gpu_va);
-    arch_dsb();
-    uint64_t t0 = mono_ticks();
-    v3d_wr(V3D_CORE0_OFFSET + V3D_CLE_CT0QEA, bcl.gpu_va + (uint32_t)bn);   /* KICK */
-    arch_dsb();
-    int br = v3d_poll_bin(res->bfc0, ovf.gpu_va, ovf.size, &res->oom);
-    res->bin_us = mono_us_since(t0);
-    res->bfc1 = v3d_rd(V3D_CORE0_OFFSET + V3D_CLE_BFC);
-    if (br != 1) {
-        v3d_dump_and_reset(bcl.gpu_va, 0);
-        return (br == -2) ? -2 : (br == -3) ? -3 : -1;
-    }
+static int v3d_submit_triangle(struct v3d_clear_result *res) {
+    res->oom = 0; res->bin_us = res->rend_us = 0;
+    res->bfc0 = res->bfc1 = res->rfc0 = res->rfc1 = 0;
+    if (v3d_mmu_init()) return -5;
+    v3d_ensure_clock();
+    uint32_t w = gpu_width, h = gpu_height;
 
-    /* ---- render bracket (CT1) ---- */
-    arch_dsb();
-    v3d_wr(V3D_CORE0_OFFSET + V3D_CLE_CT1QBA, rcl.gpu_va);
-    arch_dsb();
-    uint64_t t1 = mono_ticks();
-    v3d_wr(V3D_CORE0_OFFSET + V3D_CLE_CT1QEA, rcl.gpu_va + (uint32_t)rn);   /* KICK */
-    arch_dsb();
-    int rr = v3d_poll_frame(V3D_CORE0_OFFSET + V3D_CLE_RFC, res->rfc0, 250);
-    res->rend_us = mono_us_since(t1);
-    res->rfc1 = v3d_rd(V3D_CORE0_OFFSET + V3D_CLE_RFC);
-    if (rr != 1) {
-        v3d_dump_and_reset(bcl.gpu_va, rcl.gpu_va);
-        return (rr == -3) ? -3 : -4;
-    }
-    /* render done: flush the GPU L2T so the FB stores land in RAM for the display
-     * controller (scanout reads RAM) and the CPU pixel probe. Without this RFC can
-     * advance with the pixels still in the GPU cache -- "RFC++ but no orange". */
-    v3d_l2t_flush();
-    return 0;
+    v3d_bo_reset_frame();
+    struct v3d_bo ts, ta, ovf, zb, shc, dattr, unif, recat, posd, cold, tlist, bcl, rcl;
+    if (v3d_bo_alloc(&ts, 48u * 1024, 4096) || v3d_bo_alloc(&ta, 40u * 1024, 4096) ||
+        v3d_bo_alloc(&ovf, 256u * 1024, 4096) ||
+        v3d_bo_alloc(&zb, 2u * 1024 * 1024, 4096) ||   /* D16 depth (we store but never read) */
+        v3d_bo_alloc(&shc, 512, 8) ||                  /* frag+vtx+coord shaders (8-aligned) */
+        v3d_bo_alloc(&dattr, 256, 16) ||               /* default attribute values */
+        v3d_bo_alloc(&unif, 32, 16) ||                 /* viewport uniforms (5 + 3 floats) */
+        v3d_bo_alloc(&recat, 36 + 16 + 16, 16) ||      /* GL shader state record + 2 attr records (contiguous!) */
+        v3d_bo_alloc(&posd, 36, 16) || v3d_bo_alloc(&cold, 16, 16) ||  /* pos + color vertex data */
+        v3d_bo_alloc(&tlist, 64, 16) ||                /* generic tile list */
+        v3d_bo_alloc(&bcl, 256, 128) || v3d_bo_alloc(&rcl, 4096, 128))
+        return -5;
+    /* the GPU stores a D16 (2 bytes/px) Z buffer to zb -- fail loudly if a future FB
+     * cap ever makes the frame bigger than the fixed Z BO (silent overrun would
+     * corrupt the adjacent CL/record BOs in the pool). 1024x768 D16 = 1.5MB < 2MB. */
+    if ((uint64_t)w * h * 2u > zb.size) { AIOS_LOG_ERROR("V3D: Z buffer too small for FB"); return -5; }
+
+    /* shaders consecutive, 8-aligned: frag(12) then vtx(25) then coord(18) x u64 */
+    uint32_t frag_code = shc.gpu_va;
+    uint32_t vtx_code  = shc.gpu_va + (uint32_t)(V3D_FRAG_SHADER_WORDS * 8);
+    uint32_t coord_code = vtx_code + (uint32_t)(V3D_VTX_SHADER_WORDS * 8);
+    v3d_load_words(shc.cpu, v3d_frag_shader, V3D_FRAG_SHADER_WORDS);
+    v3d_load_words(shc.cpu + V3D_FRAG_SHADER_WORDS * 8, v3d_vtx_shader, V3D_VTX_SHADER_WORDS);
+    v3d_load_words(shc.cpu + (V3D_FRAG_SHADER_WORDS + V3D_VTX_SHADER_WORDS) * 8,
+                   v3d_coord_shader, V3D_COORD_SHADER_WORDS);
+
+    /* default attribute values: 16 x vec4(0,0,0,1) */
+    { volatile uint32_t *d = (volatile uint32_t *)dattr.cpu;
+      for (int i = 0; i < 16; i++) { d[4*i] = 0; d[4*i+1] = 0; d[4*i+2] = 0; d[4*i+3] = 0x3f800000u; } }
+
+    /* viewport uniforms: frag/vtx share [1.0, (w/2)*256, (h/2)*-256, 0.5, 0.5];
+     * coord = [1.0, (w/2)*256, (h/2)*-256]. */
+    { volatile uint32_t *u = (volatile uint32_t *)unif.cpu;
+      uint32_t hw = v3d_i2f((int32_t)((w / 2) * 256)), hh = v3d_i2f(-(int32_t)((h / 2) * 256));
+      u[0] = 0x3f800000u; u[1] = hw; u[2] = hh; u[3] = 0x3f000000u; u[4] = 0x3f000000u;
+      u[5] = 0x3f800000u; u[6] = hw; u[7] = hh; }
+    uint32_t frag_unif = unif.gpu_va, vtx_unif = unif.gpu_va, coord_unif = unif.gpu_va + 20u;
+
+    /* vertex data */
+    { volatile uint32_t *p = (volatile uint32_t *)posd.cpu;
+      const uint32_t *src = (const uint32_t *)v3d_tri_pos;
+      for (int i = 0; i < 9; i++) p[i] = src[i]; }
+    { volatile uint8_t *c = (volatile uint8_t *)cold.cpu;
+      for (int i = 0; i < 12; i++) c[i] = v3d_tri_color[i]; }
+
+    /* GL Shader State Record + the two attribute records, CONTIGUOUS (the HW reads
+     * nattr attribute records immediately after the 36-byte record). */
+    struct v3d_shader_record_params srp = {
+        .default_attr_va = dattr.gpu_va,
+        .frag_code_va = frag_code, .frag_unif_va = frag_unif,
+        .vtx_code_va = vtx_code, .vtx_unif_va = vtx_unif,
+        .coord_code_va = coord_code, .coord_unif_va = coord_unif,
+        .num_fs_varyings = 4,
+    };
+    if (v3d_build_shader_record(recat.cpu, 36, &srp) < 0) return -5;
+    struct v3d_attr_params pos = { .address = posd.gpu_va, .vec_size = 3, .type = 2, .normalized = 0,
+        .num_read_vtx = 3, .num_read_coord = 3, .stride = 12, .max_index = 0xFFFFFFu };
+    struct v3d_attr_params col = { .address = cold.gpu_va, .vec_size = 0, .type = 4, .normalized = 1,
+        .num_read_vtx = 4, .num_read_coord = 0, .stride = 4, .max_index = 0xFFFFFFu };
+    if (v3d_build_attr_record(recat.cpu + 36, 16, &pos) < 0) return -5;
+    if (v3d_build_attr_record(recat.cpu + 52, 16, &col) < 0) return -5;
+
+    struct v3d_tri_params tp = {
+        .width = (uint16_t)w, .height = (uint16_t)h, .clear_color = V3D_TRI_CLEAR_COLOR,
+        .rb_swap = 1,   /* RGBA shader colors -> AIOS BGR FB needs the R/B swap (verify on HW) */
+        .fb_va = V3D_VA_FB, .fb_stride = w * 4u, .z_va = zb.gpu_va,
+        .tile_alloc_va = ta.gpu_va, .shader_record_va = recat.gpu_va, .nattr = 2,
+        .tile_list_va = tlist.gpu_va, .vertex_count = 3,
+    };
+    if (v3d_build_triangle_tile_list(tlist.cpu, (int)tlist.size, &tp) < 0) return -5;
+    int bn = v3d_build_triangle_bin_cl(bcl.cpu, (int)bcl.size, &tp);
+    int rn = v3d_build_triangle_render_cl(rcl.cpu, (int)rcl.size, &tp);
+    if (bn < 0 || rn < 0) return -5;
+    return v3d_run_cls(&ts, &ta, &ovf, &bcl, bn, &rcl, rn, res);
 }
 
 /* Probe the live FB after a clear: CleanInvalidate the page holding the center pixel,
@@ -966,6 +1069,7 @@ int v3d_clear_and_probe(uint32_t color) {
     v3d_test.oom = res.oom;
 
     if (st == 0) {
+        v3d_test.is_tri = 0;
         v3d_pixel_probe(color);                 /* orange should be visible now */
     } else {
         fb_console_set_suspend(0);              /* GPU was reset -- restore the console */
@@ -973,8 +1077,57 @@ int v3d_clear_and_probe(uint32_t color) {
     }
     return st;
 }
+
+/* The full triangle kick, display_server thread only (mirrors v3d_clear_and_probe):
+ * take FB ownership, submit the GL-draw, probe. PASS = center pixel differs from the
+ * clear color (the triangle covers center) with no scratch redirect; the corners are
+ * sampled as a visual aid. The rainbow triangle on the monitor is the real proof. */
+int v3d_triangle_and_probe(void) {
+    v3d_tests_run++;
+    v3d_test.valid = 1;
+    v3d_test.color = V3D_TRI_CLEAR_COLOR;
+    v3d_test.pixel = 0; v3d_test.pixel_pass = 0; v3d_test.scratch0 = 0;
+    v3d_test.corner_tl = 0; v3d_test.corner_br = 0; v3d_test.is_tri = 1;
+    if (!v3d_ok_state) { char id[160]; v3d_report_ident(id, sizeof(id), 0, 0); }
+    if (!v3d_present || !v3d_ok_state || !gpu_available || !gpu_fb_pa || !v3d_pool_va) {
+        v3d_test.status = -5;
+        return -5;
+    }
+    gpu_fb_flush_all();
+    fb_console_set_suspend(1);
+
+    struct v3d_clear_result res;
+    int st = v3d_submit_triangle(&res);
+    v3d_test.status = st;
+    v3d_test.bfc0 = res.bfc0; v3d_test.bfc1 = res.bfc1;
+    v3d_test.rfc0 = res.rfc0; v3d_test.rfc1 = res.rfc1;
+    v3d_test.bin_us = res.bin_us; v3d_test.rend_us = res.rend_us;
+    v3d_test.oom = res.oom;
+
+    if (st == 0) {
+        /* center (inside the triangle) + two corners (outside near the top). Each
+         * sample CleanInvalidates the page it actually reads (the FB is cacheable). */
+        uint32_t cidx  = (gpu_height / 2) * gpu_width + (gpu_width / 2);
+        uint32_t tlidx = 10 * gpu_width + 10;
+        uint32_t bridx = (gpu_height - 1) * gpu_width + (gpu_width - 1);
+        gpu_fb_invalidate_page((uint32_t)(((uint64_t)cidx  * 4) >> 12));
+        gpu_fb_invalidate_page((uint32_t)(((uint64_t)tlidx * 4) >> 12));
+        gpu_fb_invalidate_page((uint32_t)(((uint64_t)bridx * 4) >> 12));
+        arch_dmb();
+        v3d_test.pixel     = gpu_fb[cidx];
+        v3d_test.corner_tl = gpu_fb[tlidx];
+        v3d_test.corner_br = gpu_fb[bridx];
+        v3d_test.scratch0  = v3d_pool_va ? *(volatile uint32_t *)(v3d_pool_va + V3D_SCRATCH_OFF) : 0;
+        v3d_test.pixel_pass = (v3d_test.pixel != V3D_TRI_CLEAR_COLOR);
+    } else {
+        fb_console_set_suspend(0);
+        fb_console_clear();
+    }
+    return st;
+}
 #else  /* !PLAT_RPI4 -- never reached (has_v3d=0); stubs keep the dispatcher common */
 int v3d_clear_and_probe(uint32_t color) { (void)color; return -5; }
+int v3d_triangle_and_probe(void) { return -5; }
 static int v3d_mmu_verb(char *buf, int bufsize) {
     return snprintf(buf, bufsize, "v3d.mmu: unavailable (not RPi4)\n");
 }
@@ -999,11 +1152,17 @@ static int v3d_format_test_result(char *buf, int bufsize) {
                    : (v3d_test.status == -4) ? "RENDER_TIMEOUT"
                    :                           "NO_GPU";
     int w = snprintf(buf, bufsize,
-        "v3d.test: clear=0x%08x status=%s  bfc %u->%u rfc %u->%u  bin=%lluus rend=%lluus oom=%d\n",
-        v3d_test.color, st, v3d_test.bfc0 & 0xff, v3d_test.bfc1 & 0xff,
-        v3d_test.rfc0 & 0xff, v3d_test.rfc1 & 0xff,
+        "v3d.%s: clear=0x%08x status=%s  bfc %u->%u rfc %u->%u  bin=%lluus rend=%lluus oom=%d\n",
+        v3d_test.is_tri ? "tri" : "test", v3d_test.color, st,
+        v3d_test.bfc0 & 0xff, v3d_test.bfc1 & 0xff, v3d_test.rfc0 & 0xff, v3d_test.rfc1 & 0xff,
         (unsigned long long)v3d_test.bin_us, (unsigned long long)v3d_test.rend_us, v3d_test.oom);
-    if (v3d_test.status == 0)
+    if (v3d_test.status == 0 && v3d_test.is_tri)
+        w += snprintf(buf + w, bufsize - w,
+            "  center[%u,%u]=0x%08x (!= clear 0x%08x) corners tl=0x%08x br=0x%08x scratch0=0x%08x -- %s\n",
+            gpu_width / 2, gpu_height / 2, v3d_test.pixel, v3d_test.color,
+            v3d_test.corner_tl, v3d_test.corner_br, v3d_test.scratch0,
+            (v3d_test.pixel_pass && v3d_test.scratch0 == 0) ? "PASS" : "FAIL");
+    else if (v3d_test.status == 0)
         w += snprintf(buf + w, bufsize - w,
             "  pixel[%u,%u]=0x%08x expect 0x%08x scratch0=0x%08x -- %s\n",
             gpu_width / 2, gpu_height / 2, v3d_test.pixel, v3d_test.color, v3d_test.scratch0,
@@ -1019,25 +1178,27 @@ static int v3d_format_test_result(char *buf, int bufsize) {
 }
 
 /* Called on the display_server thread when it wakes on its bound notification: run a
- * pending /proc/v3d.test clear request. No-op if none pending. */
+ * pending /proc/v3d.{test,tri} request (kind 1=clear, 2=triangle). No-op if none. */
 void v3d_service_display_request(void) {
-    if (!g_v3d_req) return;
+    uint32_t kind = g_v3d_req;
+    if (!kind) return;
     g_v3d_req = 0;
-    v3d_clear_and_probe(g_v3d_req_color);   /* fills v3d_test (RPi4); QEMU stub -> -5 */
+    if (kind == 2) v3d_triangle_and_probe();
+    else           v3d_clear_and_probe(g_v3d_req_color);   /* QEMU stubs -> -5 */
     arch_dsb();
-    v3d_test_seq++;                          /* unblock the .test poller */
+    v3d_test_seq++;                          /* unblock the poller */
 }
 
-/* /proc/v3d.test (fs thread): post the canned-orange clear request + wake
- * display_server via the bound notification, then yield-poll for the result so it
- * prints inline. NO seL4_Call here -- a nested Call from the fs thread (mid procfs
- * read) would clobber the reply cap on non-MCS (see feedback_sel4_nested_call); the
- * flag + Signal pattern keeps the reply cap intact. */
-static int v3d_test_post(char *buf, int bufsize) {
-    g_v3d_req_color = 0xFFFF8000u;   /* orange, R/B-asymmetric in BGR memory */
+/* Shared poster for the request-flag verbs (fs thread): post kind + wake
+ * display_server via the bound notification, yield-poll for completion. NO seL4_Call
+ * (a nested Call from the fs thread mid procfs-read clobbers the reply cap on
+ * non-MCS -- see feedback_sel4_nested_call); the flag + Signal keeps it intact. */
+static int v3d_request_post(uint32_t kind, uint32_t color, const char *label,
+                            char *buf, int bufsize) {
+    g_v3d_req_color = color;
     uint32_t seq0 = v3d_test_seq;
     arch_dsb();
-    g_v3d_req = 1;
+    g_v3d_req = kind;
     arch_dsb();
     if (disp_wake_ntfn_cap) seL4_Signal(disp_wake_ntfn_cap);
     for (uint64_t dl = mono_deadline_ms(2000); mono_before(dl); ) {
@@ -1046,9 +1207,17 @@ static int v3d_test_post(char *buf, int bufsize) {
     }
     if (v3d_test_seq == seq0)
         return snprintf(buf, bufsize,
-            "v3d.test: queued, display_server did not finish in 2s -- "
-            "cat /proc/v3d for the result\n");
+            "v3d.%s: queued, display_server did not finish in 2s -- "
+            "cat /proc/v3d for the result\n", label);
     return v3d_format_test_result(buf, bufsize);
+}
+
+/* /proc/v3d.test = canned-orange clear; /proc/v3d.tri = rainbow triangle. */
+static int v3d_test_post(char *buf, int bufsize) {
+    return v3d_request_post(1, 0xFFFF8000u, "test", buf, bufsize);
+}
+static int v3d_tri_post(char *buf, int bufsize) {
+    return v3d_request_post(2, 0, "tri", buf, bufsize);
 }
 
 /* ---- boot init: claims + IRQ bind + tag pin; ZERO V3D MMIO ---- */
@@ -1130,6 +1299,7 @@ int v3d_diag_cmd(const char *args, char *buf, int bufsize) {
         if (v3d_pfx(p, "mmu")   && p[3] == 0) return v3d_mmu_verb(buf, bufsize);
         if (v3d_pfx(p, "cl")    && p[2] == 0) return v3d_cl_probe(buf, bufsize);
         if (v3d_pfx(p, "test")  && p[4] == 0) return v3d_test_post(buf, bufsize);
+        if (v3d_pfx(p, "tri")   && p[3] == 0) return v3d_tri_post(buf, bufsize);
         if (p[0] == 'r' && p[1] == '.') {
             uint32_t off = v3d_hex(p + 2) & 0x3ffc;
             return snprintf(buf, bufsize, "v3d hub[0x%03x] = 0x%08x\n", off, v3d_rd(off));
@@ -1150,7 +1320,7 @@ int v3d_diag_cmd(const char *args, char *buf, int bufsize) {
                             off, val, v3d_rd(off));
         }
         return snprintf(buf, bufsize,
-            "v3d: verbs: (none) .power[.N] .clock[.MHz] .mmu .fault .cl .test "
+            "v3d: verbs: (none) .power[.N] .clock[.MHz] .mmu .fault .cl .test .tri "
             ".r.<off> .c.<off> .w.<off>.<val>\n");
     }
     return v3d_summary(buf, bufsize);

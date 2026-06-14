@@ -105,4 +105,8 @@ int v3d_build_shader_record(uint8_t *buf, int cap, const struct v3d_shader_recor
 /* Build one attribute record (16 B) into buf. Returns 16, or -1. */
 int v3d_build_attr_record(uint8_t *buf, int cap, const struct v3d_attr_params *a);
 
+/* IEEE754 single-precision bit pattern of a signed integer (|v| < 2^24, exact). No
+ * FPU -- so v3d.c can compute the shader viewport uniforms the same FP-free way. */
+uint32_t v3d_i2f(int32_t v);
+
 #endif /* AIOS_V3D_CL_H */

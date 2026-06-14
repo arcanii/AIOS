@@ -144,8 +144,9 @@ int v3d_build_render_cl(uint8_t *buf, int cap, uint32_t render_cl_va,
  * ============================================================ */
 
 /* IEEE754 single-precision bit pattern of a signed integer, |v| < 2^24 (exact). No
- * FPU: the root task is FP-free, and host+kernel must agree bit-for-bit. */
-static uint32_t i2f(int32_t v) {
+ * FPU: the root task is FP-free, and host+kernel must agree bit-for-bit. Exposed
+ * (v3d_i2f) so v3d.c can compute the shader viewport uniforms the same way. */
+uint32_t v3d_i2f(int32_t v) {
     if (v == 0) return 0;
     uint32_t sign = 0, a;
     if (v < 0) { sign = 0x80000000u; a = (uint32_t)(-(int64_t)v); } else a = (uint32_t)v;
@@ -230,7 +231,7 @@ int v3d_build_triangle_bin_cl(uint8_t *buf, int cap, const struct v3d_tri_params
     w8(&q, 104); w32(&q, 0x3f800000u);     /* POINT_SIZE 1.0 */
     w8(&q, 105); w32(&q, 0x3f800000u);     /* LINE_WIDTH 1.0 */
     /* CLIPPER_XY_SCALING (110): (w/2)*256, (h/2)*-256 (f32) */
-    w8(&q, 110); w32(&q, i2f((int32_t)((w / 2) * 256))); w32(&q, i2f(-(int32_t)((h / 2) * 256)));
+    w8(&q, 110); w32(&q, v3d_i2f((int32_t)((w / 2) * 256))); w32(&q, v3d_i2f(-(int32_t)((h / 2) * 256)));
     /* CLIPPER_Z_SCALE_AND_OFFSET (111): 0.5, 0.5 */
     w8(&q, 111); w32(&q, 0x3f000000u); w32(&q, 0x3f000000u);
     /* CLIPPER_Z_MIN_MAX (109): 0.0, 1.0 */

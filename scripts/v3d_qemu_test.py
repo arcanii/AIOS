@@ -98,6 +98,8 @@ def main():
         # before it ever signals the display thread. NEVER assert a pixel on QEMU.
         tst = con.run("cat /proc/v3d.test", 10)
         check("/proc/v3d.test refuses gracefully", "not present" in tst, repr(tst[-80:]))
+        tri = con.run("cat /proc/v3d.tri", 10)
+        check("/proc/v3d.tri refuses gracefully", "not present" in tri, repr(tri[-80:]))
 
         # 3e. fbshow --gpu-clear sends DISP_V3D_CLEAR to display_server; the QEMU
         # v3d_clear_and_probe stub returns -5 (no GPU). Must report a non-zero status
@@ -105,6 +107,9 @@ def main():
         gc = con.run("fbshow --gpu-clear", 15)
         check("fbshow --gpu-clear refuses gracefully",
               "status=" in gc and "PASS" not in gc, repr(gc[-80:]))
+        gt = con.run("fbshow --gpu-tri", 15)
+        check("fbshow --gpu-tri refuses gracefully",
+              "status=" in gt and "PASS" not in gt, repr(gt[-80:]))
         # 3f. --gpu-release must be benign (un-suspend is a no-op when not suspended).
         gr = con.run("fbshow --gpu-release", 10)
         check("fbshow --gpu-release benign", "not found" not in gr, repr(gr[-80:]))

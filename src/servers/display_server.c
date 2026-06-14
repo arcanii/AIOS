@@ -18,6 +18,7 @@
  * internally; v3d_service_display_request drains a pending /proc/v3d.test request
  * when our seL4_Recv wakes on the bound display notification. QEMU stubs are inert. */
 int  v3d_clear_and_probe(uint32_t color);
+int  v3d_triangle_and_probe(void);
 void v3d_service_display_request(void);
 
 /* Font and drawing functions from boot_display_init.c */
@@ -269,6 +270,14 @@ void display_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             uint32_t color = (uint32_t)seL4_GetMR(0);
             if (color == 0) color = 0xFFFF8000u;
             int st = v3d_clear_and_probe(color);
+            seL4_SetMR(0, (seL4_Word)st);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+
+        case DISP_V3D_TRI: {
+            /* Phase 3: GPU rainbow triangle to the live FB. MR0 reply = job status. */
+            int st = v3d_triangle_and_probe();
             seL4_SetMR(0, (seL4_Word)st);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
