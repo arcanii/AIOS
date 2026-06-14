@@ -21,6 +21,23 @@ say so in the deploy notes.
 
 ---
 
+## General FAT32 mount / file read-write (queued 2026-06-14)
+
+Today `src/fat32.c` is single-purpose -- KERNEL8.IMG swap only (`find_kernel_dirent`
+is hardcoded), and there is NO FAT mount (the running Pi `/proc/mounts` is ext2 +
+proc only; no `/boot`). A general FAT read/write -- or a real mount at `/boot` --
+would let `config.txt` and other boot files be edited OVER THE NETWORK (flash-free
+boot-config tweaks: `arm_freq`, DVFS `arm_freq_min`, overclock, `enable_uart`)
+instead of pulling the SD. The primitives already exist in fat32.c (BPB parse,
+dirent find, cluster-chain read/alloc, FAT write, dirent commit + the sha verify) --
+generalize `find_kernel_dirent` to an arbitrary 8.3 name, add a small
+read/append/rewrite for a file that fits its existing cluster(s), and a CLI. MUST be
+crash-ordered like the kernel swap (a bad config.txt write stops boot -> physical
+recovery). Motivated 2026-06-14 by the DVFS `arm_freq_min=300` edit, which had to be
+done via a physical SD mount because AIOS could not edit config.txt itself.
+
+---
+
 ## Next up -- recommended order (queued 2026-06-03)
 
 Execution order set after the v0.4.143 pipe-EOF fix shipped: reliability
