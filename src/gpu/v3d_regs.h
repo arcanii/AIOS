@@ -169,6 +169,34 @@
 #define V3D_CLE_CT0QMA            0x170     /* bin tile-state addr  (Phase 2) */
 #define V3D_CLE_CT0QMS            0x174     /* bin tile-state size  (Phase 2) */
 
+/* ---- CLE: Phase 2 additions (tile-state base + return/list/prim counters).
+ * Offsets transcribed VERBATIM from Linux drivers/gpu/drm/v3d/v3d_regs.h
+ * (rpi-6.6.y), NOT from memory. Core block -- add V3D_CORE0_OFFSET. */
+#define V3D_CLE_CT0QTS            0x15c     /* bin tile-state base (write before bin kick) */
+#define V3D_CLE_CT0RA             0x118
+#define V3D_CLE_CT1RA             0x11c     /* return addrs (dumped on hang) */
+#define V3D_CLE_CT0LC             0x120
+#define V3D_CLE_CT1LC             0x124     /* list counters (dump) */
+#define V3D_CLE_CT0PC             0x128
+#define V3D_CLE_CT1PC             0x12c     /* primitive-list counters (dump) */
+
+/* ---- PTB (primitive-tile binner; binner overflow alloc on OUTOMEM) ---- */
+#define V3D_PTB_BPCA              0x300     /* binner current alloc addr */
+#define V3D_PTB_BPCS              0x304     /* binner current alloc size */
+#define V3D_PTB_BPOA              0x308     /* binner overflow alloc addr (OUTOMEM refill) */
+#define V3D_PTB_BPOS              0x30c     /* binner overflow alloc size (zero before bin) */
+
+/* ---- core cache control (invalidate slices before each bin; flush L2T) ---- */
+#define V3D_CTL_SLCACTL           0x024     /* slices cache all-invalidate */
+#define V3D_CTL_L2TCACTL          0x030     /* L2T ctrl: (FLM<<SHIFT)|L2TFLS, poll L2TFLS */
+#define V3D_CTL_L2TFLSTA          0x034     /* L2T flush range start (0 = full) */
+#define V3D_CTL_L2TFLEND          0x038     /* L2T flush range end   (~0 = full) */
+#define V3D_L2TCACTL_L2TFLS       (1u << 0) /* flush kick + busy bit (poll until clear) */
+#define V3D_L2TCACTL_FLM_SHIFT    1         /* flush-mode field [2:1] */
+#define V3D_L2TCACTL_FLM_FLUSH    0u
+#define V3D_L2TCACTL_FLM_CLEAR    1u
+#define V3D_L2TCACTL_FLM_CLEAN    2u
+
 /* ---- GCA (global cache/shutdown; Phase 2+ reset path) ---- */
 #define V3D_GCA_CACHE_CTRL        0x00c
 #define V3D_GCA_CACHE_CTRL_FLUSH  (1u << 0)
