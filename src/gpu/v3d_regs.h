@@ -138,6 +138,17 @@
 #define V3D_MMU_VIO_ADDR          0x1234   /* faulting GPU VA (the PTI probe reads this) */
 #define V3D_MMU_DEBUG_INFO        0x1238
 
+/* MMU_DEBUG_INFO fields (Linux v3d_regs.h). The GPU VA width drives the VIO_ADDR
+ * decode: the faulting address is reg << (va_width - 32). HW-confirmed on bcm2711
+ * V3D 4.2 -- DEBUG_INFO reads 0x550 -> VA_WIDTH field 5 -> va_width 35 -> shift 3
+ * (raw 0x04000018 << 3 = 0x200000c0 -> page 0x20000000). PA_WIDTH is decoded the
+ * same way. The old <<8 (page-shift-minus-4) guess was wrong. */
+#define V3D_MMU_DEBUG_VERSION_MASK   0x0000000fu   /* bits [3:0]  */
+#define V3D_MMU_DEBUG_VA_WIDTH_SHIFT 4             /* bits [7:4]  */
+#define V3D_MMU_DEBUG_PA_WIDTH_SHIFT 8             /* bits [11:8] */
+#define V3D_MMU_WIDTH_FIELD_MASK     0xfu
+#define V3D_MMU_WIDTH_BASE           30u           /* width = BASE + field */
+
 /* ---- PTE format (Linux v3d_mmu.c) ---- */
 #define V3D_MMU_PAGE_SHIFT        12        /* 4 KB GPU pages */
 #define V3D_PTE_VALID             (1u << 28)

@@ -409,6 +409,14 @@ Failures: FLUSHING never clears -> MMU not powered (dump MMUC readback); no faul
 latched -> PT base wrong/MMU disabled (dump PT_PA_BASE + MMU_CTL readbacks). No ARM
 SError is expected here (GPU faults never trap the A72) -- if one occurs the bug is
 in our MMIO mapping.
+**VIO_ADDR decode (HW-CONFIRMED, was the one Phase 1 loose end):** the faulting GPU
+VA is `VIO_ADDR << (va_width - 32)`, with `va_width = 30 + MMU_DEBUG_INFO[7:4]` read
+from the silicon -- exactly as Linux v3d does. On bcm2711 V3D 4.2, DEBUG_INFO reads
+0x550 -> va_width 35 -> shift 3, so raw 0x04000018 << 3 = 0x200000c0 -> page
+0x20000000 (the kicked VA). The early `<<8` (page-shift-minus-4) guess was wrong.
+VIO_ID decodes the faulting client as `id >> 5` (table L2T/PTB/PSE/TLB/CLE/TFU/MMU/GMP
+for V3D >= 4.1); our CT1 fault reads 0x84 -> client CLE. Phase 2+ MMU debugging reads
+these the same way.
 Exit: clean flush under deadline; fault detected, attributed, recovered remotely.
 
 **Phase 2 -- GPU clear to the live HDMI FB (3-4 days).** Empty-bin + render pair

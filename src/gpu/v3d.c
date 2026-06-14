@@ -587,12 +587,27 @@ static int v3d_fault_probe(char *buf, int bufsize) {
     uint32_t sts  = v3d_rd(V3D_HUB_INT_STS);
     uint32_t vraw = v3d_rd(V3D_MMU_VIO_ADDR);
     uint32_t vid  = v3d_rd(V3D_MMU_VIO_ID);
+    uint32_t dbg  = v3d_rd(V3D_MMU_DEBUG_INFO);
     uint32_t ct1ca = v3d_rd(V3D_CORE0_OFFSET + V3D_CLE_CT1CA);
-    /* VIO_ADDR units are unconfirmed on this silicon (Linux uses reg << (SHIFT-4)
-     * = <<8); report raw + the two plausible byte decodings so the HW log nails it. */
-    uint32_t vio8  = vraw << 8;
-    uint32_t vio12 = vraw << 12;
-    v3d_fault_vio_addr = vio8; v3d_fault_vio_id = vid;
+    /* VIO_ADDR is the faulting GPU VA shifted right by (va_width - 32); va_width is
+     * read from MMU_DEBUG_INFO, exactly as Linux v3d does (vio = reg << (va_width-32)).
+     * HW-confirmed on bcm2711 V3D 4.2: DEBUG_INFO 0x550 -> va_width 35 -> shift 3, so
+     * raw 0x04000018 << 3 = 0x200000c0 -> page 0x20000000 (the kicked VA). The old
+     * <<8/<<12 byte guesses were both wrong. */
+    uint32_t va_width = V3D_MMU_WIDTH_BASE +
+                        ((dbg >> V3D_MMU_DEBUG_VA_WIDTH_SHIFT) & V3D_MMU_WIDTH_FIELD_MASK);
+    uint32_t pa_width = V3D_MMU_WIDTH_BASE +
+                        ((dbg >> V3D_MMU_DEBUG_PA_WIDTH_SHIFT) & V3D_MMU_WIDTH_FIELD_MASK);
+    int vsh = (int)va_width - 32;
+    uint64_t vio_full = (vsh >= 0) ? ((uint64_t)vraw << vsh) : ((uint64_t)vraw >> -vsh);
+    uint32_t vio_page = (uint32_t)(vio_full & ~0xfffull);
+    /* VIO_ID client id: for V3D >= 4.1 the client is id >> 5 (Linux v3d41_axi_ids).
+     * Our CT1 fault is a CLE (control-list executor) fetch -- id 0x84 >> 5 = 4. */
+    static const char *const v3d_axi_ids[8] = {
+        "L2T", "PTB", "PSE", "TLB", "CLE", "TFU", "MMU", "GMP" };
+    uint32_t cli = vid >> 5;
+    const char *cliname = (cli < 8) ? v3d_axi_ids[cli] : "?";
+    v3d_fault_vio_addr = vio_page; v3d_fault_vio_id = vid;
     if (faulted) v3d_mmu_faults_seen++;
 
     /* dump-and-reset: clear the latched hub MMU status + any core error the abort
@@ -605,14 +620,16 @@ static int v3d_fault_probe(char *buf, int bufsize) {
     char id[160]; v3d_report_ident(id, sizeof(id), 0, 0);
     int ident_ok = v3d_ok_state;
 
-    int pass = faulted && ident_ok && (vio8 == V3D_VA_FAULT || vraw != 0);
+    int pass = faulted && ident_ok && vio_page == V3D_VA_FAULT;
     return snprintf(buf, bufsize,
         "v3d.fault: core_clk=%u Hz  kicked CT1 @ 0x%08x  hub_int_sts=0x%08x PTI=%d\n"
-        "  VIO_ADDR raw=0x%08x  (<<8=0x%08x <<12=0x%08x)  VIO_ID=0x%08x  CT1CA=0x%08x\n"
+        "  va_width=%u pa_width=%u (DEBUG_INFO=0x%08x)\n"
+        "  VIO_ADDR raw=0x%08x -> 0x%09llx page=0x%08x (<<%d)  client=%s VIO_ID=0x%08x  CT1CA=0x%08x\n"
         "  reset: flushed, ident_after=%s  -- %s\n"
         "  (no fault? try: cat /proc/v3d.clock.500 then re-run cat /proc/v3d.fault)\n",
         clk, V3D_VA_FAULT, sts, faulted ? 1 : 0,
-        vraw, vio8, vio12, vid, ct1ca,
+        va_width, pa_width, dbg,
+        vraw, (unsigned long long)vio_full, vio_page, vsh, cliname, vid, ct1ca,
         ident_ok ? "PASS" : "FAIL", pass ? "PASS" : "FAIL");
 }
 #else  /* !PLAT_RPI4 -- never reached (has_v3d=0); stubs keep the dispatcher common */

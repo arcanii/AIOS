@@ -4,6 +4,17 @@ Milestone-level history of AIOS (Open Aries). Versions are commit-granular
 (`v0.4.NNN: ...` in `git log`); this file tracks the arcs that matter. Newest
 first. "HW-verified" means confirmed on a real Raspberry Pi 4, not just QEMU.
 
+## v0.4.245 (2026-06-14)
+**V3D Phase 1 -- MMU fault VIO_ADDR decode fixed (HW-confirmed).** The V3D MMU
+reports the faulting GPU VA in `(va_width - 32)`-bit units, with `va_width` read
+from `MMU_DEBUG_INFO` exactly as Linux v3d does. On bcm2711 V3D 4.2 that register
+reads 0x550 -> VA_WIDTH field 5 -> va_width 35 -> shift 3, so the prior `<<8`
+guess (page-shift-minus-4) was wrong. `/proc/v3d.fault` now decodes the faulting
+page correctly (raw 0x04000018 -> page 0x20000000, the kicked VA), names the
+faulting client from VIO_ID (`id >> 5`; our CT1 fault reads 0x84 -> CLE), and
+reports va/pa width. Closes the one open Phase 1 item; Phase 2 reads VIO_ADDR the
+same way for real MMU faults.
+
 ## v0.4.244 (2026-06-14)
 Catch-up across the netd de-monolithization and RPi4 power/resilience arcs
 (v0.4.229-244). Four headline features, all HW-verified on a real RPi4.
