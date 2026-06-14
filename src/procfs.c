@@ -361,6 +361,21 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
             w += snprintf(buf + w, bufsize - w, "governor %s\n",
                           on ? "enabled" : "disabled");
             w += cpu_gov_status(buf + w, bufsize - w);
+        } else if (arg[0] == '.' && arg[1] == 't' && arg[2] == 'u' && arg[3] == 'n'
+                && arg[4] == 'e' && arg[5] == '.') {
+            /* /proc/cpufreq.tune.LO.HI.IT -- live governor thresholds (RPi4): LO/HI
+             * are the busy permille (downclock < LO for IT ticks; upclock > HI) and
+             * IT the idle-tick count. A zero field is left unchanged. Lets the
+             * governor be dialled in over netconsole with no reflash per attempt. */
+            unsigned vals[3] = {0, 0, 0};
+            const char *p = arg + 6;
+            for (int vi = 0; vi < 3; vi++) {
+                while (*p >= '0' && *p <= '9') vals[vi] = vals[vi] * 10u + (unsigned)(*p++ - '0');
+                if (*p == '.') p++;
+            }
+            cpu_gov_tune(vals[0], vals[1], (int)vals[2]);
+            w += snprintf(buf + w, bufsize - w, "governor tuned\n");
+            w += cpu_gov_status(buf + w, bufsize - w);
         } else {
             unsigned int cur = 0, max = 0;
             if (hw_arm_clock_hz(&cur, &max) == 0) {

@@ -10,12 +10,13 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
 ## Quick orientation
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4.
-* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.243**. Origin
-  is at `555d915` (Bryan pushed mid-session); `5b09d6f` + `e0cbb3a` are **ahead,
-  pending Bryan's push**. **The real Pi runs build 2231 at 192.168.0.8**, deployed
-  flash-free (`scripts/pi_flash.py` + `fatswap`), and is **parked at 300MHz /
-  governor OFF / ~64C** (the auto-governor is buggy -- arc 2 below).
-* **This session (v0.4.241 -> v0.4.243), three arcs -- DONE sections below + the
+* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.244**. Origin
+  is at `555d915`; everything since (incl. the DVFS governor) is **ahead, pending
+  Bryan's push**. **The real Pi runs build 2245 at 192.168.0.8** (= the 0.4.244
+  governor; not re-flashed for the version bump), deployed flash-free
+  (`scripts/pi_flash.py` + `fatswap`), with the **DVFS governor ON and WORKING**
+  (idle->300, load->600 -- arc 2 below).
+* **This session (v0.4.241 -> v0.4.244), arcs -- DONE sections below + the
   seed `docs/NEXT_20260614b_dvfs_cpuacct.md`:**
   1. **netd Stage 4 items 1-3 DONE + HW-VERIFIED** (`eeb2785`, v0.4.241):
      `/proc/genet` is now a read-only UMAC/MDIO-free root view; the active NIC ops
@@ -23,17 +24,24 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
      over NET_DIAG; explicit SVC_PING reply. Live MDIO read the BCM54213 PHYID on
      real GENET. Only the **item-4 AIOS_NETD default flip** remains
      (`docs/NEXT_20260614_netd_stage4_flip.md` + `project_demono_netd`).
-  2. **RPi4 DVFS** -- `config.txt arm_freq_min=300` (physical SD edit) opened the
-     clock floor, so the VC mailbox `SET_CLOCK_RATE` now pins 300/450/600 and manual
-     `/proc/cpufreq.set.MHZ` works. BUT the **load-driven governor (`ee655e7`,
-     v0.4.242) is BUGGY -- it holds 600 in idle. DO NOT PUSH AS WORKING.** The
-     root-loop-rate metric is confounded.
-  3. **CPU accounting shipped** (`5b09d6f`, v0.4.243) -- `KernelBenchmarks=
-     track_utilisation` + a `/proc/cpuacct` per-thread cycle table, built to find
-     the governor's core-0 confound. VERDICT: **no single hog** -- it is the
-     netconsole relay (observer effect) + the spread of background threads. Two
-     measurement bugs remain (PMCCNTR 32-bit ~7s wrap; idle thread reads 0). See
-     `feedback_rpi4_thermal_clock`.
+  2. **RPi4 DVFS GOVERNOR -- WORKING + HW-verified (v0.4.244).** `config.txt
+     arm_freq_min=300` opened the clock floor; the load-driven governor now
+     actuates (idle->300, load->600) on a **work-server load metric**. Two HW-only
+     bugs fixed: (a) it never actuated (`sets=0` -- actuate against the last-set
+     clock, not a target init guess); (b) the `total-minus-background` metric read
+     the no-WFI idle spin as work, because **seL4 `track_utilisation` books at
+     switch-out so always-running spinners under-report** -- switched to a positive
+     sum of the event-driven work servers. HW: `sets=5 bmin=0 set=600` under load,
+     idle->300 in the boot trace. Thresholds runtime-tunable: `/proc/cpufreq.tune.
+     LO.HI.IT`. Still to capture: the cooling temperature over a disconnected soak
+     (the `/proc/temp` read keeps wedging on the known TLBI/netconsole transient).
+     See `feedback_rpi4_thermal_clock`.
+  3. **CPU accounting** (`5b09d6f` + v0.4.244) -- `KernelBenchmarks=
+     track_utilisation` + `/proc/cpuacct`. Now wrap-aware (the 32-bit CCNT wraps
+     ~7s -> the pct base falls back + unaccounted reads n/a past 7s). The idle
+     thread reading 0 is EXPECTED (the root spins, so it never deschedules to the
+     core-0 idle thread); the idle spin shows as (unaccounted) since the spinner
+     under-reports. Feeds the governor via `aios_acct_busy_permille`.
   Earlier: **netd Stage 3 CUTOVER** (net runs in the MMU-isolated `netd` behind
   `AIOS_NETD`, HW-VERIFIED, real-MAC `.8`), the netd FOUNDATION + Stages 0-2, and
   `/proc/temp`+`/proc/cpufreq` (v0.4.240). The v0.4.188-228 arcs (USB HID, V3D, the
@@ -141,9 +149,9 @@ login reached. The last open QEMU gate; all QEMU gates now closed.
 
 ---
 
-## DONE/WIP: RPi4 DVFS + CPU accounting -- v0.4.242-243 (2026-06-14)
+## DONE: RPi4 DVFS governor + CPU accounting -- v0.4.244 (2026-06-14)
 
-The power-lever arc. **The governor is NOT working yet -- this is the live open thread.**
+The power-lever arc. **The governor WORKS + is HW-verified (build 2245 on the Pi).**
 
 **DVFS mechanism (works).** `config.txt arm_freq_min=300` (added via a physical SD
 mount at `/Volumes/AIOSBOOT` -- AIOS cannot edit the FAT itself; general FAT mount is
@@ -154,11 +162,23 @@ DVFS Phase 0 `f12eddc`). The firmware does NOT auto-boost back under load (a 400
 loop stayed 21s at 300), so an explicit governor IS required. cntpct is
 clock-independent, so lowering the clock never breaks timeouts.
 
-**Governor (BUGGY -- `ee655e7` v0.4.242, diagnostics `3e55ec8`; DO NOT PUSH AS
-WORKING).** `src/cpu_gov.c`: a root-main-loop tick samples the root loop-iteration
-rate and sets 300 (idle) / 600 (load). On HW it HOLDS 600 in idle (never cools). The
-loop-rate metric is confounded: the root runs only ~11% during idle (not a clean idle
-proxy), and a connected netconsole session pegs core 0.
+**Governor (WORKING -- `src/cpu_gov.c`, v0.4.244).** A root-main-loop tick samples
+`aios_acct_busy_permille` once a second and sets 300 (idle) / 600 (load) via the VC
+mailbox; raise-fast, lower-gently (LO/HI permille + idle-tick thresholds, runtime
+tunable via `/proc/cpufreq.tune.LO.HI.IT`). Two HW-only bugs (caught over two flashes,
+both fixed): (1) **`sets=0` -- never actuated**: it Called the mailbox only on a
+transition vs `gov_target` (init 600), but the firmware boots at 300 so `want==target`
+forever -> fix actuates against the clock LAST set (`gov_set_mhz`, init 0). (2) the
+original `total-minus-background` metric read the **no-WFI idle spin as work** -- seL4
+`track_utilisation` books a TCB only at switch-OUT, so the always-running root/tlbi
+spinners under-report (their cycles are in the PMCCNTR total, not their TCB; `bmin`
+stuck ~442 over a disconnected idle) -> fix is a POSITIVE sum of the event-driven work
+servers (pipe/fs/exec/net), which block + read ~0 at idle. HW proof (build 2245):
+`gov_dbg sets=5 bmin=0 set=600` under the relay load, idle->300 in the boot trace.
+**Still to capture:** the cooling temperature over a disconnected soak (the post-idle
+`/proc/temp` read wedges on the known TLBI/netconsole transient -- NOT a mailbox race;
+the VC mailbox is lock-serialized). Verify tool: `scripts/gov_verify.py`. Known gap: a
+pure-compute-no-IO loop will not boost (no work-server traffic).
 
 **CPU accounting (works -- `5b09d6f` v0.4.243), built to diagnose the governor.**
 `KernelBenchmarks=track_utilisation` (settings-rpi4.cmake + settings.cmake) makes the
@@ -171,19 +191,17 @@ renders cycle DELTAS since the last read (`seL4_BenchmarkGetThreadUtilisation`) 
 keepalive) is only ~11%, EQUAL to root/serverstats/flush; the ~50% core-0 "stall"
 confounding the governor is (1) the netconsole RELAY (a connected session = pipe ~42%
 + unaccounted ~32% -- the observer effect, proven) and (2) the collective background
-threads. **TWO MEASUREMENT BUGS to fix:** (a) the `%` total is from PMCCNTR -- 32-bit,
-WRAPS ~7s (no `KERNEL_PMU_IRQ` on BCM2711) -- so only <7s windows give sane % (a 30s
-read gave >100% per-thread); use sum-of-threads or short windows. (b) the kernel idle
-thread reads 0 (`BENCHMARK_IDLE_LOCALCPU`) yet root is only ~11%, so the no-WFI idle
-path needs investigating: does the RPi4 root actually spin (`seL4_Yield`) or block
-(`seL4_Wait`) at idle? The accounting suggests it BLOCKS, contradicting the long-held
-"no-WFI spin" assumption (which underpins the stall cure -- so this matters).
-
-**Open thread (the seed):** fix the two measurement bugs, resolve idle=0, then rewire
-the governor onto a work-thread load metric (load = pipe+fs+net+user-procs EXCL the
-background root/tlbi/serverstats/flush, over a <7s window; low -> downclock -- sidesteps
-idle=0). Pi parked 300/gov-off (~64C). Seed `docs/NEXT_20260614b_dvfs_cpuacct.md`,
-memory `feedback_rpi4_thermal_clock`.
+threads. **The two measurement bugs are now RESOLVED (v0.4.244):** (a) the PMCCNTR `%`
+total is 32-bit and WRAPS ~7s -> `/proc/cpuacct` is wrap-aware (reads cntpct; past 7s
+the pct base falls back to the accounted sum and unaccounted reads n/a). (b) the idle
+thread reading 0 is EXPECTED, not a bug: the RPi4 root SPINS (`irq_uart_active` stays 0
+on RPi4 -> the main loop takes the `seL4_Yield` branch, never `seL4_Wait`), so the
+core-0 idle thread never runs. The earlier "suggests it BLOCKS" read was WRONG -- the
+no-WFI spin (and the stall cure that depends on it) stands. The deeper finding driving
+the governor redesign: those spinner cycles are mis-attributed (`track_utilisation`
+books at switch-out, so an always-running spinner under-reports), which is why the
+governor sums the event-driven work servers positively, not idle/background. Seed
+`docs/NEXT_20260614b_dvfs_cpuacct.md`, memory `feedback_rpi4_thermal_clock`.
 
 ---
 

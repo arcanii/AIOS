@@ -96,12 +96,15 @@ int hw_arm_clock_set(unsigned int mhz, unsigned int *new_hz);
 extern volatile unsigned long g_root_loop_iters;
 
 /* RPi4 load-driven DVFS governor (src/cpu_gov.c). cpu_gov_tick() is called from
- * the root main loop every iteration -- cheap (a cntpct read + a compare); it
- * samples g_root_loop_iters and Calls hw_arm_clock_set only on a transition.
- * cpu_gov_enable toggles auto-DVFS (/proc/cpufreq.gov.0/.1); cpu_gov_status
- * renders state for /proc/cpufreq. No-ops on non-RPi4. */
+ * the root main loop every iteration -- cheap (a cntpct read + a compare); once a
+ * second it samples aios_acct_busy_permille (the non-background core-0 work load)
+ * and Calls hw_arm_clock_set only on a transition. cpu_gov_enable toggles
+ * auto-DVFS (/proc/cpufreq.gov.0/.1); cpu_gov_tune sets the busy LO/HI permille +
+ * idle-tick thresholds live (/proc/cpufreq.tune.LO.HI.IT); cpu_gov_status renders
+ * state for /proc/cpufreq. No-ops on non-RPi4. */
 void cpu_gov_tick(void);
 int  cpu_gov_enable(int on);
+void cpu_gov_tune(unsigned lo, unsigned hi, int it);
 int  cpu_gov_status(char *buf, int sz);
 
 #endif /* AIOS_HW_INFO_H */

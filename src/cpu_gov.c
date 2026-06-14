@@ -8,57 +8,72 @@
  *     explicit control is required. Needs config.txt `arm_freq_min=300` to open
  *     the floor (arm_freq stays the heat-capped 600 ceiling); without it the set
  *     clamps to 600 and the governor is a harmless no-op.
- *   - metric: the root main-loop iteration rate (g_root_loop_iters). The root
- *     SPINS on RPi4 (no-WFI), so the rate collapses ~45x under load (idle
- *     ~12000/s -> busy ~260/s at 300 MHz; ~2x both at 600). cntpct is a fixed-rate
- *     timer (clock-independent), so the rate is computed over real wall-clock and
- *     the huge idle/busy gap makes one threshold work at any clock.
+ *   - metric: aios_acct_busy_permille (src/cpuacct.c, seL4 track_utilisation).
+ *     The fraction of core-0 cycles spent on the event-driven WORK servers (pipe /
+ *     fs / exec / net / ...), summed positively. NOT total-minus-background: that
+ *     reads the no-WFI idle spin as work, because track_utilisation books a TCB
+ *     only at switch-out so the always-running root/tlbi spinners under-report
+ *     (HW-confirmed: bmin stuck ~440 over a disconnected idle). The work servers
+ *     block on seL4_Recv, so they are booked accurately and read ~0 at idle; a
+ *     forked tcc shows via its pipe/fs/exec syscall traffic. This also REPLACES
+ *     the original root-loop-rate metric, which the same spin confounded.
  *
- * POLICY: sample every GOV_TICK_MS. rate < LOW => BUSY => jump to MAX now. rate >
- * HIGH for GOV_IDLE_TICKS in a row => settle to MIN. Raise fast, lower gently. MAX
- * is the firmware ceiling (~65C, well under the 85C throttle) so no separate
- * thermal cap is needed. cpu_gov_tick() runs from the root main loop; it is cheap
- * (a cntpct read + a compare) and only Calls the mailbox on a transition.
+ * POLICY: sample every GOV_TICK_MS. busy > HI => jump to MAX now. busy < LO for
+ * GOV_IDLE_TICKS in a row => settle to MIN. Raise fast, lower gently. MAX is the
+ * firmware ceiling (~65C, well under the 85C throttle) so no separate thermal cap
+ * is needed. cpu_gov_tick() runs from the root main loop; it is cheap (a cntpct
+ * read, a few benchmark syscalls once a second) and only Calls the mailbox on a
+ * transition. The observer effect (a connected netconsole relay shows as work)
+ * makes any connected idle read unreliable -- verify cooling by TEMPERATURE.
  */
 #include <stdint.h>
 #include <stdio.h>
-#include "aios/hw_info.h"   /* g_root_loop_iters, hw_arm_clock_set */
+#include "aios/hw_info.h"    /* hw_arm_clock_set */
+#include "aios/cpuacct.h"    /* aios_acct_busy_permille */
 
 #ifdef PLAT_RPI4
 
 #define GOV_MIN_MHZ    300u
 #define GOV_MAX_MHZ    600u
-#define GOV_LOW_RATE   2000u   /* loop rate below this => BUSY -> boost to MAX */
-#define GOV_HIGH_RATE  6000u   /* above this => idle candidate -> may drop to MIN */
-#define GOV_IDLE_TICKS 2       /* consecutive idle windows before downclock (~2s) */
-/* 1s averaging window. The per-250ms loop rate is wildly noisy on HW (HW-measured
- * rmin=95 .. rmax=75903) -- a single ~250ms core-0 stall (scheduler / serverstats /
- * periodic) reads as fully busy and, with the immediate single-tick upclock, kept
- * bouncing the clock off 300. A 1s window dilutes any sub-second stall to a small
- * fraction, so genuine idle reads >>HIGH and the downclock sticks. */
+#define GOV_BUSY_HI    200     /* permille: > 20% non-background work => boost to MAX */
+#define GOV_BUSY_LO     80     /* permille: < 8% for IDLE_TICKS in a row => settle MIN */
+#define GOV_IDLE_TICKS 3       /* consecutive idle windows before downclock (~3s) */
+/* 1s window: under the ~7s CCNT wrap (so the busy% is computed from a single
+ * non-wrapped CCNT delta), and it dilutes any sub-second background blip to a
+ * small fraction of the busy metric -- which already subtracts the background, so
+ * the dominant idle confound is gone and this window only smooths the remainder. */
 #define GOV_TICK_MS    1000u
 
 static uint64_t rd_cntpct(void) {
     uint64_t v; __asm__ volatile("mrs %0, cntpct_el0" : "=r"(v)); return v;
 }
 
-static int      gov_enabled   = 1;            /* auto-DVFS ON by default */
-static unsigned gov_target    = GOV_MAX_MHZ;  /* gentle start at MAX; settle down when idle */
-static uint64_t gov_frq       = 0;            /* cntpct frequency (cached) */
-static uint64_t gov_span      = 0;            /* GOV_TICK_MS in cntpct ticks */
-static uint64_t gov_last_ct   = 0;
-static unsigned long gov_last_iters = 0;
-static int      gov_idle_run  = 0;
-static unsigned gov_last_rate = 0;
-/* diagnostics: why does the governor hold 600 in idle? frq/span check the tick
- * timing math; ticks confirms it fires ~4/s; sets/setfail show transitions vs
- * mailbox failures; rmin/rmax show the rate distribution it actually measures
- * (rmax ~37000 => it sees idle but will not act; rmax ~270 => never measures idle). */
-static uint64_t gov_ticks    = 0;
-static uint64_t gov_sets     = 0;
-static uint64_t gov_setfail  = 0;
-static unsigned gov_rate_min = 0xFFFFFFFFu;
-static unsigned gov_rate_max = 0;
+static int      gov_enabled  = 1;            /* auto-DVFS ON by default */
+static unsigned gov_target   = GOV_MAX_MHZ;  /* gentle start at MAX; settle down when idle */
+static uint64_t gov_frq      = 0;            /* cntpct frequency (cached) */
+static uint64_t gov_span     = 0;            /* GOV_TICK_MS in cntpct ticks */
+static uint64_t gov_last_ct  = 0;
+static int      gov_idle_run = 0;
+/* runtime-tunable thresholds (defaults above) so the governor can be tuned live
+ * over /proc/cpufreq.tune.LO.HI.IT -- no reflash per attempt (HW iteration
+ * discipline: tune over netconsole, bake the final values in at commit). */
+static unsigned gov_busy_hi  = GOV_BUSY_HI;
+static unsigned gov_busy_lo  = GOV_BUSY_LO;
+static int      gov_it       = GOV_IDLE_TICKS;
+/* diagnostics on /proc/cpufreq: busy is the metric the governor acts on (permille
+ * of core-0 cycles on the work servers); bmin/bmax bound its observed range (read
+ * bmin after a disconnected idle to see the true idle floor despite the relay
+ * observer effect); total/work are the last raw CCNT total and work-server cycle
+ * sum; set is the clock last actuated. */
+static unsigned gov_last_busy  = 0;
+static uint64_t gov_ticks      = 0;
+static uint64_t gov_sets       = 0;
+static uint64_t gov_setfail    = 0;
+static unsigned gov_busy_min   = 1000;
+static unsigned gov_busy_max   = 0;
+static uint64_t gov_last_total = 0;
+static uint64_t gov_last_work  = 0;
+static unsigned gov_set_mhz    = 0;   /* clock last pushed to the mailbox (0 = none yet) */
 
 void cpu_gov_tick(void) {
     if (!gov_frq) {
@@ -67,55 +82,79 @@ void cpu_gov_tick(void) {
         gov_span = (gov_frq * GOV_TICK_MS) / 1000u;
     }
     uint64_t now = rd_cntpct();
-    if (gov_last_ct == 0) { gov_last_ct = now; gov_last_iters = g_root_loop_iters; return; }
+    if (gov_last_ct == 0) {
+        gov_last_ct = now;
+        aios_acct_busy_permille(0, 0);              /* prime the load baseline */
+        return;
+    }
     if (now - gov_last_ct < gov_span) return;       /* not a tick boundary yet */
-
-    unsigned long iters = g_root_loop_iters;
-    uint64_t dct = now - gov_last_ct;
-    unsigned rate = (unsigned)(((uint64_t)(iters - gov_last_iters) * gov_frq) / dct);
-    gov_last_rate = rate;
-    gov_ticks++;
-    if (rate < gov_rate_min) gov_rate_min = rate;
-    if (rate > gov_rate_max) gov_rate_max = rate;
     gov_last_ct = now;
-    gov_last_iters = iters;
+
+    uint64_t total = 0, work = 0;
+    int busy = aios_acct_busy_permille(&total, &work);
+    gov_ticks++;
+    if (busy < 0) return;                           /* accounting unavailable / priming */
+    gov_last_busy  = (unsigned)busy;
+    gov_last_total = total;
+    gov_last_work  = work;
+    if ((unsigned)busy < gov_busy_min) gov_busy_min = busy;
+    if ((unsigned)busy > gov_busy_max) gov_busy_max = busy;
 
     unsigned want = gov_target;
-    if (rate < GOV_LOW_RATE) {                       /* busy: raise immediately */
+    if ((unsigned)busy > gov_busy_hi) {              /* busy: raise immediately */
         want = GOV_MAX_MHZ; gov_idle_run = 0;
-    } else if (rate > GOV_HIGH_RATE) {               /* idle: lower after a run */
-        if (++gov_idle_run >= GOV_IDLE_TICKS) want = GOV_MIN_MHZ;
+    } else if ((unsigned)busy < gov_busy_lo) {       /* idle: lower after a run */
+        if (++gov_idle_run >= gov_it) want = GOV_MIN_MHZ;
     } else {
         gov_idle_run = 0;                            /* mid-band: hold */
     }
+    gov_target = want;                               /* the decision (display + intent) */
 
-    if (want != gov_target) {
-        if (gov_enabled) {
-            unsigned got = 0;
-            if (hw_arm_clock_set(want, &got) == 0) { gov_target = want; gov_sets++; }
-            else gov_setfail++;   /* mailbox busy / clamped: keep target, retry next tick */
-        } else {
-            gov_target = want;                       /* track intent, do not actuate */
-        }
+    /* Actuate against the clock we LAST set (gov_set_mhz, 0 = nothing yet), not
+     * the prior decision -- the firmware boots at its own clock (300), so the
+     * governor must push the first decision to reach a known state. Comparing
+     * against gov_target instead leaves want==target forever when the load never
+     * changes, so the mailbox is never Called (HW-confirmed sets=0, clock stuck at
+     * the boot default). When disabled we track the decision but do not actuate;
+     * on re-enable the mismatch re-establishes governor control on the next tick. */
+    if (gov_enabled && want != gov_set_mhz) {
+        unsigned got = 0;
+        if (hw_arm_clock_set(want, &got) == 0) { gov_set_mhz = want; gov_sets++; }
+        else gov_setfail++;   /* mailbox busy / clamped: retry next tick */
     }
 }
 
 int cpu_gov_enable(int on) { gov_enabled = on ? 1 : 0; return gov_enabled; }
 
+/* Live threshold override (/proc/cpufreq.tune.LO.HI.IT). A zero field is left
+ * unchanged, so .tune.0.0.4 retunes only the idle-tick count. LO/HI are permille
+ * (0..1000); HI is forced above LO. Lets the governor be dialled in over
+ * netconsole against the HW busy/temp response without a reflash per attempt. */
+void cpu_gov_tune(unsigned lo, unsigned hi, int it) {
+    if (lo > 0 && lo <= 1000) gov_busy_lo = lo;
+    if (hi > 0 && hi <= 1000) gov_busy_hi = hi;
+    if (gov_busy_hi <= gov_busy_lo) gov_busy_hi = gov_busy_lo + 1;
+    if (it >= 1 && it <= 60) gov_it = it;
+}
+
 int cpu_gov_status(char *buf, int sz) {
     return snprintf(buf, sz,
-        "governor: %s  target_mhz: %u  loop_rate: %u/s  idle_run: %d\n"
-        "gov_dbg: frq=%llu span=%llu ticks=%llu sets=%llu setfail=%llu rmin=%u rmax=%u\n",
-        gov_enabled ? "on" : "off", gov_target, gov_last_rate, gov_idle_run,
+        "governor: %s  target_mhz: %u  busy: %u/1000  idle_run: %d\n"
+        "gov_dbg: frq=%llu span=%llu ticks=%llu sets=%llu setfail=%llu "
+        "bmin=%u bmax=%u total=%llu work=%llu set=%u lo=%u hi=%u it=%d\n",
+        gov_enabled ? "on" : "off", gov_target, gov_last_busy, gov_idle_run,
         (unsigned long long)gov_frq, (unsigned long long)gov_span,
         (unsigned long long)gov_ticks, (unsigned long long)gov_sets,
-        (unsigned long long)gov_setfail, gov_rate_min, gov_rate_max);
+        (unsigned long long)gov_setfail, gov_busy_min, gov_busy_max,
+        (unsigned long long)gov_last_total, (unsigned long long)gov_last_work,
+        gov_set_mhz, gov_busy_lo, gov_busy_hi, gov_it);
 }
 
 #else  /* !PLAT_RPI4 -- no VC mailbox clock control; governor is RPi4-only */
 
 void cpu_gov_tick(void) {}
 int  cpu_gov_enable(int on) { (void)on; return 0; }
+void cpu_gov_tune(unsigned lo, unsigned hi, int it) { (void)lo; (void)hi; (void)it; }
 int  cpu_gov_status(char *buf, int sz) {
     return snprintf(buf, sz, "governor: n/a (not RPi4)\n");
 }
