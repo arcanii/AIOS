@@ -272,6 +272,25 @@ harden the netconsole relay (bulk drain + reliable end-of-command framing) --
   dash's stdout flush on `exit`. Also check the A72 pipe-SHM coherency window
   (the relay may observe the writer EOF before the last written bytes are
   coherently visible -- QEMU cannot model it).
+- **ROOT CAUSE FOUND 2026-06-15 (code-traced) -- it is the TCP STACK, not the pipe.**
+  The pipe read path is serial-correct (`PIPE_READ`/`PIPE_READ_SHM` serve all `count`
+  bytes before EOF; the SHM xfer is coherent across the IPC reply), and the socket
+  send NEVER returns EAGAIN (`net_server.c` NET_SENDTO for TCP always returns `len`
+  when ESTAB). The real bug: **AIOS TCP has NO sender-side retransmission.** The
+  `net_socket` struct has `snd_nxt` but NO `snd_una` (highest-ACKed), so it cannot
+  track unACKed data; `net_tcp_send` is fire-and-forget (no retransmit queue, no RTO
+  timer), and `NET_CLOSE_SOCK` sends FIN + frees the socket (`in_use=0`) WITHOUT
+  draining unACKed data. So the last pre-close segment, if lost on the wire or dropped
+  by a momentarily-full client window, is gone -- client sees FIN, no data. A72-only
+  because SLIRP loopback is lossless + instant. (All AIOS "retransmit" code is the
+  RECEIVE side, relying on the PEER to retransmit to us.) **Fix is TCP-layer, not
+  sshd-local**: add `snd_una` + a retransmit queue + RTO timer (retransmit unACKed on
+  timeout / 3 dup-ACKs) + a GRACEFUL close (hold the socket in FIN_WAIT until
+  `snd_una == snd_nxt`, retransmitting the tail). Fixes ALL outbound TCP reliability
+  (sshd, netconsole push, fatswap), not just this symptom. Sizeable (~hundreds of LOC,
+  careful state machine); QEMU cannot exercise the loss path -- needs the real-Pi
+  deploy-over-net verify loop. A narrower interim: graceful-close-with-tail-retransmit
+  only (still needs `snd_una` + a small unACKed buffer).
 - **CONFIRMED ON HW (v0.4.178 deploy).** Once reconnect was fixed and many
   sequential SSH sessions ran on the real RPi4, this race became visible:
   ~35% of short sessions (`echo X; exit`) intermittently disconnect with
@@ -294,19 +313,30 @@ harden the netconsole relay (bulk drain + reliable end-of-command framing) --
   unaffected. (Also: zsh emits OSC color / DA terminal queries whose replies the
   SSH relay echoes back as visible `]11;rgb:.../[?1;2c` noise, and `zsh/compctl`
   fails to load -- AIOS zsh is static, no loadable modules.)
-- **IMPACT (worse than cosmetic): it takes sshd DOWN for ALL future connections.**
-  sshd is one-connection-at-a-time, and `channel_relay` ends with a BLOCKING
-  `waitpid(shell)`. With zsh hung, the `sshd -> dash -> zsh` chain never exits,
-  so sshd blocks forever and never returns to `accept()` -- every later
-  `ssh` just fails to connect. Client-side `~.` does NOT help (it closes the
-  client; sshd is still stuck in waitpid). **Recovery: over netconsole 2323,
-  kill the shell chain (`kill -9 <zsh-pid> <dash-pid>`, find them in
-  `/proc/status`) -- killing BOTH is required (killing only zsh leaves dash, and
-  sshd still waits on dash); or reboot.** Verified 2026-06-06.
-- **Robustness sub-fix (independent of the termios work)**: sshd should not wedge
-  the whole service on one hung shell -- on client disconnect, kill the shell
-  (and reap) rather than block in `waitpid`; consider `waitpid(WNOHANG)` + a kill
-  escalation in `channel_relay`. Small, high-value: makes sshd self-heal.
+- **sshd-wedge SELF-HEAL: RESOLVED (v0.4.178) + EMPIRICALLY CONFIRMED 2026-06-15.**
+  The old claim ("a hung shell takes sshd DOWN for all future connections") is
+  STALE. `channel_relay` cleanup already does `kill(child, SIGKILL)` (when the loop
+  ended without a clean shell EOF) before `waitpid`, and `kill(SIGKILL)` destroys
+  the target DIRECTLY inside pipe_server (`handle_child_fault` -- it does not need
+  the blocked `dash` to run code), creating the zombie that `waitpid` then reaps at
+  once. Reproduced on QEMU (`/tmp/ssh_wedge_repro.py`: PTY ssh -> `sleep 120` so
+  dash parks in `waitpid` -> abrupt client SIGKILL -> reconnect): **3/3 cycles the
+  next connection succeeded** (the session `dash` was reaped each time, 2->1). So
+  the "robustness sub-fix" is already in place. (Aside: the BACKLOG's proposed
+  `waitpid(WNOHANG)` form is moot anyway -- AIOS's `waitpid` shim ignores `options`,
+  [posix_proc.c:62](src/lib/posix_proc.c); the AIOS idiom is a `/proc/status` poll.)
+- **STILL OPEN -- orphaned-grandchild LEAK (low severity).** When the relay kills
+  `dash`, a grandchild `dash` itself spawned (the hung `zsh`, or `sleep` in the
+  repro) is ORPHANED, not killed -- the repro saw `sleep` climb 1->2 across cycles.
+  It accumulates only on abrupt disconnect WHILE a foreground child runs (normal
+  `exit` leaks nothing); slow path to the proc-table cap. Cannot be fixed
+  sshd-locally: `/proc/status` exposes no PPID (pipe_server `active_procs` has it,
+  procfs does not). Proper fix is a CORE change -- have `handle_child_fault` kill/
+  reparent a destroyed process's children -- or expose PPID so sshd can walk+kill.
+- **STILL OPEN -- zsh raw-mode usability (separate, Medium):** zsh itself does not
+  work over SSH (the cooked relay vs ZLE raw-mode fight, below). That is a
+  usability gap, NOT a service-wedge anymore. Fix = make the SSH channel
+  termios-aware (mirror the local tty_server path).
 - **Cause**: `ssh_channel.c` (`channel_relay` + `process_input`) implements a
   FIXED cooked-mode server-side line discipline -- it echoes chars, line-buffers,
   and sends a whole line to the shell on Enter. dash expects exactly that. zsh
