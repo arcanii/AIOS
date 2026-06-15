@@ -144,6 +144,7 @@ static uint32_t g_int_err_events;
  * dispatcher below can keep the keyboard alive (even while a control transfer waits
  * on EP0) without pulling the HID globals up here. */
 static int kbd_try_deliver(uint32_t slot, uint32_t ep, uint32_t cc);
+static int hub_try_deliver(uint32_t slot, uint32_t ep, uint32_t cc);   /* Path B: hub status pipe */
 
 /* v0.4.255: USB-MSC runtime block-I/O coordination. The driver thread (xhci_kbd_driver_fn,
  * defined ABOVE the mass-storage section) sets g_msc_driver_running and services FS-thread
@@ -173,6 +174,23 @@ static uint32_t evt_deq = 0, evt_cycle = 1;   /* event ring (consumer) */
 static volatile uint32_t g_port_change;       /* v0.4.253: a port-status event is pending
                                                * (set in evt_dispatch, drained by the driver
                                                * thread for hotswap reconcile) */
+/* Path B (v0.4.256): a hub interrupt-IN status-change transfer arrived -- a DOWNSTREAM port
+ * changed (a hub absorbs downstream changes and reports them on its own interrupt pipe, not as
+ * a root Port Status Change Event). Set in evt_dispatch (snapshot/flag only), drained at TOP
+ * LEVEL by the driver thread so enumeration never runs nested in a command wait. g_hub_hotplug
+ * gates arming the pipe (HW-only-verifiable; default-state set after the QEMU testability probe). */
+static volatile uint32_t g_hub_change;
+/* Default OFF (INERT): on the RPi4 the keyboard rides the SAME VL805 hub, and driving the hub's
+ * status pipe (Configure-Endpoint + CLEAR_FEATURE through the hub TT) while the keyboard int-IN
+ * is armed is a known VL805 wedge mode that QEMU cannot model. So Path B ships dormant -- the
+ * hub status pipe is NOT armed at boot. Enable it live for a HW serial-capture session with
+ * /proc/xhci.hub.1 (the driver thread then arms every enumerated hub); /proc/xhci.hub.0 disables
+ * the reconcile (the pipe keeps draining so the keyboard is unaffected). QEMU-verified either way. */
+static volatile int      g_hub_hotplug = 0;
+static int               g_hub_armed   = 0;   /* hub status pipes armed (set once on enable) */
+static int  setup_hub_int(struct usb_dev *hub);                       /* Path B (defined below) */
+static int  hub_enumerate_port(struct usb_dev *hub, uint32_t port);   /* Path B (defined below) */
+static void handle_hub_changes(void);                                 /* Path B (defined below) */
 
 /* Non-blocking: if the next event ring TRB has been produced, copy it into out[]
  * and advance ERDP. Returns 0 on an event, -1 if none pending. */
@@ -214,6 +232,10 @@ static int evt_dispatch(uint32_t out[4], uint32_t want_type,
             out[0] = e[0]; out[1] = e[1]; out[2] = e[2]; out[3] = e[3];
             return DISP_MATCH;
         }
+        /* Path B: a hub status-change transfer (downstream port changed)? kbd_try_deliver
+         * excludes hubs, so match it here -- snapshot + flag for the top-level handler, never
+         * enumerate inline (this runs nested inside enumeration command waits). */
+        if (hub_try_deliver(slot, ep, EVT_CC(e[2]))) return DISP_OTHER;
         kbd_try_deliver(slot, ep, EVT_CC(e[2]));   /* live report -- deliver + re-arm */
         return DISP_OTHER;
     }
@@ -420,6 +442,9 @@ struct usb_dev {
     int      kind;                                  /* USB_KBD / USB_MOUSE / USB_HUB */
     uint32_t slot;
     uint32_t root_port;                             /* 0-based root port (hotswap reconcile) */
+    uint32_t parent_slot;                           /* Path B: parent hub slot (0 = root device) */
+    uint32_t parent_port;                           /* Path B: 1-based port on the parent hub */
+    uint8_t  hub_nports;                            /* Path B: downstream port count (hubs) */
     uint32_t speed;                                 /* PORTSC speed: 1 FS, 2 LS, 3 HS, 4 SS */
     /* EP0 control endpoint */
     volatile uint8_t *dev_ctx;  uint64_t dev_ctx_pa;   /* output device context */
@@ -1015,6 +1040,16 @@ static struct usb_dev *dev_on_root_port(uint32_t p) {
     return NULL;
 }
 
+/* Path B: find a hub-downstream device by (parent hub slot, downstream port). Downstream
+ * devices carry root_port=0xFFFFFFFF (the sentinel), so dev_on_root_port never finds them --
+ * they are keyed by parent_slot/parent_port instead. */
+static struct usb_dev *dev_on_hub_port(struct usb_dev *hub, uint32_t port) {
+    for (int i = 0; i < MAX_USB_DEV; i++)
+        if (g_devs[i].in_use && g_devs[i].parent_slot == hub->slot && g_devs[i].parent_port == port)
+            return &g_devs[i];
+    return NULL;
+}
+
 /* Tear down a vanished device: stop its key-repeat, Disable Slot, clear its DCBAA entry,
  * reclaim its 6 DMA pages, free the g_devs slot. (The 2 enum SCRATCH pages are a separate
  * pre-existing leak -- follow-up.) */
@@ -1138,6 +1173,22 @@ void xhci_kbd_driver_fn(void *a, void *b, void *c) {
         /* v0.4.253 hotswap: a port plug/unplug was flagged by evt_dispatch -- reconcile
          * at top level (safe to enumerate / Disable-Slot here; not nested in a cmd wait). */
         if (g_port_change) handle_port_changes();
+
+        /* Path B: when enabled live (/proc/xhci.hub.1) arm every enumerated hub's status pipe
+         * ONCE -- on this (the driver) thread, so the Configure-Endpoint + arm touch the event
+         * ring safely. Ships disabled (g_hub_hotplug=0) so the keyboard-on-the-hub path on the
+         * RPi4 is undisturbed until a serial-capture HW session verifies it. */
+        if (g_hub_hotplug && !g_hub_armed) {
+            for (int hi = 0; hi < MAX_USB_DEV; hi++)
+                if (g_devs[hi].in_use && g_devs[hi].kind == USB_HUB)
+                    setup_hub_int(&g_devs[hi]);
+            g_hub_armed = 1;
+        }
+
+        /* Path B: a hub status-change event flagged a DOWNSTREAM port change -- reconcile the
+         * hub's ports (enumerate/teardown) + re-arm at top level. Before the MSC mount check so
+         * a drive enumerated behind the hub sets g_msc_mount_pending and mounts this iteration. */
+        if (g_hub_change) handle_hub_changes();
 
         /* v0.4.255 Path A: a runtime-hotplugged MSC drive needs mounting at /mnt/usb. Runs at
          * TOP LEVEL on this (the sole event-ring consumer) thread, so the mount block I/O
@@ -1278,6 +1329,101 @@ static int address_and_describe(struct usb_dev *d, uint32_t route, uint32_t root
  * + scan its downstream ports, reset each one with a device, and enumerate every device
  * THROUGH the hub (route string + parent-hub TT) into its own usb_dev. hub is the
  * already-addressed hub device. Returns 0 if at least one HID device was set up. */
+/* Path B: a Transfer Event landed on a hub's interrupt-IN status pipe -> a downstream port
+ * changed. Snapshot is in hub->rpt (the status-change bitmap, bit N = port N, bit 0 = hub).
+ * Flag for the top-level handler; never enumerate here (called from evt_dispatch, nested in
+ * command waits). Returns 1 if (slot,ep) belonged to a hub. */
+static int hub_try_deliver(uint32_t slot, uint32_t ep, uint32_t cc) {
+    for (int i = 0; i < MAX_USB_DEV; i++) {
+        struct usb_dev *hd = &g_devs[i];
+        if (hd->in_use && hd->kind == USB_HUB && hd->slot == slot && hd->dci == ep) {
+            printf("[xhci] HUB INT event slot=%u ep=%u cc=%u bitmap0=0x%02x\n",
+                   slot, ep, cc, hd->rpt ? hd->rpt[0] : 0);
+            g_hub_change = 1;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Path B (v0.4.256): arm the hub interrupt-IN status-change pipe so DOWNSTREAM port changes are
+ * reported at RUNTIME (the boot scan only polls). Mirrors setup_hid: read the full config
+ * descriptor, find the single interrupt-IN endpoint, Configure-Endpoint it, arm one transfer.
+ * The hub reuses the usb_dev int-ring fields (a hub has no HID endpoint). Self-contained
+ * (uses hub->hub_nports) so it can be called at boot OR runtime (when /proc/xhci.hub.1 enables
+ * it). HW-only-verifiable: QEMU's usb-hub is FS, the VL805 is HS -- the interval is speed-aware. */
+static int setup_hub_int(struct usb_dev *hub) {
+    if (hub->int_ring) return 0;                  /* already armed */
+    uint64_t buf_pa;
+    volatile uint8_t *buf = (volatile uint8_t *)dma_page(&buf_pa);
+    if (!buf) return -1;
+    int rc = -1;
+    int cc = control_transfer(hub, 0x80, 6, (2u << 8), 0, 9, buf_pa, 1);   /* config header */
+    if (cc != CC_SUCCESS) goto done;
+    uint16_t total = buf[2] | (buf[3] << 8);
+    if (total > 4096) total = 4096;
+    cc = control_transfer(hub, 0x80, 6, (2u << 8), 0, total, buf_pa, 1);   /* full config */
+    if (cc != CC_SUCCESS) goto done;
+    int ep_addr = -1, ep_mps = 1, ep_interval = 0;
+    for (int i = 0; i + 2 <= total; ) {
+        uint8_t len = buf[i], type = buf[i + 1];
+        if (len == 0) break;
+        if (type == 5) {                                  /* endpoint descriptor */
+            uint8_t addr = buf[i + 2], attr = buf[i + 3];
+            if ((addr & 0x80) && (attr & 0x3) == 3) {     /* interrupt IN = status change */
+                ep_addr = addr; ep_mps = buf[i + 4] | (buf[i + 5] << 8); ep_interval = buf[i + 6];
+                break;
+            }
+        }
+        i += len;
+    }
+    if (ep_addr < 0) { AIOS_LOG_WARN("hub: no interrupt-IN status endpoint"); goto done; }
+    hub->dci     = (uint32_t)((ep_addr & 0xF) * 2 + 1);
+    hub->int_mps = (uint32_t)ep_mps;
+    hub->rpt_len = (int)((hub->hub_nports + 8) / 8);      /* status bitmap bytes (bit0 = hub) */
+    hub->int_ring = (volatile uint8_t *)dma_page(&hub->int_ring_pa);
+    hub->rpt      = (volatile uint8_t *)dma_page(&hub->rpt_pa);
+    if (!hub->int_ring || !hub->rpt) goto done;
+    hub->int_enq = 0; hub->int_cycle = 1; hub->int_proc = 0;
+
+    /* Configure-Endpoint: slot (keep the Hub bit set by the earlier Evaluate Context) + the
+     * interrupt-IN status endpoint. The hub has only EP0 + this int EP, so context entries = dci. */
+    volatile uint32_t *icc      = (volatile uint32_t *)(hub->in_ctx + 0);
+    volatile uint32_t *slot_ctx = (volatile uint32_t *)(hub->in_ctx + CTX_SZ);
+    volatile uint32_t *ep_ctx   = (volatile uint32_t *)(hub->in_ctx + (1 + hub->dci) * CTX_SZ);
+    icc[0] = 0; icc[1] = (1u << 0) | (1u << hub->dci);
+    slot_ctx[0] = (slot_ctx[0] & ~(0x1Fu << 27)) | (hub->dci << 27);   /* context entries = dci */
+    /* interval exponent: HS/SS bInterval is exponent+1; FS/LS is in 1ms frames (QEMU hub is FS,
+     * the VL805 hub is HS) -- mirror setup_hid so the poll rate is right on both. */
+    uint32_t ivl;
+    if (hub->speed == 1 || hub->speed == 2) {             /* FS / LS hub: bInterval in ms */
+        uint32_t ms8 = (uint32_t)(ep_interval > 0 ? ep_interval : 12) * 8;
+        ivl = 31 - (uint32_t)__builtin_clz(ms8);
+        if (ivl > 10) ivl = 10;
+        if (ivl < 8)  ivl = 8;
+    } else {                                              /* HS / SS: exponent + 1 */
+        ivl = ep_interval > 0 ? (uint32_t)ep_interval - 1 : 8;
+        if (ivl > 15) ivl = 15;
+    }
+    ep_ctx[0] = ivl << 16;
+    ep_ctx[1] = (7u << 3) | (3u << 1) | (hub->int_mps << 16);          /* Interrupt IN, CErr=3, MPS */
+    ep_ctx[2] = (uint32_t)(hub->int_ring_pa | 1);
+    ep_ctx[3] = (uint32_t)(hub->int_ring_pa >> 32);
+    ep_ctx[4] = 8 | (hub->int_mps << 16);
+    arch_dsb();
+    uint32_t evt[4];
+    cc = cmd_submit(hub->in_ctx_pa, 0, TRB_CONFIG_EP, hub->slot, 0, evt);
+    if (cc != CC_SUCCESS) { AIOS_LOG_WARN_V("hub int Configure EP cc=", (unsigned long)cc); goto done; }
+
+    arm_int_buf(hub, 0);   /* arm one status-change transfer */
+    printf("[xhci] hub status pipe armed: ep=0x%02x dci=%u mps=%u bitmap=%d bytes speed=%u\n",
+           ep_addr, hub->dci, hub->int_mps, hub->rpt_len, hub->speed);
+    rc = 0;
+done:
+    dma_free((void *)buf);
+    return rc;
+}
+
 static int setup_hub(struct usb_dev *hub, uint32_t hub_root_port, uint32_t hub_speed) {
     (void)hub_speed;
     uint64_t buf_pa;
@@ -1313,6 +1459,9 @@ static int setup_hub(struct usb_dev *hub, uint32_t hub_root_port, uint32_t hub_s
     arch_dsb();
     uint32_t evt[4];
     cmd_submit(hub->in_ctx_pa, 0, TRB_EVAL_CONTEXT, hub->slot, 0, evt);  /* best effort */
+    hub->hub_nports = (uint8_t)nports;   /* Path B: remembered so the status pipe can be armed
+                                          * later (runtime, on /proc/xhci.hub.1) -- NOT at boot,
+                                          * to keep the keyboard-on-the-same-hub path undisturbed. */
 
     /* Power every downstream port, then wait power-on-to-power-good. */
     for (uint32_t port = 1; port <= nports; port++)
@@ -1334,27 +1483,9 @@ static int setup_hub(struct usb_dev *hub, uint32_t hub_root_port, uint32_t hub_s
             if (!(pstat & 0x1)) continue;            /* PORT_CONNECTION: no device yet */
             tried |= (1u << port);
             printf("[xhci] hub port %u: device connected (status=0x%x)\n", port, pstat);
-
-            control_transfer(hub, 0x23, 3, 4 /* PORT_RESET */, port, 0, 0, 0);
-            for (uint64_t dl = mono_deadline_ms(800); mono_before(dl); ) {
-                if (control_transfer(hub, 0xA3, 0, 0, port, 4, buf_pa, 1) != CC_SUCCESS) break;
-                if ((buf[2] | (buf[3] << 8)) & 0x10) break;   /* C_PORT_RESET */
-                xhci_mdelay(10);
-            }
-            pstat = buf[0] | (buf[1] << 8);
-            control_transfer(hub, 0x23, 1 /* CLEAR_FEATURE */, 20 /* C_PORT_RESET */, port, 0, 0, 0);
-            if (!(pstat & 0x2)) { AIOS_LOG_WARN("hub port not enabled after reset"); continue; }
-            uint32_t kspeed = (pstat & (1u << 9)) ? 2 /* LS */
-                            : (pstat & (1u << 10)) ? 3 /* HS */ : 1 /* FS */;
-
-            struct usb_dev *d = dev_alloc();
-            if (!d) break;
-            uint8_t kdesc[18];
-            int kcls = address_and_describe(d, port, hub_root_port, kspeed, hub->slot, port, kdesc);
-            if (kcls < 0) { AIOS_LOG_WARN("downstream device enum failed"); d->in_use = 0; continue; }
-            if (kcls == 9) { d->in_use = 0; continue; }   /* nested hub: not supported */
-            if (setup_hid(d) == 0) found++;
-            else d->in_use = 0;
+            /* reset + enumerate this downstream port (HID or MSC). Shared with the runtime
+             * hub-change handler so a USB drive enumerates+mounts behind the hub too. */
+            if (hub_enumerate_port(hub, port) == 0) found++;
         }
         /* If a connected port is still un-enumerated, keep scanning; otherwise once we
          * have a device, stop (do not burn the whole 2.5s when devices are present). */
@@ -1807,6 +1938,87 @@ static int setup_device(uint32_t p) {
     return -1;
 }
 
+/* Path B: reset + enumerate ONE downstream port of a hub into a fresh usb_dev (the device is
+ * known connected). Mirrors setup_device but routes through the hub (route string + parent-hub
+ * TT) and dispatches HID AND MSC. Records parent_slot/parent_port so a later unplug is found by
+ * dev_on_hub_port. Used by both the boot scan (setup_hub) and the runtime handler. Returns 0 if
+ * a device was set up. */
+static int hub_enumerate_port(struct usb_dev *hub, uint32_t port) {
+    uint64_t buf_pa;
+    volatile uint8_t *buf = (volatile uint8_t *)dma_page(&buf_pa);
+    if (!buf) return -1;
+    control_transfer(hub, 0x23, 3, 4 /* PORT_RESET */, port, 0, 0, 0);
+    for (uint64_t dl = mono_deadline_ms(800); mono_before(dl); ) {
+        if (control_transfer(hub, 0xA3, 0, 0, port, 4, buf_pa, 1) != CC_SUCCESS) break;
+        if ((buf[2] | (buf[3] << 8)) & 0x10) break;   /* C_PORT_RESET */
+        xhci_mdelay(10);
+    }
+    uint32_t pstat = buf[0] | (buf[1] << 8);
+    control_transfer(hub, 0x23, 1 /* CLEAR_FEATURE */, 20 /* C_PORT_RESET */, port, 0, 0, 0);
+    if (!(pstat & 0x2)) { AIOS_LOG_WARN("hub port not enabled after reset"); dma_free((void *)buf); return -1; }
+    uint32_t kspeed = (pstat & (1u << 9)) ? 2 /* LS */
+                    : (pstat & (1u << 10)) ? 3 /* HS */ : 1 /* FS */;
+    struct usb_dev *d = dev_alloc();
+    if (!d) { dma_free((void *)buf); return -1; }
+    uint8_t kdesc[18];
+    int kcls = address_and_describe(d, port, hub->root_port + 1, kspeed, hub->slot, port, kdesc);
+    if (kcls < 0) { AIOS_LOG_WARN("downstream device enum failed"); d->in_use = 0; dma_free((void *)buf); return -1; }
+    d->parent_slot = hub->slot;
+    d->parent_port = port;
+    int rc = -1;
+    if (kcls == 9) { d->in_use = 0; }                  /* nested hub: not supported */
+    else if (setup_hid(d) == 0) rc = 0;               /* keyboard / mouse */
+    else if (setup_msc(d) == 0) rc = 0;               /* mass storage (mounts via g_msc_mount_pending) */
+    else d->in_use = 0;
+    dma_free((void *)buf);
+    return rc;
+}
+
+/* Path B: drain a hub status-change interrupt at TOP LEVEL (the driver loop, never inside
+ * evt_dispatch -- enumeration nests control transfers). For each hub, read the change bitmap
+ * the HW wrote (bit p = downstream port p changed; bit 0 = hub itself), and per flagged port:
+ * HUB_GET_STATUS, ACK C_PORT_CONNECTION, reconcile (new connect -> hub_enumerate_port; vanished
+ * -> device_teardown). Then RE-ARM the status pipe. g_hub_hotplug gates the reconcile (kill
+ * switch); the pipe is always drained + re-armed so a keyboard on the same hub keeps working. */
+static void handle_hub_changes(void) {
+    g_hub_change = 0;
+    for (int i = 0; i < MAX_USB_DEV; i++) {
+        struct usb_dev *hub = &g_devs[i];
+        if (!hub->in_use || hub->kind != USB_HUB || !hub->rpt || !hub->int_ring) continue;
+        /* Snapshot AND clear the change bitmap in one pass, before any control transfer. The
+         * status transfer that delivered this bitmap has completed and is NOT re-armed until the
+         * end of this hub, so the HW cannot overwrite rpt mid-reconcile; a port that changes
+         * during the reconcile is latched by the hub and reported by the next re-armed transfer. */
+        uint32_t changed = 0;
+        for (int b = 0; b < hub->rpt_len && b < 4; b++) {
+            changed |= (uint32_t)hub->rpt[b] << (b * 8);
+            hub->rpt[b] = 0;
+        }
+        arch_dsb();
+        if (changed) {
+            uint64_t buf_pa;
+            volatile uint8_t *buf = (volatile uint8_t *)dma_page(&buf_pa);
+            if (buf) {
+                for (uint32_t port = 1; port <= 31; port++) {
+                    if (!(changed & (1u << port))) continue;
+                    if (control_transfer(hub, 0xA3 /* GET_STATUS (other) */, 0, 0, port, 4, buf_pa, 1) != CC_SUCCESS)
+                        continue;
+                    uint32_t pstat = buf[0] | (buf[1] << 8);
+                    control_transfer(hub, 0x23, 1 /* CLEAR_FEATURE */, 16 /* C_PORT_CONNECTION */, port, 0, 0, 0);
+                    if (!g_hub_hotplug) continue;     /* kill switch: ACK only, no reconcile */
+                    int connected = (pstat & 0x1) != 0;
+                    struct usb_dev *dev = dev_on_hub_port(hub, port);
+                    printf("[xhci] hub port %u change: %s\n", port, connected ? "connected" : "removed");
+                    if (connected && !dev)      hub_enumerate_port(hub, port);
+                    else if (!connected && dev) device_teardown(dev);
+                }
+                dma_free((void *)buf);
+            }
+        }
+        arm_int_buf(hub, 0);   /* re-arm the status pipe for the next change (rpt already cleared) */
+    }
+}
+
 int xhci_init(void) {
     if (!pcie_xhci_present) { AIOS_LOG_WARN("no xHCI controller"); return -1; }
     if (map_bar()) return -1;
@@ -2004,12 +2216,16 @@ int xhci_diag_cmd(const char *args, char *buf, int bufsize) {
             g_msc_automount = (int)(xdiag_hex(p + 5) & 1);   /* gate runtime hotplug mount */
             return snprintf(buf, bufsize, "xHCI: USB-MSC automount = %d\n", g_msc_automount);
         }
+        if (p[0] == 'h' && p[1] == 'u' && p[2] == 'b' && p[3] == '.') {
+            g_hub_hotplug = (int)(xdiag_hex(p + 4) & 1);     /* Path B kill switch (default on) */
+            return snprintf(buf, bufsize, "xHCI: hub downstream hotplug reconcile = %d\n", g_hub_hotplug);
+        }
     }
 
     int w = 0;
     uint32_t sts = op_r32(XHCI_USBSTS), cmd = op_r32(XHCI_USBCMD);
     w += snprintf(buf + w, bufsize - w,
-        "xHCI diag. cmds: .led.N (bit0 Num, 1 Caps, 2 Scroll)  .lock  .irq.0|1  .debug.0|1  .auto.0|1\n");
+        "xHCI diag. cmds: .led.N  .lock  .irq.0|1  .debug.0|1  .auto.0|1  .hub.0|1 (downstream hotplug)\n");
     w += snprintf(buf + w, bufsize - w,
         "USBSTS=0x%x (HCH=%d HSE=%d HCE=%d CNR=%d)  USBCMD=0x%x (RS=%d INTE=%d)\n",
         sts, sts & 1, (sts >> 2) & 1, (sts >> 12) & 1, (sts >> 11) & 1,

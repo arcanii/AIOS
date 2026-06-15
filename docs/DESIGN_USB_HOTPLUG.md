@@ -1,11 +1,43 @@
 # DESIGN: USB runtime HOTPLUG (xHCI) -- external drive insert-after-boot
 
-Status: Path A IMPLEMENTED + QEMU-verified (2026-06-16); Path B = DESIGN. Driver:
+Status: Path A + Path B IMPLEMENTED + QEMU-verified (2026-06-16). Driver:
 `src/usb/xhci.c`. Builds on the root-port hotswap (commit `07fa756`, v0.4.253), the
 USB-MSC driver + >2TB (v0.4.255), and the boot-only `usb_msc_mount()`
 (`src/boot/boot_fs_init.c`). Synthesized from a 5-lens read-only design workflow +
 direct code grounding. Companion: `docs/NEXT_20260615h_usb_hotplug.md`,
 `docs/NEXT_20260615e_*`.
+
+## Path B -- AS BUILT (QEMU-verified end-to-end; ships OFF/inert, HW-pending)
+
+A USB device hotplugged BEHIND the VL805 hub now enumerates + mounts at runtime.
+`scripts/usb_hub_hotplug_qemu_test.py` 11/11 (enable via `/proc/xhci.hub.1` -> arm ->
+downstream device_add -> enumerate -> mount /mnt/usb -> ls/cat/write -> unplug teardown ->
+replug). No regression (Path A 12/12, swap 11/11, hotswap PASS, net 8/8; the keyboard
+enumerates behind the hub -- the `xhci_hub_key` decode flake is a pre-existing QEMU
+`sendkey` env issue on clean+B alike). All four trees build.
+
+* **The de-risk:** a QEMU probe proved `qemu-xhci` + `usb-hub` DELIVERS the interrupt-IN
+  status-change transfer (incl runtime changes), so Path B is QEMU-developable, not HW-blind.
+* **Pieces:** `setup_hub_int` (find+configure+arm the hub interrupt-IN status pipe, speed-aware
+  interval, self-contained via `hub_nports`); `hub_try_deliver` (flag `g_hub_change` on a hub
+  status event); `handle_hub_changes` (top-level: snapshot+clear the bitmap atomically, per
+  changed port GET_STATUS + CLEAR_FEATURE + reconcile, re-arm); `hub_enumerate_port` (factored
+  from the boot scan, dispatches HID AND MSC, sets parent_slot/parent_port); `dev_on_hub_port`
+  (downstream teardown key, since downstream devices carry root_port=0xFFFFFFFF).
+* **Ships OFF (`g_hub_hotplug=0`, inert).** The RPi4 keyboard rides the SAME hub, and driving
+  the hub status pipe (Configure-Endpoint + CLEAR_FEATURE through the hub TT) while the keyboard
+  int-IN is armed is a known VL805 wedge mode QEMU cannot model (adversarial review HIGH finding).
+  So the pipe is NOT armed at boot. `/proc/xhci.hub.1` enables it live (the driver thread arms
+  every enumerated hub); `.hub.0` stops the reconcile (pipe keeps draining -> keyboard safe).
+* **Adversarial 4-lens review applied:** fixed the real bugs -- `setup_hub_int` buf leak,
+  HS-only interval (now speed-aware: QEMU hub is FS, VL805 is HS), bitmap read-then-clear window
+  (now atomic snapshot+clear). Rejected false positives: the route string (`port` is correct for
+  a single tier + matches the HW-proven existing `setup_hub`), context-entries (`dci` is right),
+  the ring-deadlock (single armed buffer; same proven `arm_int_buf` as the keyboard).
+* **HW-verify (serial capture):** boot the Pi, `/proc/xhci.hub.1`, insert a USB-2 drive behind
+  the hub -> watch for `hub status pipe armed` -> `hub port N change: connected` -> `USB MSC
+  ready` -> mounted; CONFIRM THE KEYBOARD KEEPS TYPING throughout (the TT-coexistence unknown).
+  If the keyboard wedges, `/proc/xhci.hub.0` or reboot.
 
 ## Path A -- AS BUILT (QEMU-verified, HW-pending)
 
