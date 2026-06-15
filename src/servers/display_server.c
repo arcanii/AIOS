@@ -19,6 +19,7 @@
  * when our seL4_Recv wakes on the bound display notification. QEMU stubs are inert. */
 int  v3d_clear_and_probe(uint32_t color);
 int  v3d_triangle_and_probe(void);
+int  v3d_cube_run(int frames);
 void v3d_service_display_request(void);
 
 /* Font and drawing functions from boot_display_init.c */
@@ -278,6 +279,15 @@ void display_server_fn(void *arg0, void *arg1, void *ipc_buf) {
         case DISP_V3D_TRI: {
             /* Phase 3: GPU rainbow triangle to the live FB. MR0 reply = job status. */
             int st = v3d_triangle_and_probe();
+            seL4_SetMR(0, (seL4_Word)st);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+
+        case DISP_V3D_CUBE: {
+            /* Phase 4a: GPU spinning cube for MR0 frames (0 = default). Monopolizes
+             * display_server for the run (like the CPU DISP_CUBE). MR0 reply = status. */
+            int st = v3d_cube_run((int)seL4_GetMR(0));
             seL4_SetMR(0, (seL4_Word)st);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;

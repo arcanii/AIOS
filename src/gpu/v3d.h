@@ -42,6 +42,11 @@ int v3d_clear_and_probe(uint32_t color);
  * Returns 0 on PASS (center pixel != clear color), negative on failure. QEMU: -5. */
 int v3d_triangle_and_probe(void);
 
+/* Phase 4a: spin a GPU-rendered shaded cube for `frames` frames (<=0 = default,
+ * capped) on the display_server thread. Same thread + ownership rules. Returns 0 on
+ * PASS. QEMU stub: -5. The project deliverable. */
+int v3d_cube_run(int frames);
+
 /* Called by display_server when its blocking seL4_Recv wakes on the bound display
  * notification: services a pending /proc/v3d.{test,tri} request (no-op if none).
  * Mirrors the net_server bound-notification wake. */

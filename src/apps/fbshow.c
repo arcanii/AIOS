@@ -42,6 +42,13 @@ static uint32_t hex_to_u32(const char *s) {
     return v;
 }
 
+/* Parse a non-negative decimal (the cube frame count). */
+static int parse_dec(const char *s) {
+    int v = 0;
+    while (*s >= '0' && *s <= '9') v = v * 10 + (*s++ - '0');
+    return v;
+}
+
 /* Parse up to 8 hex digits (a raw 32-bit FB-order pixel value, e.g. FFFF8000). */
 static uint32_t hex32(const char *s) {
     uint32_t v = 0;
@@ -64,7 +71,7 @@ int main(int argc, char *argv[]) {
 
     if (argc < 2) {
         printf("Usage: fbshow <file.raw> | --info | --clear [RRGGBB] | --cube\n"
-               "             | --gpu-clear [AABBGGRR] | --gpu-tri | --gpu-release\n");
+               "             | --gpu-clear [AABBGGRR] | --gpu-tri | --gpu-cube [N] | --gpu-release\n");
         return 1;
     }
 
@@ -114,6 +121,19 @@ int main(int argc, char *argv[]) {
         (void)r;
         int st = (int)seL4_GetMR(0);
         printf("gpu-tri: status=%d %s (cat /proc/v3d for the probe line)\n",
+               st, st == 0 ? "PASS" : "FAIL");
+        return st == 0 ? 0 : 1;
+    }
+
+    if (streq(argv[1], "--gpu-cube")) {
+        /* Phase 4a: GPU-rendered spinning cube. Optional frame count (default 150). */
+        uint32_t frames = (argc > 2) ? (uint32_t)parse_dec(argv[2]) : 0;
+        seL4_SetMR(0, frames);
+        seL4_MessageInfo_t r = seL4_Call(disp_ep,
+            seL4_MessageInfo_new(DISP_V3D_CUBE, 0, 0, 1));
+        (void)r;
+        int st = (int)seL4_GetMR(0);
+        printf("gpu-cube: status=%d %s (cat /proc/v3d for frames/fps)\n",
                st, st == 0 ? "PASS" : "FAIL");
         return st == 0 ? 0 : 1;
     }

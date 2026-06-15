@@ -100,6 +100,8 @@ def main():
         check("/proc/v3d.test refuses gracefully", "not present" in tst, repr(tst[-80:]))
         tri = con.run("cat /proc/v3d.tri", 10)
         check("/proc/v3d.tri refuses gracefully", "not present" in tri, repr(tri[-80:]))
+        cub = con.run("cat /proc/v3d.cube", 10)
+        check("/proc/v3d.cube refuses gracefully", "not present" in cub, repr(cub[-80:]))
 
         # 3e. fbshow --gpu-clear sends DISP_V3D_CLEAR to display_server; the QEMU
         # v3d_clear_and_probe stub returns -5 (no GPU). Must report a non-zero status
@@ -110,6 +112,9 @@ def main():
         gt = con.run("fbshow --gpu-tri", 15)
         check("fbshow --gpu-tri refuses gracefully",
               "status=" in gt and "PASS" not in gt, repr(gt[-80:]))
+        gcu = con.run("fbshow --gpu-cube 5", 15)
+        check("fbshow --gpu-cube refuses gracefully",
+              "status=" in gcu and "PASS" not in gcu, repr(gcu[-80:]))
         # 3f. --gpu-release must be benign (un-suspend is a no-op when not suspended).
         gr = con.run("fbshow --gpu-release", 10)
         check("fbshow --gpu-release benign", "not found" not in gr, repr(gr[-80:]))
