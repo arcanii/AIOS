@@ -90,6 +90,19 @@ def main():
         check("%s byte-exact vs golden" % name, ok,
               "" if ok else hexdump_diff(ours, gold))
 
+    # Phase 4a: the cube transform has no captured golden -- range/structure check.
+    cube_src = os.path.join(ROOT, "tools", "v3d_cube_check.c")
+    cube_c = os.path.join(ROOT, "src", "gpu", "v3d_cube.c")
+    cube_exe = os.path.join(td, "cube_check")
+    cb = subprocess.run([cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-O0",
+                         "-I", INC, cube_src, cube_c, CL_SRC, "-o", cube_exe],
+                        capture_output=True, text=True)
+    if cb.returncode != 0:
+        check("cube transform host build", False, cb.stderr.strip()[-300:])
+    else:
+        cr = subprocess.run([cube_exe], capture_output=True, text=True)
+        check("cube transform NDC/structure sane", cr.returncode == 0, cr.stdout.strip())
+
     print("=== v3d_clcheck: %s ===" % ("PASS" if fails == 0 else "FAIL"))
     return 1 if fails else 0
 

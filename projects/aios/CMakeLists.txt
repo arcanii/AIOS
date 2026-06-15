@@ -201,6 +201,7 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/usb/xhci.c
     ${AIOS_ROOT}/src/gpu/v3d.c
     ${AIOS_ROOT}/src/gpu/v3d_cl.c
+    ${AIOS_ROOT}/src/gpu/v3d_cube.c
     ${PLAT_SOURCES}
     apps_cpio.o
 )

@@ -60,7 +60,9 @@ struct v3d_tri_params {
     uint32_t shader_record_va;  /* GL Shader State Record GPU VA (16-byte aligned)   */
     uint8_t  nattr;             /* number of attribute arrays (2: pos + color)      */
     uint32_t tile_list_va;      /* generic tile-list buffer GPU VA (start)           */
-    uint32_t vertex_count;      /* number of vertices (3)                            */
+    uint32_t vertex_count;      /* number of vertices (triangle 3, cube 36)         */
+    uint8_t  cull;              /* 0 = draw both faces (triangle); 1 = cull back-faces (cube) */
+    uint8_t  skip_z;            /* 0 = store D16 Z (triangle); 1 = no Z store (cube, cull-only) */
 };
 
 /* Resolved shader/uniform addresses for the GL Shader State Record (36 B). */

@@ -226,8 +226,10 @@ int v3d_build_triangle_bin_cl(uint8_t *buf, int cap, const struct v3d_tri_params
     w8(&q, 6);                             /* START_TILE_BINNING */
     /* CLIP_WINDOW (107): left, bottom, width, height (u16) */
     w8(&q, 107); w16(&q, 0); w16(&q, 0); w16(&q, w); w16(&q, h);
-    /* CFG_BITS (96): fwd+rev+cw prims, no cull; depth_test_func=ALWAYS(7); early-z-update */
-    w8(&q, 96); w8(&q, 0x07); w8(&q, 0x70); w8(&q, 0x02);
+    /* CFG_BITS (96): byte0 = fwd(1) | rev(!cull)<<1 | cw(1)<<2. cull=0 (triangle) =>
+     * 0x07 (both faces); cull=1 (cube) => 0x05 (back-face cull). depth_test=ALWAYS(7),
+     * early-z-update -- a convex cube needs only culling, no depth buffer. */
+    w8(&q, 96); w8(&q, p->cull ? 0x05 : 0x07); w8(&q, 0x70); w8(&q, 0x02);
     w8(&q, 104); w32(&q, 0x3f800000u);     /* POINT_SIZE 1.0 */
     w8(&q, 105); w32(&q, 0x3f800000u);     /* LINE_WIDTH 1.0 */
     /* CLIPPER_XY_SCALING (110): (w/2)*256, (h/2)*-256 (f32) */
@@ -265,7 +267,8 @@ int v3d_build_triangle_tile_list(uint8_t *buf, int cap, const struct v3d_tri_par
     w8(&q, 56); w8(&q, 0x02);    /* PRIM_LIST_FORMAT: triangles */
     w8(&q, 21); w8(&q, 0);       /* BRANCH_TO_IMPLICIT_TILE_LIST, set 0 */
     emit_store_tile(&q, 0, 0, 27, p->rb_swap, p->fb_stride, p->fb_va);          /* RT0 RGBA8 RASTER */
-    emit_store_tile(&q, 9, 5, 42, 0, (p->height + 15u) / 8u, p->z_va);          /* Z D16 UIF_XOR   */
+    if (!p->skip_z)
+        emit_store_tile(&q, 9, 5, 42, 0, (p->height + 15u) / 8u, p->z_va);      /* Z D16 UIF_XOR (cube: skipped) */
     w8(&q, 25); w8(&q, 0x03);    /* CLEAR_TILE_BUFFERS all RT + ZS */
     w8(&q, 27);                  /* END_OF_TILE_MARKER */
     w8(&q, 18);                  /* RETURN_FROM_SUB_LIST */
@@ -312,8 +315,11 @@ int v3d_build_triangle_render_cl(uint8_t *buf, int cap, const struct v3d_tri_par
 
     w8(&q, 19);                  /* FLUSH_VCD_CACHE */
 
-    /* START_ADDRESS_OF_GENERIC_TILE_LIST (20): the SEPARATE tile-list buffer */
-    w8(&q, 20); w32(&q, p->tile_list_va); w32(&q, p->tile_list_va + 36u);
+    /* START_ADDRESS_OF_GENERIC_TILE_LIST (20): the SEPARATE tile-list buffer. Its
+     * length is 36 B with the Z store, 23 B without (cube). Must match the tile-list
+     * emitter exactly so packet 20's end address brackets the sub-list. */
+    uint32_t tlist_len = p->skip_z ? 23u : 36u;
+    w8(&q, 20); w32(&q, p->tile_list_va); w32(&q, p->tile_list_va + tlist_len);
 
     /* SUPERTILE_COORDINATES (23) per supertile -- row-major (col fastest) */
     for (uint32_t row = 0; row < fh; row++)
