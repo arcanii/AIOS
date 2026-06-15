@@ -180,13 +180,15 @@ static volatile uint32_t g_port_change;       /* v0.4.253: a port-status event i
  * LEVEL by the driver thread so enumeration never runs nested in a command wait. g_hub_hotplug
  * gates arming the pipe (HW-only-verifiable; default-state set after the QEMU testability probe). */
 static volatile uint32_t g_hub_change;
-/* Default OFF (INERT): on the RPi4 the keyboard rides the SAME VL805 hub, and driving the hub's
- * status pipe (Configure-Endpoint + CLEAR_FEATURE through the hub TT) while the keyboard int-IN
- * is armed is a known VL805 wedge mode that QEMU cannot model. So Path B ships dormant -- the
- * hub status pipe is NOT armed at boot. Enable it live for a HW serial-capture session with
- * /proc/xhci.hub.1 (the driver thread then arms every enumerated hub); /proc/xhci.hub.0 disables
- * the reconcile (the pipe keeps draining so the keyboard is unaffected). QEMU-verified either way. */
-static volatile int      g_hub_hotplug = 0;
+/* Default ON -- HW-VERIFIED (build 2503, real VL805, 2026-06-16). The keyboard rides the SAME
+ * hub, and the feared wedge (Configure-Endpoint + CLEAR_FEATURE through the hub TT while the
+ * keyboard int-IN is armed) did NOT happen on real silicon: the keyboard was hot-torn-down +
+ * re-enumerated behind the hub and kept typing throughout. So the driver thread arms every
+ * enumerated hub's status pipe shortly after boot, and a device hotplugged behind the hub is
+ * detected at runtime. /proc/xhci.hub.0 is a runtime kill-switch (stops the reconcile; the pipe
+ * keeps draining so a keyboard on the hub is unaffected); .hub.1 re-enables. QEMU usb_hub_hotplug
+ * 11/11. (The original VL805-TT-wedge concern came from the adversarial review; HW retired it.) */
+static volatile int      g_hub_hotplug = 1;
 static int               g_hub_armed   = 0;   /* hub status pipes armed (set once on enable) */
 static int  setup_hub_int(struct usb_dev *hub);                       /* Path B (defined below) */
 static int  hub_enumerate_port(struct usb_dev *hub, uint32_t port);   /* Path B (defined below) */

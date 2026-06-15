@@ -98,11 +98,10 @@ def main():
         boot = ready
         if not ready:
             raise SystemExit
-        # Path B ships OFF (inert) so the keyboard-on-the-hub path is undisturbed on real HW.
-        # Enable it live (as a HW serial-capture session would): the driver thread then arms
-        # every enumerated hub's status pipe.
-        nc("cat /proc/xhci.hub.1")
-        time.sleep(1.5)
+        # Path B is default ON (HW-verified on the real VL805): the driver thread arms every
+        # enumerated hub's status pipe shortly after boot -- no /proc enable needed. (Kill-switch
+        # is /proc/xhci.hub.0.) Give the driver loop a moment to arm.
+        time.sleep(2.0)
         armed = "yes" if "hub status pipe armed" in logtext() else ""
 
         s = socket.create_connection(("127.0.0.1", MON), timeout=5); time.sleep(0.5); s.recv(8192)
