@@ -1519,6 +1519,15 @@ static int setup_hub(struct usb_dev *hub, uint32_t hub_root_port, uint32_t hub_s
  * ============================================================ */
 /* xhci_msc_ok + g_msc_dev are defined near the top (above device_teardown, which clears them). */
 
+/* v0.4.257: fault injection for the bulk-STALL recovery path. QEMU usb-storage never STALLs
+ * a bulk endpoint, so this lets the recovery (Reset Endpoint + ClearFeature + Set TR Dequeue)
+ * be exercised + regression-tested on QEMU: when nonzero, the next N MSC data-phase transfers
+ * report CC_STALL to bot_scsi AFTER the real transfer has completed -- so the ring/dequeue
+ * state stays consistent and recovery's Set TR Dequeue lands on the live cursor (a no-op there),
+ * while the recovery commands themselves still run + log. Set via /proc/xhci.stalltest.N;
+ * default 0 (inert). On real HW the STALL is genuine (the endpoint really is Halted). */
+static volatile uint32_t g_msc_stall_inject;
+
 /* Enqueue one NORMAL TRB on a bulk ring, ring the doorbell, and wait (via the event-
  * ring dispatcher) for its Transfer Event on (slot, dci). Returns the completion code
  * (CC_SUCCESS / CC_SHORT_PKT are both fine); -1 on timeout. Mirrors arm_int_buf's
@@ -1556,6 +1565,45 @@ static int bot_bulk(struct usb_dev *d, int dir_in, uint64_t buf_pa, uint32_t len
     return -1;
 }
 
+/* v0.4.257: recover a STALLed (Halted) bulk endpoint per the USB Bulk-Only Transport spec
+ * (5.3.x / 6.7.x). A bulk STALL (cc=6) halts the endpoint on BOTH the xHC and the device;
+ * left alone, EVERY later transfer on that pipe times out (cc=-1, the doorbell on a Halted
+ * EP is ignored). HW-PROVEN: a SuperSpeed drive's first replug STALLs the READ_CAPACITY data
+ * phase, then the CSW + the next command's CBW read cc=-1 -> "READ_CAPACITY failed" and the
+ * drive only enumerates on a second slot (seed docs/NEXT_20260616). Clear the halt on both
+ * sides, mirroring ep0_recover's RESET_EP + SET_TR_DEQ for EP0:
+ *   - xHC:    Reset Endpoint (Halted -> Stopped), then Set TR Dequeue to the live ring cursor
+ *             with the current cycle bit (the failed TRB was already consumed, so *enq points
+ *             at the next free slot = where the next bot_bulk will enqueue + ring the doorbell).
+ *   - device: ClearFeature(ENDPOINT_HALT) on EP0 so the device un-stalls the pipe.
+ * dir_in picks bulk-IN (1) vs bulk-OUT (0). Bounded: if the Reset Endpoint command itself
+ * times out the controller is wedged -- skip the rest rather than compound three command/
+ * control busy-waits (~3s of core-0 spin during USB churn; see item 4, project_stall_hunt). */
+static void bot_ep_recover(struct usb_dev *d, int dir_in) {
+    uint32_t dci     = dir_in ? d->bi_dci : d->bo_dci;
+    uint64_t ring_pa = dir_in ? d->bi_ring_pa : d->bo_ring_pa;
+    uint32_t enq     = dir_in ? d->bi_enq : d->bo_enq;
+    uint32_t cyc     = dir_in ? d->bi_cycle : d->bo_cycle;
+    /* USB endpoint address from the DCI: ep_num = dci>>1 (OUT dci=2N, IN dci=2N+1, both
+     * floor to N); IN sets bit 7. Exact because setup_msc derived the DCI from (addr & 0xF)
+     * and USB endpoint numbers are 4-bit. */
+    uint8_t  ep_addr = (uint8_t)((dci >> 1) | (dir_in ? 0x80u : 0u));
+    uint32_t evt[4];
+    if (cmd_submit(0, 0, TRB_RESET_EP, d->slot, dci, evt) < 0) {
+        AIOS_LOG_WARN("MSC bulk-EP reset timed out -- controller wedged, skipping recovery");
+        return;
+    }
+    /* Device side: clear ENDPOINT_HALT so the device un-stalls the pipe (BOT 5.3.x). The xHC
+     * Reset Endpoint above is what un-wedges OUR ring, so this is best-effort. Both this and the
+     * Set TR Dequeue below are checked + logged loudly: an HW poll timeout/failure here must be
+     * diagnosable, never silent. */
+    int crc = control_transfer(d, 0x02, 1 /* CLEAR_FEATURE */, 0 /* ENDPOINT_HALT */, ep_addr, 0, 0, 0);
+    if (crc != CC_SUCCESS) AIOS_LOG_WARN_V("MSC ClearFeature(ENDPOINT_HALT) cc=", (unsigned long)crc);
+    uint64_t deq = ring_pa + (uint64_t)enq * 16;
+    if (cmd_submit(deq | cyc, 0, TRB_SET_TR_DEQ, d->slot, dci, evt) != CC_SUCCESS)
+        AIOS_LOG_WARN("MSC Set-TR-Dequeue after STALL recovery failed -- endpoint may stay Stopped");
+}
+
 /* One Bulk-Only Transport command: build the 31-byte CBW (sig "USBC") carrying the
  * SCSI CDB, send it on bulk-OUT, run the optional data phase on the indicated bulk
  * endpoint, then read the 13-byte CSW (sig "USBS") on bulk-IN and validate tag+status.
@@ -1578,15 +1626,43 @@ static int bot_scsi(struct usb_dev *d, const uint8_t *cdb, int cdb_len,
     arch_dsb();
 
     int cc = bot_bulk(d, 0, d->msc_buf_pa, 31);                      /* CBW on bulk-OUT */
+    if (cc == CC_STALL) {
+        /* A CBW-phase STALL: clear the bulk-OUT halt so the NEXT command is not wedged, then
+         * fail this one (the TUR / READ_CAPACITY retry loops re-issue it on a clean pipe). */
+        AIOS_LOG_WARN("MSC CBW STALL -- clearing bulk-OUT halt");
+        bot_ep_recover(d, 0);
+        return -1;
+    }
     if (cc != CC_SUCCESS) { AIOS_LOG_WARN_V("MSC CBW cc=", (unsigned long)cc); return -1; }
     if (data_len) {                                                 /* data phase */
         cc = bot_bulk(d, dir_in, data_pa, data_len);
-        if (cc != CC_SUCCESS && cc != CC_SHORT_PKT) {
+        /* v0.4.257 fault injection (QEMU has no real bulk STALL): fake one AFTER the real
+         * transfer so the ring stays consistent -- exercises the recovery path below. */
+        uint32_t inj = g_msc_stall_inject;   /* snapshot: set from the proc thread -- no RMW underflow */
+        if (inj && (cc == CC_SUCCESS || cc == CC_SHORT_PKT)) {
+            g_msc_stall_inject = inj - 1;
+            cc = CC_STALL;
+            AIOS_LOG_WARN("MSC data STALL INJECTED (test)");
+        }
+        if (cc == CC_STALL) {
+            /* BOT 5.3.x: a data-phase STALL is RECOVERABLE -- clear the halt on the data
+             * endpoint and STILL read the CSW (the device reports the command status there).
+             * The old code returned here, leaving the endpoint Halted -> the CSW read and the
+             * next command's CBW then read cc=-1: the failed-replug wedge this fixes. */
+            AIOS_LOG_WARN("MSC data STALL -- clearing halt, reading CSW");
+            bot_ep_recover(d, dir_in);
+        } else if (cc != CC_SUCCESS && cc != CC_SHORT_PKT) {
             AIOS_LOG_WARN_V("MSC data cc=", (unsigned long)cc); return -1;
         }
     }
     volatile uint8_t *csw = d->msc_buf + 64;                        /* CSW on bulk-IN */
     cc = bot_bulk(d, 1, d->msc_buf_pa + 64, 13);
+    if (cc == CC_STALL) {
+        /* BOT 6.7.x: a STALL on the status phase -- clear the bulk-IN halt + retry the CSW once. */
+        AIOS_LOG_WARN("MSC CSW STALL -- clearing halt, retrying CSW");
+        bot_ep_recover(d, 1);
+        cc = bot_bulk(d, 1, d->msc_buf_pa + 64, 13);
+    }
     if (cc != CC_SUCCESS && cc != CC_SHORT_PKT) {
         AIOS_LOG_WARN_V("MSC CSW cc=", (unsigned long)cc); return -1;
     }
@@ -1774,7 +1850,15 @@ static int setup_msc(struct usb_dev *d) {
         xhci_mdelay(100);
     }
     scsi_inquiry(d);
-    if (scsi_read_capacity(d) != 0) { AIOS_LOG_WARN("MSC READ_CAPACITY failed"); return -1; }
+    /* v0.4.257: a STALLed first access (HW: a SuperSpeed drive's first replug) is now recovered
+     * in bot_scsi, but the command that STALLed still reports failure -- retry READ_CAPACITY so
+     * the FIRST replug enumerates cleanly on a freshly-cleared pipe (mirrors the TUR retry). */
+    int cap_ok = 0;
+    for (int i = 0; i < 3; i++) {
+        if (scsi_read_capacity(d) == 0) { cap_ok = 1; break; }
+        xhci_mdelay(50);
+    }
+    if (!cap_ok) { AIOS_LOG_WARN("MSC READ_CAPACITY failed"); return -1; }
 
     unsigned long mb = (unsigned long)((d->msc_nsectors * d->msc_blocksize) >> 20);
     printf("[xhci] USB MSC ready: %lu sectors x %u bytes = %lu MB (slot %u)\n",
@@ -2222,12 +2306,17 @@ int xhci_diag_cmd(const char *args, char *buf, int bufsize) {
             g_hub_hotplug = (int)(xdiag_hex(p + 4) & 1);     /* Path B kill switch (default on) */
             return snprintf(buf, bufsize, "xHCI: hub downstream hotplug reconcile = %d\n", g_hub_hotplug);
         }
+        if (p[0] == 's' && p[1] == 't' && p[2] == 'a' && p[3] == 'l' && p[4] == 'l'
+            && p[5] == 't' && p[6] == 'e' && p[7] == 's' && p[8] == 't' && p[9] == '.') {
+            g_msc_stall_inject = xdiag_hex(p + 10) & 0xF;    /* fake N MSC data-phase STALLs (test) */
+            return snprintf(buf, bufsize, "xHCI: MSC data-STALL inject = %u\n", g_msc_stall_inject);
+        }
     }
 
     int w = 0;
     uint32_t sts = op_r32(XHCI_USBSTS), cmd = op_r32(XHCI_USBCMD);
     w += snprintf(buf + w, bufsize - w,
-        "xHCI diag. cmds: .led.N  .lock  .irq.0|1  .debug.0|1  .auto.0|1  .hub.0|1 (downstream hotplug)\n");
+        "xHCI diag. cmds: .led.N  .lock  .irq.0|1  .debug.0|1  .auto.0|1  .hub.0|1  .stalltest.N (inject MSC bulk STALL)\n");
     w += snprintf(buf + w, bufsize - w,
         "USBSTS=0x%x (HCH=%d HSE=%d HCE=%d CNR=%d)  USBCMD=0x%x (RS=%d INTE=%d)\n",
         sts, sts & 1, (sts >> 2) & 1, (sts >> 12) & 1, (sts >> 11) & 1,
