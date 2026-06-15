@@ -329,6 +329,14 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
         for (int j = 0; j < 4; j++) conn->remote_ip[j] = src_ip[j];
         for (int j = 0; j < 6; j++) conn->remote_mac[j] = src_mac[j];
         conn->snd_nxt = 1000;
+        /* v0.4.253-fix: arm/CLEAR the sender-retransmit + close state on this
+         * (possibly reused) slot NOW, in SYN_RCVD. Without this, a slot freed by
+         * the RTO give-up keeps stale closing/fin_sent/rtx_due_ms/close_deadline_ms,
+         * and net_tcp_rto_check fires on the fresh child before it reaches ESTAB ->
+         * RST the new connection ("worked once, then every connect RSTs"). The
+         * NET_SOCKET (active connect) path already zeroes these; this is the
+         * matching passive-accept reset. net_sock_tx_init re-runs at ESTAB. */
+        net_sock_tx_init(conn);
         conn->rcv_nxt = seq + 1;
         conn->rxlen = 0;
         conn->rx_head = 0;
@@ -557,17 +565,19 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
         s->state = TCP_FIN_WAIT;
     }
 
-    /* FIN_WAIT + ACK -> closed. v0.4.253: free ONLY once EVERYTHING we sent is ACKed
-     * (snd_una == snd_nxt). For an active close that includes our FIN (snd_nxt == fin_seq+1);
-     * for a passive close (peer FIN, we have not sent a FIN) it means all DATA is ACKed.
-     * A stray/partial ACK must NOT free a socket that still has unACKed data or an unsent
-     * FIN -- that would lose data and cut off the retransmit (the passive-FIN-during-close
-     * race). Wrap-safe; snd_una never exceeds snd_nxt. */
-    if (s->state == TCP_FIN_WAIT && (flags & TCP_ACK) && !(flags & TCP_FIN)) {
-        if ((int32_t)(s->snd_una - s->snd_nxt) >= 0) {
-            s->state = TCP_CLOSED;
-            s->in_use = 0;
-        }
+    /* FIN_WAIT + ACK -> closed. v0.4.253-fix: free once OUR FIN is ACKed, i.e.
+     * fin_sent AND snd_una == snd_nxt (snd_nxt includes the FIN seq). Accept a
+     * COALESCED FIN+ACK too: a real peer routinely ACKs our FIN and sends its own
+     * FIN in ONE segment, and the old `!(flags & TCP_FIN)` guard SKIPPED that, so
+     * the socket lingered to the give-up deadline and got RST -- THE v0.4.253 HW
+     * REGRESSION (QEMU SLIRP coalesces too, but its lossless instant ACK freed the
+     * socket via the pure-ACK case before the give-up, hiding it). Requiring
+     * fin_sent leaves a passive peer-FIN (we have not close()d yet) for the
+     * application close() to drive. Wrap-safe; snd_una never exceeds snd_nxt. */
+    if (s->state == TCP_FIN_WAIT && (flags & TCP_ACK) && s->fin_sent &&
+        (int32_t)(s->snd_una - s->snd_nxt) >= 0) {
+        s->state = TCP_CLOSED;
+        s->in_use = 0;
     }
 }
 
@@ -591,10 +601,17 @@ static void net_tcp_rto_check(void) {
         int give_up = (sk->rtx_count >= TCP_RTX_MAX) ||
                       (sk->close_deadline_ms && now >= sk->close_deadline_ms);
         if (give_up) {
-            if (sk->closing || sk->fin_sent) {     /* a close that the peer never finished */
-                net_tcp_send(sk->remote_ip, sk->remote_mac, sk->local_port,
-                             sk->remote_port, sk->snd_nxt, sk->rcv_nxt, TCP_RST, NULL, 0);
+            if (sk->closing || sk->fin_sent) {     /* a close the peer never finished */
+                /* v0.4.253-fix: free the slot but do NOT send a RST. A RST makes
+                 * the peer DISCARD data it already received but has not yet read --
+                 * exactly the v0.4.253 regression (SSH 0/20, netconsole "reset by
+                 * peer"). A genuinely dead peer times out by itself; a live-but-
+                 * slow peer sends later segments that hit the no-socket drop. net_sock_tx_init
+                 * clears the rto/close state so this freed slot is never reused with
+                 * a stale give-up timer/deadline (the slot-poison cascade). */
+                net_rx_stats.tcp_giveups++;
                 net_sock_drop_parked(sk);
+                net_sock_tx_init(sk);
                 sk->state = TCP_CLOSED;
                 sk->in_use = 0;
             } else {
@@ -615,6 +632,7 @@ static void net_tcp_rto_check(void) {
                     tmp[j] = sk->txbuf[(seq + (uint32_t)j) % TX_RTX_BUF];
                 net_tcp_send(sk->remote_ip, sk->remote_mac, sk->local_port,
                              sk->remote_port, seq, sk->rcv_nxt, TCP_ACK | TCP_PSH, tmp, n);
+                net_rx_stats.tcp_rtx_segs++;
                 seq += (uint32_t)n;
             }
             did = 1;

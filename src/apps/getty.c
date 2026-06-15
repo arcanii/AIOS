@@ -353,9 +353,11 @@ int main(int argc, char *argv[]) {
     /* Init POSIX shim (needed for fork/exec/waitpid) */
     aios_init_caps(serial_ep, fs_ep, auth_ep, pipe_ep);
 
-    ser_puts("\n============================================\n");
-    ser_puts("  " AIOS_VERSION_FULL "\n");
-    ser_puts("============================================\n");
+    /* v0.4.253-fix: the getty version banner was REMOVED. AIOS_VERSION_FULL is
+     * baked into this DISK binary at build time, so a stale on-disk getty showed
+     * an old build number on the console that contradicted the real kernel
+     * version. The kernel prints the real version at boot and /proc/version is
+     * authoritative; getty does not need its own (drift-prone) banner. */
 
     /* Auto-start the background network services (v0.4.163 netconsole :2323 --
      * UNAUTHENTICATED root, trusted LAN/dev only; v0.4.177 sshd :2222 -- encrypted;

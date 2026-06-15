@@ -90,7 +90,15 @@ static uint32_t sntp_query(const char *server_ip)
 
 int main(int argc, char **argv)
 {
-    const char *single = (argc > 1) ? argv[1] : (void *)0;
+    /* v0.4.254: QUIET by default -- getty auto-spawns sntp with fd1=tty, so any
+     * output lands on the HDMI console (the "sntp:" clutter). Pass -v for the
+     * diagnostic line; date(1) confirms the sync either way. */
+    int verbose = 0;
+    const char *single = (void *)0;
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0] == '-' && argv[i][1] == 'v') verbose = 1;
+        else if (!single) single = argv[i];
+    }
     int n_servers = single ? 1 : (int)(sizeof(DEFAULT_SERVERS) / sizeof(DEFAULT_SERVERS[0]));
 
     for (int s = 0; s < n_servers; s++) {
@@ -101,12 +109,12 @@ int main(int argc, char **argv)
             tv.tv_sec = (long)unix_sec;
             tv.tv_usec = 0;
             settimeofday(&tv, (void *)0);
-            printf("sntp: time set from %s -> epoch %u\n",
-                   server, (unsigned)unix_sec);
+            if (verbose) printf("sntp: time set from %s -> epoch %u\n",
+                                server, (unsigned)unix_sec);
             return 0;
         }
-        printf("sntp: no reply from %s\n", server);
+        if (verbose) printf("sntp: no reply from %s\n", server);
     }
-    printf("sntp: failed to reach any NTP server\n");
+    if (verbose) printf("sntp: failed to reach any NTP server\n");
     return 1;
 }

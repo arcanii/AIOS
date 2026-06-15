@@ -416,40 +416,45 @@ int main(int argc, char *argv[]) {
         v3d_init();
     }
 
-    /* Boot status on HDMI console (for RPi4 without serial adapter) */
-    fb_console_printf("AIOS %s\n", AIOS_VERSION_STR);
-    fb_console_printf("[boot] RAM: %lu MB, CPU: %s\n",
+    /* v0.4.253-fix: boot status goes to SERIAL only, NOT the HDMI fb_console.
+     * Bryan wants the HDMI clean (login prompt + shell only); the [boot]/[dtb]/
+     * [fs]/[net]/[gpu] diagnostics belong on serial (+ /proc/log once the ring is
+     * up). root printf() targets the UART (the mini-UART on RPi4); it does NOT
+     * touch fb_console (only display_server mirrors the tty there). The kernel
+     * version still prints here and via /proc/version. */
+    printf("AIOS %s\n", AIOS_VERSION_STR);
+    printf("[boot] RAM: %lu MB, CPU: %s\n",
                       (unsigned long)aios_total_mem,
                       hw_info.cpu_compat);
-    fb_console_printf("[boot] UART: %s (0x%lx IRQ %u)\n",
+    printf("[boot] UART: %s (0x%lx IRQ %u)\n",
                       uart ? "OK" : "no",
                       (unsigned long)hw_info.uart_paddr,
                       hw_info.uart_irq);
     if (hw_info.has_emmc)
-        fb_console_printf("[dtb]  eMMC: 0x%lx IRQ %u\n",
+        printf("[dtb]  eMMC: 0x%lx IRQ %u\n",
                           (unsigned long)hw_info.emmc_paddr,
                           hw_info.emmc_irq);
     if (hw_info.has_genet)
-        fb_console_printf("[dtb]  GENET: 0x%lx IRQ %u\n",
+        printf("[dtb]  GENET: 0x%lx IRQ %u\n",
                           (unsigned long)hw_info.genet_paddr,
                           hw_info.genet_irq);
     if (hw_info.has_vc_mbox)
-        fb_console_printf("[dtb]  VC mbox: 0x%lx\n",
+        printf("[dtb]  VC mbox: 0x%lx\n",
                           (unsigned long)hw_info.vc_mbox_paddr);
-    fb_console_printf("[fs]   %s\n",
+    printf("[fs]   %s\n",
                       ext2.read_sector ? "ext2 mounted" : "no filesystem");
-    fb_console_printf("[net]  %s\n",
+    printf("[net]  %s\n",
                       net_hw_present ? "OK" : "not available");
-    fb_console_printf("[gpu]  %s\n",
+    printf("[gpu]  %s\n",
                       gpu_available ? "OK" : "not available");
-    fb_console_printf("\n");
+    printf("\n");
 
     /* Phase 3: Server threads + process spawning */
     boot_start_services(&fault_ep);
     /* Enable per-thread CPU-cycle accounting now that the server threads are
      * registered (/proc/cpuacct + the DVFS governor read it). */
     aios_acct_init();
-    fb_console_printf("[boot] Services started\n");
+    printf("[boot] Services started\n");
 
     /* --- UART IRQ + notification setup --- */
     {

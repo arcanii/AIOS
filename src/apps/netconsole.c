@@ -371,8 +371,11 @@ int main(int argc, char **argv)
         close(lfd); return 1;
     }
 
-    printf("[netcon] v2 listening on port %d (plaintext command shell, LAN only)\n",
-           NETCON_PORT);
+    /* v0.4.253-fix: the startup banner was REMOVED. netconsole is getty-spawned
+     * with fd1=tty (its relay REQUIRES fd1=tty -- see netconsole-redirect-fd-bug,
+     * so we cannot redirect it), and this printf raced the getty "AIOS login:" on
+     * the shared HDMI fb_console, producing a garbled interleaved line. A working
+     * netconsole is self-evident from connections; no startup banner is needed. */
 
     /* Listening socket stays BLOCKING: accept() blocks while idle (no busy
      * spin); only the accepted client socket is made non-blocking. */

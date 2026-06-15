@@ -173,6 +173,14 @@ struct net_rx_stats {
     uint32_t dbg_read_bytes;      /* total bytes read out of rings           */
     uint32_t tcp_read_acks;       /* v0.4.226: window-reopen ACKs sent on read
                                    * (coalesced; was 1 per 900B read)        */
+    /* v0.4.253-fix: SENDER-side close/retransmit observability. These make the
+     * close machinery legible from /proc/netstat -- on QEMU AND over netconsole
+     * on the real Pi (the only window into the loss path QEMU cannot model). */
+    uint32_t tcp_rtx_segs;        /* DATA/FIN segments we RE-sent (RTO fired)  */
+    uint32_t tcp_rst_sent;        /* RSTs WE sent on a connected socket        */
+    uint32_t tcp_giveups;         /* sockets force-closed by the RTO give-up   */
+    uint32_t tcp_tx_drops;        /* test knob: outbound segments we dropped   */
+    uint32_t tcp_ack_drops;       /* test knob: inbound pure-ACKs we dropped   */
 };
 extern struct net_rx_stats net_rx_stats;
 
@@ -180,6 +188,25 @@ extern struct net_rx_stats net_rx_stats;
  * /proc/netstat.drop.N -- forces retransmission storms deterministically
  * so the resequencing/overlap paths can be exercised on QEMU. */
 extern uint32_t net_fault_drop_nth;
+
+/* v0.4.253-fix loss knobs: QEMU SLIRP is lossless+instant, so the SENDER
+ * retransmission / graceful-close / RTO give-up paths added in 3e3e26a never ran
+ * under the QEMU suite (and HW-regressed). These inject the missing loss so the
+ * close machinery is exercised on QEMU before any flash. BOTH spare the
+ * netconsole control channel (TCP port 2323) so the test harness stays reliable
+ * while the connection-under-test loses packets:
+ *   net_fault_tx_drop_n   -- drop the next N OUTBOUND DATA segments (countdown).
+ *     N=1 -> the dropped segment is retransmitted after one RTO and still
+ *     delivered (proves the feature). /proc/netstat.txdrop.N
+ *   net_fault_fin_drop_n  -- drop the next N OUTBOUND FIN segments (countdown).
+ *     N large -> our FIN never reaches the peer -> the close cannot complete ->
+ *     the RTO give-up path fires (the regression path, while data still flows so
+ *     the guest does not hang). /proc/netstat.findrop.N
+ *   net_fault_ack_drop_nth -- drop every Nth INBOUND pure-ACK (data_len==0).
+ *     /proc/netstat.ackdrop.N */
+extern uint32_t net_fault_tx_drop_n;
+extern uint32_t net_fault_fin_drop_n;
+extern uint32_t net_fault_ack_drop_nth;
 
 /* -- ARP cache -- */
 #define ARP_CACHE_SIZE  16

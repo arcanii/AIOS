@@ -14,26 +14,78 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   HW-VERIFIED + PUSHED (`9e543c6`, v0.4.252). NOTE: DHCP lease BOUNCES `.8`<->`.250`
   per boot -- ARP-sweep MAC `dc:a6:32:1c:2e:e1` if `.8` is dark.
 
-* **!! CURRENT STATE 2026-06-15 -- the real Pi NETWORK IS BROKEN (a regression).** The
-  Pi is running a flashed **v0.4.253 (build 2421)** that has a **HW-only TCP regression**
-  (commit `3e3e26a`, sender-retransmit + graceful close): it RSTs live connections on real
-  HW -- SSH 0/20, netconsole `Connection reset by peer`. The LOCAL HDMI console + keyboard
-  WORK (net stack only). QEMU could NOT catch it (SLIRP is lossless). **ROLLBACK to the
-  known-good cube kernel is staged at `disk/kernel8.img` (v0.4.252 build 2385, sha
-  `b3aa70d`) + `/tmp/card_kernel8_cube_backup.img`; network flash is impossible (netconsole
-  RSTs) so it MUST be the PHYSICAL CARD.** Everything is committed in git -- nothing lost.
-  Full runbook + the next tasks: **`docs/NEXT_20260615f_console_cleanup_tcp_regression.md`**.
+* **CURRENT STATE 2026-06-15 (two sessions) -- TCP fix + console + USB external-HDD w/ >2TB;
+  USB-MSC + >2TB now HW-PROVEN on a real 4TB drive. Everything UNCOMMITTED (Bryan commits).**
+  The Pi runs **v0.4.254 build 2464** at 192.168.0.8 (DHCP bounces `.8`<->`.250`/`.197`; ARP MAC
+  `dc:a6:32:1c:2e:e1` if dark). The v0.4.253 TCP regression is FIXED + HW-VERIFIED (deployed).
+  The USB Mass Storage driver (external HDD) is now **HW-PROVEN on a real 4TB Buffalo**: enumerate
+  + INQUIRY + READ_CAPACITY + READ(10) + **>2TB READ_CAPACITY(16)/READ(16)** (build 2464 serial:
+  true 4.0TB capacity + a 64-bit-LBA read on real silicon). MOUNT+rw is QEMU-verified 6/6 but
+  **HW-BLOCKED by RPi4 firmware** -- an ext2 USB drive present at boot makes the bootloader try to
+  boot FROM it and HANG before loading kernel8.img (cold AND warm), so the mount HW test needs
+  **USB HOTPLUG (the clear next epic)** or an EEPROM `BOOT_ORDER` change. version.h is still
+  **254** (the USB-MSC/>2TB is "v0.4.255 WIP"; the Pi runs build 2464 = the full uncommitted
+  tree). Commit plan ready (two commits, below). Full detail: **`docs/NEXT_20260615h_usb_hotplug.md`**
+  (this session) + `docs/NEXT_20260615g_tcp_fix_deploy.md` (the TCP/console/USB-MSC arc).
 
-* **This session (after the cube): TCP retransmit + xHCI hotswap + a regression.**
-  - `3e3e26a` TCP sender-retransmission + graceful close -- QEMU-green but **HW-REGRESSED
-    (do NOT redeploy as-is)**; the deferred-close/rto_check/RST is the suspect; data-
-    retransmit core reviewed sound. Spec: `docs/NEXT_20260615c`.
-  - `07fa756` xHCI keyboard HOTSWAP -- QEMU-VERIFIED (unplug->teardown->replug->re-enum,
-    `scripts/xhci_hotswap_qemu_test.py`); ROOT-PORT only (the Pi kbd is hub-downstream ->
-    VL805 interrupt-IN follow-up needed). `docs/NEXT_20260615e`.
-  - NEW asks from Bryan (NOT yet done, in `NEXT_20260615f`): quiet the HDMI console
-    (boot/[INF]/netconsole text -> log+serial only), remove the stale getty version banner
-    (getty.c:356-358, shows old build 2263), and make the keyboard lock LEDs work.
+* **SESSION 2 (2026-06-15, this session): USB-MSC HW bring-up + >2TB (READ16).** Verified the
+  commit plan, then HW-tested the USB driver and added 64-bit-LBA support.
+  - **USB driver HW-PROVEN.** Flashed build-rpi4-netd over the network (pi_flash); a real **4TB
+    Buffalo External HDD** behind the VL805 hub enumerated (slot 3, SuperSpeed), INQUIRY +
+    READ_CAPACITY + READ(10) LBA0 all worked, 512-byte blocks, keyboard coexisted, zero faults.
+    `/mnt/usb` correctly declined (drive is GPT, not ext2). Serial-only signal (`/proc/xhci` does
+    NOT show MSC); capture via `aios_console.py monitor <dev> --mirror <file>` then read the file.
+  - **>2TB (64-bit LBA) DONE + HW-PROVEN.** The 4TB drive saturated READ_CAPACITY(10) at 0xFFFFFFFF
+    (-> reported 2TB). Added in `xhci.c`: `scsi_read_capacity_16` (0x9E/SA0x10) as a saturation
+    fallback, `scsi_rw16` (READ(16) 0x88 / WRITE(16) 0x8A), `scsi_blk_rw` dispatcher (LBA>0xFFFFFFFF
+    -> 16-byte; <2TB byte-identical), 64-bit `g_msc_req.lba` + un-truncated `usb_blk_*`, and a
+    read-only last-LBA self-test. HW (build 2464): `USB MSC ready: 7814037168 sectors x 512 = 3815447
+    MB` (true 4.0TB) + `last-LBA(16) @7814037167: OK` (READ(16) of LBA 7.8e9 returned real data).
+    QEMU: new `scripts/usb_msc_big_qemu_test.py` 4/4 (sparse 2.36TB image), usb_msc 5/5 +
+    usb_msc_mount 6/6 no-regress, all four trees build. Adversarial 3-lens review = 0 bugs; it
+    caught a PRE-EXISTING latent WRITE(10)-self-test buffer overlap (pat@+1024 vs read-back@+128
+    collide for blocksize>896) -> fixed (pattern moved to the separate `msc_io` page).
+  - **MOUNT HW-BLOCKED by firmware (Bryan diagnosed).** An ext2 USB drive present at boot makes the
+    RPi4 bootloader try to boot FROM it and hang (no serial, no net) on cold AND warm reboot; the
+    4TB data drive (NTFS) booted past via pi_flash's warm reboot, an ext2 drive does not. Recover
+    by REMOVING the drive. So drive-at-boot is impractical -> **USB hub-port HOTPLUG is now required**
+    (insert-after-boot; the drive is behind the VL805 hub so it needs the hub status-change EP, the
+    backlogged hub-hotswap). A built + QEMU-verified ext2 image (`/tmp/usbstick.img`, AIOS-builder,
+    `usb_stick_qemu_check` 5/5) is ready to `dd` once a path exists. [[project_usb_msc]].
+  - **NETD/netconsole fragility seen again:** post-boot ~32s TLBI stall -> netd wedges (root alive,
+    net dead); netconsole wedges under back-to-back connections. Known [[project_stall_hunt]] +
+    [[project_netconsole]]; possibly aggravated by the always-polling USB driver thread.
+
+* **SESSION 1 (2026-06-15, earlier): TCP regression FIXED + console cleanup + the USB driver (stages 1-4).**
+  - **TCP fix (v0.4.254, DEPLOYED + HW-VERIFIED).** Root cause (5-lens diagnosis + a NEW
+    lossy-QEMU repro -- the thing the lossless suite could never run): `3e3e26a`'s
+    deferred-close froze a FIN_WAIT socket only on `(ACK) && !(FIN)`, so a real peer's
+    COALESCED FIN+ACK lingered to the 10s give-up which sent a RST (a RST makes the peer
+    DISCARD its unread data = the 0/20), and the give-up left stale rto/close state that
+    POISONED the reused slot ("worked once, then every connect RSTs"). Fix (net_server.c):
+    free on `fin_sent && snd_una>=snd_nxt` (accept FIN+ACK), `net_sock_tx_init` the SYN-child
+    + on free, and **do NOT RST on give-up** (free silently). New `scripts/tcp_loss_qemu_test.py`
+    (txdrop/findrop/ackdrop hooks + a `tcp_rst_sent` counter) reproduced it (rst_sent=1) and
+    proved the fix (rst_sent=0, give-up still fires). [[feedback_qemu_cannot_model_loss]].
+  - **Console cleanup (DEPLOYED).** Boot banner ([boot]/[dtb]/[fs]/[net]/[gpu]) -> serial
+    (aios_root.c `printf`, off fb_console -- it cannot reach fb_console); getty version banner
+    removed; netconsole startup banner removed; sntp quiet-by-default (`-v` to restore).
+    getty/netconsole/sntp are DISK apps -> deployed by `pi_filexfer push` (no flash).
+  - **Keyboard LEDs -- HW-tested, ring-resume WRONG, DISABLED safely.** The Stop-Endpoint +
+    SET_REPORT half WORKS (the LED changes on `/proc/xhci.led.N`), but my interrupt-ring
+    RESUME re-delivers a stale report (stuck 'r' -> dead keyboard). `#if 0`'d so it cannot
+    wedge typing; corrected resume DESIGNED (doorbell-resume + drain the Stop event, NO ring
+    reset) -- needs a serial-capture HW session. [[project_usb_hid]].
+  - **USB Mass Storage / external HDD (NEW, QEMU-verified, UNCOMMITTED, v0.4.255 WIP).** A
+    Bulk-Only-Transport/SCSI driver in `src/usb/xhci.c`: enumerate class-8 -> INQUIRY +
+    READ_CAPACITY -> READ(10)/WRITE(10) -> **MOUNT at /mnt/usb** (read+write files that
+    persist). Runtime-concurrency crux solved with an FS-thread -> xHCI-driver-thread request
+    queue (the event ring is single-consumer). `blk_cache` extended to drive 2; mount via
+    `usb_msc_mount()` (boot_fs_init.c). Tests: `usb_msc_qemu_test.py` 5/5 +
+    `usb_msc_mount_qemu_test.py` 6/6; all four trees compile. REMAINING: HW test (a real
+    drive), stall recovery, multi-sector. [[project_usb_msc]], docs/NEXT_20260615g.
+  - **Designs captured** (read-only workflow) for the LED resume + the VL805-downstream hub
+    hotplug: docs/NEXT_20260615g + the `usb-next-phase-design` workflow output.
 * **PRIOR session -- V3D GPU hardware 3D bring-up (Phases 2 -> 4a), all HW-verified
   on the real RPi4. Seed: `docs/NEXT_20260615b_v3d_phase4_cube.md`. Memories:
   `project_v3d_phase2`, `project_v3d_phase3`, `project_v3d_phase4`,

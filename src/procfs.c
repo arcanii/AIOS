@@ -661,6 +661,36 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
             net_fault_drop_nth = n;
             w += snprintf(buf + w, bufsize - w,
                 "fault_drop_nth set to %u\n", (unsigned)n);
+        } else if (path[7] == '.' && path[8] == 't' && path[9] == 'x'
+            && path[10] == 'd' && path[11] == 'r' && path[12] == 'o'
+            && path[13] == 'p' && path[14] == '.') {
+            /* v0.4.253-fix: drop the next N OUTBOUND data/FIN segments (0=off). */
+            uint32_t n = 0;
+            for (int i = 15; path[i] >= '0' && path[i] <= '9'; i++)
+                n = n * 10 + (uint32_t)(path[i] - '0');
+            net_fault_tx_drop_n = n;
+            w += snprintf(buf + w, bufsize - w,
+                "fault_tx_drop_n set to %u\n", (unsigned)n);
+        } else if (path[7] == '.' && path[8] == 'f' && path[9] == 'i'
+            && path[10] == 'n' && path[11] == 'd' && path[12] == 'r'
+            && path[13] == 'o' && path[14] == 'p' && path[15] == '.') {
+            /* v0.4.253-fix: drop the next N OUTBOUND FIN segments (0=off). */
+            uint32_t n = 0;
+            for (int i = 16; path[i] >= '0' && path[i] <= '9'; i++)
+                n = n * 10 + (uint32_t)(path[i] - '0');
+            net_fault_fin_drop_n = n;
+            w += snprintf(buf + w, bufsize - w,
+                "fault_fin_drop_n set to %u\n", (unsigned)n);
+        } else if (path[7] == '.' && path[8] == 'a' && path[9] == 'c'
+            && path[10] == 'k' && path[11] == 'd' && path[12] == 'r'
+            && path[13] == 'o' && path[14] == 'p' && path[15] == '.') {
+            /* v0.4.253-fix: drop every Nth INBOUND pure-ACK (0=off). */
+            uint32_t n = 0;
+            for (int i = 16; path[i] >= '0' && path[i] <= '9'; i++)
+                n = n * 10 + (uint32_t)(path[i] - '0');
+            net_fault_ack_drop_nth = n;
+            w += snprintf(buf + w, bufsize - w,
+                "fault_ack_drop_nth set to %u\n", (unsigned)n);
         } else {
             w += snprintf(buf + w, bufsize - w,
                 "tcp_data_segs: %u\ntcp_cksum_drops: %u\n"
@@ -687,6 +717,20 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
                 (unsigned)net_rx_stats.dbg_read_bytes,
                 (unsigned)net_rx_stats.tcp_read_acks,
                 (unsigned)net_fault_drop_nth);
+            /* v0.4.253-fix: sender close/retransmit observability + loss knobs. */
+            w += snprintf(buf + w, bufsize - w,
+                "tcp_rtx_segs: %u\ntcp_rst_sent: %u\ntcp_giveups: %u\n"
+                "tcp_tx_drops: %u\ntcp_ack_drops: %u\n"
+                "fault_tx_drop_n: %u\nfault_fin_drop_n: %u\n"
+                "fault_ack_drop_nth: %u\n",
+                (unsigned)net_rx_stats.tcp_rtx_segs,
+                (unsigned)net_rx_stats.tcp_rst_sent,
+                (unsigned)net_rx_stats.tcp_giveups,
+                (unsigned)net_rx_stats.tcp_tx_drops,
+                (unsigned)net_rx_stats.tcp_ack_drops,
+                (unsigned)net_fault_tx_drop_n,
+                (unsigned)net_fault_fin_drop_n,
+                (unsigned)net_fault_ack_drop_nth);
             /* v0.4.233: DHCP lease/renewal state (the renewal test reads these). */
             w += snprintf(buf + w, bufsize - w,
                 "dhcp_acks: %u\ndhcp_renews: %u\ndhcp_lease_secs: %u\n",

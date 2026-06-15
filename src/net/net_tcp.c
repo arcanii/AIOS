@@ -43,6 +43,27 @@ void net_tcp_send(const uint8_t *dst_ip, const uint8_t *dst_mac,
                   uint16_t src_port, uint16_t dst_port,
                   uint32_t seq, uint32_t ack_val, uint8_t flags,
                   const uint8_t *data, int data_len) {
+    /* v0.4.253-fix test knobs: drop the next N OUTBOUND DATA segments and/or the
+     * next M OUTBOUND FIN segments (countdown), so the sender-retransmit + RTO
+     * give-up paths run on lossless QEMU SLIRP. Skip pure ACK / RST / SYN so
+     * handshakes + flow control survive; spare the netconsole control channel
+     * (port 2323) so the harness stays reliable. Seq state still advances at the
+     * caller -- this models a segment lost on the wire. Dropping DATA exercises
+     * data retransmit (redelivered after one RTO); dropping the FIN with M large
+     * forces a close that never completes -> the give-up path, while data still
+     * flows so the guest does not hang in read(). */
+    if (src_port != 2323 && dst_port != 2323 && !(flags & (TCP_RST | TCP_SYN))) {
+        if (net_fault_tx_drop_n && data_len > 0) {
+            net_fault_tx_drop_n--;
+            net_rx_stats.tcp_tx_drops++;
+            return;
+        }
+        if (net_fault_fin_drop_n && (flags & TCP_FIN)) {
+            net_fault_fin_drop_n--;
+            net_rx_stats.tcp_tx_drops++;
+            return;
+        }
+    }
     uint8_t my_ip[4] = { net_cfg_ip[0], net_cfg_ip[1], net_cfg_ip[2], net_cfg_ip[3] };
     int tcp_len = 20 + data_len;
     int ip_total = 20 + tcp_len;
@@ -123,6 +144,21 @@ void handle_tcp(const uint8_t *pkt, uint32_t len,
     const uint8_t *data = pkt + tcp_hlen;
     int data_len = (int)len - tcp_hlen;
     if (data_len < 0) data_len = 0;
+
+    /* v0.4.253-fix test knob: drop every Nth INBOUND pure-ACK (no data, no
+     * SYN/FIN/RST) -- simulates a peer whose ACKs never reach us, so snd_una
+     * stalls and the deferred-close / RTO give-up path is exercised on QEMU.
+     * Spares the netconsole control channel (port 2323). */
+    if (net_fault_ack_drop_nth && data_len == 0 &&
+        (flags & TCP_ACK) && !(flags & (TCP_SYN | TCP_FIN | TCP_RST)) &&
+        dst_port != 2323 && src_port != 2323) {
+        static uint32_t ack_fault_ctr;
+        if (++ack_fault_ctr >= net_fault_ack_drop_nth) {
+            ack_fault_ctr = 0;
+            net_rx_stats.tcp_ack_drops++;
+            return;
+        }
+    }
 
     if (data_len > 0) {
         net_rx_stats.tcp_data_segs++;

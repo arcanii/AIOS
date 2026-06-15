@@ -117,6 +117,7 @@ static inline void doorbell(uint32_t n, uint32_t target) {
 #define TRB_CONFIG_EP     12
 #define TRB_EVAL_CONTEXT  13
 #define TRB_RESET_EP      14
+#define TRB_STOP_EP       15
 #define TRB_SET_TR_DEQ    16
 #define TRB_NOOP_CMD      23
 #define TRB_TRANSFER_EVT  32
@@ -655,6 +656,44 @@ static void arm_int_buf(struct usb_dev *d, uint32_t buf_idx) {
     arch_dsb();
 }
 
+/* v0.4.253/254: drive the lock LEDs at RUNTIME (interrupt-IN endpoint already armed).
+ *
+ * A bare SET_REPORT on EP0 STALLs (cc=6) on the low-speed keyboard behind the VL805
+ * transaction translator while interrupt-IN transfers are armed (HW-PROVEN, serial-
+ * captured v0.4.192), wedging the device -- which is why the lock keys are SOFTWARE-
+ * ONLY. The remedy attempted below: quiesce the interrupt endpoint (Stop Endpoint),
+ * SET_REPORT on EP0, then re-establish the interrupt ring and restart it.
+ *
+ * !! HW RESULT 2026-06-15 (v0.4.254, real Pi via /proc/xhci.led poke): the LED part
+ *    WORKS (cat /proc/xhci.led.0 turned the LEDs off -> Stop-Endpoint + SET_REPORT is
+ *    fine) but the interrupt-ring RESUME below is WRONG: the keyboard then emitted a
+ *    stuck repeated key ('r') and went DEAD. So the re-prime re-delivers a STALE report
+ *    and/or the int_enq/int_proc/int_cycle re-sync does not match the HW dequeue after
+ *    the Stop. A reboot recovers (the risk stayed contained to the explicit poke).
+ *
+ * Because getting the ring-resume right needs a real-HW iteration loop with serial
+ * capture (each wrong attempt wedges the keyboard -> power-cycle) -- not something that
+ * can be done blind -- the wedging sequence is DISABLED (#if 0). The runtime poke is now
+ * a SAFE no-op; the lock keys stay software-only (the documented backlog state). Fix
+ * direction for that session is in the #if 0 below + docs/NEXT_20260615g. */
+static void set_leds_runtime(struct usb_dev *d, int bits) {
+    (void)d; (void)bits;
+    g_led_last_cc = 0xFFFFFFFFu;   /* sentinel: runtime LED not attempted (HW-wedges, disabled) */
+#if 0  /* HW-WEDGES the keyboard -- re-enable ONLY in a serial-capture HW-iteration session */
+    if (!d->led_buf) return;
+    uint32_t evt[4];
+    cmd_submit(0, 0, TRB_STOP_EP, d->slot, d->dci, evt);   /* quiesce the int-IN EP */
+    set_leds(d, bits);                                     /* this half WORKS on HW (LED changes) */
+    /* WRONG re-arm (wedges). Fix direction: read the EP context TR Dequeue Pointer the
+     * HW wrote AFTER the Stop and resume from THERE (do not force ring start); ZERO the
+     * report buffers before re-priming so no stale report ('r') is re-delivered; drain
+     * the Stop-Endpoint Transfer/Command events first. */
+    d->int_enq = 0; d->int_proc = 0; d->int_cycle = 1;
+    cmd_submit(d->int_ring_pa | 1, 0, TRB_SET_TR_DEQ, d->slot, d->dci, evt);
+    for (uint32_t i = 0; i < INT_RING_BUFS; i++) arm_int_buf(d, i);
+#endif
+}
+
 /* Apply the Ctrl modifier to a decoded character, producing the terminal control code:
  * Ctrl-A..Z -> 0x01..0x1a (so Ctrl-C = 0x03 ETX, the tty's VINTR), Ctrl-@/[/\/]/^/_ ->
  * 0x00..0x1f, Ctrl-Space -> NUL, Ctrl-? -> DEL (0x7f). Other keys pass through. */
@@ -1045,8 +1084,14 @@ void xhci_kbd_driver_fn(void *a, void *b, void *c) {
             g_led_request = 0;
             struct usb_dev *d = first_kbd();
             if (d) {
-                if (req & 0x200) set_leds_current(d);   /* use current lock state */
-                else set_leds(d, (int)(req & 0x7));     /* explicit bitmap */
+                /* v0.4.253: use the Stop-Endpoint RUNTIME path (the int ring is armed
+                 * now, unlike at enumeration) so an explicit /proc/xhci.led poke can be
+                 * HW-tested without the bare-SET_REPORT STALL that wedged the device.
+                 * Keypress-driven LEDs stay OFF until this is HW-proven (see set_leds_runtime). */
+                int bits = (req & 0x200)
+                    ? ((d->num_lock ? 1 : 0) | (d->caps_lock ? 2 : 0) | (d->scroll_lock ? 4 : 0))
+                    : (int)(req & 0x7);
+                set_leds_runtime(d, bits);
             }
         }
 

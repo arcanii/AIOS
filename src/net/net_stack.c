@@ -18,6 +18,11 @@
 /* v0.4.225: inbound-path integrity counters + fault knob (see net.h). */
 struct net_rx_stats net_rx_stats;
 uint32_t net_fault_drop_nth;
+/* v0.4.253-fix: outbound/ACK loss knobs to exercise the sender-retransmit and
+ * graceful-close paths on lossless QEMU SLIRP (see net.h). */
+uint32_t net_fault_tx_drop_n;
+uint32_t net_fault_fin_drop_n;
+uint32_t net_fault_ack_drop_nth;
 
 /* -- Internet checksum (RFC 1071) -- */
 uint16_t ip_checksum(const void *data, int len) {

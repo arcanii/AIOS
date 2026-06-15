@@ -22,6 +22,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <stdint.h>
+#include <time.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 
@@ -140,6 +141,30 @@ static int do_bulk(const uint8_t *ip, int port) {
     return 0;
 }
 
+static int do_closelinger(const uint8_t *ip, int port) {
+    /* v0.4.253-fix loss test: connect, echo, close(), then STAY ALIVE ~14s so the
+     * server-side socket LINGERS (no op-98 process-exit reap). This mirrors a
+     * long-lived server (netconsole/sshd) whose per-connection socket outlives the
+     * request: with the FIN dropped (/proc/netstat.findrop.N) the deferred close
+     * cannot complete and the RTO give-up fires while we sleep -- the window the
+     * host test reads /proc/netstat in. Run backgrounded ("nettest closelinger ... &").*/
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) { printf("NETTEST closelinger FAIL socket errno=%d\n", errno); return 1; }
+    struct sockaddr_in sa; fill_addr(&sa, ip, port);
+    if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+        printf("NETTEST closelinger FAIL connect errno=%d\n", errno); close(fd); return 1;
+    }
+    write(fd, "PING", 4);
+    char buf[64];
+    int n = (int)read(fd, buf, sizeof(buf) - 1);
+    int echo_ok = (n == 4 && memcmp(buf, "PING", 4) == 0);
+    close(fd);                       /* deferred graceful close in net_server */
+    struct timespec ts; ts.tv_sec = 14; ts.tv_nsec = 0;
+    nanosleep(&ts, (void *)0);       /* keep the owner alive -> socket lingers */
+    printf("NETTEST closelinger %s\n", echo_ok ? "PASS" : "FAIL");
+    return 0;
+}
+
 static int do_count(void) {
     int fds[MAXS], n = 0;
     for (int i = 0; i < MAXS; i++) {
@@ -181,6 +206,7 @@ int main(int argc, char **argv) {
     if (!strcmp(cmd, "udp"))      return do_udp(ip, port);
     if (!strcmp(cmd, "recvrst"))  return do_recvrst(ip, port);
     if (!strcmp(cmd, "dblclose")) return do_dblclose(ip, port);
+    if (!strcmp(cmd, "closelinger")) return do_closelinger(ip, port);
     if (!strcmp(cmd, "bulk"))     return do_bulk(ip, port);
     if (!strcmp(cmd, "count"))    return do_count();
     if (!strcmp(cmd, "hog"))      return do_hog();
