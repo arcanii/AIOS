@@ -32,7 +32,7 @@ tools. Manual step-by-step instructions remain below under
 
 Architectures / Hardware Supported
 - :white_check_mark: AArch64 (QEMU virt)
-- :white_check_mark: AArch64 (Raspberry Pi 4 Model B) -- 4-core SMP, GENET networking, HDMI console, USB keyboard (xHCI over PCIe), SSH + netconsole over LAN (serial : TXD : GPIO14, RXD : GPIO15)
+- :white_check_mark: AArch64 (Raspberry Pi 4 Model B) -- 4-core SMP, GENET networking, HDMI console + V3D GPU 3D, USB keyboard (xHCI over PCIe), SSH + netconsole over LAN (serial : TXD : GPIO14, RXD : GPIO15)
 - :white_medium_square: AArch64 (Raspberry Pi 5)
 - :white_medium_square: X86-64 
 
@@ -43,6 +43,10 @@ Architectures / Hardware Supported
   the shell mirrored to the framebuffer console (all HW-verified; known open
   issue: the HDMI console can freeze on its first scroll on hardware -- see
   [CHANGELOG.md](CHANGELOG.md))
+- **Hardware 3D graphics** -- a hand-written VideoCore VI (V3D) driver renders a
+  GPU-accelerated spinning cube to the live HDMI framebuffer (clear -> rainbow
+  triangle -> backface-culled cube, emitted as byte-exact control lists), all
+  HW-verified on real Pi silicon
 - **4-core SMP on real hardware** -- all four Cortex-A72 cores via spin-table
 - **On the LAN** -- GENET Ethernet + DHCP, always-on SSH (AES-256-CTR +
   HMAC-SHA-256, sftp/scp), netconsole remote control, DNS, SNTP wall-clock time
@@ -74,7 +78,7 @@ External AI (Claude) is used as a development tool for code generation
 and review. This project is also a study in AI-assisted systems programming.
 The long-term goal is self-hosted development within AIOS itself.
 
-**Current version:** v0.4.245 (authoritative: `include/aios/version.h`; history: [CHANGELOG.md](CHANGELOG.md))
+**Current version:** v0.4.252 (authoritative: `include/aios/version.h`; history: [CHANGELOG.md](CHANGELOG.md))
 
 ## Quick Start
 
@@ -133,7 +137,7 @@ To run on a **real Raspberry Pi 4**, see
 - **Display server IPC** -- user programs draw to framebuffer via disp_ep (fbshow command)
 - **HDMI console** -- the interactive shell mirrors to the framebuffer (`tty_server` -> `display_server` -> `fb_console`), so a monitor + USB keyboard is a full standalone console (no serial)
 - **USB HID keyboard** -- xHCI host controller driver with USB hub enumeration + HID boot-protocol keymap; generic ECAM (QEMU) and brcmstb PCIe (RPi4 VL805); keystrokes feed the tty like serial input
-- **V3D GPU bring-up (RPi4)** -- the VideoCore VI 3D core powered + identified (V3D 4.2, 8 QPUs), MMU programmed, and a deliberate page-fault probe verified end-to-end on real hardware (fault page + AXI client decoded from the silicon via `MMU_DEBUG_INFO`); driven over `/proc/v3d`. GPU-rendered pixels (Phase 2: clear to the live framebuffer) in progress
+- **V3D GPU 3D rendering (RPi4)** -- a hand-written VideoCore VI driver (V3D 4.2, 8 QPUs) renders real 3D on the silicon, all HW-verified on a real Pi to the live HDMI framebuffer: GPU clear -> rainbow triangle (the GL shader-state path) -> a spinning shaded cube (backface-culled, no depth buffer -- a convex cube needs only culling), emitted as byte-exact control lists (host golden gate) and submitted through an 8MB GPU MMU pool. Full power/MMU/IRQ bring-up + fault decoding (fault page + AXI client from `MMU_DEBUG_INFO`); driven over `/proc/v3d` (`.test`/`.tri`/`.cube`/`.quad`) and `fbshow --gpu-*`
 - **Networking** -- virtio-net (QEMU) + GENET Ethernet (RPi4), ARP/ICMP/UDP/TCP, DHCP (+ T1 lease renewal), DNS (`nslookup`), SNTP, HTTP server, POSIX sockets
 - **netd (isolated network process)** -- behind `option(AIOS_NETD)`: the socket server + TCP/IP + NIC driver dev-half run in a separate MMU-protected CPIO process; root keeps device provisioning and serves the unchanged `net_ep`. A `/proc/net` cacheable heartbeat page is the IPC-free liveness detector; a net-stack crash is contained + a reply-sweep wakes parked callers. HW-verified on a real RPi4 (DHCP/ping/ssh/netconsole + crash recovery; live NIC diagnostics via the sacrificial userland `/bin/netdiag` tool over NET_DIAG, with `/proc/genet` a read-only UMAC/MDIO-free register view); default ON -- the production net path (the legacy in-root path stays available via `-DAIOS_NETD=OFF`)
 - **Network control** -- netconsole: run commands, push/pull files (`pi_filexfer.py`), and reboot the Pi over the LAN; flash a new kernel over the LAN (`pi_flash.py` + `fatswap`)

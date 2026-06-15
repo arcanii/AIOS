@@ -40,6 +40,22 @@ at `/boot` (still single-file, root-dir only); a full mount stays a future item.
 
 ---
 
+## Queued epics (2026-06-15)
+
+- **TCP graceful close + tail retransmit** -- fixes the SSH last-command drain race
+  (AIOS TCP has no sender-side retransmission). Data-retransmit core IMPLEMENTED +
+  QEMU-no-regression-green (UNCOMMITTED in net_server.c); the close/FIN lifecycle needs
+  a focused state-machine session (review verdict fix_first). Spec + review roadmap:
+  `docs/NEXT_20260615c_tcp_graceful_close.md`. HW-only to verify the loss path.
+- **V3D textured console epic** -- (a) a textured (`art/aries_screen.png`) spinning +
+  bouncing cube boot splash -> text; (b) a fast V3D-accelerated text console; (c) emoji.
+  ALL gated on one new V3D capability: TEXTURE MAPPING (the TMU). Staged like Phases 2-4.
+  Seed: `docs/NEXT_20260615d_v3d_textured_console.md`.
+- **HCI robustness + keyboard HOTSWAP** -- runtime USB keyboard plug/unplug
+  re-enumeration (today enum is BOOT-ONLY; PORT_STS_EVT is discarded; no device teardown
+  -> DMA-pool leak). Code-traced first steps + the robustness items in
+  `docs/NEXT_20260615e_hci_robustness_hotswap.md`. (Bryan: look at this next week.)
+
 ## Next up -- recommended order (queued 2026-06-03)
 
 Execution order set after the v0.4.143 pipe-EOF fix shipped: reliability
