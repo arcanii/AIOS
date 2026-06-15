@@ -10,63 +10,62 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
 ## Quick orientation
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4.
-* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.244**. Origin
-  is at `555d915`; everything since (incl. the DVFS governor) is **ahead, pending
-  Bryan's push**. **The real Pi runs build 2245 at 192.168.0.8** (= the 0.4.244
-  governor; not re-flashed for the version bump), deployed flash-free
-  (`scripts/pi_flash.py` + `fatswap`), with the **DVFS governor ON and WORKING**
-  (idle->300, load->600 -- arc 2 below).
-* **This session (v0.4.241 -> v0.4.244), arcs -- DONE sections below + the
-  seed `docs/NEXT_20260614b_dvfs_cpuacct.md`:**
-  1. **netd Stage 4 COMPLETE -- `AIOS_NETD` now defaults ON (netd is the production
-     net path).** Items 1-3 (`eeb2785`, v0.4.241): `/proc/genet` read-only
-     UMAC/MDIO-free root view; active NIC ops (peek/poke/mdio/tx/mac/irq) in the
-     sacrificial userland `/bin/netdiag` over NET_DIAG; explicit SVC_PING. **Item 4
-     (this session): flipped the `option(AIOS_NETD)` default OFF->ON.** A fresh
-     no-flag configure now builds netd (verified); the flag-OFF trees (`build-04`,
-     `build-rpi4`) keep the legacy in-root path via an explicit `-DAIOS_NETD=OFF`
-     (pinned in `setup-linux.py`; existing caches preserved across the flip). Full
-     gate suite green (netd 10/10, netdiag 6/6, socket 8/8 ON+OFF, ssh 6/6, smp
-     ceiling 30). NOT yet done (DESIGN_NETD s9 end state): delete the in-root net
-     path + retire the flag -- after the default-ON release soaks.
-  2. **RPi4 DVFS GOVERNOR -- WORKING + HW-verified (v0.4.244).** `config.txt
-     arm_freq_min=300` opened the clock floor; the load-driven governor now
-     actuates (idle->300, load->600) on a **work-server load metric**. Two HW-only
-     bugs fixed: (a) it never actuated (`sets=0` -- actuate against the last-set
-     clock, not a target init guess); (b) the `total-minus-background` metric read
-     the no-WFI idle spin as work, because **seL4 `track_utilisation` books at
-     switch-out so always-running spinners under-report** -- switched to a positive
-     sum of the event-driven work servers. HW: `sets=5 bmin=0 set=600` under load,
-     idle->300 in the boot trace. Thresholds runtime-tunable: `/proc/cpufreq.tune.
-     LO.HI.IT`. **Cooling CONFIRMED + governor fully verified** (`gov_cooling.py`):
-     ~4-5C delta (idle ~64C vs forced-600 ~68.6C), and `gov_dbg sets` increments +2
-     per sample with the governor on but freezes with it off -- proof of idle
-     downclocking that the observer effect cannot hide. See
-     `feedback_rpi4_thermal_clock`.
-  3. **CPU accounting** (`5b09d6f` + v0.4.244) -- `KernelBenchmarks=
-     track_utilisation` + `/proc/cpuacct`. Now wrap-aware (the 32-bit CCNT wraps
-     ~7s -> the pct base falls back + unaccounted reads n/a past 7s). The idle
-     thread reading 0 is EXPECTED (the root spins, so it never deschedules to the
-     core-0 idle thread); the idle spin shows as (unaccounted) since the spinner
-     under-reports. Feeds the governor via `aios_acct_busy_permille`.
-  4. **getty respawn-supervisor** (`a5b7273`, QEMU 4/4 + HW 4/4) -- getty respawns
-     netconsole/sshd if they crash, via a `/proc/status` name-poll in its idle
-     login wait (getty re-forks; the v0.4.171 supervisor-child was reverted for
-     no-fork-of-fork). Deployed flash-free (push `/bin/aios/getty` + reboot).
-     Recovers a CRASH, not the kernel TLBI stall. Open: does it fix ssh
-     one-session-per-boot? See `project_netconsole`.
-  5. **FAT config-over-network** (`ca595ce`, QEMU + HW verified) -- `fat32.c`
-     generalized from kernel8-swap-only to read+write ANY root-dir file:
-     `fatswap --read <t>` + `fatswap <src> [t]`. config.txt is now editable
-     flash-free (`fatswap --read config.txt > /tmp/c; <edit>; fatswap /tmp/c
-     config.txt`); `mksdcard` bakes `arm_freq_min=300` in. Engine is root-task
-     (kernel flash, build 2268 on the Pi) + the `fatswap` CLI is a disk app
-     (push `/bin/aios/fatswap`). See `project_fatswap` + `BACKLOG.md`.
-  Earlier: **netd Stage 3 CUTOVER** (net runs in the MMU-isolated `netd` behind
-  `AIOS_NETD`, HW-VERIFIED, real-MAC `.8`), the netd FOUNDATION + Stages 0-2, and
-  `/proc/temp`+`/proc/cpufreq` (v0.4.240). The v0.4.188-228 arcs (USB HID, V3D, the
-  32.4s stall CURE, fatswap flash-over-network, ext2 group layout, 4-core SMP) are
-  in the memory index + `docs/NEXT_*.md`, not inline here.
+* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.252**
+  (version.h bumped to 252 UNCOMMITTED -- the flashed cube kernel; commit it with
+  4a-C once the cube visual is confirmed). Origin is at `26ac58b`; **ahead by 4**
+  (Phase 3 B/C + Phase 4a A/B) **pending Bryan's push**. **The real Pi runs
+  v0.4.252 / build 2373 at 192.168.0.8** (deployed flash-free, `scripts/pi_flash.py`
+  + `fatswap`). NOTE: the Pi's DHCP lease BOUNCES between `.8` and `.250` per boot --
+  if `.8` is unreachable, ARP-sweep the /24 for MAC `dc:a6:32:1c:2e:e1`
+  (`pi_flash.py` already scans). USB keyboard needs a REBOOT to enumerate (boot-only
+  USB enum; all 4 ports are behind the one VL805 hub).
+* **This session -- V3D GPU hardware 3D bring-up (Phases 2 -> 4a), all HW-verified
+  on the real RPi4. Seed: `docs/NEXT_20260615b_v3d_phase4_cube.md`. Memories:
+  `project_v3d_phase2`, `project_v3d_phase3`, `project_v3d_phase4` (NEW),
+  `project_v3d_design`:**
+  1. **Phase 2 -- GPU clear (first GPU pixels). DONE + HW-verified + PUSHED
+     (`920a5d2`, v0.4.250).** A solid orange clear renders to the live HDMI FB via
+     the V3D CLE. `/proc/v3d.test` + `fbshow --gpu-clear`; pixel probe PASS. Two
+     HW-only fixes: `rb_swap=0` (AIOS BGR FB, clear color fed pre-swapped through the
+     Clear Colors packet) + the non-MCS bound-notification wake delivered badge 0
+     (drain on any wake).
+  2. **Phase 3 -- GPU rainbow triangle (GL Shader State path, the design's
+     "highest-risk" phase). DONE + HW-verified (`26ac58b` A / `8cfc66e` B /
+     `15ea47f` C, v0.4.251).** Byte-exact host golden-CL gate (8 objects incl. the
+     36-B shader record + attr records + tile list); kernel `v3d_submit_triangle`
+     reusing the extracted `v3d_run_cls` submit core. Visually confirmed: red BL,
+     green BR, blue top -> `rb_swap=1` for the RGBA-shader -> BGR-FB path (DIFFERS
+     from the clear). The hardest part was RESCUED from /tmp: the Random06457 (MIT)
+     reference is now self-contained in `tools/v3d_ref/` (regenerates every golden).
+  3. **Phase 4a -- spinning cube (THE PROJECT DELIVERABLE). DONE + HW-VERIFIED
+     (`89a3769` A / `cf1d904` B / 4a-C v0.4.252, build 2385). The V3D deliverable is
+     COMPLETE: clear -> triangle -> cube, all GPU-rendered on real V3D silicon.**
+     `/proc/v3d.cube.600` ran **600 frames, 0 OUTOMEM, 0 MMU faults, 0 resets,
+     status=OK PASS** (~1.1 ms/frame GPU, paced ~60 fps) and Bryan visually confirmed a
+     SOLID spinning 3-D cube. It looked inside-out at first; the ROOT CAUSE was ONE
+     mis-wound face -- `+Y top` was `{3,2,6,7}` (first-triangle normal pointed INWARD)
+     while the other five wound outward, so backface culling showed its far side ("some
+     faces correct, some inverted"). Found by a host replica of the transform
+     (cross-product . face-centre per face), fixed by reversing it to `{7,6,2,3}` (normal
+     +Y, outward) in `src/gpu/v3d_cube.c`. The cull winding is `0x01` (cw=0, CCW-front --
+     the `cull=1` branch of CFG_BITS in `src/gpu/v3d_cl.c`), NOT `0x05`: the brief's "flip
+     the cw bit" hypothesis was a red herring -- the bug was geometry, not cull direction,
+     and flipping cw alone never fixed it. Reuses the triangle pipeline with `cull=1,
+     skip_z=1` (convex cube, NO depth buffer); 36 CPU-transformed verts/frame (FP-free).
+     New backface-cull diagnostic `/proc/v3d.quad[.N]` -- a flat square drawn twice with
+     opposite winding (RED + BLUE); with culling only one colour shows at a time, flipping
+     each half-turn. `v3d_submit_cube_frame` is now a thin wrapper over the shared
+     `v3d_submit_geom_frame(ax,ay,nverts,quad,res)`. `/proc/v3d.cube[.N]` +
+     `fbshow --gpu-cube [N]` + `DISP_V3D_CUBE`.
+  Adversarial multi-agent reviews ran before each flash (0 confirmed bugs each).
+  Gates every milestone: `python3 scripts/v3d_clcheck.py` (host golden, 8/8 +
+  cube-transform sanity), `python3 scripts/v3d_qemu_test.py` (15/15 graceful
+  refusal), all four build trees green. **Optional V3D follow-up**: Phase 4b
+  (double-buffer via mailbox panning -- tear reduction + the backlogged HDMI
+  scroll-perf fix, design sec 8). Single-buffer 4a (tearing accepted) is shipped.
+  The PRIOR session's arcs (netd Stage 4 default-ON, the DVFS governor, CPU
+  accounting, getty respawn-supervisor, FAT config-over-network -- v0.4.241-244) are
+  in the memory index + `docs/NEXT_20260614b_dvfs_cpuacct.md`, not inline here.
 * **Target**: AArch64 (qemu-system-aarch64 + Raspberry Pi 4).
 * **Host**: macOS Apple Silicon, cross-compile to aarch64-linux-gnu.
 * **Developer**: Bryan -- prefers Python patch scripts over sed/heredocs; no

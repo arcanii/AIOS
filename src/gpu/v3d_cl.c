@@ -226,10 +226,13 @@ int v3d_build_triangle_bin_cl(uint8_t *buf, int cap, const struct v3d_tri_params
     w8(&q, 6);                             /* START_TILE_BINNING */
     /* CLIP_WINDOW (107): left, bottom, width, height (u16) */
     w8(&q, 107); w16(&q, 0); w16(&q, 0); w16(&q, w); w16(&q, h);
-    /* CFG_BITS (96): byte0 = fwd(1) | rev(!cull)<<1 | cw(1)<<2. cull=0 (triangle) =>
-     * 0x07 (both faces); cull=1 (cube) => 0x05 (back-face cull). depth_test=ALWAYS(7),
-     * early-z-update -- a convex cube needs only culling, no depth buffer. */
-    w8(&q, 96); w8(&q, p->cull ? 0x05 : 0x07); w8(&q, 0x70); w8(&q, 0x02);
+    /* CFG_BITS (96): byte0 bits = fwd(0) | rev(1) | cw(2). cull=0 (triangle) => 0x07
+     * (fwd+rev+cw: both faces drawn, winding irrelevant). cull=1 (cube) => 0x01 (fwd
+     * only = back-face cull, cw=0 => COUNTER-clockwise is front). The Y viewport is
+     * flipped, so screen winding is inverted vs object space: cw=1 (0x05) culls the
+     * NEAR faces and renders inside-out -- cw=0 culls the far faces (correct winding).
+     * byte2/3 = depth_test ALWAYS(7) + early-z; a convex cube needs only culling. */
+    w8(&q, 96); w8(&q, p->cull ? 0x01 : 0x07); w8(&q, 0x70); w8(&q, 0x02);
     w8(&q, 104); w32(&q, 0x3f800000u);     /* POINT_SIZE 1.0 */
     w8(&q, 105); w32(&q, 0x3f800000u);     /* LINE_WIDTH 1.0 */
     /* CLIPPER_XY_SCALING (110): (w/2)*256, (h/2)*-256 (f32) */

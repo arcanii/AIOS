@@ -113,6 +113,8 @@ static struct {
 
 /* Phase 4a spinning-cube run result (surfaced via /proc/v3d[.cube]). */
 static struct { int valid, status, frames; uint64_t avg_us; int outomem; } v3d_cube;
+/* Backface-cull diagnostic: two-sided spinning-square run result (/proc/v3d.quad). */
+static struct { int valid, status, frames; uint64_t avg_us; int outomem; } v3d_quad;
 
 /* ---- register accessors (device memory; explicit barriers) ---- */
 static inline uint32_t v3d_rd(uint32_t off)        { arch_dmb(); return v3d_base[off >> 2]; }
@@ -1032,10 +1034,13 @@ static int v3d_submit_triangle(struct v3d_clear_result *res) {
     return v3d_run_cls(&ts, &ta, &ovf, &bcl, bn, &rcl, rn, res);
 }
 
-/* ---- Phase 4a: one GPU cube frame. Like the triangle but 36 CPU-transformed verts,
- * backface culling, and NO Z buffer (a convex cube needs only culling). caller assures
- * power/mmu/clock + FB ownership; reuses v3d_run_cls. ---- */
-static int v3d_submit_cube_frame(int ax, int ay, struct v3d_clear_result *res) {
+/* ---- Phase 4a: one GPU geometry frame. Like the triangle but `nverts` CPU-transformed
+ * verts, backface culling, and NO Z buffer (a convex cube / the diagnostic quad need only
+ * culling). quad=0 -> spinning cube (v3d_cube_verts); quad=1 -> the two-sided cull-test
+ * square (v3d_quad_verts). caller assures power/mmu/clock + FB ownership; reuses
+ * v3d_run_cls. ---- */
+static int v3d_submit_geom_frame(int ax, int ay, int nverts, int quad,
+                                 struct v3d_clear_result *res) {
     res->oom = 0; res->bin_us = res->rend_us = 0;
     res->bfc0 = res->bfc1 = res->rfc0 = res->rfc1 = 0;
     uint32_t w = gpu_width, h = gpu_height;
@@ -1046,8 +1051,8 @@ static int v3d_submit_cube_frame(int ax, int ay, struct v3d_clear_result *res) {
         v3d_bo_alloc(&ovf, 256u * 1024, 4096) ||
         v3d_bo_alloc(&shc, 512, 8) || v3d_bo_alloc(&dattr, 256, 16) ||
         v3d_bo_alloc(&unif, 32, 16) || v3d_bo_alloc(&recat, 36 + 16 + 16, 16) ||
-        v3d_bo_alloc(&posd, V3D_CUBE_VERTICES * 12u, 16) ||   /* 36 x float3 */
-        v3d_bo_alloc(&cold, V3D_CUBE_VERTICES * 4u, 16) ||    /* 36 x ubyte4 */
+        v3d_bo_alloc(&posd, (uint32_t)nverts * 12u, 16) ||    /* nverts x float3 */
+        v3d_bo_alloc(&cold, (uint32_t)nverts * 4u, 16) ||     /* nverts x ubyte4 */
         v3d_bo_alloc(&tlist, 64, 16) ||
         v3d_bo_alloc(&bcl, 256, 128) || v3d_bo_alloc(&rcl, 4096, 128))
         return -5;
@@ -1067,8 +1072,9 @@ static int v3d_submit_cube_frame(int ax, int ay, struct v3d_clear_result *res) {
       u[5] = 0x3f800000u; u[6] = hw; u[7] = hh; }
     uint32_t frag_unif = unif.gpu_va, vtx_unif = unif.gpu_va, coord_unif = unif.gpu_va + 20u;
 
-    /* the per-frame geometry: transform the cube into the pos/color BOs (non-cacheable). */
-    v3d_cube_verts(ax, ay, (uint32_t *)posd.cpu, (uint8_t *)cold.cpu);
+    /* the per-frame geometry: transform into the pos/color BOs (non-cacheable). */
+    if (quad) v3d_quad_verts(ay, (uint32_t *)posd.cpu, (uint8_t *)cold.cpu);
+    else      v3d_cube_verts(ax, ay, (uint32_t *)posd.cpu, (uint8_t *)cold.cpu);
 
     struct v3d_shader_record_params srp = {
         .default_attr_va = dattr.gpu_va,
@@ -1088,14 +1094,18 @@ static int v3d_submit_cube_frame(int ax, int ay, struct v3d_clear_result *res) {
         .width = (uint16_t)w, .height = (uint16_t)h, .clear_color = V3D_TRI_CLEAR_COLOR,
         .rb_swap = 1, .fb_va = V3D_VA_FB, .fb_stride = w * 4u, .z_va = 0,
         .tile_alloc_va = ta.gpu_va, .shader_record_va = recat.gpu_va, .nattr = 2,
-        .tile_list_va = tlist.gpu_va, .vertex_count = V3D_CUBE_VERTICES,
-        .cull = 1, .skip_z = 1,   /* convex cube: backface cull, no depth buffer */
+        .tile_list_va = tlist.gpu_va, .vertex_count = (uint32_t)nverts,
+        .cull = 1, .skip_z = 1,   /* convex cube / cull-test quad: cull, no depth buffer */
     };
     if (v3d_build_triangle_tile_list(tlist.cpu, (int)tlist.size, &tp) < 0) return -5;
     int bn = v3d_build_triangle_bin_cl(bcl.cpu, (int)bcl.size, &tp);
     int rn = v3d_build_triangle_render_cl(rcl.cpu, (int)rcl.size, &tp);
     if (bn < 0 || rn < 0) return -5;
     return v3d_run_cls(&ts, &ta, &ovf, &bcl, bn, &rcl, rn, res);
+}
+
+static int v3d_submit_cube_frame(int ax, int ay, struct v3d_clear_result *res) {
+    return v3d_submit_geom_frame(ax, ay, V3D_CUBE_VERTICES, 0, res);
 }
 
 /* Phase 4a: spin a shaded cube for `frames` frames on the display_server thread.
@@ -1127,6 +1137,38 @@ int v3d_cube_run(int frames) {
     }
     v3d_cube.frames = done; v3d_cube.avg_us = done ? tot / (uint64_t)done : 0;
     v3d_cube.outomem = oom; v3d_cube.status = st;
+    return st;
+}
+
+/* Diagnostic: spin the two-sided RED/BLUE square for `frames` frames. Same thread +
+ * FB-ownership rules as the cube; yaw-only spin so the front/back flip reads cleanly.
+ * Fills v3d_quad. Returns 0 on PASS. */
+int v3d_quad_run(int frames) {
+    v3d_quad.valid = 1; v3d_quad.frames = 0; v3d_quad.avg_us = 0; v3d_quad.outomem = 0;
+    if (frames <= 0) frames = 150;
+    if (frames > 600) frames = 600;
+    if (!v3d_ok_state) { char id[160]; v3d_report_ident(id, sizeof(id), 0, 0); }
+    if (!v3d_present || !v3d_ok_state || !gpu_available || !gpu_fb_pa || !v3d_pool_va) {
+        v3d_quad.status = -5; return -5;
+    }
+    if (v3d_mmu_init()) { v3d_quad.status = -5; return -5; }
+    v3d_ensure_clock();
+    v3d_tests_run++;
+    gpu_fb_flush_all();
+    fb_console_set_suspend(1);
+
+    uint64_t tot = 0; int oom = 0, done = 0, st = 0;
+    for (int f = 0; f < frames; f++) {
+        uint64_t f0 = mono_ticks();
+        struct v3d_clear_result res;
+        st = v3d_submit_geom_frame(0, (f * 3) % 360, V3D_QUAD_VERTICES, 1, &res);
+        if (st != 0) { fb_console_set_suspend(0); fb_console_clear(); break; }
+        tot += res.rend_us; oom += res.oom; done++;
+        uint64_t el = mono_us_since(f0);
+        if (el < 16000) v3d_udelay((int)(16000 - el));   /* pace to ~60 fps */
+    }
+    v3d_quad.frames = done; v3d_quad.avg_us = done ? tot / (uint64_t)done : 0;
+    v3d_quad.outomem = oom; v3d_quad.status = st;
     return st;
 }
 
@@ -1231,6 +1273,7 @@ int v3d_triangle_and_probe(void) {
 int v3d_clear_and_probe(uint32_t color) { (void)color; return -5; }
 int v3d_triangle_and_probe(void) { return -5; }
 int v3d_cube_run(int frames) { (void)frames; return -5; }
+int v3d_quad_run(int frames) { (void)frames; return -5; }
 static int v3d_mmu_verb(char *buf, int bufsize) {
     return snprintf(buf, bufsize, "v3d.mmu: unavailable (not RPi4)\n");
 }
@@ -1292,13 +1335,27 @@ static int v3d_format_cube_result(char *buf, int bufsize) {
         (v3d_cube.status == 0 && v3d_cube.frames > 0) ? "PASS" : "FAIL");
 }
 
+/* Format the last backface-cull diagnostic (two-sided square) run result. */
+static int v3d_format_quad_result(char *buf, int bufsize) {
+    if (!v3d_quad.valid)
+        return snprintf(buf, bufsize, "v3d.quad: no result yet -- run cat /proc/v3d.quad\n");
+    return snprintf(buf, bufsize,
+        "v3d.quad: %d frames avg=%lluus fps~%llu outomem=%d status=%d -- %s "
+        "(HDMI: RED one half-turn, BLUE the other; one colour at a time = cull works)\n",
+        v3d_quad.frames, (unsigned long long)v3d_quad.avg_us,
+        v3d_quad.avg_us ? (unsigned long long)(1000000ull / v3d_quad.avg_us) : 0ull,
+        v3d_quad.outomem, v3d_quad.status,
+        (v3d_quad.status == 0 && v3d_quad.frames > 0) ? "PASS" : "FAIL");
+}
+
 /* Called on the display_server thread when it wakes on its bound notification: run a
- * pending /proc/v3d.{test,tri,cube} request (kind 1=clear, 2=triangle, 3=cube). */
+ * pending /proc/v3d.{test,tri,cube,quad} request (1=clear 2=triangle 3=cube 4=quad). */
 void v3d_service_display_request(void) {
     uint32_t kind = g_v3d_req;
     if (!kind) return;
     g_v3d_req = 0;
-    if      (kind == 3) v3d_cube_run((int)g_v3d_req_color);   /* color field = frame count */
+    if      (kind == 4) v3d_quad_run((int)g_v3d_req_color);   /* color field = frame count */
+    else if (kind == 3) v3d_cube_run((int)g_v3d_req_color);   /* color field = frame count */
     else if (kind == 2) v3d_triangle_and_probe();
     else                v3d_clear_and_probe(g_v3d_req_color); /* QEMU stubs -> -5 */
     arch_dsb();
@@ -1325,6 +1382,7 @@ static int v3d_request_post(uint32_t kind, uint32_t arg, const char *label,
         return snprintf(buf, bufsize,
             "v3d.%s: queued, display_server did not finish in %dms -- "
             "cat /proc/v3d for the result\n", label, poll_ms);
+    if (kind == 4) return v3d_format_quad_result(buf, bufsize);
     return (kind == 3) ? v3d_format_cube_result(buf, bufsize)
                        : v3d_format_test_result(buf, bufsize);
 }
@@ -1346,6 +1404,14 @@ static int v3d_cube_post(uint32_t frames, char *buf, int bufsize) {
     int poll = (int)(frames * 20u + 500u);
     if (poll > 4000) poll = 4000;
     return v3d_request_post(3, frames, "cube", poll, buf, bufsize);
+}
+/* /proc/v3d.quad[.N] = the backface-cull diagnostic (two-sided RED/BLUE spinning square). */
+static int v3d_quad_post(uint32_t frames, char *buf, int bufsize) {
+    if (frames == 0) frames = 150;
+    if (frames > 600) frames = 600;
+    int poll = (int)(frames * 20u + 500u);
+    if (poll > 4000) poll = 4000;
+    return v3d_request_post(4, frames, "quad", poll, buf, bufsize);
 }
 
 /* ---- boot init: claims + IRQ bind + tag pin; ZERO V3D MMIO ---- */
@@ -1431,6 +1497,8 @@ int v3d_diag_cmd(const char *args, char *buf, int bufsize) {
         if (v3d_pfx(p, "tri")   && p[3] == 0) return v3d_tri_post(buf, bufsize);
         if (v3d_pfx(p, "cube")  && (p[4] == 0 || p[4] == '.'))
             return v3d_cube_post(p[4] == '.' ? v3d_dec(p + 5) : 0, buf, bufsize);
+        if (v3d_pfx(p, "quad")  && (p[4] == 0 || p[4] == '.'))
+            return v3d_quad_post(p[4] == '.' ? v3d_dec(p + 5) : 0, buf, bufsize);
         if (p[0] == 'r' && p[1] == '.') {
             uint32_t off = v3d_hex(p + 2) & 0x3ffc;
             return snprintf(buf, bufsize, "v3d hub[0x%03x] = 0x%08x\n", off, v3d_rd(off));
@@ -1452,7 +1520,7 @@ int v3d_diag_cmd(const char *args, char *buf, int bufsize) {
         }
         return snprintf(buf, bufsize,
             "v3d: verbs: (none) .power[.N] .clock[.MHz] .mmu .fault .cl .test .tri .cube[.N] "
-            ".r.<off> .c.<off> .w.<off>.<val>\n");
+            ".quad[.N] .r.<off> .c.<off> .w.<off>.<val>\n");
     }
     return v3d_summary(buf, bufsize);
 }

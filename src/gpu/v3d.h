@@ -47,6 +47,10 @@ int v3d_triangle_and_probe(void);
  * PASS. QEMU stub: -5. The project deliverable. */
 int v3d_cube_run(int frames);
 
+/* Diagnostic: spin a flat two-sided square (RED front / BLUE back via opposite winding)
+ * for `frames` frames -- a backface-cull sanity check on a single quad. QEMU stub: -5. */
+int v3d_quad_run(int frames);
+
 /* Called by display_server when its blocking seL4_Recv wakes on the bound display
  * notification: services a pending /proc/v3d.{test,tri} request (no-op if none).
  * Mirrors the net_server bound-notification wake. */
