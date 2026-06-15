@@ -77,6 +77,8 @@ int blk_cache_read0(uint64_t sector, void *buf);
 int blk_cache_write0(uint64_t sector, const void *buf);
 int blk_cache_read1(uint64_t sector, void *buf);
 int blk_cache_write1(uint64_t sector, const void *buf);
+int blk_cache_read2(uint64_t sector, void *buf);    /* v0.4.255: USB mass-storage drive */
+int blk_cache_write2(uint64_t sector, const void *buf);
 
 /* Drop up to n_pages cold lines back to vka. Returns the number
  * actually freed (may be less if the cache is empty or all lines

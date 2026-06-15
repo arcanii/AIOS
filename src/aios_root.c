@@ -402,6 +402,12 @@ int main(int argc, char *argv[]) {
     if (pcie_xhci_present) {
         extern int xhci_init(void);
         xhci_init();
+        /* v0.4.255: mount a USB mass-storage drive at /mnt/usb if one enumerated.
+         * MUST be here -- after xhci_init, before boot_start_services spawns the xHCI
+         * driver thread -- so the mount's block reads use the boot thread (sole event
+         * consumer); runtime file I/O then routes through the driver thread. */
+        extern int usb_msc_mount(void);
+        usb_msc_mount();
     }
 
     /* Phase 2f: V3D 4.2 GPU bring-up (Phase 0 -- power/IDENT/IRQ). RPi4 only;

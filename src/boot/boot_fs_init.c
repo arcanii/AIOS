@@ -91,3 +91,30 @@ int boot_fs_init(void) {
     }
     return aios_boot_status;
 }
+
+/* v0.4.255: ext2 context for a mounted USB mass-storage drive (drive 2 -> /mnt/usb). */
+ext2_ctx_t ext2_usb;
+
+/* Mount a USB mass-storage drive at /mnt/usb, IF xhci_init() enumerated one. MUST be
+ * called from the boot thread AFTER xhci_init() and BEFORE the xHCI driver thread is
+ * spawned (boot_start_services): the ext2 superblock/inode reads here transfer DIRECTLY
+ * (the boot thread is the sole event-ring consumer at that point), while runtime file
+ * I/O later routes block requests through the driver thread (usb_blk_read/write). A drive
+ * with no ext2 (raw / other fs) is left as a block device only (mount skipped). */
+int usb_msc_mount(void) {
+    extern int xhci_msc_ok;
+    extern int usb_blk_read(uint64_t sector, void *buf);
+    extern int usb_blk_write(uint64_t sector, const void *buf);
+    if (!xhci_msc_ok) return -1;
+    blk_cache_register_backend(2, usb_blk_read, usb_blk_write);
+    int err = ext2_init(&ext2_usb, blk_cache_read2, 2);
+    if (err != 0) {
+        AIOS_LOG_WARN_V("USB drive present but not ext2 (raw/other fs) err=", err);
+        return -1;
+    }
+    ext2_init_write(&ext2_usb, blk_cache_write2);
+    vfs_mount("/mnt/usb", &ext2_fs_ops, &ext2_usb);
+    LOG_INFO("USB mass-storage mounted at /mnt/usb");
+    AIOS_LOG_INFO("USB drive mounted at /mnt/usb");
+    return 0;
+}

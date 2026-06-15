@@ -58,24 +58,27 @@ static int          line_count = 0;
 static int          line_max   = BLK_CACHE_DEFAULT_MAX_PAGES;
 static uint32_t     monotonic_tick = 0;
 
-static blk_backend_read_fn  backend_read[2]  = { NULL, NULL };
-static blk_backend_write_fn backend_write[2] = { NULL, NULL };
-static blk_backend_write_multi_fn backend_write_multi[2] = { NULL, NULL };
-static blk_backend_read_multi_fn  backend_read_multi[2]  = { NULL, NULL };
-static blk_backend_discard_fn     backend_discard[2]     = { NULL, NULL };
+/* v0.4.255: drive 2 added for a hot-pluggable USB mass-storage drive (/mnt/usb). */
+static blk_backend_read_fn  backend_read[3]  = { NULL, NULL, NULL };
+static blk_backend_write_fn backend_write[3] = { NULL, NULL, NULL };
+static blk_backend_write_multi_fn backend_write_multi[3] = { NULL, NULL, NULL };
+static blk_backend_read_multi_fn  backend_read_multi[3]  = { NULL, NULL, NULL };
+static blk_backend_discard_fn     backend_discard[3]     = { NULL, NULL, NULL };
 
 /* v0.4.172: write-back policy per drive. Drive 0 (system disk) is write-back
  * -- the big file-write speedup: it coalesces the inode/bitmap rewrites and
  * the new-block zero+data double-write that made single-block eMMC writes
  * ~21KB/s. Drive 1 (log) stays write-through so a crash never loses the most
  * recent log lines (the whole point of the persistent /var/log). */
-static const int drive_writeback[2] = { 1, 0 };
+/* v0.4.255: drive 2 (USB) is write-through -- a USB drive can be unplugged at any
+ * time, so never defer its writes (same rationale as the log drive). */
+static const int drive_writeback[3] = { 1, 0, 0 };
 static int dirty_count = 0;
 #define BLK_DIRTY_FLUSH_LINES 16   /* flush all dirty once this many accrue */
 
 /* read-ahead state (per drive); reset in blk_cache_init. */
-static uint64_t ra_last_line[2];
-static int      ra_run[2];
+static uint64_t ra_last_line[3];
+static int      ra_run[3];
 
 static blk_cache_stats_t stats;
 
@@ -228,8 +231,8 @@ void blk_cache_init(int max_pages) {
     line_count = 0;
     dirty_count = 0;
     monotonic_tick = 0;
-    ra_last_line[0] = ra_last_line[1] = (uint64_t)-1;   /* sentinel: line 0 is not a false match */
-    ra_run[0] = ra_run[1] = 0;
+    ra_last_line[0] = ra_last_line[1] = ra_last_line[2] = (uint64_t)-1;  /* sentinel */
+    ra_run[0] = ra_run[1] = ra_run[2] = 0;
     line_max = max_pages > 0 ? max_pages : BLK_CACHE_DEFAULT_MAX_PAGES;
     stats.pages_max = (uint32_t)line_max;
     AIOS_LOG_INFO_V("init max_pages=", (unsigned long)line_max);
@@ -238,23 +241,23 @@ void blk_cache_init(int max_pages) {
 void blk_cache_register_backend(int drive,
                                 blk_backend_read_fn read_fn,
                                 blk_backend_write_fn write_fn) {
-    if (drive < 0 || drive > 1) return;
+    if (drive < 0 || drive > 2) return;
     backend_read[drive]  = read_fn;
     backend_write[drive] = write_fn;
 }
 
 void blk_cache_register_write_multi(int drive, blk_backend_write_multi_fn fn) {
-    if (drive < 0 || drive > 1) return;
+    if (drive < 0 || drive > 2) return;
     backend_write_multi[drive] = fn;
 }
 
 void blk_cache_register_read_multi(int drive, blk_backend_read_multi_fn fn) {
-    if (drive < 0 || drive > 1) return;
+    if (drive < 0 || drive > 2) return;
     backend_read_multi[drive] = fn;
 }
 
 void blk_cache_register_discard(int drive, blk_backend_discard_fn fn) {
-    if (drive < 0 || drive > 1) return;
+    if (drive < 0 || drive > 2) return;
     backend_discard[drive] = fn;
 }
 
@@ -394,6 +397,8 @@ int blk_cache_read0 (uint64_t s, void *b)        { return cache_read_sector(0, s
 int blk_cache_write0(uint64_t s, const void *b)  { return cache_write_sector(0, s, b); }
 int blk_cache_read1 (uint64_t s, void *b)        { return cache_read_sector(1, s, b); }
 int blk_cache_write1(uint64_t s, const void *b)  { return cache_write_sector(1, s, b); }
+int blk_cache_read2 (uint64_t s, void *b)        { return cache_read_sector(2, s, b); }   /* v0.4.255: USB */
+int blk_cache_write2(uint64_t s, const void *b)  { return cache_write_sector(2, s, b); }
 
 int blk_cache_evict(int n_pages) {
     int freed = 0;

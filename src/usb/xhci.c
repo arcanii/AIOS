@@ -145,6 +145,12 @@ static uint32_t g_int_err_events;
  * on EP0) without pulling the HID globals up here. */
 static int kbd_try_deliver(uint32_t slot, uint32_t ep, uint32_t cc);
 
+/* v0.4.255: USB-MSC runtime block-I/O coordination. The driver thread (xhci_kbd_driver_fn,
+ * defined ABOVE the mass-storage section) sets g_msc_driver_running and services FS-thread
+ * block requests via msc_service_request -- forward-declared here. */
+static volatile int g_msc_driver_running;
+static void msc_service_request(void);
+
 /* ---- command ring + event ring producer/consumer state ---- */
 static uint32_t cmd_enq = 0, cmd_cycle = 1;   /* command ring (producer) */
 static uint32_t evt_deq = 0, evt_cycle = 1;   /* event ring (consumer) */
@@ -361,7 +367,7 @@ static int map_bar(void) {
  * uses THAT device's EP0 ring even after other devices have enumerated. The event ring
  * still has a single consumer thread (enum on init, runtime on the driver thread), so
  * the array needs no locking. */
-enum { USB_NONE = 0, USB_KBD = 1, USB_MOUSE = 2, USB_HUB = 9 };
+enum { USB_NONE = 0, USB_KBD = 1, USB_MOUSE = 2, USB_MSC = 8, USB_HUB = 9 };
 #define MAX_USB_DEV  8
 /* v0.4.192: keep MULTIPLE interrupt-IN transfers armed at once. The keyboard is a
  * low-speed device behind the VL805's transaction-translator (10ms interval) and
@@ -430,6 +436,19 @@ struct usb_dev {
                                  * (dead-man: see KBD_REPEAT_MAX_RUN) */
     /* mouse state */
     uint8_t  prev_btn;
+    /* v0.4.255: USB Mass Storage (BOT/SCSI) -- two BULK endpoints + capacity.
+     * The bulk rings are 1 page each (256 TRBs, Link-wrap at 255 like the int ring);
+     * msc_buf is a 4KB DMA scratch for the 31-byte CBW, the 13-byte CSW, and small
+     * data phases (INQUIRY/READ_CAPACITY). Block READ/WRITE data uses the caller buf. */
+    volatile uint8_t *bo_ring; uint64_t bo_ring_pa; uint32_t bo_enq, bo_cycle, bo_dci; /* bulk OUT */
+    volatile uint8_t *bi_ring; uint64_t bi_ring_pa; uint32_t bi_enq, bi_cycle, bi_dci; /* bulk IN  */
+    volatile uint8_t *msc_buf; uint64_t msc_buf_pa;
+    uint64_t msc_nsectors;     /* total logical blocks (READ_CAPACITY last LBA + 1) */
+    uint32_t msc_blocksize;    /* bytes per logical block (usually 512)             */
+    uint32_t msc_tag;          /* monotonic CBW tag                                 */
+    uint8_t  msc_qemu;         /* INQUIRY product is the QEMU emulated disk -> safe to
+                                * run the destructive WRITE(10) self-test on it      */
+    volatile uint8_t *msc_io;  uint64_t msc_io_pa;   /* block-I/O DMA bounce buffer (1 page) */
 };
 static struct usb_dev g_devs[MAX_USB_DEV];
 
@@ -1071,9 +1090,16 @@ static void xhci_setup_irq(void) {
  * wakes us (latched notification) -- no lost wakeup. */
 void xhci_kbd_driver_fn(void *a, void *b, void *c) {
     (void)a; (void)b; (void)c;
+    /* v0.4.255: from here ON this thread is the SOLE event-ring consumer, so runtime
+     * USB-MSC block I/O (FS thread) must post requests to us rather than transfer
+     * directly (see usb_blk_read/write + msc_service_request). */
+    g_msc_driver_running = 1;
     uint32_t e[4];
     while (1) {
         while (evt_dispatch(e, 0 /* no awaited completion */, 0, 0) != DISP_NONE) { }
+
+        /* v0.4.255: serve a pending USB-MSC block request from the FS thread. */
+        msc_service_request();
 
         /* v0.4.253 hotswap: a port plug/unplug was flagged by evt_dispatch -- reconcile
          * at top level (safe to enumerate / Disable-Slot here; not nested in a cmd wait). */
@@ -1314,9 +1340,385 @@ static int setup_hub(struct usb_dev *hub, uint32_t hub_root_port, uint32_t hub_s
     return 0;
 }
 
+/* ============================================================
+ * USB Mass Storage (Bulk-Only Transport + SCSI) over xHCI -- v0.4.255
+ * Stage 1: enumerate the two bulk endpoints, INQUIRY + READ_CAPACITY.
+ * (Block READ(10)/WRITE(10) + blk_cache registration are later stages.)
+ * ============================================================ */
+int xhci_msc_ok = 0;                  /* a USB mass-storage LUN enumerated (read elsewhere) */
+static struct usb_dev *g_msc_dev;     /* first MSC device (the future block backend target) */
+
+/* Enqueue one NORMAL TRB on a bulk ring, ring the doorbell, and wait (via the event-
+ * ring dispatcher) for its Transfer Event on (slot, dci). Returns the completion code
+ * (CC_SUCCESS / CC_SHORT_PKT are both fine); -1 on timeout. Mirrors arm_int_buf's
+ * Link-wrap at index 255. SINGLE-CONSUMER: safe at enumeration (init thread); runtime
+ * block I/O must serialize vs the driver thread (a later stage). */
+static int bot_bulk(struct usb_dev *d, int dir_in, uint64_t buf_pa, uint32_t len) {
+    volatile uint8_t *ring = dir_in ? d->bi_ring : d->bo_ring;
+    uint64_t ring_pa       = dir_in ? d->bi_ring_pa : d->bo_ring_pa;
+    uint32_t *enq          = dir_in ? &d->bi_enq : &d->bo_enq;
+    uint32_t *cyc          = dir_in ? &d->bi_cycle : &d->bo_cycle;
+    uint32_t dci           = dir_in ? d->bi_dci : d->bo_dci;
+
+    volatile uint32_t *trb = (volatile uint32_t *)(ring + *enq * 16);
+    trb[0] = (uint32_t)buf_pa;
+    trb[1] = (uint32_t)(buf_pa >> 32);
+    trb[2] = len;                                  /* TRB Transfer Length */
+    trb[3] = TRB_SET_TYPE(TRB_NORMAL) | (1u << 5) /* IOC */ | *cyc;
+    if (++(*enq) == 255) {
+        volatile uint32_t *link = (volatile uint32_t *)(ring + 255 * 16);
+        link[0] = (uint32_t)ring_pa;
+        link[1] = (uint32_t)(ring_pa >> 32);
+        link[2] = 0;
+        link[3] = TRB_SET_TYPE(TRB_LINK) | (1u << 1) /* Toggle Cycle */ | *cyc;
+        *enq = 0;
+        *cyc ^= 1;
+    }
+    arch_dsb();
+    doorbell(d->slot, dci);
+    arch_dsb();
+    uint32_t e[4];
+    for (uint64_t dl = mono_deadline_ms(2000); mono_before(dl); ) {
+        if (evt_dispatch(e, TRB_TRANSFER_EVT, d->slot, dci) == DISP_MATCH)
+            return (int)EVT_CC(e[2]);
+    }
+    return -1;
+}
+
+/* One Bulk-Only Transport command: build the 31-byte CBW (sig "USBC") carrying the
+ * SCSI CDB, send it on bulk-OUT, run the optional data phase on the indicated bulk
+ * endpoint, then read the 13-byte CSW (sig "USBS") on bulk-IN and validate tag+status.
+ * msc_buf layout: CBW @0, CSW @64, small SCSI replies @128. For block I/O the caller
+ * passes its own data_pa. Returns 0 on success, -1 on any transport/status failure. */
+static int bot_scsi(struct usb_dev *d, const uint8_t *cdb, int cdb_len,
+                    int dir_in, uint64_t data_pa, uint32_t data_len) {
+    volatile uint8_t *cbw = d->msc_buf;
+    uint32_t tag = ++d->msc_tag;
+    for (int i = 0; i < 31; i++) cbw[i] = 0;
+    cbw[0] = 0x55; cbw[1] = 0x53; cbw[2] = 0x42; cbw[3] = 0x43;       /* "USBC" (LE 0x43425355) */
+    cbw[4] = (uint8_t)tag;        cbw[5] = (uint8_t)(tag >> 8);
+    cbw[6] = (uint8_t)(tag >> 16); cbw[7] = (uint8_t)(tag >> 24);
+    cbw[8] = (uint8_t)data_len;   cbw[9] = (uint8_t)(data_len >> 8);
+    cbw[10] = (uint8_t)(data_len >> 16); cbw[11] = (uint8_t)(data_len >> 24);
+    cbw[12] = dir_in ? 0x80 : 0x00;                                  /* bmCBWFlags: IN=0x80 */
+    cbw[13] = 0;                                                     /* bCBWLUN = 0 */
+    cbw[14] = (uint8_t)cdb_len;                                      /* bCBWCBLength */
+    for (int i = 0; i < cdb_len && i < 16; i++) cbw[15 + i] = cdb[i];
+    arch_dsb();
+
+    int cc = bot_bulk(d, 0, d->msc_buf_pa, 31);                      /* CBW on bulk-OUT */
+    if (cc != CC_SUCCESS) { AIOS_LOG_WARN_V("MSC CBW cc=", (unsigned long)cc); return -1; }
+    if (data_len) {                                                 /* data phase */
+        cc = bot_bulk(d, dir_in, data_pa, data_len);
+        if (cc != CC_SUCCESS && cc != CC_SHORT_PKT) {
+            AIOS_LOG_WARN_V("MSC data cc=", (unsigned long)cc); return -1;
+        }
+    }
+    volatile uint8_t *csw = d->msc_buf + 64;                        /* CSW on bulk-IN */
+    cc = bot_bulk(d, 1, d->msc_buf_pa + 64, 13);
+    if (cc != CC_SUCCESS && cc != CC_SHORT_PKT) {
+        AIOS_LOG_WARN_V("MSC CSW cc=", (unsigned long)cc); return -1;
+    }
+    uint32_t csig = csw[0] | (csw[1] << 8) | (csw[2] << 16) | (csw[3] << 24);
+    uint32_t ctag = csw[4] | (csw[5] << 8) | (csw[6] << 16) | (csw[7] << 24);
+    /* csw[12] != 0 = SCSI command failed (e.g. the first-access Unit Attention that a
+     * TEST UNIT READY clears) -- a normal, expected outcome the CALLER handles (TUR
+     * retries, others log context), so do not WARN here. Transport errors (bad bulk cc)
+     * are WARNed above. */
+    if (csig != 0x53425355u || ctag != tag || csw[12] != 0)
+        return -1;
+    return 0;
+}
+
+static int scsi_test_unit_ready(struct usb_dev *d) {
+    uint8_t cdb[6] = { 0x00, 0, 0, 0, 0, 0 };
+    return bot_scsi(d, cdb, 6, 0, 0, 0);
+}
+static int scsi_inquiry(struct usb_dev *d) {
+    uint8_t cdb[6] = { 0x12, 0, 0, 0, 36, 0 };
+    uint64_t dpa = d->msc_buf_pa + 128;
+    if (bot_scsi(d, cdb, 6, 1, dpa, 36) != 0) return -1;
+    volatile uint8_t *r = d->msc_buf + 128;
+    char vendor[9], product[17];
+    for (int i = 0; i < 8;  i++) vendor[i]  = (char)r[8 + i];  vendor[8]  = 0;
+    for (int i = 0; i < 16; i++) product[i] = (char)r[16 + i]; product[16] = 0;
+    printf("[xhci] USB MSC INQUIRY: '%s' '%s'\n", vendor, product);
+    d->msc_qemu = (vendor[0] == 'Q' && vendor[1] == 'E' && vendor[2] == 'M' && vendor[3] == 'U');
+    return 0;
+}
+/* SCSI READ CAPACITY(16) (opcode 0x9E, service action 0x10): the 64-bit-LBA capacity
+ * query. Used as the fallback when READ_CAPACITY(10) saturates its 32-bit last-LBA field
+ * (a drive >= 2TB). Reply: bytes 0..7 = last LBA (big-endian 64-bit), 8..11 = block size. */
+static int scsi_read_capacity_16(struct usb_dev *d) {
+    uint8_t cdb[16] = { 0x9E, 0x10, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 32, 0, 0 };          /* alloc length = 32 (CDB[10..13] BE) */
+    uint64_t dpa = d->msc_buf_pa + 128;
+    if (bot_scsi(d, cdb, 16, 1, dpa, 32) != 0) return -1;
+    volatile uint8_t *r = d->msc_buf + 128;
+    uint64_t last_lba = 0;
+    for (int i = 0; i < 8; i++) last_lba = (last_lba << 8) | r[i];     /* big-endian 64-bit */
+    uint32_t bsize = ((uint32_t)r[8] << 24) | ((uint32_t)r[9] << 16) |
+                     ((uint32_t)r[10] << 8) |  (uint32_t)r[11];
+    d->msc_nsectors  = last_lba + 1;
+    d->msc_blocksize = bsize ? bsize : 512;
+    return 0;
+}
+static int scsi_read_capacity(struct usb_dev *d) {
+    uint8_t cdb[10] = { 0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    uint64_t dpa = d->msc_buf_pa + 128;
+    if (bot_scsi(d, cdb, 10, 1, dpa, 8) != 0) return -1;
+    volatile uint8_t *r = d->msc_buf + 128;
+    uint32_t last_lba = ((uint32_t)r[0] << 24) | ((uint32_t)r[1] << 16) |
+                        ((uint32_t)r[2] << 8)  |  (uint32_t)r[3];      /* big-endian */
+    uint32_t bsize    = ((uint32_t)r[4] << 24) | ((uint32_t)r[5] << 16) |
+                        ((uint32_t)r[6] << 8)  |  (uint32_t)r[7];
+    /* A drive >= 2TB saturates the 32-bit READ_CAPACITY(10) last-LBA at 0xFFFFFFFF; switch
+     * to READ_CAPACITY(16) for the true 64-bit count so blocks past 2TB are addressable.
+     * Smaller drives never take this branch -- the proven 10-byte path is byte-identical. */
+    if (last_lba == 0xFFFFFFFFu && scsi_read_capacity_16(d) == 0)
+        return 0;
+    d->msc_nsectors  = (uint64_t)last_lba + 1;
+    d->msc_blocksize = bsize ? bsize : 512;
+    return 0;
+}
+
+/* SCSI READ(10): read `count` logical blocks starting at `lba` into data_pa.
+ * count*blocksize must fit the caller's buffer; the caller clamps to MSC_DATA_MAX. */
+static int scsi_read_10(struct usb_dev *d, uint32_t lba, uint16_t count, uint64_t data_pa) {
+    uint8_t cdb[10] = { 0x28, 0,
+        (uint8_t)(lba >> 24), (uint8_t)(lba >> 16), (uint8_t)(lba >> 8), (uint8_t)lba,
+        0, (uint8_t)(count >> 8), (uint8_t)count, 0 };
+    return bot_scsi(d, cdb, 10, 1, data_pa, (uint32_t)count * d->msc_blocksize);
+}
+
+/* SCSI WRITE(10): write `count` logical blocks at `lba` from data_pa. */
+static int scsi_write_10(struct usb_dev *d, uint32_t lba, uint16_t count, uint64_t data_pa) {
+    uint8_t cdb[10] = { 0x2A, 0,
+        (uint8_t)(lba >> 24), (uint8_t)(lba >> 16), (uint8_t)(lba >> 8), (uint8_t)lba,
+        0, (uint8_t)(count >> 8), (uint8_t)count, 0 };
+    return bot_scsi(d, cdb, 10, 0, data_pa, (uint32_t)count * d->msc_blocksize);
+}
+
+/* SCSI READ(16)/WRITE(16) (opcodes 0x88/0x8A): 64-bit-LBA block transfer for LBAs beyond
+ * the READ(10) 2TB ceiling. CDB[2..9] = LBA (big-endian 64-bit), CDB[10..13] = transfer
+ * length in blocks (big-endian 32-bit). */
+static int scsi_rw16(struct usb_dev *d, int write, uint64_t lba, uint16_t count,
+                     uint64_t data_pa) {
+    uint8_t cdb[16] = { (uint8_t)(write ? 0x8A : 0x88), 0,
+        (uint8_t)(lba >> 56), (uint8_t)(lba >> 48), (uint8_t)(lba >> 40), (uint8_t)(lba >> 32),
+        (uint8_t)(lba >> 24), (uint8_t)(lba >> 16), (uint8_t)(lba >> 8), (uint8_t)lba,
+        0, 0, (uint8_t)(count >> 8), (uint8_t)count, 0, 0 };
+    return bot_scsi(d, cdb, 16, write ? 0 : 1, data_pa, (uint32_t)count * d->msc_blocksize);
+}
+
+/* One-block read/write that picks READ(10)/WRITE(10) for LBAs that fit the 32-bit field
+ * (the proven path, unchanged for < 2TB drives) and READ(16)/WRITE(16) above it. */
+static int scsi_blk_rw(struct usb_dev *d, int write, uint64_t lba, uint64_t data_pa) {
+    if (lba > 0xFFFFFFFFu)
+        return scsi_rw16(d, write, lba, 1, data_pa);
+    return write ? scsi_write_10(d, (uint32_t)lba, 1, data_pa)
+                 : scsi_read_10 (d, (uint32_t)lba, 1, data_pa);
+}
+
+/* Enumerate a USB Mass Storage (class 8 / Bulk-Only 0x50) device: find the two bulk
+ * endpoints, configure both EP contexts in one Configure-Endpoint, then INQUIRY +
+ * READ_CAPACITY. Returns 0 if a usable LUN is found. */
+static int setup_msc(struct usb_dev *d) {
+    uint64_t buf_pa;
+    volatile uint8_t *buf = (volatile uint8_t *)dma_page(&buf_pa);
+    if (!buf) return -1;
+    int cc = control_transfer(d, 0x80, 6, (2u << 8), 0, 9, buf_pa, 1);       /* config hdr */
+    if (cc != CC_SUCCESS) return -1;
+    uint16_t total = buf[2] | (buf[3] << 8);
+    uint8_t cfg_val = buf[5];
+    if (total > 4096) total = 4096;
+    cc = control_transfer(d, 0x80, 6, (2u << 8), 0, total, buf_pa, 1);       /* full config */
+    if (cc != CC_SUCCESS) return -1;
+
+    int iface = -1, in_msc = 0, bo_ep = -1, bi_ep = -1;
+    uint32_t bo_mps = 512, bi_mps = 512;
+    for (int i = 0; i + 2 <= total; ) {
+        uint8_t len = buf[i], type = buf[i + 1];
+        if (len == 0) break;
+        if (type == 4) {                              /* interface descriptor */
+            uint8_t icls = buf[i + 5], iproto = buf[i + 7];
+            in_msc = (icls == 8 && iproto == 0x50);   /* Mass Storage, Bulk-Only Transport */
+            if (in_msc) iface = buf[i + 2];
+        } else if (type == 5 && in_msc) {             /* endpoint descriptor */
+            uint8_t addr = buf[i + 2], attr = buf[i + 3];
+            uint16_t mps = buf[i + 4] | (buf[i + 5] << 8);
+            if ((attr & 0x3) == 2) {                  /* bulk */
+                if (addr & 0x80) { bi_ep = addr; bi_mps = mps; }
+                else             { bo_ep = addr; bo_mps = mps; }
+            }
+        }
+        i += len;
+    }
+    if (bo_ep < 0 || bi_ep < 0) { AIOS_LOG_WARN("MSC: no bulk endpoint pair"); return -1; }
+    d->kind  = USB_MSC;
+    d->iface = (uint32_t)iface;
+    d->bo_dci = (uint32_t)((bo_ep & 0xF) * 2);        /* OUT endpoint DCI = ep*2     */
+    d->bi_dci = (uint32_t)((bi_ep & 0xF) * 2 + 1);    /* IN  endpoint DCI = ep*2 + 1 */
+    printf("[xhci] USB MSC: slot=%u iface=%d bulk-out=0x%02x(dci%u) bulk-in=0x%02x(dci%u)\n",
+           d->slot, iface, bo_ep, d->bo_dci, bi_ep, d->bi_dci);
+
+    cc = control_transfer(d, 0x00, 9 /* SET_CONFIGURATION */, cfg_val, 0, 0, 0, 0);
+    if (cc != CC_SUCCESS) { AIOS_LOG_WARN_V("MSC SET_CONFIG cc=", (unsigned long)cc); return -1; }
+
+    d->bo_ring = (volatile uint8_t *)dma_page(&d->bo_ring_pa);
+    d->bi_ring = (volatile uint8_t *)dma_page(&d->bi_ring_pa);
+    d->msc_buf = (volatile uint8_t *)dma_page(&d->msc_buf_pa);
+    d->msc_io  = (volatile uint8_t *)dma_page(&d->msc_io_pa);   /* block-I/O bounce buffer */
+    if (!d->bo_ring || !d->bi_ring || !d->msc_buf || !d->msc_io) return -1;
+    d->bo_enq = d->bi_enq = 0; d->bo_cycle = d->bi_cycle = 1; d->msc_tag = 0;
+
+    /* Configure BOTH bulk endpoints in one Configure-Endpoint command. */
+    uint32_t max_dci = d->bo_dci > d->bi_dci ? d->bo_dci : d->bi_dci;
+    volatile uint32_t *icc      = (volatile uint32_t *)(d->in_ctx + 0);
+    volatile uint32_t *slot_ctx = (volatile uint32_t *)(d->in_ctx + CTX_SZ);
+    icc[0] = 0;
+    icc[1] = (1u << 0) | (1u << d->bo_dci) | (1u << d->bi_dci);
+    slot_ctx[0] = (slot_ctx[0] & ~(0x1Fu << 27)) | (max_dci << 27);   /* context entries */
+    volatile uint32_t *bo_ctx = (volatile uint32_t *)(d->in_ctx + (1 + d->bo_dci) * CTX_SZ);
+    bo_ctx[0] = 0;
+    bo_ctx[1] = (2u << 3) | (3u << 1) | (bo_mps << 16);  /* EP type 2 = Bulk OUT, CErr=3 */
+    bo_ctx[2] = (uint32_t)(d->bo_ring_pa | 1);           /* TR dequeue | DCS */
+    bo_ctx[3] = (uint32_t)(d->bo_ring_pa >> 32);
+    bo_ctx[4] = bo_mps;
+    volatile uint32_t *bi_ctx = (volatile uint32_t *)(d->in_ctx + (1 + d->bi_dci) * CTX_SZ);
+    bi_ctx[0] = 0;
+    bi_ctx[1] = (6u << 3) | (3u << 1) | (bi_mps << 16);  /* EP type 6 = Bulk IN, CErr=3 */
+    bi_ctx[2] = (uint32_t)(d->bi_ring_pa | 1);
+    bi_ctx[3] = (uint32_t)(d->bi_ring_pa >> 32);
+    bi_ctx[4] = bi_mps;
+    arch_dsb();
+    uint32_t evt[4];
+    cc = cmd_submit(d->in_ctx_pa, 0, TRB_CONFIG_EP, d->slot, 0, evt);
+    if (cc != CC_SUCCESS) { AIOS_LOG_WARN_V("MSC Configure EP cc=", (unsigned long)cc); return -1; }
+
+    /* TEST UNIT READY -- a freshly attached LUN often reports Not-Ready / Unit-Attention
+     * for the first couple of polls; retry briefly before INQUIRY. */
+    for (int i = 0; i < 5; i++) {
+        if (scsi_test_unit_ready(d) == 0) break;
+        xhci_mdelay(100);
+    }
+    scsi_inquiry(d);
+    if (scsi_read_capacity(d) != 0) { AIOS_LOG_WARN("MSC READ_CAPACITY failed"); return -1; }
+
+    unsigned long mb = (unsigned long)((d->msc_nsectors * d->msc_blocksize) >> 20);
+    printf("[xhci] USB MSC ready: %lu sectors x %u bytes = %lu MB (slot %u)\n",
+           (unsigned long)d->msc_nsectors, d->msc_blocksize, mb, d->slot);
+    /* READ-ONLY self-test: READ(10) of LBA 0 validates the bulk data path at
+     * enumeration (race-free, single event-ring consumer). Read-only = safe for a
+     * real drive. WRITE(10) is exercised only via an explicit diagnostic, never here. */
+    if (scsi_read_10(d, 0, 1, d->msc_buf_pa + 128) == 0) {
+        volatile uint8_t *s = d->msc_buf + 128;
+        printf("[xhci] USB MSC LBA0: %02x %02x %02x %02x %02x %02x %02x %02x\n",
+               s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7]);
+    } else {
+        AIOS_LOG_WARN("MSC READ(10) LBA0 self-test failed");
+    }
+    /* >2TB drive: also exercise the READ(16) high-LBA path on the LAST block (LBA > 2^32).
+     * Read-only (safe on any drive); proves 64-bit-LBA reads work on real HW -- the LBA0
+     * test above only covers READ(10). scsi_blk_rw auto-selects READ(16) for the high LBA. */
+    if (d->msc_nsectors > 0x100000000ULL) {
+        uint64_t last = d->msc_nsectors - 1;
+        if (scsi_blk_rw(d, 0, last, d->msc_buf_pa + 128) == 0) {
+            volatile uint8_t *s = d->msc_buf + 128;
+            printf("[xhci] USB MSC last-LBA(16) @%lu: OK %02x %02x %02x %02x\n",
+                   (unsigned long)last, s[0], s[1], s[2], s[3]);
+        } else {
+            AIOS_LOG_WARN("MSC READ(16) high-LBA self-test failed");
+        }
+    }
+    /* WRITE(10) self-test -- ONLY on the QEMU emulated disk (DESTRUCTIVE, never a real
+     * drive). Write a pattern to LBA 1, read it back, compare. Proves the bulk-OUT data
+     * path before the block-device stages wire writes through the filesystem. */
+    if (d->msc_qemu && d->msc_blocksize <= 2048) {
+        /* pattern in the SEPARATE msc_io page (unused until the driver thread) so the
+         * read-back into msc_buf+128 cannot clobber the compare source -- the two would
+         * overlap inside msc_buf for any blocksize > 896. */
+        volatile uint8_t *pat = d->msc_io, *rb = d->msc_buf + 128;
+        for (uint32_t i = 0; i < d->msc_blocksize; i++) pat[i] = (uint8_t)(0xA5 ^ (i & 0xFF));
+        int ok = (scsi_write_10(d, 1, 1, d->msc_io_pa)       == 0) &&
+                 (scsi_read_10 (d, 1, 1, d->msc_buf_pa + 128) == 0);
+        if (ok) for (uint32_t i = 0; i < d->msc_blocksize; i++)
+                    if (rb[i] != pat[i]) { ok = 0; break; }
+        printf("[xhci] USB MSC WRITE(10) self-test (LBA1, QEMU disk): %s\n", ok ? "PASS" : "FAIL");
+    }
+    g_msc_dev = d;
+    xhci_msc_ok = 1;
+    return 0;
+}
+
+/* ---- USB-MSC block-device backend (blk_cache drive 2) -- v0.4.255 Stage 4 ----
+ *
+ * THE CONCURRENCY RULE: the xHCI event ring has a SINGLE consumer. During enumeration
+ * (boot thread, before the driver loop) that consumer is the boot thread, so block I/O
+ * for the mount transfers DIRECTLY. At runtime the FS thread calls usb_blk_read/write
+ * but must NOT touch the event ring -- it posts a request to the xHCI driver thread (the
+ * sole runtime consumer) via g_msc_req and spin-waits. The driver loop services it with
+ * the same scsi_read_10/write_10 path, so keyboard reports still interleave (evt_dispatch
+ * delivers them during the bulk wait). One request at a time (the single FS thread). */
+static volatile struct {
+    int      pending;     /* a request is posted */
+    int      write;       /* 1 = write, 0 = read */
+    uint64_t lba;         /* 64-bit: >2TB drives use READ(16)/WRITE(16) via scsi_blk_rw */
+    int      status;      /* result, set by the driver thread (0 = ok) */
+    int      done;        /* set by the driver thread on completion */
+} g_msc_req;
+/* g_msc_driver_running is defined near the top (forward-declared) -- the driver thread
+ * that owns it is above this section. */
+
+/* Service a posted block request from the driver loop (single consumer context). */
+static void msc_service_request(void) {
+    if (!g_msc_req.pending) return;
+    struct usb_dev *d = g_msc_dev;
+    int rc = -1;
+    if (d) rc = scsi_blk_rw(d, g_msc_req.write, g_msc_req.lba, d->msc_io_pa);
+    g_msc_req.status = (rc == 0) ? 0 : -1;
+    arch_dsb();
+    g_msc_req.pending = 0;
+    g_msc_req.done = 1;
+    arch_dsb();
+}
+
+/* blk_cache drive-2 backend: ONE 512-byte sector. Direct transfer during enumeration
+ * (boot thread = sole consumer); request-queue + spin-wait at runtime (FS thread). */
+int usb_blk_read(uint64_t sector, void *buf) {
+    struct usb_dev *d = g_msc_dev;
+    if (!d || sector >= d->msc_nsectors) return -1;
+    int rc;
+    if (!g_msc_driver_running) {
+        rc = scsi_blk_rw(d, 0, sector, d->msc_io_pa);
+    } else {
+        g_msc_req.write = 0; g_msc_req.lba = sector;
+        g_msc_req.status = -1; g_msc_req.done = 0; arch_dsb();
+        g_msc_req.pending = 1; arch_dsb();
+        while (!g_msc_req.done) seL4_Yield();
+        rc = g_msc_req.status;
+    }
+    if (rc == 0) { volatile uint8_t *s = d->msc_io; uint8_t *o = buf;
+                   for (int i = 0; i < 512; i++) o[i] = s[i]; }
+    return rc == 0 ? 0 : -1;
+}
+int usb_blk_write(uint64_t sector, const void *buf) {
+    struct usb_dev *d = g_msc_dev;
+    if (!d || sector >= d->msc_nsectors) return -1;
+    { volatile uint8_t *s = d->msc_io; const uint8_t *in = buf;
+      for (int i = 0; i < 512; i++) s[i] = in[i]; arch_dsb(); }   /* into the DMA buffer first */
+    if (!g_msc_driver_running)
+        return scsi_blk_rw(d, 1, sector, d->msc_io_pa) == 0 ? 0 : -1;
+    g_msc_req.write = 1; g_msc_req.lba = sector;
+    g_msc_req.status = -1; g_msc_req.done = 0; arch_dsb();
+    g_msc_req.pending = 1; arch_dsb();
+    while (!g_msc_req.done) seL4_Yield();
+    return g_msc_req.status == 0 ? 0 : -1;
+}
+
 /* Reset the root port, address the device on it into a fresh usb_dev, and either arm it
- * (HID keyboard/mouse) or recurse into it (USB hub -- the RPi4 path: input is behind the
- * VL805 hub). */
+ * (HID keyboard/mouse), enumerate it as mass storage, or recurse into it (USB hub -- the
+ * RPi4 path: input is behind the VL805 hub). */
 static int setup_device(uint32_t p) {
     if (port_reset(p)) return -1;
     uint32_t speed = PORTSC_SPEED(op_r32(XHCI_PORTSC(p)));
@@ -1327,8 +1729,10 @@ static int setup_device(uint32_t p) {
     int cls = address_and_describe(d, 0, p + 1, speed, 0, 0, desc);
     if (cls < 0) { d->in_use = 0; return -1; }
     if (cls == 9) return setup_hub(d, p + 1, speed);   /* hub -> enumerate downstream */
-    if (setup_hid(d) != 0) { d->in_use = 0; return -1; }
-    return 0;
+    if (setup_hid(d) == 0) return 0;                   /* HID keyboard / mouse */
+    if (setup_msc(d) == 0) return 0;                   /* v0.4.255: USB mass storage */
+    d->in_use = 0;
+    return -1;
 }
 
 int xhci_init(void) {
