@@ -10,18 +10,33 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
 ## Quick orientation
 
 * **Project**: AIOS (Open Aries) -- microkernel research OS on seL4.
-* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`, at **v0.4.252**
-  (version.h bumped to 252 UNCOMMITTED -- the flashed cube kernel; commit it with
-  4a-C once the cube visual is confirmed). Origin is at `26ac58b`; **ahead by 4**
-  (Phase 3 B/C + Phase 4a A/B) **pending Bryan's push**. **The real Pi runs
-  v0.4.252 / build 2373 at 192.168.0.8** (deployed flash-free, `scripts/pi_flash.py`
-  + `fatswap`). NOTE: the Pi's DHCP lease BOUNCES between `.8` and `.250` per boot --
-  if `.8` is unreachable, ARP-sweep the /24 for MAC `dc:a6:32:1c:2e:e1`
-  (`pi_flash.py` already scans). USB keyboard needs a REBOOT to enumerate (boot-only
-  USB enum; all 4 ports are behind the one VL805 hub).
-* **This session -- V3D GPU hardware 3D bring-up (Phases 2 -> 4a), all HW-verified
+* **Repo**: `~/Desktop/github_repos/AIOS`, branch `main`. The V3D cube is DONE +
+  HW-VERIFIED + PUSHED (`9e543c6`, v0.4.252). NOTE: DHCP lease BOUNCES `.8`<->`.250`
+  per boot -- ARP-sweep MAC `dc:a6:32:1c:2e:e1` if `.8` is dark.
+
+* **!! CURRENT STATE 2026-06-15 -- the real Pi NETWORK IS BROKEN (a regression).** The
+  Pi is running a flashed **v0.4.253 (build 2421)** that has a **HW-only TCP regression**
+  (commit `3e3e26a`, sender-retransmit + graceful close): it RSTs live connections on real
+  HW -- SSH 0/20, netconsole `Connection reset by peer`. The LOCAL HDMI console + keyboard
+  WORK (net stack only). QEMU could NOT catch it (SLIRP is lossless). **ROLLBACK to the
+  known-good cube kernel is staged at `disk/kernel8.img` (v0.4.252 build 2385, sha
+  `b3aa70d`) + `/tmp/card_kernel8_cube_backup.img`; network flash is impossible (netconsole
+  RSTs) so it MUST be the PHYSICAL CARD.** Everything is committed in git -- nothing lost.
+  Full runbook + the next tasks: **`docs/NEXT_20260615f_console_cleanup_tcp_regression.md`**.
+
+* **This session (after the cube): TCP retransmit + xHCI hotswap + a regression.**
+  - `3e3e26a` TCP sender-retransmission + graceful close -- QEMU-green but **HW-REGRESSED
+    (do NOT redeploy as-is)**; the deferred-close/rto_check/RST is the suspect; data-
+    retransmit core reviewed sound. Spec: `docs/NEXT_20260615c`.
+  - `07fa756` xHCI keyboard HOTSWAP -- QEMU-VERIFIED (unplug->teardown->replug->re-enum,
+    `scripts/xhci_hotswap_qemu_test.py`); ROOT-PORT only (the Pi kbd is hub-downstream ->
+    VL805 interrupt-IN follow-up needed). `docs/NEXT_20260615e`.
+  - NEW asks from Bryan (NOT yet done, in `NEXT_20260615f`): quiet the HDMI console
+    (boot/[INF]/netconsole text -> log+serial only), remove the stale getty version banner
+    (getty.c:356-358, shows old build 2263), and make the keyboard lock LEDs work.
+* **PRIOR session -- V3D GPU hardware 3D bring-up (Phases 2 -> 4a), all HW-verified
   on the real RPi4. Seed: `docs/NEXT_20260615b_v3d_phase4_cube.md`. Memories:
-  `project_v3d_phase2`, `project_v3d_phase3`, `project_v3d_phase4` (NEW),
+  `project_v3d_phase2`, `project_v3d_phase3`, `project_v3d_phase4`,
   `project_v3d_design`:**
   1. **Phase 2 -- GPU clear (first GPU pixels). DONE + HW-verified + PUSHED
      (`920a5d2`, v0.4.250).** A solid orange clear renders to the live HDMI FB via
