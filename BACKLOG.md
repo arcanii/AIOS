@@ -43,18 +43,27 @@ at `/boot` (still single-file, root-dir only); a full mount stays a future item.
 ## Queued epics (2026-06-15)
 
 - **TCP graceful close + tail retransmit** -- fixes the SSH last-command drain race
-  (AIOS TCP has no sender-side retransmission). Data-retransmit core IMPLEMENTED +
-  QEMU-no-regression-green (UNCOMMITTED in net_server.c); the close/FIN lifecycle needs
-  a focused state-machine session (review verdict fix_first). Spec + review roadmap:
-  `docs/NEXT_20260615c_tcp_graceful_close.md`. HW-only to verify the loss path.
+  (AIOS TCP had no sender-side retransmission). IMPLEMENTED + COMMITTED `3e3e26a`
+  (net_server.c): snd_una + 4KB retransmit ring + RTO resend + deferred graceful close +
+  FIN retransmit. Two read-only adversarial reviews (lifecycle hardened). QEMU
+  no-regression GREEN (socket 8/8 ON+OFF, ssh 6/6, reconnect 6/6, netd 10/10). **STILL
+  PENDING: the HW flash + loss-path verify** (QEMU/SLIRP is lossless; net_server is in
+  the kernel/netd so a bad flash could drop the Pi's net -> needs Bryan's go-ahead + a
+  short-session loss-rate repro). No version bump until HW-verified. Spec/review trail:
+  `docs/NEXT_20260615c_tcp_graceful_close.md`.
 - **V3D textured console epic** -- (a) a textured (`art/aries_screen.png`) spinning +
   bouncing cube boot splash -> text; (b) a fast V3D-accelerated text console; (c) emoji.
   ALL gated on one new V3D capability: TEXTURE MAPPING (the TMU). Staged like Phases 2-4.
   Seed: `docs/NEXT_20260615d_v3d_textured_console.md`.
-- **HCI robustness + keyboard HOTSWAP** -- runtime USB keyboard plug/unplug
-  re-enumeration (today enum is BOOT-ONLY; PORT_STS_EVT is discarded; no device teardown
-  -> DMA-pool leak). Code-traced first steps + the robustness items in
-  `docs/NEXT_20260615e_hci_robustness_hotswap.md`. (Bryan: look at this next week.)
+- **HCI keyboard HOTSWAP** -- ROOT-PORT hotplug IMPLEMENTED + QEMU-VERIFIED + COMMITTED
+  `07fa756` (xhci.c): evt_dispatch flags port-status changes, the driver thread reconciles
+  root ports (enumerate new / teardown vanished), device_teardown reclaims the slot + DMA
+  (new dma_free + freelist). `scripts/xhci_hotswap_qemu_test.py` PASS (unplug->teardown->
+  replug->re-enum, slot reused). PENDING: VL805 DOWNSTREAM-hub hotplug (RPi4 kbd is behind
+  the hub -> needs the hub interrupt-IN status pipe, HW-only), the 2 enum scratch-page
+  leaks, a real-keyboard verify on the Pi (kernel flash, holding for Bryan), and the
+  ROBUSTNESS sweep (xHCI error/recovery -- the scoping lens that failed). Details:
+  `docs/NEXT_20260615e_hci_robustness_hotswap.md`.
 
 ## Next up -- recommended order (queued 2026-06-03)
 
