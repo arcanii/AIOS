@@ -56,6 +56,8 @@
 #define PORTSC_PED        (1u << 1)   /* port enabled */
 #define PORTSC_PR         (1u << 4)   /* port reset */
 #define PORTSC_SPEED(v)   (((v) >> 10) & 0xF)
+#define PORTSC_CSC        (1u << 17)  /* connect status change (W1C) -- hotplug */
+#define PORTSC_PLC        (1u << 22)  /* port link state change (W1C) */
 
 /* Interrupter 0 register set (Runtime + 0x20) */
 #define IR0_BASE          0x20
@@ -110,6 +112,7 @@ static inline void doorbell(uint32_t n, uint32_t target) {
 #define TRB_STATUS        4
 #define TRB_LINK          6
 #define TRB_ENABLE_SLOT   9
+#define TRB_DISABLE_SLOT  10
 #define TRB_ADDRESS_DEV   11
 #define TRB_CONFIG_EP     12
 #define TRB_EVAL_CONTEXT  13
@@ -144,6 +147,9 @@ static int kbd_try_deliver(uint32_t slot, uint32_t ep, uint32_t cc);
 /* ---- command ring + event ring producer/consumer state ---- */
 static uint32_t cmd_enq = 0, cmd_cycle = 1;   /* command ring (producer) */
 static uint32_t evt_deq = 0, evt_cycle = 1;   /* event ring (consumer) */
+static volatile uint32_t g_port_change;       /* v0.4.253: a port-status event is pending
+                                               * (set in evt_dispatch, drained by the driver
+                                               * thread for hotswap reconcile) */
 
 /* Non-blocking: if the next event ring TRB has been produced, copy it into out[]
  * and advance ERDP. Returns 0 on an event, -1 if none pending. */
@@ -192,11 +198,15 @@ static int evt_dispatch(uint32_t out[4], uint32_t want_type,
         out[0] = e[0]; out[1] = e[1]; out[2] = e[2]; out[3] = e[3];
         return DISP_MATCH;
     }
-    /* Port status change = a device reset/connected/disconnected. Any armed
-     * typematic may belong to a keyboard that just died mid-press (its release
-     * will never arrive) -- disarm rather than risk a repeat runaway (v0.4.197). */
-    if (type == TRB_PORT_STS_EVT)
+    /* Port status change = a device reset/connected/disconnected. Any armed typematic
+     * may belong to a keyboard that just died mid-press (its release will never arrive)
+     * -- disarm rather than risk a repeat runaway (v0.4.197). v0.4.253: flag it so the
+     * driver thread reconciles ports at TOP LEVEL (hotswap) -- never enumerate here, this
+     * runs nested inside enumeration command waits. */
+    if (type == TRB_PORT_STS_EVT) {
         typematic_disarm_all("port change");
+        g_port_change = 1;
+    }
     return DISP_OTHER;               /* port-status / stray -- consumed, ignored */
 }
 
@@ -243,6 +253,10 @@ static int cmd_submit(uint64_t param, uint32_t status, uint32_t type, uint32_t s
 static uint8_t  *dma_pool_va;                   /* contiguous mapped base (2 MB) */
 static uint64_t  dma_pool_pa;                   /* contiguous base paddr (2 MB aligned) */
 static uint32_t  dma_pool_used;
+/* v0.4.253: a freelist so pages reclaimed on device teardown (hotswap unplug) are
+ * reused -- without it dma_page only bumps and a replug storm exhausts the 2MB pool. */
+static uint32_t  dma_freelist[DMA_POOL_PAGES];
+static uint32_t  dma_free_count;
 
 /* Reserve the xHCI DMA pool. Idempotent. Call EARLY (low RAM still plentiful) so the
  * 2 MB frame lands below 3 GB; a later call is a no-op. Retries a few times for a low
@@ -279,16 +293,31 @@ int xhci_dma_reserve(void) {
     return 0;
 }
 
-/* Carve one zeroed page from the low DMA pool; returns vaddr + paddr. */
+/* Carve one zeroed page from the low DMA pool; returns vaddr + paddr. Reuses a freed
+ * page first (hotswap teardown returns pages here via dma_free), else bumps. */
 static void *dma_page(uint64_t *pa_out) {
-    if (!dma_pool_va || dma_pool_used >= DMA_POOL_PAGES) {
+    uint32_t i;
+    if (dma_free_count > 0) {
+        i = dma_freelist[--dma_free_count];
+    } else if (dma_pool_va && dma_pool_used < DMA_POOL_PAGES) {
+        i = dma_pool_used++;
+    } else {
         AIOS_LOG_ERROR("xHCI DMA pool exhausted"); return NULL;
     }
-    uint32_t i = dma_pool_used++;
     void *va = dma_pool_va + (uint64_t)i * 0x1000;
     for (int k = 0; k < 4096; k++) ((volatile uint8_t *)va)[k] = 0;
     *pa_out = dma_pool_pa + (uint64_t)i * 0x1000;
     return va;
+}
+
+/* Return a dma_page()'d page to the freelist (hotswap device teardown). No-op for NULL
+ * or a pointer outside the pool. */
+static void dma_free(void *va) {
+    if (!va || !dma_pool_va) return;
+    uint64_t off = (uint64_t)((uint8_t *)va - dma_pool_va);
+    if (off >= (uint64_t)DMA_POOL_PAGES * 0x1000 || (off & 0xFFF)) return;
+    uint32_t i = (uint32_t)(off >> 12);
+    if (dma_free_count < DMA_POOL_PAGES) dma_freelist[dma_free_count++] = i;
 }
 
 /* Map the controller BAR0 register space (non-cacheable device memory).
@@ -367,6 +396,7 @@ struct usb_dev {
     int      in_use;
     int      kind;                                  /* USB_KBD / USB_MOUSE / USB_HUB */
     uint32_t slot;
+    uint32_t root_port;                             /* 0-based root port (hotswap reconcile) */
     uint32_t speed;                                 /* PORTSC speed: 1 FS, 2 LS, 3 HS, 4 SS */
     /* EP0 control endpoint */
     volatile uint8_t *dev_ctx;  uint64_t dev_ctx_pa;   /* output device context */
@@ -410,6 +440,10 @@ static struct usb_dev *dev_alloc(void) {
         *d = (struct usb_dev){0};
         d->in_use = 1;
         d->num_lock = 1;
+        d->root_port = 0xFFFFFFFFu;   /* v0.4.253: "not a direct root-port device" --
+                                       * setup_device sets the real port; hub-downstream
+                                       * devices keep this sentinel so the root-port
+                                       * reconcile never mistakenly tears them down */
         return d;
     }
     AIOS_LOG_WARN("USB device table full");
@@ -886,6 +920,55 @@ static struct usb_dev *first_kbd(void) {
     return NULL;
 }
 
+/* ---- hotswap (v0.4.253): runtime device plug/unplug re-enumeration ----
+ * evt_dispatch sets g_port_change on a Port Status Change Event; the driver thread (the
+ * single event-ring consumer) drains it at TOP LEVEL -- never inline in evt_dispatch,
+ * which runs nested inside enumeration command waits (that would re-enter). On a change
+ * we re-scan every root port and reconcile against g_devs[]: a newly-connected port with
+ * no device is enumerated; a vanished device is torn down (slot + DMA reclaimed). Root
+ * ports only -- the RPi4 keyboard behind the VL805 hub needs the hub interrupt-IN status
+ * pipe (a follow-up; docs/NEXT_20260615e). */
+static int setup_device(uint32_t p);        /* fwd: the per-root-port enumerate path */
+
+static struct usb_dev *dev_on_root_port(uint32_t p) {
+    for (int i = 0; i < MAX_USB_DEV; i++)
+        if (g_devs[i].in_use && g_devs[i].root_port == p) return &g_devs[i];
+    return NULL;
+}
+
+/* Tear down a vanished device: stop its key-repeat, Disable Slot, clear its DCBAA entry,
+ * reclaim its 6 DMA pages, free the g_devs slot. (The 2 enum SCRATCH pages are a separate
+ * pre-existing leak -- follow-up.) */
+static void device_teardown(struct usb_dev *d) {
+    if (!d || !d->in_use) return;
+    if (d->rep_active) typematic_disarm_all("device unplugged");
+    if (d->slot) {
+        cmd_submit(0, 0, TRB_DISABLE_SLOT, d->slot, 0, NULL);
+        if (d->slot <= max_slots) dcbaa[d->slot] = 0;
+    }
+    dma_free((void *)d->dev_ctx);   dma_free((void *)d->in_ctx);
+    dma_free((void *)d->ep0_ring);  dma_free((void *)d->int_ring);
+    dma_free((void *)d->rpt);       dma_free((void *)d->led_buf);
+    printf("[xhci] device unplugged: slot=%u port=%u -- torn down\n", d->slot, d->root_port);
+    *d = (struct usb_dev){0};       /* frees the slot (in_use = 0) */
+}
+
+/* Reconcile every root port against g_devs[] after a port-status event. Idempotent:
+ * a connect/reset event that fires while a device is already up just re-acks. */
+static void handle_port_changes(void) {
+    g_port_change = 0;
+    for (uint32_t p = 0; p < max_ports; p++) {
+        uint32_t sc = op_r32(XHCI_PORTSC(p));
+        int connected = (sc & PORTSC_CCS) != 0;
+        /* ACK the W1C change bits for this port (preserve PP; leave the RW bits alone). */
+        op_w32(XHCI_PORTSC(p),
+               (sc & PORTSC_PP) | (sc & (PORTSC_CSC | PORTSC_PRC | PORTSC_PLC)));
+        struct usb_dev *dev = dev_on_root_port(p);
+        if (connected && !dev)       setup_device(p);      /* new plug -> enumerate */
+        else if (!connected && dev)  device_teardown(dev); /* unplug -> tear down */
+    }
+}
+
 /* ---- interrupt (IRQ) mode (Task 2) ----
  * The driver thread can BLOCK on an seL4 IRQ notification instead of busy-polling +
  * Yield, freeing core 0 when idle. Default is POLLING (xhci_irq_mode = 0): the doc keeps
@@ -952,6 +1035,10 @@ void xhci_kbd_driver_fn(void *a, void *b, void *c) {
     uint32_t e[4];
     while (1) {
         while (evt_dispatch(e, 0 /* no awaited completion */, 0, 0) != DISP_NONE) { }
+
+        /* v0.4.253 hotswap: a port plug/unplug was flagged by evt_dispatch -- reconcile
+         * at top level (safe to enumerate / Disable-Slot here; not nested in a cmd wait). */
+        if (g_port_change) handle_port_changes();
 
         uint32_t req = g_led_request;
         if (req & 0x100) {   /* pending LED request from /proc/xhci */
@@ -1190,6 +1277,7 @@ static int setup_device(uint32_t p) {
     uint32_t speed = PORTSC_SPEED(op_r32(XHCI_PORTSC(p)));
     struct usb_dev *d = dev_alloc();
     if (!d) return -1;
+    d->root_port = p;                  /* v0.4.253: for hotswap teardown reconcile */
     uint8_t desc[18];
     int cls = address_and_describe(d, 0, p + 1, speed, 0, 0, desc);
     if (cls < 0) { d->in_use = 0; return -1; }
