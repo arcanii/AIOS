@@ -22,12 +22,16 @@ regression (boot-mount 6/6, basic 5/5, >2TB 4/4, keyboard hotswap PASS, net_sock
   whenever the controller is up. This is the linchpin of insert-after-boot.
 * **Single-drive guard:** a 2nd simultaneous MSC drive is enumerated but NOT made the
   `/mnt/usb` backend (a `g_msc_dev` swap under the mounted `ext2_usb` would corrupt it).
-* **Documented LIMITATION -- different-drive swap:** `blk_cache` drive 2 is not
-  invalidated on unplug. Re-inserting the SAME drive is correct; swapping a DIFFERENT
-  drive into the slot within one boot may serve stale cached sectors -> reboot between
-  different drives. A safe invalidate must coordinate with the FS thread mid-fill (it
-  parks inside `get_line` via `usb_blk_read`'s spin-wait, so a naive drop is a
-  use-after-free) -- backlogged.
+* **Different-drive swap -- RESOLVED (v0.4.256).** Two caches front the USB drive: ext2's
+  own block cache (`src/ext2.c`, keyed by dev_id) AND `blk_cache.c` drive 2. On unplug
+  `device_teardown` calls `blk_cache_invalidate(2)` (a per-drive GENERATION bump -- frees
+  nothing, so it cannot UAF the FS thread's mid-fill line, which is not yet hash-resident;
+  stale lines drop lazily in `lookup`); on (re)mount `usb_msc_mount` calls
+  `ext2_cache_drop_dev(2)` (clears the ext2 front cache). Both are required (a front miss
+  falls through to the back). So swapping a DIFFERENT drive into the slot now reads fresh.
+  Test: `scripts/usb_msc_swap_qemu_test.py` 11/11 (two distinct ext2 images, A's marker must
+  NOT survive into B); proven discriminating (disable the ext2 front-clear -> B serves A's
+  stale whoami, 9/11).
 * **Adversarial review (4 lenses) outcome:** the "multi-core race" findings were FALSE
   POSITIVES -- all root threads are pinned to core 0 (`ROOT_CORE`) AND the FS thread
   spin-waits on the `g_msc_req` queue (never touches the event ring at runtime), so

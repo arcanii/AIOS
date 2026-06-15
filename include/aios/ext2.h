@@ -111,6 +111,8 @@ typedef struct {
 } ext2_ctx_t;
 
 int ext2_init(ext2_ctx_t *ctx, blk_read_fn read, int dev_id);
+/* v0.4.256: drop every cached block for a dev_id (USB drive swap; front-cache clear). */
+void ext2_cache_drop_dev(int dev_id);
 int ext2_read_inode(ext2_ctx_t *ctx, uint32_t ino, struct ext2_inode *out);
 int ext2_read_block(ext2_ctx_t *ctx, uint32_t block, void *buf);
 int ext2_lookup(ext2_ctx_t *ctx, uint32_t dir_ino, const char *name, uint32_t *out_ino);

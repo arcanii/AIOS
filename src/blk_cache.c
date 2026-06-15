@@ -47,6 +47,7 @@ typedef struct cache_line {
     uint32_t lru_tick;
     uint8_t  valid;
     uint8_t  dirty;           /* v0.4.172: line has unflushed writes (drive 0) */
+    uint32_t gen;             /* v0.4.256: drive generation at fill; stale if != drive_gen[drive] */
     struct cache_line *hash_next;
     struct cache_line *prev, *next;  /* LRU: head=most recent, tail=oldest */
 } cache_line_t;
@@ -90,10 +91,32 @@ static inline uint32_t hash_key(uint32_t drive, uint64_t line_sector) {
     return (uint32_t)(k % HASH_BUCKETS);
 }
 
+/* v0.4.256: per-drive generation (USB hot-swap). blk_cache_invalidate bumps it; a cached
+ * line whose gen != drive_gen[drive] is stale (a different drive now occupies the slot) and
+ * is dropped lazily in lookup. invalidate FREES NOTHING -- a line still being filled is not
+ * yet hash-inserted (get_line inserts only after the fill), so dropping stale lines in lookup
+ * never frees a line a parked thread is mid-fill on (no use-after-free). Drives 0/1 never bump
+ * it, so the gen check is a no-op for the system disk + log drive. */
+static volatile uint32_t drive_gen[3];
+static void lru_unlink(cache_line_t *l);
+static void line_free(cache_line_t *l);
+
 static cache_line_t *lookup(uint32_t drive, uint64_t line_sector) {
     uint32_t h = hash_key(drive, line_sector);
-    for (cache_line_t *p = bucket_head[h]; p; p = p->hash_next) {
-        if (p->drive == drive && p->line_sector == line_sector) return p;
+    cache_line_t **pp = &bucket_head[h];
+    while (*pp) {
+        cache_line_t *p = *pp;
+        if (p->drive == drive && p->line_sector == line_sector) {
+            if (p->gen == drive_gen[drive]) return p;   /* current generation */
+            /* stale (drive hot-swapped) -- unlink from the bucket + LRU and free. Safe:
+             * cache ops are single-threaded, and a line still being filled is not yet
+             * hash-inserted, so this never frees a line a parked thread is mid-fill on. */
+            *pp = p->hash_next;
+            lru_unlink(p);
+            line_free(p);
+            continue;            /* *pp now points at the next node; do not advance */
+        }
+        pp = &p->hash_next;
     }
     return NULL;
 }
@@ -233,6 +256,7 @@ void blk_cache_init(int max_pages) {
     monotonic_tick = 0;
     ra_last_line[0] = ra_last_line[1] = ra_last_line[2] = (uint64_t)-1;  /* sentinel */
     ra_run[0] = ra_run[1] = ra_run[2] = 0;
+    drive_gen[0] = drive_gen[1] = drive_gen[2] = 0;
     line_max = max_pages > 0 ? max_pages : BLK_CACHE_DEFAULT_MAX_PAGES;
     stats.pages_max = (uint32_t)line_max;
     AIOS_LOG_INFO_V("init max_pages=", (unsigned long)line_max);
@@ -286,6 +310,7 @@ static cache_line_t *get_line(uint32_t drive, uint64_t line_sector) {
     }
     l->drive = drive;
     l->line_sector = line_sector;
+    l->gen = drive_gen[drive];   /* generation at fetch start: a teardown mid-fill stales it */
 
     /* Fill the line: prefer a single multi-sector read (one CMD18 / virtio
      * chain) when a multi backend is registered, else fall back to per-sector
@@ -404,6 +429,19 @@ int blk_cache_evict(int n_pages) {
     int freed = 0;
     while (freed < n_pages && evict_one()) freed++;
     return freed;
+}
+
+/* v0.4.256: invalidate every cached line for one drive (USB unplug -- a DIFFERENT drive
+ * swapped into the slot must not read the old drive's cached sectors). Bumps the drive
+ * generation so every existing line for `drive` is stale (treated as a miss + dropped lazily
+ * in lookup). Frees NOTHING here, so it is safe to call from the driver thread while the fs
+ * thread is parked mid-fill (that line is not yet hash-resident). Drive 2 (USB) is
+ * write-through, so no line is ever dirty -- nothing to flush. */
+void blk_cache_invalidate(int drive) {
+    if (drive < 0 || drive > 2) return;
+    drive_gen[drive]++;
+    ra_last_line[drive] = (uint64_t)-1;   /* reset read-ahead run for the new drive */
+    ra_run[drive] = 0;
 }
 
 /* Discard a run of just-freed sectors. Invalidate every FULLY-covered cache

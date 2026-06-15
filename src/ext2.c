@@ -71,6 +71,17 @@ static void cache_invalidate(int dev_id, uint32_t block) {
     }
 }
 
+/* v0.4.256: drop EVERY cached block for one dev_id. The ext2 block cache is keyed by
+ * (dev_id, block) and sits IN FRONT of blk_cache.c, so on a USB drive swap (same dev_id 2
+ * = /mnt/usb) a stale hit here serves the old drive's block before blk_cache.c is even
+ * consulted. The mount path calls this before re-init so a different drive reads fresh.
+ * Only clears valid flags (no allocation), so it is safe to call from the driver thread. */
+void ext2_cache_drop_dev(int dev_id) {
+    for (int i = 0; i < EXT2_CACHE_SIZE; i++)
+        if (blk_cache[i].valid && blk_cache[i].dev_id == dev_id)
+            blk_cache[i].valid = 0;
+}
+
 
 static int read_block(ext2_ctx_t *ctx, uint32_t block, void *buf) {
     if (cache_lookup(ctx->dev_id, block, buf) == 0) return 0;

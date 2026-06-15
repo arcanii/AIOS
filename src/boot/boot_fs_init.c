@@ -107,6 +107,10 @@ int usb_msc_mount(void) {
     extern int usb_blk_write(uint64_t sector, const void *buf);
     if (!xhci_msc_ok) return -1;
     blk_cache_register_backend(2, usb_blk_read, usb_blk_write);
+    /* v0.4.256: a replug may be a DIFFERENT drive on the same dev_id 2. blk_cache (the back
+     * cache) was invalidated on unplug (device_teardown); also clear the ext2 front cache
+     * here so this (re)init + subsequent reads come from the new drive, not stale blocks. */
+    ext2_cache_drop_dev(2);
     int err = ext2_init(&ext2_usb, blk_cache_read2, 2);
     if (err != 0) {
         AIOS_LOG_WARN_V("USB drive present but not ext2 (raw/other fs) err=", err);

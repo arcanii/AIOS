@@ -90,6 +90,11 @@ int blk_cache_evict(int n_pages);
  * MUST be called before shutdown/reboot or deferred writes are lost. */
 void blk_cache_flush(void);
 
+/* v0.4.256: invalidate every cached line for `drive` (USB unplug). Bumps a generation so
+ * stale lines are dropped lazily on the next lookup -- frees nothing, so it is safe to call
+ * from the driver thread while the fs thread is parked mid-fill. No-op for drives 0/1. */
+void blk_cache_invalidate(int drive);
+
 /* Snapshot stats for /proc/cachestats. */
 typedef struct {
     uint32_t hits;

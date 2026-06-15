@@ -1029,12 +1029,18 @@ static void device_teardown(struct usb_dev *d) {
     dma_free((void *)d->ep0_ring);  dma_free((void *)d->int_ring);
     dma_free((void *)d->rpt);       dma_free((void *)d->led_buf);
     /* v0.4.255 Path A: also reclaim the MSC pages (NULL on a non-MSC device; dma_free no-ops
-     * NULL), and drop the block-device globals so a replug re-enumerates cleanly. The /mnt/usb
-     * VFS entry persists (no umount path) -- usb_blk_read returns -1 while g_msc_dev is NULL, so
-     * accessing the unplugged drive fails gracefully; a replug refreshes ext2_usb in place. */
+     * NULL), invalidate the drive-2 block cache, and drop the block-device globals so a replug
+     * re-enumerates cleanly. The /mnt/usb VFS entry persists (no umount path) -- usb_blk_read
+     * returns -1 while g_msc_dev is NULL, so accessing the unplugged drive fails gracefully; a
+     * replug refreshes ext2_usb in place and reads the new drive (cache invalidated). */
     dma_free((void *)d->bo_ring);   dma_free((void *)d->bi_ring);
     dma_free((void *)d->msc_buf);   dma_free((void *)d->msc_io);
-    if (d == g_msc_dev) { g_msc_dev = 0; xhci_msc_ok = 0; g_msc_mount_pending = 0; }
+    if (d == g_msc_dev) {
+        extern void blk_cache_invalidate(int drive);
+        blk_cache_invalidate(2);   /* v0.4.256: drop the unplugged drive's cached sectors so a
+                                    * DIFFERENT drive swapped into the slot reads fresh, not stale */
+        g_msc_dev = 0; xhci_msc_ok = 0; g_msc_mount_pending = 0;
+    }
     printf("[xhci] device unplugged: slot=%u port=%u -- torn down\n", d->slot, d->root_port);
     *d = (struct usb_dev){0};       /* frees the slot (in_use = 0) */
 }
@@ -1765,11 +1771,9 @@ int usb_blk_write(uint64_t sector, const void *buf) {
  * the duration -- the driver thread is running the mount, so it cannot post to g_msc_req and
  * wait for itself. usb_msc_mount (boot_fs_init.c) is idempotent on the VFS side (registers the
  * /mnt/usb mount point once; a replug just re-inits ext2_usb in place). A non-ext2 drive logs
- * and stays a raw block device. LIMITATION: blk_cache drive 2 is NOT invalidated on unplug, so
- * re-inserting the SAME drive is correct (same data) but swapping a DIFFERENT drive into the
- * slot within one boot may serve stale cached sectors -- reboot between different drives. A
- * safe invalidate must coordinate with the FS thread mid-fill (it parks inside get_line via
- * usb_blk_read), so it is a backlog follow-up, not a naive blk_cache drop here. */
+ * and stays a raw block device. blk_cache drive 2 is invalidated on unplug (device_teardown
+ * -> blk_cache_invalidate, a generation bump), so swapping a DIFFERENT drive into the slot
+ * reads fresh -- not the old drive's cached sectors. */
 static void msc_runtime_mount(void) {
     extern int usb_msc_mount(void);
     g_msc_mount_pending = 0;
