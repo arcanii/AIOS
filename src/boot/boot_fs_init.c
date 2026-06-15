@@ -113,7 +113,11 @@ int usb_msc_mount(void) {
         return -1;
     }
     ext2_init_write(&ext2_usb, blk_cache_write2);
-    vfs_mount("/mnt/usb", &ext2_fs_ops, &ext2_usb);
+    /* v0.4.255 Path A: register the /mnt/usb mount point ONCE. A runtime replug re-inits
+     * ext2_usb in place (above) -- the existing mount entry holds &ext2_usb, so it picks up
+     * the refreshed superblock without a duplicate vfs_mount (there is no umount path). */
+    static int mounted_once = 0;
+    if (!mounted_once) { vfs_mount("/mnt/usb", &ext2_fs_ops, &ext2_usb); mounted_once = 1; }
     LOG_INFO("USB mass-storage mounted at /mnt/usb");
     AIOS_LOG_INFO("USB drive mounted at /mnt/usb");
     return 0;

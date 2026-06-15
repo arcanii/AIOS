@@ -129,12 +129,15 @@ void boot_start_services(vka_object_t *fault_ep) {
 
     proc_add("pipe_server", 200);
 
-    /* USB HID keyboard driver thread (if xhci_init enumerated a keyboard).
-     * Polls the xHCI event ring for interrupt-transfer completions. */
+    /* USB driver thread -- spawn whenever the xHCI controller is up (v0.4.255 Path A), not
+     * just when a keyboard enumerated at boot. It polls the event ring for interrupt-transfer
+     * completions AND drains Port Status Change Events, so a device HOTPLUGGED after boot (the
+     * only workable model for a USB drive -- the RPi4 firmware hangs on an ext2 drive present
+     * at boot) is detected, enumerated, and (for mass storage) mounted at runtime. */
     {
-        extern int xhci_kbd_ok;
+        extern int xhci_running;
         extern void xhci_kbd_driver_fn(void *, void *, void *);
-        if (xhci_kbd_ok)
+        if (xhci_running)
             start_server_thread("xhci", (sel4utils_thread_entry_fn)xhci_kbd_driver_fn, 0);
     }
 

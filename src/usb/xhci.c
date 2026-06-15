@@ -151,6 +151,22 @@ static int kbd_try_deliver(uint32_t slot, uint32_t ep, uint32_t cc);
 static volatile int g_msc_driver_running;
 static void msc_service_request(void);
 
+/* v0.4.255 Path A (runtime hotplug mount): MSC state lives here, ABOVE device_teardown and
+ * the driver loop which both touch it (it is SET by setup_msc far below). g_msc_mount_pending
+ * flags an MSC drive that enumerated WHILE the driver thread is running (a hotplugged drive,
+ * not the boot drive aios_root.c mounts) -- the driver loop mounts it at top level via
+ * msc_runtime_mount. g_msc_mount_inline forces usb_blk_read/write to transfer DIRECTLY for the
+ * duration of that mount: the driver thread runs the mount itself, so it must NOT post to
+ * g_msc_req and spin-wait for itself (deadlock). g_msc_automount gates it (/proc/xhci.automount.0
+ * leaves a hotplugged drive as a raw block device). */
+struct usb_dev;
+int                     xhci_msc_ok = 0;      /* a USB mass-storage LUN is enumerated + live */
+static struct usb_dev  *g_msc_dev;            /* the live MSC device (block backend target) */
+static volatile int     g_msc_mount_pending;  /* runtime-enumerated MSC awaits mount */
+static volatile int     g_msc_mount_inline;   /* mount in progress -> usb_blk_* transfer direct */
+static volatile int     g_msc_automount = 1;  /* /proc/xhci.automount.0 to leave as block dev */
+static void msc_runtime_mount(void);
+
 /* ---- command ring + event ring producer/consumer state ---- */
 static uint32_t cmd_enq = 0, cmd_cycle = 1;   /* command ring (producer) */
 static uint32_t evt_deq = 0, evt_cycle = 1;   /* event ring (consumer) */
@@ -542,7 +558,12 @@ static int control_transfer(struct usb_dev *d, uint8_t bmReqType, uint8_t bReq, 
 /* ---- HID (Layer 4/5): keyboard + mouse ---- */
 extern vka_object_t serial_ep;   /* tty input endpoint (defined in aios_root.c) */
 
-int xhci_kbd_ok = 0;               /* read by boot_services to spawn the driver thread */
+int xhci_kbd_ok = 0;               /* a keyboard enumerated at boot (diag) */
+/* v0.4.255 Path A: the controller is up -> boot_services spawns the polling driver thread
+ * UNCONDITIONALLY (even with no boot device), so the event ring is drained and a device
+ * HOTPLUGGED after boot is detected. Previously the thread spawned only if a keyboard
+ * enumerated at boot, so an insert-after-boot drive was never noticed. */
+int xhci_running = 0;
 
 /* Lock-LED request channel for /proc/xhci (see set_leds). The diagnostic runs on the
  * fs/proc thread; it must not touch the event ring, so it only pokes g_led_request and
@@ -1007,6 +1028,13 @@ static void device_teardown(struct usb_dev *d) {
     dma_free((void *)d->dev_ctx);   dma_free((void *)d->in_ctx);
     dma_free((void *)d->ep0_ring);  dma_free((void *)d->int_ring);
     dma_free((void *)d->rpt);       dma_free((void *)d->led_buf);
+    /* v0.4.255 Path A: also reclaim the MSC pages (NULL on a non-MSC device; dma_free no-ops
+     * NULL), and drop the block-device globals so a replug re-enumerates cleanly. The /mnt/usb
+     * VFS entry persists (no umount path) -- usb_blk_read returns -1 while g_msc_dev is NULL, so
+     * accessing the unplugged drive fails gracefully; a replug refreshes ext2_usb in place. */
+    dma_free((void *)d->bo_ring);   dma_free((void *)d->bi_ring);
+    dma_free((void *)d->msc_buf);   dma_free((void *)d->msc_io);
+    if (d == g_msc_dev) { g_msc_dev = 0; xhci_msc_ok = 0; g_msc_mount_pending = 0; }
     printf("[xhci] device unplugged: slot=%u port=%u -- torn down\n", d->slot, d->root_port);
     *d = (struct usb_dev){0};       /* frees the slot (in_use = 0) */
 }
@@ -1104,6 +1132,11 @@ void xhci_kbd_driver_fn(void *a, void *b, void *c) {
         /* v0.4.253 hotswap: a port plug/unplug was flagged by evt_dispatch -- reconcile
          * at top level (safe to enumerate / Disable-Slot here; not nested in a cmd wait). */
         if (g_port_change) handle_port_changes();
+
+        /* v0.4.255 Path A: a runtime-hotplugged MSC drive needs mounting at /mnt/usb. Runs at
+         * TOP LEVEL on this (the sole event-ring consumer) thread, so the mount block I/O
+         * transfers directly (g_msc_mount_inline) rather than deadlocking on the request queue. */
+        if (g_msc_mount_pending) msc_runtime_mount();
 
         uint32_t req = g_led_request;
         if (req & 0x100) {   /* pending LED request from /proc/xhci */
@@ -1345,8 +1378,7 @@ static int setup_hub(struct usb_dev *hub, uint32_t hub_root_port, uint32_t hub_s
  * Stage 1: enumerate the two bulk endpoints, INQUIRY + READ_CAPACITY.
  * (Block READ(10)/WRITE(10) + blk_cache registration are later stages.)
  * ============================================================ */
-int xhci_msc_ok = 0;                  /* a USB mass-storage LUN enumerated (read elsewhere) */
-static struct usb_dev *g_msc_dev;     /* first MSC device (the future block backend target) */
+/* xhci_msc_ok + g_msc_dev are defined near the top (above device_teardown, which clears them). */
 
 /* Enqueue one NORMAL TRB on a bulk ring, ring the doorbell, and wait (via the event-
  * ring dispatcher) for its Transfer Event on (slot, dci). Returns the completion code
@@ -1646,8 +1678,19 @@ static int setup_msc(struct usb_dev *d) {
                     if (rb[i] != pat[i]) { ok = 0; break; }
         printf("[xhci] USB MSC WRITE(10) self-test (LBA1, QEMU disk): %s\n", ok ? "PASS" : "FAIL");
     }
+    /* Single block-device backend (g_msc_dev). If a drive is ALREADY live, enumerate this one
+     * but do NOT make it the /mnt/usb backend -- swapping g_msc_dev under the mounted ext2_usb
+     * would corrupt the mount. Multi-drive is out of scope (the first drive wins). */
+    if (g_msc_dev && g_msc_dev != d) {
+        AIOS_LOG_WARN("second USB MSC device ignored (single-drive; first stays mounted)");
+        return 0;
+    }
     g_msc_dev = d;
     xhci_msc_ok = 1;
+    /* Path A: if the driver thread is already running this is a RUNTIME hotplug (not the boot
+     * drive, which aios_root.c mounts directly on the boot thread). Flag it so the driver loop
+     * mounts it at top level via msc_runtime_mount (the deadlock-safe path). */
+    if (g_msc_driver_running) g_msc_mount_pending = 1;
     return 0;
 }
 
@@ -1689,7 +1732,7 @@ int usb_blk_read(uint64_t sector, void *buf) {
     struct usb_dev *d = g_msc_dev;
     if (!d || sector >= d->msc_nsectors) return -1;
     int rc;
-    if (!g_msc_driver_running) {
+    if (!g_msc_driver_running || g_msc_mount_inline) {
         rc = scsi_blk_rw(d, 0, sector, d->msc_io_pa);
     } else {
         g_msc_req.write = 0; g_msc_req.lba = sector;
@@ -1707,13 +1750,38 @@ int usb_blk_write(uint64_t sector, const void *buf) {
     if (!d || sector >= d->msc_nsectors) return -1;
     { volatile uint8_t *s = d->msc_io; const uint8_t *in = buf;
       for (int i = 0; i < 512; i++) s[i] = in[i]; arch_dsb(); }   /* into the DMA buffer first */
-    if (!g_msc_driver_running)
+    if (!g_msc_driver_running || g_msc_mount_inline)
         return scsi_blk_rw(d, 1, sector, d->msc_io_pa) == 0 ? 0 : -1;
     g_msc_req.write = 1; g_msc_req.lba = sector;
     g_msc_req.status = -1; g_msc_req.done = 0; arch_dsb();
     g_msc_req.pending = 1; arch_dsb();
     while (!g_msc_req.done) seL4_Yield();
     return g_msc_req.status == 0 ? 0 : -1;
+}
+
+/* v0.4.255 Path A: mount a runtime-hotplugged MSC drive at /mnt/usb. Called ONLY from the
+ * driver loop at top level (the sole event-ring consumer). g_msc_mount_inline forces the
+ * block I/O issued by ext2_init -> blk_cache_read2 -> usb_blk_read to transfer DIRECTLY for
+ * the duration -- the driver thread is running the mount, so it cannot post to g_msc_req and
+ * wait for itself. usb_msc_mount (boot_fs_init.c) is idempotent on the VFS side (registers the
+ * /mnt/usb mount point once; a replug just re-inits ext2_usb in place). A non-ext2 drive logs
+ * and stays a raw block device. LIMITATION: blk_cache drive 2 is NOT invalidated on unplug, so
+ * re-inserting the SAME drive is correct (same data) but swapping a DIFFERENT drive into the
+ * slot within one boot may serve stale cached sectors -- reboot between different drives. A
+ * safe invalidate must coordinate with the FS thread mid-fill (it parks inside get_line via
+ * usb_blk_read), so it is a backlog follow-up, not a naive blk_cache drop here. */
+static void msc_runtime_mount(void) {
+    extern int usb_msc_mount(void);
+    g_msc_mount_pending = 0;
+    if (!g_msc_automount) {
+        printf("[xhci] USB MSC enumerated; automount OFF (/proc/xhci.automount.1 to enable)\n");
+        return;
+    }
+    g_msc_mount_inline = 1; arch_dsb();
+    int rc = usb_msc_mount();
+    g_msc_mount_inline = 0; arch_dsb();
+    printf("[xhci] USB MSC runtime mount: %s\n",
+           rc == 0 ? "mounted at /mnt/usb" : "not mounted (raw/other fs)");
 }
 
 /* Reset the root port, address the device on it into a fresh usb_dev, and either arm it
@@ -1867,6 +1935,7 @@ int xhci_init(void) {
     for (uint32_t p = 0; p < max_ports; p++)
         if (op_r32(XHCI_PORTSC(p)) & PORTSC_CCS)
             setup_device(p);
+    xhci_running = 1;   /* controller up -> spawn the polling driver thread (handles hotplug) */
     return 0;
 }
 
@@ -1927,12 +1996,16 @@ int xhci_diag_cmd(const char *args, char *buf, int bufsize) {
             return snprintf(buf, bufsize, "xHCI: IRQ mode = %u (irq=%d count=%u)\n",
                             on, xhci_irq_num, xhci_irq_count);
         }
+        if (p[0] == 'a' && p[1] == 'u' && p[2] == 't' && p[3] == 'o' && p[4] == '.') {
+            g_msc_automount = (int)(xdiag_hex(p + 5) & 1);   /* gate runtime hotplug mount */
+            return snprintf(buf, bufsize, "xHCI: USB-MSC automount = %d\n", g_msc_automount);
+        }
     }
 
     int w = 0;
     uint32_t sts = op_r32(XHCI_USBSTS), cmd = op_r32(XHCI_USBCMD);
     w += snprintf(buf + w, bufsize - w,
-        "xHCI diag. cmds: .led.N (bit0 Num, 1 Caps, 2 Scroll)  .lock  .irq.0|1  .debug.0|1\n");
+        "xHCI diag. cmds: .led.N (bit0 Num, 1 Caps, 2 Scroll)  .lock  .irq.0|1  .debug.0|1  .auto.0|1\n");
     w += snprintf(buf + w, bufsize - w,
         "USBSTS=0x%x (HCH=%d HSE=%d HCE=%d CNR=%d)  USBCMD=0x%x (RS=%d INTE=%d)\n",
         sts, sts & 1, (sts >> 2) & 1, (sts >> 12) & 1, (sts >> 11) & 1,
@@ -1940,6 +2013,11 @@ int xhci_diag_cmd(const char *args, char *buf, int bufsize) {
     w += snprintf(buf + w, bufsize - w,
         "irq: mode=%d bound=%d num=%d count=%u  (poll is the default; .irq.1 to block)\n",
         xhci_irq_mode, xhci_irq_ntfn ? 1 : 0, xhci_irq_num, xhci_irq_count);
+    { struct usb_dev *md = g_msc_dev;   /* snapshot: teardown may clear it (same core, but clean) */
+      w += snprintf(buf + w, bufsize - w,
+        "msc: ok=%d automount=%d mount_pending=%d nsectors=%lu blksz=%u\n",
+        xhci_msc_ok, g_msc_automount, g_msc_mount_pending,
+        md ? (unsigned long)md->msc_nsectors : 0, md ? md->msc_blocksize : 0); }
     w += snprintf(buf + w, bufsize - w,
         "slots=%u ports=%u  kbd_ok=%d  evt_deq=%u cyc=%u  key_events=%u int_errs=%u  last SET_REPORT cc=%d USBSTS=0x%x\n",
         max_slots, max_ports, xhci_kbd_ok, evt_deq, evt_cycle, g_key_events, g_int_err_events,
@@ -1958,7 +2036,7 @@ int xhci_diag_cmd(const char *args, char *buf, int bufsize) {
         struct usb_dev *d = &g_devs[i];
         if (!d->in_use) continue;
         const char *kn = d->kind == USB_KBD ? "kbd" : d->kind == USB_MOUSE ? "mouse"
-                       : d->kind == USB_HUB ? "hub" : "?";
+                       : d->kind == USB_HUB ? "hub" : d->kind == USB_MSC ? "msc" : "?";
         uint32_t st = d->dev_ctx ? (((volatile uint32_t *)d->dev_ctx)[3] >> 27) & 0x1F : 0;
         w += snprintf(buf + w, bufsize - w, "dev[%d] %s slot=%u dci=%u state=%u", i, kn,
                       d->slot, d->dci, st);
