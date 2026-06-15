@@ -40,6 +40,14 @@ _Static_assert(NETD_REPLY_SLOTS == 3 * MAX_NET_SOCKETS,
 #endif
 #define SOCK_RX_BUF_SZ   32768   /* v0.4.171: 32KB rx window (was 4KB) -- 8x fewer
                                   * window-reopen round-trips on a large push */
+/* v0.4.253: per-socket sender retransmit buffer (unACKed data held for resend). 4KB
+ * fully covers sshd (its unACKed data is always small); bulk senders that exceed it
+ * degrade gracefully (tx_broken). 4KB * MAX_NET_SOCKETS(8) = 32KB. */
+#define TX_RTX_BUF       4096
+#define TCP_RTO_MS       1000     /* retransmit timeout (idle granularity bounded by
+                                   * the ~5s serverstats kick -- see net_tcp_rto_check) */
+#define TCP_RTX_MAX      8        /* consecutive RTO retransmits before force-close */
+#define TCP_CLOSE_MAX_MS 10000    /* absolute cap on holding a closing socket's slot */
 
 struct net_socket {
     int      in_use;
@@ -51,6 +59,23 @@ struct net_socket {
     uint8_t  remote_mac[6];
     uint32_t snd_nxt;
     uint32_t rcv_nxt;
+
+    /* v0.4.253: sender-side retransmission (fixes the SSH last-command drain race --
+     * a lost pre-close segment was never resent; see docs/NEXT_20260615c). txbuf holds
+     * the CONTIGUOUS unACKed prefix [snd_una, tx_buf_end), indexed by seq % TX_RTX_BUF;
+     * only that range is ever retransmitted. tx_broken latches once a send overflows
+     * the buffer (then its tail is not retransmittable -- bulk senders self-heal via
+     * app-level checks; sshd never overflows TX_RTX_BUF unACKed). */
+    uint32_t snd_una;            /* oldest unACKed seq (== snd_nxt when all ACKed) */
+    uint32_t tx_buf_end;         /* seq one past the last BUFFERED byte (<= snd_nxt) */
+    uint8_t  txbuf[TX_RTX_BUF];
+    uint8_t  tx_broken;          /* a send overflowed -> stop extending tx_buf_end */
+    uint8_t  closing;            /* app close() pending: send our FIN once data drains */
+    uint8_t  fin_sent;           /* our FIN has been sent (seq == fin_seq) */
+    uint32_t fin_seq;            /* the seq our FIN consumed (snd_nxt was fin_seq+1 after) */
+    uint8_t  rtx_count;          /* consecutive RTO retransmits (force-close cap) */
+    uint64_t rtx_due_ms;         /* next RTO fire (0 = disarmed) */
+    uint64_t close_deadline_ms;  /* absolute force-close deadline for a closing socket */
 
     /* RX buffer */
     uint8_t  rxbuf[SOCK_RX_BUF_SZ];
@@ -207,6 +232,47 @@ void net_udp_deliver(uint16_t dst_port, uint16_t src_port,
     }
 }
 
+/* v0.4.253: monotonic milliseconds from the ARM generic timer (for the TCP RTO). */
+static inline uint64_t net_now_ms(void) {
+    uint64_t c, f;
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(c));
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(f));
+    if (!f) f = 62500000ull;
+    return (c * 1000ull) / f;
+}
+
+/* v0.4.253: arm the sender-retransmit state when a TCP socket reaches ESTABLISHED.
+ * snd_nxt is final (post-handshake) here, so [snd_una, tx_buf_end) starts empty. */
+static void net_sock_tx_init(struct net_socket *s) {
+    s->snd_una = s->snd_nxt;
+    s->tx_buf_end = s->snd_nxt;
+    s->tx_broken = 0;
+    s->closing = 0;
+    s->fin_sent = 0;
+    s->fin_seq = 0;
+    s->rtx_count = 0;
+    s->rtx_due_ms = 0;
+    s->close_deadline_ms = 0;
+}
+
+/* v0.4.253: a deferred graceful close sends OUR FIN only once all data is ACKed, so the
+ * last pre-close segment (retransmitted by net_tcp_rto_check if lost) reaches the peer
+ * BEFORE the FIN. Works in ESTAB and in a passive FIN_WAIT (peer FIN arrived mid-close).
+ * Keeps rtx armed so the FIN itself is retransmitted. Returns 1 if the FIN was sent. */
+static int net_tcp_maybe_send_fin(struct net_socket *s) {
+    if (!s->closing || s->fin_sent) return 0;
+    if (s->snd_una != s->snd_nxt) return 0;          /* data still unACKed -- wait */
+    s->fin_seq = s->snd_nxt;
+    net_tcp_send(s->remote_ip, s->remote_mac, s->local_port, s->remote_port,
+                 s->snd_nxt, s->rcv_nxt, TCP_ACK | TCP_FIN, NULL, 0);
+    s->snd_nxt++;
+    s->fin_sent = 1;
+    if (s->state == TCP_ESTAB) s->state = TCP_FIN_WAIT;
+    s->rtx_count = 0;
+    s->rtx_due_ms = net_now_ms() + TCP_RTO_MS;        /* armed for FIN retransmit */
+    return 1;
+}
+
 /* ---- TCP delivery (called from handle_tcp in net_tcp.c) ---- */
 void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
                      uint16_t src_port, uint16_t dst_port,
@@ -304,6 +370,7 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
     if (s->state == TCP_SYN_SENT && (flags & TCP_SYN) && (flags & TCP_ACK)) {
         s->rcv_nxt = seq + 1;
         s->state = TCP_ESTAB;
+        net_sock_tx_init(s);    /* v0.4.253: arm sender retransmit */
         /* Send ACK to complete 3-way handshake */
         tcp_tx_window = SOCK_RX_BUF_SZ - 1;
         net_tcp_send(s->remote_ip, s->remote_mac,
@@ -323,6 +390,7 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
     /* SYN_RCVD + ACK -> ESTABLISHED */
     if (s->state == TCP_SYN_RCVD && (flags & TCP_ACK)) {
         s->state = TCP_ESTAB;
+        net_sock_tx_init(s);    /* v0.4.253: arm sender retransmit */
 
         /* Wake blocked accept on parent listen socket */
         int pi = s->listen_parent;
@@ -340,6 +408,29 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
              * waits in the backlog for the next accept(). */
             s->listen_parent = -1;
         }
+    }
+
+    /* v0.4.253: consume the peer's ACK -- advance snd_una, drop ACKed bytes from the
+     * retransmit buffer, (re)arm the RTO, and fire a deferred graceful-close FIN once
+     * all data is ACKed. Guarded to ESTAB/FIN_WAIT so pre-handshake state is untouched.
+     * Wrap-safe seq compares. Runs BEFORE the existing FIN_WAIT->CLOSED below. */
+    if ((flags & TCP_ACK) &&
+        (s->state == TCP_ESTAB || s->state == TCP_FIN_WAIT)) {
+        if ((int32_t)(ack_val - s->snd_una) > 0 &&
+            (int32_t)(ack_val - s->snd_nxt) <= 0) {
+            s->snd_una = ack_val;
+            if ((int32_t)(s->tx_buf_end - s->snd_una) < 0)
+                s->tx_buf_end = s->snd_una;
+            s->rtx_count = 0;
+            if (s->snd_una == s->snd_nxt) {
+                s->rtx_due_ms = 0;       /* nothing unACKed (maybe_send_fin re-arms) */
+                s->tx_broken = 0;        /* buffer fully drained -- safe to buffer again */
+                s->tx_buf_end = s->snd_nxt;
+            } else {
+                s->rtx_due_ms = net_now_ms() + TCP_RTO_MS;
+            }
+        }
+        net_tcp_maybe_send_fin(s);       /* deferred close: send our FIN once drained */
     }
 
     /* ESTABLISHED: receive data */
@@ -466,10 +557,79 @@ void net_tcp_deliver(const uint8_t *src_ip, const uint8_t *src_mac,
         s->state = TCP_FIN_WAIT;
     }
 
-    /* FIN_WAIT + ACK -> closed */
+    /* FIN_WAIT + ACK -> closed. v0.4.253: free ONLY once EVERYTHING we sent is ACKed
+     * (snd_una == snd_nxt). For an active close that includes our FIN (snd_nxt == fin_seq+1);
+     * for a passive close (peer FIN, we have not sent a FIN) it means all DATA is ACKed.
+     * A stray/partial ACK must NOT free a socket that still has unACKed data or an unsent
+     * FIN -- that would lose data and cut off the retransmit (the passive-FIN-during-close
+     * race). Wrap-safe; snd_una never exceeds snd_nxt. */
     if (s->state == TCP_FIN_WAIT && (flags & TCP_ACK) && !(flags & TCP_FIN)) {
-        s->state = TCP_CLOSED;
-        s->in_use = 0;
+        if ((int32_t)(s->snd_una - s->snd_nxt) >= 0) {
+            s->state = TCP_CLOSED;
+            s->in_use = 0;
+        }
+    }
+}
+
+/* v0.4.253: TCP retransmit timer. Per armed socket past its RTO: (1) resend the
+ * contiguous unACKed DATA prefix [snd_una, tx_buf_end) while our FIN is not yet sent
+ * (covers ESTAB and a passive FIN_WAIT reached mid-close); (2) fire a deferred
+ * graceful-close FIN once the data drains; (3) retransmit OUR FIN until it is ACKed.
+ * Give-up: a closing socket is RST+freed after TCP_RTX_MAX tries OR an absolute
+ * TCP_CLOSE_MAX_MS deadline (so a dead-peer close cannot hold one of the 8 slots for
+ * long / starve accept); a non-closing socket merely stops retrying (no surprise for an
+ * app still holding the fd). Called from the main loop beside net_dhcp_renew_check; the
+ * loop wakes on every RX/ACK (fast common path) and >= every PROBE_PERIOD_SEC via the
+ * serverstats kick, so an idle lost segment is resent within ~5s (see docs/NEXT_20260615c). */
+static void net_tcp_rto_check(void) {
+    uint64_t now = net_now_ms();
+    for (int i = 0; i < MAX_NET_SOCKETS; i++) {
+        struct net_socket *sk = &sockets[i];
+        if (!sk->in_use || sk->type != 1) continue;
+        if (sk->rtx_due_ms == 0 || now < sk->rtx_due_ms) continue;
+
+        int give_up = (sk->rtx_count >= TCP_RTX_MAX) ||
+                      (sk->close_deadline_ms && now >= sk->close_deadline_ms);
+        if (give_up) {
+            if (sk->closing || sk->fin_sent) {     /* a close that the peer never finished */
+                net_tcp_send(sk->remote_ip, sk->remote_mac, sk->local_port,
+                             sk->remote_port, sk->snd_nxt, sk->rcv_nxt, TCP_RST, NULL, 0);
+                net_sock_drop_parked(sk);
+                sk->state = TCP_CLOSED;
+                sk->in_use = 0;
+            } else {
+                sk->rtx_due_ms = 0;                /* leave the fd to the app */
+            }
+            continue;
+        }
+
+        int did = 0;
+        /* (1) resend the contiguous unACKed DATA prefix (only before our FIN is sent) */
+        if (!sk->fin_sent && (int32_t)(sk->tx_buf_end - sk->snd_una) > 0) {
+            uint32_t seq = sk->snd_una;
+            while ((int32_t)(sk->tx_buf_end - seq) > 0) {
+                int n = (int)(sk->tx_buf_end - seq);
+                if (n > 900) n = 900;
+                uint8_t tmp[900];
+                for (int j = 0; j < n; j++)
+                    tmp[j] = sk->txbuf[(seq + (uint32_t)j) % TX_RTX_BUF];
+                net_tcp_send(sk->remote_ip, sk->remote_mac, sk->local_port,
+                             sk->remote_port, seq, sk->rcv_nxt, TCP_ACK | TCP_PSH, tmp, n);
+                seq += (uint32_t)n;
+            }
+            did = 1;
+        }
+        /* (2) deferred close: send our FIN once the data has drained */
+        if (sk->closing && !sk->fin_sent) { if (net_tcp_maybe_send_fin(sk)) did = 1; }
+        /* (3) retransmit our FIN until it is ACKed */
+        if (sk->fin_sent && (int32_t)(sk->snd_una - (sk->fin_seq + 1)) < 0) {
+            net_tcp_send(sk->remote_ip, sk->remote_mac, sk->local_port, sk->remote_port,
+                         sk->fin_seq, sk->rcv_nxt, TCP_ACK | TCP_FIN, NULL, 0);
+            did = 1;
+        }
+
+        if (did) { sk->rtx_count++; sk->rtx_due_ms = now + TCP_RTO_MS; }
+        else sk->rtx_due_ms = 0;                    /* nothing pending -- disarm */
     }
 }
 
@@ -573,6 +733,7 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
          * early-returns until due); the loop wakes >= every PROBE_PERIOD_SEC via
          * the serverstats SVC_PING, so this fires on time even on an idle link. */
         net_dhcp_renew_check();
+        net_tcp_rto_check();        /* v0.4.253: resend unACKed data + drive graceful close */
 
         if (!selftest_done && net_arp_resolved(gw)) {
             net_send_ping(gw);
@@ -615,6 +776,18 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 sockets[slot].listen_parent = -1;
                 sockets[slot].owner_pid = (int)seL4_GetMR(3);
                 sockets[slot].has_connect_blocked = 0;
+                /* v0.4.253: zero the sender-retransmit state (defense-in-depth -- a
+                 * reused slot must not carry stale snd_una/txbuf; net_sock_tx_init
+                 * re-arms it at ESTAB). */
+                sockets[slot].snd_una = 0;
+                sockets[slot].tx_buf_end = 0;
+                sockets[slot].tx_broken = 0;
+                sockets[slot].closing = 0;
+                sockets[slot].fin_sent = 0;
+                sockets[slot].fin_seq = 0;
+                sockets[slot].rtx_count = 0;
+                sockets[slot].rtx_due_ms = 0;
+                sockets[slot].close_deadline_ms = 0;
             }
             seL4_SetMR(0, (seL4_Word)slot);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
@@ -708,12 +881,23 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                                       dst_ip, dst_port, pdata, len);
                     if (rc == 0) rc = len;
                 } else if (sk->type == 1 && sk->state == TCP_ESTAB) {
-                    /* TCP: send data segment */
+                    /* TCP: buffer into the retransmit ring (contiguous unACKed prefix
+                     * only), then send. v0.4.253. */
+                    uint32_t unacked = sk->snd_nxt - sk->snd_una;
+                    if (!sk->tx_broken && unacked + (uint32_t)len <= TX_RTX_BUF) {
+                        for (int i = 0; i < len; i++)
+                            sk->txbuf[(sk->snd_nxt + (uint32_t)i) % TX_RTX_BUF] = pdata[i];
+                        sk->tx_buf_end = sk->snd_nxt + (uint32_t)len;
+                    } else {
+                        sk->tx_broken = 1;   /* keep [snd_una, tx_buf_end) contiguous */
+                    }
                     net_tcp_send(sk->remote_ip, sk->remote_mac,
                                  sk->local_port, sk->remote_port,
                                  sk->snd_nxt, sk->rcv_nxt,
                                  TCP_ACK | TCP_PSH, pdata, len);
                     sk->snd_nxt += len;
+                    if (sk->rtx_due_ms == 0)
+                        sk->rtx_due_ms = net_now_ms() + TCP_RTO_MS;
                     rc = len;
                 }
             }
@@ -835,14 +1019,17 @@ void net_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                  * socket, like op-98 -- otherwise a stale cap poisons the slot
                  * when this index is reused (DESIGN_NETD F4). */
                 net_sock_drop_parked(sk);
-                /* TCP: send FIN if connected */
+                /* TCP: GRACEFUL close (v0.4.253) -- defer the FIN until all data is
+                 * ACKed, so a lost last segment is retransmitted (net_tcp_rto_check)
+                 * and delivered BEFORE the peer sees the FIN. maybe_send_fin sends it
+                 * immediately when nothing is unACKed (the common case == old behavior).
+                 * close() returns at once; the FIN/teardown finishes asynchronously. */
                 if (sk->type == 1 && sk->state == TCP_ESTAB) {
-                    net_tcp_send(sk->remote_ip, sk->remote_mac,
-                                 sk->local_port, sk->remote_port,
-                                 sk->snd_nxt, sk->rcv_nxt,
-                                 TCP_ACK | TCP_FIN, NULL, 0);
-                    sk->snd_nxt++;
-                    sk->state = TCP_FIN_WAIT;
+                    sk->closing = 1;
+                    sk->close_deadline_ms = net_now_ms() + TCP_CLOSE_MAX_MS;
+                    if (sk->rtx_due_ms == 0)
+                        sk->rtx_due_ms = net_now_ms() + TCP_RTO_MS;
+                    net_tcp_maybe_send_fin(sk);
                 } else {
                     sk->in_use = 0;
                 }
