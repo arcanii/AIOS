@@ -32,6 +32,137 @@ static void stdout_request_wshm(void) {
     stdout_wshm_pid = v ? stdout_pipe_id : -1;
 }
 
+/* ===================== v0.4.258: direct SPSC SHM-ring pipes =====================
+ *
+ * When a pipe was armed in ring mode (/proc/shmring) the writer and reader move
+ * bytes through a shared ring in USERSPACE -- no per-chunk seL4_Call -- so a
+ * `cmd | cmd` pipeline spans cores instead of serialising every chunk through the
+ * core-0 pipe_server. The server is touched only at empty/full: a reader that
+ * finds the ring empty blocks via the normal PIPE_READ / PIPE_READ_SHM path (the
+ * server pulls from the SAME ring); a writer that just made data available wakes
+ * a parked reader via PIPE_RING_WAKE. pipe_map_ring() returns 0 when the pipe is
+ * not ring-armed, so every caller transparently falls back to the legacy path.
+ * Cross-core coherency rests on the cacheable-inner-shareable mapping + the
+ * release/acquire/fence barriers in shm_ring.h (QEMU cannot model it -- HW soak). */
+#include "aios/shm_ring.h"
+
+#define PIPE_MAP_RING_L   91
+#define PIPE_RING_WAKE_L  92
+
+/* Map the ring frame for pipe_id (dir 0=read, 1=write); returns the vaddr or 0. */
+static char *pipe_map_ring(int pipe_id, int dir) {
+    if (!pipe_ep || pipe_id < 0) return (void *)0;
+    seL4_SetMR(0, (seL4_Word)pipe_id);
+    seL4_SetMR(1, (seL4_Word)dir);
+    seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_MAP_RING_L, 0, 0, 2));
+    seL4_Word v = seL4_GetMR(0);
+    return v ? (char *)v : (void *)0;
+}
+
+/* Cached ring vaddrs for the stdin (reader) and stdout (writer) redirects.
+ * Keyed by pipe id: a single map attempt per pipe (re-attempt only if the id
+ * changes), so a non-ring pipe costs ONE failed Call, not one per read/write. */
+static char *stdin_ring = (void *)0;   static int stdin_ring_pid  = -2;
+static char *stdout_ring = (void *)0;  static int stdout_ring_pid = -2;
+static char *stdin_ring_get(void) {
+    if (stdin_pipe_id < 0 || !pipe_ep) return (void *)0;
+    if (stdin_ring_pid != stdin_pipe_id) {
+        stdin_ring = pipe_map_ring(stdin_pipe_id, 0);
+        stdin_ring_pid = stdin_pipe_id;   /* mark attempted, even on 0 */
+    }
+    return stdin_ring;
+}
+static char *stdout_ring_get(void) {
+    if (stdout_pipe_id < 0 || !pipe_ep) return (void *)0;
+    if (stdout_ring_pid != stdout_pipe_id) {
+        stdout_ring = pipe_map_ring(stdout_pipe_id, 1);
+        stdout_ring_pid = stdout_pipe_id;
+    }
+    return stdout_ring;
+}
+
+/* Direct ring read. Returns >0 bytes copied, 0 on EOF, or -1 when the ring is
+ * empty and the writer is still live (caller must block via the server). */
+static int shm_ring_recv_fast(char *ring, char *dst, int want) {
+    shm_ring_hdr_t *h = (shm_ring_hdr_t *)ring;
+    const char *data = shm_ring_data(ring);
+    uint32_t head = h->head;            /* reader owns head -- plain load of our own index */
+    uint32_t tail = h->tail;
+    shm_ring_observe();                 /* acquire: order the tail load BEFORE the data reads */
+    uint32_t avail = tail - head;
+    if (avail == 0) {
+        /* Empty: distinguish a true EOF from a transient gap WITHOUT dropping the
+         * writer's final bytes. Read writer_closed FIRST, then (acquire) re-read
+         * tail, so observing closed=1 implies observing every pre-close write --
+         * the writer/server set writer_closed only after the final tail publish is
+         * globally visible. The barrier MUST sit BETWEEN the two loads: without it
+         * the A72 can satisfy them out of order and see closed=1 with a stale tail,
+         * a false EOF that silently loses the tail of the stream. */
+        int closed = (int)h->writer_closed;
+        shm_ring_observe();             /* acquire: closed-load BEFORE the tail re-load */
+        tail = h->tail;
+        avail = tail - head;
+        if (avail == 0)
+            return closed ? 0 : -1;
+        shm_ring_observe();             /* acquire: re-loaded tail BEFORE the data reads */
+    }
+    int n = (int)avail;
+    if (n > want) n = want;
+    for (int i = 0; i < n; i++)
+        dst[i] = data[(head + (uint32_t)i) & SHM_RING_MASK];
+    shm_ring_observe();                 /* load->store: reads complete before head frees cells */
+    h->head = head + (uint32_t)n;
+    return n;
+}
+
+/* Direct ring write (writer mapped the ring). Copies up to count bytes, yielding on
+ * a full ring until the reader drains it (no syscall on full in the common case).
+ * Wakes a reader parked in the server via PIPE_RING_WAKE when it observes
+ * reader_waiting. Returns bytes written (< count only if the reader closed = EPIPE). */
+static long shm_ring_send(int pipe_id, char *ring, const char *src, size_t count) {
+    shm_ring_hdr_t *h = (shm_ring_hdr_t *)ring;
+    char *data = shm_ring_data(ring);
+    size_t sent = 0;
+    while (sent < count) {
+        if (h->reader_closed) break;            /* EPIPE: reader gone, stop (short write) */
+        uint32_t tail = h->tail;                /* writer owns tail */
+        uint32_t head = h->head;
+        shm_ring_observe();                     /* acquire reader's head */
+        uint32_t space = SHM_RING_DATA - (tail - head);
+        if (space == 0) {
+            /* Full pipe -> block until the reader drains (POSIX write semantics).
+             * Never silently drop: a parked reader is SERVED via PIPE_RING_WAKE
+             * (which advances head right here), so the writer cannot deadlock
+             * holding bytes the parked reader is waiting for; a runnable reader is
+             * given the core via Yield. The only exit is reader_closed above. */
+            shm_ring_fence();                    /* StoreLoad: see a fresh reader_waiting */
+            if (h->reader_waiting) {
+                seL4_SetMR(0, (seL4_Word)pipe_id);
+                seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_RING_WAKE_L, 0, 0, 1));
+            } else {
+                seL4_Yield();
+            }
+            continue;
+        }
+        uint32_t idx = tail & SHM_RING_MASK;
+        uint32_t run = SHM_RING_DATA - idx;      /* contiguous bytes to the buffer end */
+        uint32_t chunk = (uint32_t)(count - sent);
+        if (chunk > space) chunk = space;
+        if (chunk > run) chunk = run;
+        for (uint32_t i = 0; i < chunk; i++)
+            data[idx + i] = src[sent + i];
+        shm_ring_publish();                      /* release: data stores before tail */
+        h->tail = tail + chunk;
+        sent += chunk;
+        shm_ring_fence();                        /* StoreLoad: tail before reader_waiting */
+        if (h->reader_waiting) {
+            seL4_SetMR(0, (seL4_Word)pipe_id);
+            seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_RING_WAKE_L, 0, 0, 1));
+        }
+    }
+    return (long)sent;
+}
+
 
 /* v0.4.79: generate /proc/self/fd directory entries (getdents64 format) */
 static int procfd_gen_dirents(char *buf, int bufsz) {
@@ -404,6 +535,16 @@ long aios_sys_read(va_list ap) {
         if (stdin_pipe_id >= 0 && pipe_ep) {
             /* Read from pipe instead of serial */
             char *cbuf = (char *)buf;
+            /* v0.4.258: ring fast path -- read straight from the shared ring with no
+             * syscall; only block via the server (below) when the ring is empty. */
+            char *rr = stdin_ring_get();
+            if (rr) {
+                int rwant = (int)count; if (rwant > 4096) rwant = 4096;
+                int rgot = shm_ring_recv_fast(rr, cbuf, rwant);
+                if (rgot > 0) return (long)rgot;
+                if (rgot == 0) return 0;   /* EOF */
+                /* rgot == -1: empty + writer live -> block via PIPE_READ below */
+            }
             int want = (int)count;
             if (want > 900) want = 900;
             seL4_SetMR(0, (seL4_Word)stdin_pipe_id);
@@ -452,6 +593,17 @@ long aios_sys_read(va_list ap) {
         /* Pipe read */
         if (f->is_pipe && f->pipe_read && pipe_ep) {
             char *cbuf = (char *)buf;
+            /* v0.4.258: ring fast path -- direct read, no syscall; on empty fall
+             * through to the PIPE_READ_SHM block path (server pulls from the ring). */
+            if (!f->ring_tried) { f->ring_vaddr = pipe_map_ring(f->pipe_id, 0); f->ring_tried = 1; }
+            if (f->ring_vaddr) {
+                int rwant = (int)count; if (rwant > 4096) rwant = 4096;
+                int rgot = shm_ring_recv_fast(f->ring_vaddr, cbuf, rwant);
+                if (rgot > 0) return (long)rgot;
+                if (rgot == 0) return 0;                 /* EOF */
+                if (f->is_nonblock) return -EAGAIN;      /* empty + O_NONBLOCK */
+                /* else: empty + writer live -> block via PIPE_READ_SHM below */
+            }
             /* v0.4.66: try SHM path (up to 4096 bytes per call) */
             if (!f->shm_vaddr) pipe_request_shm(f);
             if (f->shm_vaddr) {
@@ -646,6 +798,13 @@ long aios_sys_write(va_list ap) {
         if (stdout_pipe_id >= 0 && pipe_ep) {
             /* Write to pipe instead of serial */
             const char *src = (const char *)buf;
+            /* v0.4.258: ring fast path -- write straight into the shared ring (no
+             * per-chunk Call); the reader drains it on its own core. */
+            char *wr = stdout_ring_get();
+            /* shm_ring_send returns < count only when the reader closed (EPIPE);
+             * a live reader is always drained to completion. Return its count so a
+             * short write surfaces instead of looping forever on a dead reader. */
+            if (wr) return shm_ring_send(stdout_pipe_id, wr, src, count);
             size_t sent = 0;
             int stall = 0;                 /* bounded backpressure retry (never hang) */
             stdout_request_wshm();         /* v0.4.257: map the 4KB write xfer page once */
@@ -738,6 +897,10 @@ long aios_sys_write(va_list ap) {
         }
         if (f->is_pipe && !f->pipe_read && pipe_ep) {
             const char *src = (const char *)buf;
+            /* v0.4.258: ring fast path -- direct write, no per-chunk Call. */
+            if (!f->ring_tried) { f->ring_vaddr = pipe_map_ring(f->pipe_id, 1); f->ring_tried = 1; }
+            /* < count only on reader-close (EPIPE); a live reader drains fully. */
+            if (f->ring_vaddr) return shm_ring_send(f->pipe_id, f->ring_vaddr, src, count);
             /* v0.4.66: try SHM path (up to 4096 bytes per call) */
             if (!f->shm_vaddr) pipe_request_shm(f);
             if (f->shm_vaddr) {
@@ -803,6 +966,8 @@ long aios_sys_close(va_list ap) {
         f->pipe_id = -1;
         f->socket_id = -1;
         f->shm_vaddr = 0;
+        f->ring_vaddr = 0;     /* v0.4.258 */
+        f->ring_tried = 0;
         return 0;
     }
     /* Reset stdin/stdout pipe redirect on close */

@@ -208,6 +208,8 @@ typedef struct {
     int is_socket;            /* M3: fd is a network socket */
     int socket_id;            /* M3: index in net_server socket table (0-7) */
     char *shm_vaddr;              /* v0.4.66: SHM xfer page in this VSpace */
+    char *ring_vaddr;             /* v0.4.258: direct SPSC SHM-ring page (0 = none) */
+    int   ring_tried;             /* v0.4.258: ring map attempted (avoids re-Call when off) */
     char path[128];
     char data[4096];
     int size;

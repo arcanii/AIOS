@@ -68,6 +68,189 @@ static int exec_done[MAX_ACTIVE_PROCS];
  * frees it and the pointer cannot dangle. Shared with exec_server.c. */
 sel4utils_res_t aios_bss_res[MAX_ACTIVE_PROCS];
 
+/* ===================== v0.4.258: direct SPSC SHM-ring pipes =====================
+ *
+ * A ring-mode pipe's data lives in ONE shared frame (include/aios/shm_ring.h) that
+ * the writer and reader map directly: bytes flow in userspace on the producer/
+ * consumer cores, and the pipe_server is touched only at empty/full transitions.
+ * This takes the kernel (+ its big lock) out of the per-chunk data path so a
+ * `cmd | cmd` pipeline can span cores instead of serialising every chunk through
+ * the core-0 server.
+ *
+ * The ring is the pipe's ONE buffer in ring mode: whether an end moves bytes
+ * itself (direct, the fast path) or falls back to legacy IPC (PIPE_WRITE/READ* --
+ * used only if its PIPE_MAP_RING failed), both operate on the SAME ring via the
+ * helpers below, so a failed map never splits data across two buffers. Mode is
+ * latched per-pipe at PIPE_CREATE from g_shm_ring; a later toggle affects only
+ * new pipes. Default OFF -> armed=0 for every pipe -> every pipe_is_ring() check
+ * is false -> the legacy path is byte-identical to before this change. */
+#include "aios/shm_ring.h"
+
+/* /proc/shmring[.0|.1] -- arm/disarm the SHM-ring for pipes created afterwards.
+ * Default OFF: the cross-core coherency path (cacheable inner-shareable + the
+ * release/acquire/fence handshake) needs real-A72 soak; QEMU cannot model it. */
+volatile int g_shm_ring = 0;
+/* Observability counters (shown in /proc/shmring). A direct writer/reader never
+ * touches the server, so push/pull stay 0 in the pure fast path; nonzero push/pull
+ * = an end fell back to server-mediated IPC (line-buffered writers go through the
+ * MR PIPE_WRITE path, so push is normal). park = times a full-ring writer blocked;
+ * wake = PIPE_RING_WAKE calls from direct writers. */
+static unsigned long g_ring_map_ok, g_ring_map_fail, g_ring_push, g_ring_pull,
+                     g_ring_wake, g_ring_park;
+
+typedef struct {
+    int          armed;        /* ring mode chosen for this pipe at PIPE_CREATE */
+    int          valid;        /* frame allocated + root-mapped (header live) */
+    vka_object_t frame;
+    char        *buf;          /* root mapping; shm_ring_hdr_t header at offset 0 */
+    seL4_CPtr    copies[4];    /* child cap copies (writer + reader, + a couple fork dups) */
+    int          copy_count;
+} pipe_ring_t;
+static pipe_ring_t pipe_ring[MAX_PIPES];
+
+/* v0.4.258: a writer that fills a ring blocks in the server (SaveCaller) instead
+ * of spin-dropping data -- symmetric to the reader blocking on an empty ring. SPSC
+ * => at most one parked writer per pipe. Its bytes sit in xfer_buf_w (the client is
+ * blocked in the Call, so it cannot overwrite them). The reader's drain (which frees
+ * space) pushes them and replies the accepted count; teardown replies -1 (EPIPE).
+ * Per-pipe reply-cap slot is lazy-allocated on first park. */
+typedef struct {
+    int active; seL4_CPtr reply_cap; int wlen;
+    int is_mr;            /* 1: bytes are in `stash` (MR PIPE_WRITE); 0: in xfer_buf_w */
+    char stash[900];      /* MR-write payload (<=900) held while parked */
+} ring_wblock_t;
+static ring_wblock_t ring_wblock[MAX_PIPES];
+static vka_object_t  ring_wblock_obj[MAX_PIPES];
+static int           ring_wblock_obj_valid[MAX_PIPES];
+
+int shmring_cmd(const char *args, char *buf, int bufsize) {
+    if (args[0] == '.' && (args[1] == '0' || args[1] == '1'))
+        g_shm_ring = (args[1] == '1');
+    return snprintf(buf, bufsize,
+        "shmring: enabled=%d data=%uB  map_ok=%lu map_fail=%lu push=%lu pull=%lu wake=%lu park=%lu\n",
+        g_shm_ring, (unsigned)SHM_RING_DATA, g_ring_map_ok, g_ring_map_fail,
+        g_ring_push, g_ring_pull, g_ring_wake, g_ring_park);
+}
+
+static inline int pipe_is_ring(int pi) {
+    return pi >= 0 && pi < MAX_PIPES && pipe_ring[pi].armed && pipe_ring[pi].valid;
+}
+static inline shm_ring_hdr_t *ring_hdr(int pi) {
+    return pipe_is_ring(pi) ? (shm_ring_hdr_t *)pipe_ring[pi].buf : (shm_ring_hdr_t *)0;
+}
+
+/* Allocate + root-map the ring frame and initialise its header. Mirrors the
+ * PIPE_CREATE shm_frame alloc. Returns 0 on success (valid=1), -1 on failure. */
+static int ring_alloc(int pi) {
+    pipe_ring[pi].valid = 0;
+    pipe_ring[pi].buf = NULL;
+    pipe_ring[pi].copy_count = 0;
+    vka_audit_frame(VKA_SUB_PIPE, 1);
+    if (vka_alloc_frame(&vka, seL4_PageBits, &pipe_ring[pi].frame) != 0) {
+        vka_audit_frame_release(1);
+        return -1;
+    }
+    /* Cacheable (inner-shareable on the A72): the writer + reader map it the same
+     * way, so the cores stay coherent (the v0.4.164 all-NUL bug was a memory-type
+     * mismatch -- map both ends identically). */
+    void *m = vspace_map_pages(&vspace, &pipe_ring[pi].frame.cptr, NULL,
+        seL4_AllRights, 1, seL4_PageBits, 1 /* cacheable */);
+    if (!m) {
+        vka_free_object(&vka, &pipe_ring[pi].frame);
+        vka_audit_frame_release(1);
+        return -1;
+    }
+    pipe_ring[pi].buf = (char *)m;
+    shm_ring_hdr_t *h = (shm_ring_hdr_t *)m;
+    memset(h, 0, SHM_RING_DATAOFF);
+    h->magic = SHM_RING_MAGIC;
+    h->size  = SHM_RING_DATA;
+    shm_ring_fence();   /* header initialised before any child maps + reads it */
+    pipe_ring[pi].valid = 1;
+    return 0;
+}
+
+/* Free the ring frame + child cap copies. Called from pipe_maybe_free. */
+static void ring_free(int pi) {
+    if (ring_wblock[pi].active) {   /* v0.4.258: drop any parked writer before teardown */
+        seL4_CNode_Delete(seL4_CapInitThreadCNode, ring_wblock[pi].reply_cap, seL4_WordBits);
+        ring_wblock[pi].active = 0;
+    }
+    if (!pipe_ring[pi].valid) { pipe_ring[pi].armed = 0; return; }
+    for (int ci = 0; ci < pipe_ring[pi].copy_count; ci++) {
+        seL4_CNode_Delete(seL4_CapInitThreadCNode, pipe_ring[pi].copies[ci], seL4_WordBits);
+        vka_cspace_free(&vka, pipe_ring[pi].copies[ci]);
+    }
+    pipe_ring[pi].copy_count = 0;
+    cspacepath_t rp;
+    vka_cspace_make_path(&vka, pipe_ring[pi].frame.cptr, &rp);
+    seL4_CNode_Revoke(rp.root, rp.capPtr, rp.capDepth);
+    vspace_unmap_pages(&vspace, pipe_ring[pi].buf, 1, seL4_PageBits, NULL);
+    vka_free_object(&vka, &pipe_ring[pi].frame);
+    vka_audit_frame_release(1);
+    pipe_ring[pi].buf = NULL;
+    pipe_ring[pi].valid = 0;
+    pipe_ring[pi].armed = 0;
+}
+
+/* Server-side producer: copy up to n bytes into the ring, advance tail. Used
+ * only when the WRITER end fell back to legacy IPC (server is then the sole
+ * producer for this pipe). Returns the bytes accepted (< n if the ring fills). */
+static int ring_server_push(int pi, const char *src, int n) {
+    shm_ring_hdr_t *h = ring_hdr(pi);
+    if (!h || n < 0) return -1;
+    uint32_t tail = h->tail;          /* sole producer -> plain load of our own index */
+    uint32_t head = h->head;          /* peer index; a stale (older/smaller) head only
+                                       * under-estimates space, which is safe */
+    uint32_t space = shm_ring_space(tail, head);
+    if ((uint32_t)n > space) n = (int)space;
+    char *data = shm_ring_data(h);
+    for (int i = 0; i < n; i++)
+        data[(tail + (uint32_t)i) & SHM_RING_MASK] = src[i];
+    shm_ring_publish();               /* release: data stores complete before tail advertises them */
+    h->tail = tail + (uint32_t)n;
+    if (n > 0) g_ring_push += (unsigned long)n;
+    return n;
+}
+
+/* Server-side consumer: copy up to max bytes out of the ring into dst, advance
+ * head. Used to serve a reader that fell back to / blocked via legacy IPC.
+ * Returns the bytes copied. */
+static int ring_server_pull(int pi, char *dst, int max) {
+    shm_ring_hdr_t *h = ring_hdr(pi);
+    if (!h || max < 0) return -1;
+    uint32_t head = h->head;          /* sole consumer -> plain load of our own index */
+    uint32_t tail = h->tail;
+    shm_ring_observe();               /* acquire: the data we read is >= as new as this tail */
+    uint32_t avail = shm_ring_used(tail, head);
+    if ((uint32_t)max > avail) max = (int)avail;
+    char *data = shm_ring_data(h);
+    for (int i = 0; i < max; i++)
+        dst[i] = data[(head + (uint32_t)i) & SHM_RING_MASK];
+    shm_ring_observe();               /* load->store: reads complete before head frees the cells */
+    h->head = head + (uint32_t)max;
+    if (max > 0) g_ring_pull += (unsigned long)max;
+    return max;
+}
+
+/* Mark the writer end gone (reader sees EOF after draining) / reader end gone
+ * (writer sees EPIPE). Set with a fence so a peer spinning on the flag observes it. */
+static void ring_set_writer_closed(int pi) {
+    shm_ring_hdr_t *h = ring_hdr(pi);
+    if (h) { h->writer_closed = 1; shm_ring_fence(); }
+}
+static void ring_set_reader_closed(int pi) {
+    shm_ring_hdr_t *h = ring_hdr(pi);
+    if (h) { h->reader_closed = 1; shm_ring_fence(); }
+}
+/* Clear the parked-reader flag when a blocked reader is served / woken / EINTR'd.
+ * Fenced so a direct writer spinning on reader_waiting (the Dekker handshake in
+ * shm_ring_send) promptly observes the clear and stops re-issuing PIPE_RING_WAKE. */
+static void ring_clear_reader_waiting(int pi) {
+    shm_ring_hdr_t *h = ring_hdr(pi);
+    if (h) { h->reader_waiting = 0; shm_ring_fence(); }
+}
+
 /* v0.4.87: Wake a blocked reader whose PID matches, return EINTR (-4).
  * Called from PIPE_SIGNAL when a signal is delivered to a blocked process. */
 static void wake_blocked_reader_signal(int target_pid) {
@@ -80,6 +263,7 @@ static void wake_blocked_reader_signal(int target_pid) {
         seL4_CNode_Delete(seL4_CapInitThreadCNode,
                           pipe_read_blocked[bi].reply_cap, seL4_WordBits);
         pipe_read_blocked[bi].active = 0;
+        ring_clear_reader_waiting(pipe_read_blocked[bi].pipe_id);  /* v0.4.258 */
         return;  /* one reader per PID */
     }
 }
@@ -95,6 +279,7 @@ static void wake_blocked_readers_eof(int pipe_id) {
         seL4_CNode_Delete(seL4_CapInitThreadCNode,
                           pipe_read_blocked[bi].reply_cap, seL4_WordBits);
         pipe_read_blocked[bi].active = 0;
+        ring_clear_reader_waiting(pipe_id);  /* v0.4.258 */
     }
 }
 
@@ -115,8 +300,61 @@ static void wake_one_blocked_reader(int pipe_id) {
         if (!pipe_read_blocked[bi].active) continue;
         if (pipe_read_blocked[bi].pipe_id != pipe_id) continue;
         pipe_t *p = &pipes[pipe_id];
-        if (p->count == 0) break;
         int max_len = pipe_read_blocked[bi].max_len;
+        /* v0.4.258: ring mode -- serve the parked reader straight from the ring
+         * (advancing head with the consumer barriers) instead of from shm_buf. */
+        if (pipe_is_ring(pipe_id)) {
+            int is_shm = pipe_read_blocked[bi].is_shm && p->xfer_valid;
+            char tmp[900];
+            char *dst;
+            if (is_shm) {
+                if (max_len > PAGE_SIZE) max_len = PAGE_SIZE;
+                if (max_len > (int)SHM_RING_DATA) max_len = (int)SHM_RING_DATA;
+                dst = p->xfer_buf;
+            } else {
+                if (max_len > 900) max_len = 900;
+                dst = tmp;
+            }
+            int rlen = ring_server_pull(pipe_id, dst, max_len);
+            if (rlen <= 0) {
+                /* Nothing to serve. If the writer is gone, the reader must get EOF
+                 * NOW -- no future publish will wake it (the close path already ran
+                 * wake_blocked_readers_eof, but a WAKE can race ahead of it). If the
+                 * writer is still live, leave the reader parked: reader_waiting stays
+                 * set, so the next tail publish re-issues PIPE_RING_WAKE and we retry. */
+                shm_ring_hdr_t *h = ring_hdr(pipe_id);
+                if (h && h->writer_closed) {
+                    seL4_SetMR(0, 0);
+                    seL4_Send(pipe_read_blocked[bi].reply_cap,
+                              seL4_MessageInfo_new(0, 0, 0, 1));
+                    ring_clear_reader_waiting(pipe_id);
+                    seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                                      pipe_read_blocked[bi].reply_cap, seL4_WordBits);
+                    pipe_read_blocked[bi].active = 0;
+                }
+                break;
+            }
+            if (is_shm) {
+                seL4_SetMR(0, (seL4_Word)rlen);
+                seL4_Send(pipe_read_blocked[bi].reply_cap,
+                          seL4_MessageInfo_new(0, 0, 0, 1));
+            } else {
+                seL4_SetMR(0, (seL4_Word)rlen);
+                int mr = 1; seL4_Word w = 0;
+                for (int i = 0; i < rlen; i++) {
+                    w |= ((seL4_Word)(uint8_t)tmp[i]) << ((i % 8) * 8);
+                    if (i % 8 == 7 || i == rlen - 1) { seL4_SetMR(mr++, w); w = 0; }
+                }
+                seL4_Send(pipe_read_blocked[bi].reply_cap,
+                          seL4_MessageInfo_new(0, 0, 0, mr));
+            }
+            ring_clear_reader_waiting(pipe_id);
+            seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                              pipe_read_blocked[bi].reply_cap, seL4_WordBits);
+            pipe_read_blocked[bi].active = 0;
+            break;
+        }
+        if (p->count == 0) break;
         int rlen = p->count < max_len ? p->count : max_len;
         /* v0.4.66: SHM wake -- copy to xfer page, reply with length only */
         if (pipe_read_blocked[bi].is_shm && p->xfer_valid) {
@@ -151,6 +389,78 @@ static void wake_one_blocked_reader(int pipe_id) {
         pipe_read_blocked[bi].active = 0;
         break;
     }
+}
+
+/* v0.4.258: park the current caller as a blocked reader on pipe pi (SaveCaller).
+ * Returns the slot index (>=0; NO reply sent -- the saved cap is Send'd on wake)
+ * or -1 if the blocked-reader table is full (caller should reply 0). Shared by the
+ * ring-mode PIPE_READ / PIPE_READ_SHM branches. */
+static int park_reader_save(int pi, int max_len, int is_shm, int badge) {
+    int bi = -1;
+    for (int b = 0; b < MAX_PIPE_READ_BLOCKED; b++)
+        if (!pipe_read_blocked[b].active) { bi = b; break; }
+    if (bi < 0) return -1;
+    seL4_CNode_Delete(seL4_CapInitThreadCNode, read_reply_objs[bi].cptr, seL4_WordBits);
+    seL4_CNode_SaveCaller(seL4_CapInitThreadCNode, read_reply_objs[bi].cptr, seL4_WordBits);
+    pipe_read_blocked[bi].active = 1;
+    pipe_read_blocked[bi].pipe_id = pi;
+    pipe_read_blocked[bi].max_len = max_len;
+    pipe_read_blocked[bi].is_shm = is_shm;
+    pipe_read_blocked[bi].reply_cap = read_reply_objs[bi].cptr;
+    int ci = badge - 1;
+    pipe_read_blocked[bi].caller_pid =
+        (ci >= 0 && ci < MAX_ACTIVE_PROCS && active_procs[ci].active)
+            ? active_procs[ci].pid : -1;
+    return bi;
+}
+
+/* v0.4.258: resume a writer parked on a full ring. Push its pending xfer_buf_w
+ * (now that the reader has freed space), reply the accepted count, and wake the
+ * reader if bytes landed. If `epipe` (the read end is gone) or the push still
+ * can't place any byte with the reader gone, reply -1 (EPIPE). Called whenever the
+ * reader advances head, and on teardown. */
+static void wake_blocked_writer(int pi, int epipe) {
+    if (pi < 0 || pi >= MAX_PIPES || !ring_wblock[pi].active) return;
+    int written = 0;
+    if (!epipe && pipe_is_ring(pi)) {
+        const char *src = ring_wblock[pi].is_mr
+            ? ring_wblock[pi].stash : pipes[pi].xfer_buf_w;
+        written = ring_server_push(pi, src, ring_wblock[pi].wlen);
+    }
+    if (written == 0 && !epipe) return;   /* still full -> stay parked */
+    seL4_SetMR(0, (seL4_Word)(written > 0 ? written : -1));
+    seL4_Send(ring_wblock[pi].reply_cap, seL4_MessageInfo_new(0, 0, 0, 1));
+    seL4_CNode_Delete(seL4_CapInitThreadCNode, ring_wblock[pi].reply_cap, seL4_WordBits);
+    ring_wblock[pi].active = 0;
+    if (written > 0) wake_one_blocked_reader(pi);
+}
+
+/* Park the current caller as the writer of ring pipe pi. For the MR path, `mr_src`
+ * holds the wlen payload bytes (copied into the park stash); for the SHM path pass
+ * NULL (the bytes stay in xfer_buf_w). Returns 0 on park (NO reply), -1 if no cap
+ * slot (caller replies 0). */
+static int park_writer_save(int pi, int wlen, const char *mr_src) {
+    if (!ring_wblock_obj_valid[pi]) {
+        cspacepath_t path;
+        if (vka_cspace_alloc_path(&vka, &path) != 0) return -1;
+        ring_wblock_obj[pi].cptr = path.capPtr;
+        ring_wblock_obj_valid[pi] = 1;
+    }
+    seL4_CNode_Delete(seL4_CapInitThreadCNode, ring_wblock_obj[pi].cptr, seL4_WordBits);
+    seL4_CNode_SaveCaller(seL4_CapInitThreadCNode, ring_wblock_obj[pi].cptr, seL4_WordBits);
+    g_ring_park++;
+    ring_wblock[pi].active = 1;
+    ring_wblock[pi].reply_cap = ring_wblock_obj[pi].cptr;
+    ring_wblock[pi].wlen = wlen;
+    if (mr_src) {
+        ring_wblock[pi].is_mr = 1;
+        if (wlen > 900) wlen = 900;
+        for (int i = 0; i < wlen; i++) ring_wblock[pi].stash[i] = mr_src[i];
+        ring_wblock[pi].wlen = wlen;
+    } else {
+        ring_wblock[pi].is_mr = 0;
+    }
+    return 0;
 }
 
 /* Auto-free pipe when all refs dropped */
@@ -199,6 +509,7 @@ static void pipe_maybe_free(int pi) {
             p->shm_buf = p->buf;
             p->shm_valid = 0;
         }
+        ring_free(pi);   /* v0.4.258: free the SHM-ring frame + child cap copies */
         p->active = 0;
     }
 }
@@ -391,7 +702,14 @@ static void handle_child_fault(int child_idx) {
         if (!pipes[wpi].write_closed
             && !pipe_live_writer_exists(wpi, child_idx)) {
             pipes[wpi].write_closed = 1;
+            ring_set_writer_closed(wpi);   /* v0.4.258: EOF for a spinning ring reader */
             wake_blocked_readers_eof(wpi);
+        }
+        /* v0.4.258: a parked ring writer that was KILLED -- drop its stale park so a
+         * later read does not push its dead buffer / Send to a dangling reply cap. */
+        if (ring_wblock[wpi].active) {
+            seL4_CNode_Delete(seL4_CapInitThreadCNode, ring_wblock[wpi].reply_cap, seL4_WordBits);
+            ring_wblock[wpi].active = 0;
         }
         pipe_maybe_free(wpi);
     }
@@ -402,8 +720,11 @@ static void handle_child_fault(int child_idx) {
         && !pipes[ch->stdin_pipe_id].read_closed) {
         pipes[ch->stdin_pipe_id].read_refs--;
         /* v0.4.85: only mark closed when last reader gone */
-        if (pipes[ch->stdin_pipe_id].read_refs <= 0)
+        if (pipes[ch->stdin_pipe_id].read_refs <= 0) {
             pipes[ch->stdin_pipe_id].read_closed = 1;
+            ring_set_reader_closed(ch->stdin_pipe_id);  /* v0.4.258: EPIPE for a spinning ring writer */
+            wake_blocked_writer(ch->stdin_pipe_id, 1);  /* v0.4.258: EPIPE a parked ring writer */
+        }
         pipe_maybe_free(ch->stdin_pipe_id);
     }
     reap_forked_child(child_idx);
@@ -839,6 +1160,13 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
 
     /* Init pipes */
     for (int i = 0; i < MAX_PIPES; i++) pipes[i].active = 0;
+    for (int i = 0; i < MAX_PIPES; i++) {     /* v0.4.258 SHM-ring state */
+        pipe_ring[i].armed = 0;
+        pipe_ring[i].valid = 0;
+        pipe_ring[i].copy_count = 0;
+        ring_wblock[i].active = 0;
+        ring_wblock_obj_valid[i] = 0;
+    }
     wait_init();
 
     /* Init blocked reader table */
@@ -994,6 +1322,18 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             pipes[pi].xfer_valid = 0;
             pipes[pi].xfer_buf = NULL;
             pipes[pi].xfer_copy_count = 0;
+            pipes[pi].xfer_valid_w = 0;
+            pipes[pi].xfer_buf_w = NULL;
+            pipes[pi].xfer_copy_count_w = 0;
+            /* v0.4.258: latch SHM-ring mode for this pipe from the current flag.
+             * Allocate the ring frame NOW (before any data op) so the ring is the
+             * pipe's one buffer from the start -- no data ever lands in shm_buf. A
+             * later /proc/shmring toggle affects only pipes created afterwards. */
+            pipe_ring[pi].armed = 0;
+            pipe_ring[pi].valid = 0;
+            pipe_ring[pi].copy_count = 0;
+            if (g_shm_ring && ring_alloc(pi) == 0)
+                pipe_ring[pi].armed = 1;
             seL4_SetMR(0, (seL4_Word)pi);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
@@ -1007,6 +1347,38 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 break;
             }
             pipe_t *p = &pipes[pi];
+            /* v0.4.258: ring-mode fallback (the writer didn't map the ring) --
+             * unpack the MR bytes into a temp and push them through the ring. */
+            if (pipe_is_ring(pi)) {
+                char tmp[920];
+                if (wlen > 900) wlen = 900;
+                if (wlen < 0) wlen = 0;
+                int mr = 2;
+                for (int i = 0; i < wlen; i++) {
+                    if (i % 8 == 0 && i > 0) mr++;
+                    tmp[i] = (char)((seL4_GetMR(mr) >> ((i % 8) * 8)) & 0xFF);
+                }
+                int written = ring_server_push(pi, tmp, wlen);
+                if (written > 0) {
+                    seL4_SetMR(0, (seL4_Word)written);
+                    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                    wake_one_blocked_reader(pi);
+                    break;
+                }
+                /* full: EPIPE if the reader is gone (avoid an unwakeable park), else
+                 * stash + block. read_closed is authoritative once the reader has
+                 * exec'd (PIPE_EXEC clears any premature latch). */
+                if (pipes[pi].read_closed) {
+                    seL4_SetMR(0, (seL4_Word)-1);
+                    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                    break;
+                }
+                if (park_writer_save(pi, wlen, tmp) != 0) {
+                    seL4_SetMR(0, 0);   /* no cap slot -> client retries (rare) */
+                    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                }
+                break;   /* parked: no reply now */
+            }
             int mr = 2;
             int written = 0;
             for (int i = 0; i < wlen && p->count < PIPE_BUF_SIZE; i++) {
@@ -1032,6 +1404,67 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 break;
             }
             pipe_t *p = &pipes[pi];
+
+            /* v0.4.258: ring mode -- serve from the ring; block via the same
+             * SaveCaller machinery (the direct reader falls through to here when it
+             * finds the ring empty, and a fallback reader uses it for every read). */
+            if (pipe_is_ring(pi)) {
+                int nb = (int)seL4_GetMR(2);
+                char tmp[900];
+                int want = max_len; if (want > 900) want = 900; if (want < 0) want = 0;
+                if (want == 0) {   /* read(fd,buf,0) returns 0 -- never park on a 0-len read */
+                    seL4_SetMR(0, 0);
+                    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                    break;
+                }
+                int got = ring_server_pull(pi, tmp, want);
+                if (got <= 0) {
+                    shm_ring_hdr_t *h = ring_hdr(pi);
+                    if (h->writer_closed) {                 /* EOF after drain */
+                        seL4_SetMR(0, 0);
+                        seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                        break;
+                    }
+                    if (nb & 1) {                           /* O_NONBLOCK */
+                        seL4_SetMR(0, (seL4_Word)(-1));
+                        seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                        break;
+                    }
+                    /* Lost-wakeup guard (Dekker): publish reader_waiting, full
+                     * fence, THEN re-pull. A writer that advanced tail and read
+                     * reader_waiting==0 must, by the matching fence on its side,
+                     * have made that tail visible to this re-pull -> we serve and
+                     * never park stale. */
+                    h->reader_waiting = 1;
+                    shm_ring_fence();
+                    got = ring_server_pull(pi, tmp, want);
+                    if (got <= 0) {
+                        if (h->writer_closed) {
+                            h->reader_waiting = 0;
+                            seL4_SetMR(0, 0);
+                            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                            break;
+                        }
+                        if (park_reader_save(pi, max_len, 0, (int)badge) < 0) {
+                            h->reader_waiting = 0;
+                            seL4_SetMR(0, 0);
+                            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                            break;
+                        }
+                        break;   /* parked; reader_waiting stays set for the writer */
+                    }
+                    h->reader_waiting = 0;   /* re-pull found data -- serve below */
+                }
+                seL4_SetMR(0, (seL4_Word)got);
+                int mr = 1; seL4_Word w = 0;
+                for (int i = 0; i < got; i++) {
+                    w |= ((seL4_Word)(uint8_t)tmp[i]) << ((i % 8) * 8);
+                    if (i % 8 == 7 || i == got - 1) { seL4_SetMR(mr++, w); w = 0; }
+                }
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, mr));
+                wake_blocked_writer(pi, 0);   /* freed space -> let a parked writer refill */
+                break;
+            }
 
             /* Pipe empty -- check if writer is done */
             if (p->count == 0) {
@@ -1097,6 +1530,11 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             if (pi >= 0 && pi < MAX_PIPES && pipes[pi].active) {
                 pipes[pi].read_refs = 0;
                 pipes[pi].write_refs = 0;
+                /* v0.4.258: mark both ends closed so any spinning ring peer bails
+                 * (EOF for a reader / EPIPE for a writer) BEFORE the frame is freed. */
+                ring_set_writer_closed(pi);
+                ring_set_reader_closed(pi);
+                wake_blocked_writer(pi, 1);   /* v0.4.258: EPIPE a parked writer */
                 pipes[pi].active = 0;
                 /* Wake any blocked readers with EOF */
                 wake_blocked_readers_eof(pi);
@@ -1146,8 +1584,11 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             if (pi >= 0 && pi < MAX_PIPES && pipes[pi].active) {
                 pipes[pi].read_refs--;
                 /* v0.4.85: only mark closed when last reader gone */
-                if (pipes[pi].read_refs <= 0)
+                if (pipes[pi].read_refs <= 0) {
                     pipes[pi].read_closed = 1;
+                    ring_set_reader_closed(pi);   /* v0.4.258 */
+                    wake_blocked_writer(pi, 1);   /* v0.4.258: EPIPE a parked writer */
+                }
                 pipe_maybe_free(pi);
             }
             seL4_SetMR(0, 0);
@@ -1656,6 +2097,17 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 else
                     pipes[exec_stdout_pipe].write_refs++;
                 pipes[exec_stdout_pipe].write_closed = 0;
+                /* v0.4.258: a fresh writer is claiming this ring -- clear any
+                 * ring EOF/EPIPE latched by the shell closing its inherited
+                 * pipe-end before this writer reached exec (mirror write_closed). */
+                if (pipe_is_ring(exec_stdout_pipe)) {
+                    shm_ring_hdr_t *rh = ring_hdr(exec_stdout_pipe);
+                    /* Clear ONLY writer_closed (this end's flag, mirroring write_closed
+                     * above). Do NOT touch reader_closed: if the reader already exited
+                     * (e.g. `yes | head -1`), its EPIPE must survive so this writer stops
+                     * instead of spinning on a ring nobody drains. */
+                    if (rh) rh->writer_closed = 0;
+                }
                 pipe_had_child[exec_stdout_pipe] = 1;  /* v0.4.139 */
             }
             if (exec_stdin_pipe >= 0 && exec_stdin_pipe < MAX_PIPES
@@ -1669,6 +2121,14 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 else
                     pipes[exec_stdin_pipe].read_refs++;
                 pipes[exec_stdin_pipe].read_closed = 0;
+                if (pipe_is_ring(exec_stdin_pipe)) {
+                    shm_ring_hdr_t *rh = ring_hdr(exec_stdin_pipe);
+                    /* Clear ONLY reader_closed (this end's flag, mirroring read_closed).
+                     * Do NOT touch writer_closed: if the writer already finished and
+                     * closed, its EOF must survive so this reader sees end-of-stream
+                     * instead of blocking forever on an empty, writer-less ring. */
+                    if (rh) rh->reader_closed = 0;
+                }
                 pipe_had_child[exec_stdin_pipe] = 1;  /* v0.4.139 */
             }
             ap->exit_status = 0;
@@ -1814,6 +2274,33 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
             pipe_t *p = &pipes[pi];
             if (wlen > PAGE_SIZE) wlen = PAGE_SIZE;
+            /* v0.4.258: ring-mode fallback (writer didn't map the ring directly) --
+             * push the write xfer page through the ring instead of shm_buf. On a
+             * full ring, PARK the writer (SaveCaller) rather than returning 0 and
+             * letting the client spin-drop -- the reader's drain (or teardown =
+             * EPIPE) resumes it. No premature-close check here: parking is safe even
+             * if a stale read_closed was latched, because the writer is woken by the
+             * reader's real activity / exit, not by the unreliable refcount. */
+            if (pipe_is_ring(pi)) {
+                int written = ring_server_push(pi, p->xfer_buf_w, wlen);
+                if (written > 0) {
+                    seL4_SetMR(0, (seL4_Word)written);
+                    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                    wake_one_blocked_reader(pi);
+                    break;
+                }
+                /* full: EPIPE if the reader is gone, else block until it drains */
+                if (pipes[pi].read_closed) {
+                    seL4_SetMR(0, (seL4_Word)-1);
+                    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                    break;
+                }
+                if (park_writer_save(pi, wlen, (const char *)0) != 0) {
+                    seL4_SetMR(0, 0);   /* no cap slot -> client retries (rare) */
+                    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                }
+                break;   /* parked: no reply now */
+            }
             int avail = PIPE_BUF_SIZE - p->count;
             int written = (wlen < avail) ? wlen : avail;
             /* Copy from the write xfer page to the ring buffer */
@@ -1844,6 +2331,56 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             }
             pipe_t *p = &pipes[pi];
             if (max_len > PAGE_SIZE) max_len = PAGE_SIZE;
+            /* v0.4.258: ring mode -- serve from the ring into the xfer page; block
+             * via SaveCaller (is_shm=1). The direct reader falls through to here when
+             * it finds the ring empty; a fallback reader uses it for every read. */
+            if (pipe_is_ring(pi)) {
+                int nb = (int)seL4_GetMR(2);
+                int want = max_len;
+                if (want > (int)SHM_RING_DATA) want = (int)SHM_RING_DATA;
+                if (want <= 0) {   /* read(fd,buf,0) returns 0 -- never park on a 0-len read */
+                    seL4_SetMR(0, 0);
+                    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                    break;
+                }
+                int got = ring_server_pull(pi, p->xfer_buf, want);
+                if (got <= 0) {
+                    shm_ring_hdr_t *h = ring_hdr(pi);
+                    if (h->writer_closed) {
+                        seL4_SetMR(0, 0);
+                        seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                        break;
+                    }
+                    if (nb & 1) {
+                        seL4_SetMR(0, (seL4_Word)(-1));
+                        seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                        break;
+                    }
+                    h->reader_waiting = 1;           /* Dekker: flag, fence, re-pull */
+                    shm_ring_fence();
+                    got = ring_server_pull(pi, p->xfer_buf, want);
+                    if (got <= 0) {
+                        if (h->writer_closed) {
+                            h->reader_waiting = 0;
+                            seL4_SetMR(0, 0);
+                            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                            break;
+                        }
+                        if (park_reader_save(pi, max_len, 1, (int)badge) < 0) {
+                            h->reader_waiting = 0;
+                            seL4_SetMR(0, 0);
+                            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                            break;
+                        }
+                        break;   /* parked; reader_waiting stays set */
+                    }
+                    h->reader_waiting = 0;
+                }
+                seL4_SetMR(0, (seL4_Word)got);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                wake_blocked_writer(pi, 0);   /* freed space -> let a parked writer refill */
+                break;
+            }
             if (p->count == 0) {
                 if (p->write_closed) {
                     seL4_SetMR(0, 0);
@@ -1895,6 +2432,89 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             p->head = (p->head + rlen) % PIPE_BUF_SIZE;
             p->count -= rlen;
             seL4_SetMR(0, (seL4_Word)rlen);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        case PIPE_MAP_RING: {
+            /* v0.4.258: map the SPSC SHM-ring frame into the caller's vspace and
+             * return the child vaddr (0 -> the caller falls back to the legacy IPC
+             * path, whose server handlers route into the SAME ring, so data is never
+             * split). Gated on pipe_ring[pi].armed (the per-pipe decision latched at
+             * PIPE_CREATE) -- NOT the live g_shm_ring flag, so a toggle mid-pipeline
+             * cannot leave the two ends disagreeing. The ring is mapped RW both ways
+             * (the writer reads head; the reader writes head); MR1's dir is advisory. */
+            int pi = (int)seL4_GetMR(0);
+            (void)seL4_GetMR(1);   /* MR1 dir: advisory (ring is mapped RW both ways) */
+            int ci = (int)badge - 1;
+            if (pi < 0 || pi >= MAX_PIPES || !pipes[pi].active
+                || !pipe_ring[pi].armed
+                || ci < 0 || ci >= MAX_ACTIVE_PROCS || !active_procs[ci].active) {
+                g_ring_map_fail++;
+                seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            /* copies[] (the only cleanup record) holds 4 slots: writer + reader +
+             * a couple of fork dups. Past that, decline the map -- the end falls
+             * back to legacy IPC, which the server routes into this SAME ring, so
+             * data is never split. Returning here (before allocating the cap) avoids
+             * leaking an untracked cap copy under wide fan-out. */
+            if (pipe_ring[pi].copy_count >= 4) {
+                g_ring_map_fail++;
+                seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            if (!pipe_ring[pi].valid && ring_alloc(pi) != 0) {
+                g_ring_map_fail++;
+                seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            cspacepath_t rsrc, rdest;
+            vka_cspace_make_path(&vka, pipe_ring[pi].frame.cptr, &rsrc);
+            if (vka_cspace_alloc_path(&vka, &rdest) != 0) {
+                g_ring_map_fail++;
+                seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            if (seL4_CNode_Copy(rdest.root, rdest.capPtr, rdest.capDepth,
+                    rsrc.root, rsrc.capPtr, rsrc.capDepth, seL4_AllRights) != 0) {
+                vka_cspace_free(&vka, rdest.capPtr);
+                g_ring_map_fail++;
+                seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            void *cv = vspace_map_pages(&active_procs[ci].proc.vspace,
+                &rdest.capPtr, NULL, seL4_AllRights, 1, seL4_PageBits, 1 /* cacheable */);
+            if (!cv) {
+                seL4_CNode_Delete(seL4_CapInitThreadCNode, rdest.capPtr, seL4_WordBits);
+                vka_cspace_free(&vka, rdest.capPtr);
+                g_ring_map_fail++;
+                seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            /* Room guaranteed by the copy_count >= 4 early-return above -> every
+             * mapped cap is tracked in copies[] and freed in ring_free (no leak). */
+            pipe_ring[pi].copies[pipe_ring[pi].copy_count++] = rdest.capPtr;
+            g_ring_map_ok++;
+            seL4_SetMR(0, (seL4_Word)cv);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        case PIPE_RING_WAKE: {
+            g_ring_wake++;
+            /* v0.4.258: a direct writer advanced tail and observed reader_waiting
+             * -> ask the server to serve+wake the reader parked on the empty ring.
+             * Idempotent: if no reader is parked (it un-parked itself, or the WAKE
+             * raced ahead of the reader's PIPE_READ* park), this is a harmless no-op. */
+            int pi = (int)seL4_GetMR(0);
+            if (pi >= 0 && pi < MAX_PIPES && pipe_is_ring(pi))
+                wake_one_blocked_reader(pi);
+            seL4_SetMR(0, 0);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }

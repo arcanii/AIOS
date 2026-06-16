@@ -762,6 +762,14 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         int cs = coresched_cmd(path + 9, buf, bufsize);
         if (cs < 0) return -1;
         w = cs;
+    } else if (path[0] == 's' && path[1] == 'h' && path[2] == 'm' && path[3] == 'r'
+            && path[4] == 'i' && path[5] == 'n' && path[6] == 'g') {
+        /* /proc/shmring[.0|.1] -- v0.4.258 direct SPSC SHM-ring kill switch
+         * (src/servers/pipe_server.c). .1 arms the ring for pipes created afterwards,
+         * .0 disarms (default). Decided per-pipe at create; HW-soak gated. */
+        int sr = shmring_cmd(path + 7, buf, bufsize);
+        if (sr < 0) return -1;
+        w = sr;
     } else if (path[0] == 'v' && path[1] == '3' && path[2] == 'd') {
         /* /proc/v3d -- V3D GPU bring-up probe (impl src/gpu/v3d.c). path[1]=='3'
          * disambiguates from /proc/version and /proc/vka. cat /proc/v3d[.power[.N]
