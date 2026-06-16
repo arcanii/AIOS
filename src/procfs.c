@@ -754,6 +754,14 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         int cw = core_warm_cmd(path + 8, buf, bufsize);
         if (cw < 0) return -1;
         w = cw;
+    } else if (path[0] == 'c' && path[1] == 'o' && path[2] == 'r' && path[3] == 'e'
+            && path[4] == 's' && path[5] == 'c' && path[6] == 'h' && path[7] == 'e'
+            && path[8] == 'd') {
+        /* /proc/coresched[.0|.1] -- Stage S user-process core distribution kill switch
+         * (src/boot/spawn_util.c). .0 pins new procs to core 0, .1 spreads (default). */
+        int cs = coresched_cmd(path + 9, buf, bufsize);
+        if (cs < 0) return -1;
+        w = cs;
     } else if (path[0] == 'v' && path[1] == '3' && path[2] == 'd') {
         /* /proc/v3d -- V3D GPU bring-up probe (impl src/gpu/v3d.c). path[1]=='3'
          * disambiguates from /proc/version and /proc/vka. cat /proc/v3d[.power[.N]

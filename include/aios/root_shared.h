@@ -350,6 +350,12 @@ int spawn_simple(const char *name, uint8_t prio,
                  sel4utils_process_t *proc,
                  vka_object_t *fault_ep);
 
+/* v0.4.257 Stage S: assign a freshly-spawned USER process to a core (round-robin 1..N-1;
+ * /proc/coresched toggles it). Root servers stay on core 0 -- do NOT call this for them. */
+void aios_assign_core(seL4_CPtr tcb);
+int  coresched_cmd(const char *args, char *buf, int bufsize);
+extern volatile int g_proc_distribute;
+
 int do_fork(int parent_idx);
 void wait_init(void);
 void reap_forked_child(int child_idx);

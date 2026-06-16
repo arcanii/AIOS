@@ -438,6 +438,8 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             continue;
         }
 
+        aios_assign_core(proc->thread.tcb.cptr);   /* v0.4.257 Stage S: distribute to cores 1..N-1 */
+
         /* Register in active_procs + process table */
         cow_clear_proc(ap_idx);  /* v0.4.110: zero stale COW state */
         { extern void clear_file_vmas(int ci); clear_file_vmas(ap_idx); }  /* v0.4.146 */

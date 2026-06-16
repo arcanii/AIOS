@@ -563,6 +563,7 @@ int do_fork(int parent_idx) {
 
     /* 12. Resume child */
     seL4_TCB_SetPriority(cp->thread.tcb.cptr, simple_get_tcb(&simple), 200);
+    aios_assign_core(cp->thread.tcb.cptr);   /* v0.4.257 Stage S: distribute to cores 1..N-1 */
     seL4_TCB_Resume(cp->thread.tcb.cptr);
 
     return child_pid;

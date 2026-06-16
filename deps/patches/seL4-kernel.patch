@@ -1,8 +1,34 @@
+diff --git a/include/arch/arm/arch/64/mode/fastpath/fastpath.h b/include/arch/arm/arch/64/mode/fastpath/fastpath.h
+index 12d55f3c9..754e85d83 100644
+--- a/include/arch/arm/arch/64/mode/fastpath/fastpath.h
++++ b/include/arch/arm/arch/64/mode/fastpath/fastpath.h
+@@ -14,6 +14,7 @@
+ #include <armv/context_switch.h>
+ #include <mode/model/statedata.h>
+ #include <arch/object/vcpu.h>
++#include <arch/machine/tlb.h>   /* AIOS: aios_mark_asid_residency prototype (Stage S fastpath hook) */
+ #include <machine/fpu.h>
+ #include <smp/lock.h>
+ 
+@@ -37,6 +38,13 @@ switchToThread_fp(tcb_t *thread, vspace_root_t *vroot, pde_t stored_hw_asid)
+     }
+     asid = (asid_t)(stored_hw_asid.words[0] & 0xffff);
+     armv_contextSwitch_HWASID(vroot, asid);
++    /* AIOS v0.4.257 Stage S: the fastpath also loads a vspace onto this core WITHOUT going
++     * through setVMRoot, so it must mark per-ASID core residency too -- else a process whose
++     * vspace was only ever activated here (donated timeslice) would be MISSED by a later
++     * teardown shootdown -> stale TLB. aios_mark_asid_residency is defined in vspace.c, which
++     * precedes fastpath.c in the kernel unity build (visible here). Required before any user
++     * thread runs off core 0; harmless (sets {core0}) under the current core-0 pinning. */
++    SMP_COND_STATEMENT(aios_mark_asid_residency(asid));
+ 
+ #ifdef CONFIG_BENCHMARK_TRACK_UTILISATION
+     benchmark_utilisation_switch(NODE_STATE(ksCurThread), thread);
 diff --git a/include/arch/arm/arch/machine/tlb.h b/include/arch/arm/arch/machine/tlb.h
-index 7235672db..199d29cea 100644
+index 7235672db..0094b94a3 100644
 --- a/include/arch/arm/arch/machine/tlb.h
 +++ b/include/arch/arm/arch/machine/tlb.h
-@@ -47,6 +47,32 @@ static inline void invalidateTranslationASID(hw_asid_t hw_asid)
+@@ -47,6 +47,39 @@ static inline void invalidateTranslationASID(hw_asid_t hw_asid)
      SMP_COND_STATEMENT(doRemoteInvalidateTranslationASID(hw_asid, MASK(CONFIG_MAX_NUM_NODES)));
  }
  
@@ -32,6 +58,13 @@ index 7235672db..199d29cea 100644
 +#endif
 +}
 +
++#ifdef ENABLE_SMP_SUPPORT
++/* AIOS v0.4.257: mark per-ASID core residency (definition in arm/64 vspace.c). Prototype here
++ * so the fastpath vspace switch (switchToThread_fp), compiled before vspace.c in the unity
++ * build, can mark too -- required before any user thread runs off core 0. */
++void aios_mark_asid_residency(word_t asid);
++#endif
++
  static inline void invalidateTranslationAll(void)
  {
      invalidateTranslationAllLocal();
@@ -56,10 +89,10 @@ index c47710bcb..e9b106d30 100644
      b 1b
  END_FUNC(idle_thread)
 diff --git a/src/arch/arm/64/kernel/vspace.c b/src/arch/arm/64/kernel/vspace.c
-index 08f7937ee..fb6e581be 100644
+index 08f7937ee..8d0d3b6ae 100644
 --- a/src/arch/arm/64/kernel/vspace.c
 +++ b/src/arch/arm/64/kernel/vspace.c
-@@ -765,6 +765,42 @@ bool_t CONST isValidVTableRoot(cap_t cap)
+@@ -765,6 +765,45 @@ bool_t CONST isValidVTableRoot(cap_t cap)
      return isValidNativeRoot(cap);
  }
  
@@ -78,7 +111,10 @@ index 08f7937ee..fb6e581be 100644
 + * broadcast (still correct). Reset on deleteASID. uint8 holds up to 8 cores (we have 4). */
 +#define AIOS_RESID_NASIDS 2048
 +static uint8_t armKSASIDResidency[AIOS_RESID_NASIDS];
-+static inline void aios_mark_asid_residency(asid_t asid)
++/* NON-static + non-inline: the fastpath (switchToThread_fp) also marks residency, and its
++ * header is compiled BEFORE this file in the kernel unity build, so it calls through a
++ * prototype in arch/machine/tlb.h. Cheap (a bounds check + one OR), only on a vspace switch. */
++void aios_mark_asid_residency(word_t asid)
 +{
 +    if (likely(asid < AIOS_RESID_NASIDS)) {
 +        armKSASIDResidency[asid] |= (uint8_t)BIT(getCurrentCPUIndex());
@@ -102,7 +138,7 @@ index 08f7937ee..fb6e581be 100644
  void setVMRoot(tcb_t *tcb)
  {
      cap_t threadRoot;
-@@ -788,6 +824,7 @@ void setVMRoot(tcb_t *tcb)
+@@ -788,6 +827,7 @@ void setVMRoot(tcb_t *tcb)
      }
  
      armv_contextSwitch(vspaceRoot, asid);
@@ -110,7 +146,7 @@ index 08f7937ee..fb6e581be 100644
  }
  
  static bool_t setVMRootForFlush(vspace_root_t *vspace, asid_t asid)
-@@ -803,6 +840,7 @@ static bool_t setVMRootForFlush(vspace_root_t *vspace, asid_t asid)
+@@ -803,6 +843,7 @@ static bool_t setVMRootForFlush(vspace_root_t *vspace, asid_t asid)
      }
  
      armv_contextSwitch(vspace, asid);
@@ -118,7 +154,7 @@ index 08f7937ee..fb6e581be 100644
      return true;
  }
  
-@@ -975,7 +1013,7 @@ static inline void invalidateTLBByASID(asid_t asid)
+@@ -975,7 +1016,7 @@ static inline void invalidateTLBByASID(asid_t asid)
      }
      invalidateTranslationASID(asid_map_asid_map_vspace_get_stored_hw_vmid(asid_map));
  #else
@@ -127,7 +163,7 @@ index 08f7937ee..fb6e581be 100644
  #endif
  }
  
-@@ -997,7 +1035,8 @@ static inline void invalidateTLBByASIDVA(asid_t asid, vptr_t vaddr)
+@@ -997,7 +1038,8 @@ static inline void invalidateTLBByASIDVA(asid_t asid, vptr_t vaddr)
      uint64_t hw_asid = asid_map_asid_map_vspace_get_stored_hw_vmid(asid_map);
      invalidateTranslationSingle((hw_asid << 48) | vaddr >> seL4_PageBits);
  #else
@@ -137,7 +173,7 @@ index 08f7937ee..fb6e581be 100644
  #endif
  }
  
-@@ -1077,6 +1116,9 @@ void deleteASID(asid_t asid, vspace_root_t *vspace)
+@@ -1077,6 +1119,9 @@ void deleteASID(asid_t asid, vspace_root_t *vspace)
          if (asid_map_get_type(asid_map) == asid_map_asid_map_vspace &&
              (vspace_root_t *)asid_map_asid_map_vspace_get_vspace_root(asid_map) == vspace) {
              invalidateTLBByASID(asid);
