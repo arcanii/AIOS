@@ -22,6 +22,9 @@ int genet_diag_cmd(const char *args, char *buf, int bufsize);
 /* Live xHCI/USB-keyboard probe + lock-LED poke at /proc/xhci (impl in src/usb/xhci.c).
  * Works on QEMU + RPi4, so unguarded. */
 int xhci_diag_cmd(const char *args, char *buf, int bufsize);
+/* Idle-core warmer A/B knob at /proc/corewarm (impl in src/servers/core_warm.c) -- a
+ * stall-hunt diagnostic, inert until armed. */
+int core_warm_cmd(const char *args, char *buf, int bufsize);
 /* System mouse state at /proc/mouse (impl in src/usb/xhci.c). */
 int xhci_mouse_state(char *buf, int bufsize);
 /* V3D GPU bring-up probe/poke at /proc/v3d (impl in src/gpu/v3d.c). Phase 0:
@@ -744,6 +747,13 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         int xw = xhci_diag_cmd(path + 4, buf, bufsize);
         if (xw < 0) return -1;
         w = xw;
+    } else if (path[0] == 'c' && path[1] == 'o' && path[2] == 'r' && path[3] == 'e'
+            && path[4] == 'w' && path[5] == 'a' && path[6] == 'r' && path[7] == 'm') {
+        /* /proc/corewarm[.0|.1] -- idle-core warmer A/B knob (stall hunt, src/servers/
+         * core_warm.c). .1 arms cores 1/2/3 busy, .0 disarms, bare = status. */
+        int cw = core_warm_cmd(path + 8, buf, bufsize);
+        if (cw < 0) return -1;
+        w = cw;
     } else if (path[0] == 'v' && path[1] == '3' && path[2] == 'd') {
         /* /proc/v3d -- V3D GPU bring-up probe (impl src/gpu/v3d.c). path[1]=='3'
          * disambiguates from /proc/version and /proc/vka. cat /proc/v3d[.power[.N]

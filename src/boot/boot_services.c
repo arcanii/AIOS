@@ -127,6 +127,11 @@ void boot_start_services(vka_object_t *fault_ep) {
      * family alongside the no-WFI idle; cost is ~25 unmaps/s on core 0. */
     { extern void tlbi_probe_start(void); tlbi_probe_start(); }
 
+    /* v0.4.257 DIAGNOSTIC (core_warm.c): 3 idle-core warmers pinned to cores 1/2/3,
+     * INERT until /proc/corewarm.1 -- tests whether keeping the idle cores active cures
+     * the residual remote-TLB-shootdown spawn-storm stall (project_stall_hunt). */
+    { extern void core_warm_start(void); core_warm_start(); }
+
     proc_add("pipe_server", 200);
 
     /* USB driver thread -- spawn whenever the xHCI controller is up (v0.4.255 Path A), not

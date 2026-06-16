@@ -1,3 +1,40 @@
+diff --git a/include/arch/arm/arch/machine/tlb.h b/include/arch/arm/arch/machine/tlb.h
+index 7235672db..199d29cea 100644
+--- a/include/arch/arm/arch/machine/tlb.h
++++ b/include/arch/arm/arch/machine/tlb.h
+@@ -47,6 +47,32 @@ static inline void invalidateTranslationASID(hw_asid_t hw_asid)
+     SMP_COND_STATEMENT(doRemoteInvalidateTranslationASID(hw_asid, MASK(CONFIG_MAX_NUM_NODES)));
+ }
+ 
++/* AIOS v0.4.257: masked variants -- the remote shootdown IPIs only the given core mask
++ * instead of broadcasting to ALL cores. The per-ASID residency path (arm/64 vspace.c)
++ * passes the bitmap of cores that have actually run a vspace, so a teardown unmap no
++ * longer IPIs (and ipi_wait()-hangs on) quiesced idle cores -- the BCM2711 ~32s remote-
++ * TLBI stall (project_stall_hunt). doRemoteMaskOp already drops self + skips an empty
++ * mask, so under core-0 pinning (mask={core0}) no IPI is sent at all. */
++static inline void invalidateTranslationSingleMask(vptr_t vptr, word_t mask)
++{
++    invalidateTranslationSingleLocal(vptr);
++#ifdef ENABLE_SMP_SUPPORT
++    doRemoteInvalidateTranslationSingle(vptr, mask);
++#else
++    (void)mask;
++#endif
++}
++
++static inline void invalidateTranslationASIDMask(hw_asid_t hw_asid, word_t mask)
++{
++    invalidateTranslationASIDLocal(hw_asid);
++#ifdef ENABLE_SMP_SUPPORT
++    doRemoteInvalidateTranslationASID(hw_asid, mask);
++#else
++    (void)mask;
++#endif
++}
++
+ static inline void invalidateTranslationAll(void)
+ {
+     invalidateTranslationAllLocal();
 diff --git a/src/arch/arm/64/idle.S b/src/arch/arm/64/idle.S
 index c47710bcb..e9b106d30 100644
 --- a/src/arch/arm/64/idle.S
@@ -18,6 +55,98 @@ index c47710bcb..e9b106d30 100644
 +    1: yield
      b 1b
  END_FUNC(idle_thread)
+diff --git a/src/arch/arm/64/kernel/vspace.c b/src/arch/arm/64/kernel/vspace.c
+index 08f7937ee..fb6e581be 100644
+--- a/src/arch/arm/64/kernel/vspace.c
++++ b/src/arch/arm/64/kernel/vspace.c
+@@ -765,6 +765,42 @@ bool_t CONST isValidVTableRoot(cap_t cap)
+     return isValidNativeRoot(cap);
+ }
+ 
++#ifdef ENABLE_SMP_SUPPORT
++/* AIOS v0.4.257 -- per-ASID core-residency bitmap for PRECISE TLB shootdown.
++ * Bit c set => core c has loaded this ASID into TTBR0 (so it MAY hold ASID-tagged TLB
++ * entries). A page/ASID teardown then IPIs only those cores instead of broadcasting to
++ * all CONFIG_MAX_NUM_NODES -- the BCM2711 remote-TLBI-to-idle-core ~32s stall hangs core 0
++ * in ipi_wait() on quiesced idle cores (project_stall_hunt). The bit is SET on context
++ * switch BEFORE the core can fill an entry, so the bitmap is always a SUPERSET of the
++ * cores that actually hold entries: shootdowns never miss a core (correct), they only skip
++ * cores that provably hold none. Updated under the big kernel lock (non-MCS) -> plain
++ * accesses, no atomics. Under core-0 pinning the bitmap is always {core0}, so doRemoteMaskOp
++ * (drops self, skips empty) sends NO IPI -> the stall vanishes. Bounded to the low ASIDs
++ * AIOS uses (pools 0..3 of the 16-bit space); an out-of-range ASID falls back to a full
++ * broadcast (still correct). Reset on deleteASID. uint8 holds up to 8 cores (we have 4). */
++#define AIOS_RESID_NASIDS 2048
++static uint8_t armKSASIDResidency[AIOS_RESID_NASIDS];
++static inline void aios_mark_asid_residency(asid_t asid)
++{
++    if (likely(asid < AIOS_RESID_NASIDS)) {
++        armKSASIDResidency[asid] |= (uint8_t)BIT(getCurrentCPUIndex());
++    }
++}
++static inline word_t aios_asid_residency(asid_t asid)
++{
++    if (likely(asid < AIOS_RESID_NASIDS)) {
++        return (word_t)armKSASIDResidency[asid];
++    }
++    return MASK(CONFIG_MAX_NUM_NODES);   /* untracked ASID: safe full broadcast */
++}
++static inline void aios_clear_asid_residency(asid_t asid)
++{
++    if (likely(asid < AIOS_RESID_NASIDS)) {
++        armKSASIDResidency[asid] = 0;
++    }
++}
++#endif
++
+ void setVMRoot(tcb_t *tcb)
+ {
+     cap_t threadRoot;
+@@ -788,6 +824,7 @@ void setVMRoot(tcb_t *tcb)
+     }
+ 
+     armv_contextSwitch(vspaceRoot, asid);
++    SMP_COND_STATEMENT(aios_mark_asid_residency(asid));
+ }
+ 
+ static bool_t setVMRootForFlush(vspace_root_t *vspace, asid_t asid)
+@@ -803,6 +840,7 @@ static bool_t setVMRootForFlush(vspace_root_t *vspace, asid_t asid)
+     }
+ 
+     armv_contextSwitch(vspace, asid);
++    SMP_COND_STATEMENT(aios_mark_asid_residency(asid));
+     return true;
+ }
+ 
+@@ -975,7 +1013,7 @@ static inline void invalidateTLBByASID(asid_t asid)
+     }
+     invalidateTranslationASID(asid_map_asid_map_vspace_get_stored_hw_vmid(asid_map));
+ #else
+-    invalidateTranslationASID(asid);
++    invalidateTranslationASIDMask(asid, SMP_TERNARY(aios_asid_residency(asid), 0));   /* AIOS: residency-masked */
+ #endif
+ }
+ 
+@@ -997,7 +1035,8 @@ static inline void invalidateTLBByASIDVA(asid_t asid, vptr_t vaddr)
+     uint64_t hw_asid = asid_map_asid_map_vspace_get_stored_hw_vmid(asid_map);
+     invalidateTranslationSingle((hw_asid << 48) | vaddr >> seL4_PageBits);
+ #else
+-    invalidateTranslationSingle((asid << 48) | vaddr >> seL4_PageBits);
++    invalidateTranslationSingleMask((asid << 48) | vaddr >> seL4_PageBits,
++                                    SMP_TERNARY(aios_asid_residency(asid), 0));   /* AIOS: residency-masked */
+ #endif
+ }
+ 
+@@ -1077,6 +1116,9 @@ void deleteASID(asid_t asid, vspace_root_t *vspace)
+         if (asid_map_get_type(asid_map) == asid_map_asid_map_vspace &&
+             (vspace_root_t *)asid_map_asid_map_vspace_get_vspace_root(asid_map) == vspace) {
+             invalidateTLBByASID(asid);
++            /* AIOS v0.4.257: the ASID is being freed (entries just flushed on all resident
++             * cores above) -- clear residency so a future reuse of this ASID starts clean. */
++            SMP_COND_STATEMENT(aios_clear_asid_residency(asid));
+ #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
+             invalidateASIDEntry(asid);
+ #endif
 diff --git a/src/plat/bcm2711/overlay-rpi4-4gb.dts b/src/plat/bcm2711/overlay-rpi4-4gb.dts
 index b2376aece..ce67f35e3 100644
 --- a/src/plat/bcm2711/overlay-rpi4-4gb.dts
