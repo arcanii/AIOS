@@ -14,19 +14,27 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   HW-VERIFIED + PUSHED (`9e543c6`, v0.4.252). NOTE: DHCP lease BOUNCES `.8`<->`.250`
   per boot -- ARP-sweep MAC `dc:a6:32:1c:2e:e1` if `.8` is dark.
 
-* **CURRENT STATE 2026-06-15 (two sessions) -- TCP fix + console + USB external-HDD w/ >2TB;
-  USB-MSC + >2TB now HW-PROVEN on a real 4TB drive. Everything UNCOMMITTED (Bryan commits).**
-  The Pi runs **v0.4.254 build 2464** at 192.168.0.8 (DHCP bounces `.8`<->`.250`/`.197`; ARP MAC
-  `dc:a6:32:1c:2e:e1` if dark). The v0.4.253 TCP regression is FIXED + HW-VERIFIED (deployed).
-  The USB Mass Storage driver (external HDD) is now **HW-PROVEN on a real 4TB Buffalo**: enumerate
-  + INQUIRY + READ_CAPACITY + READ(10) + **>2TB READ_CAPACITY(16)/READ(16)** (build 2464 serial:
-  true 4.0TB capacity + a 64-bit-LBA read on real silicon). MOUNT+rw is QEMU-verified 6/6 but
-  **HW-BLOCKED by RPi4 firmware** -- an ext2 USB drive present at boot makes the bootloader try to
-  boot FROM it and HANG before loading kernel8.img (cold AND warm), so the mount HW test needs
-  **USB HOTPLUG (the clear next epic)** or an EEPROM `BOOT_ORDER` change. version.h is still
-  **254** (the USB-MSC/>2TB is "v0.4.255 WIP"; the Pi runs build 2464 = the full uncommitted
-  tree). Commit plan ready (two commits, below). Full detail: **`docs/NEXT_20260615h_usb_hotplug.md`**
-  (this session) + `docs/NEXT_20260615g_tcp_fix_deploy.md` (the TCP/console/USB-MSC arc).
+* **CURRENT STATE 2026-06-16 (v0.4.257 SMP session) -- USB hotplug epic done; RPi4 remote-TLBI
+  STALL FIXED on HW; opt-in multi-core; SHM-ring pipe groundwork.** The Pi runs **v0.4.257 build
+  2523** at 192.168.0.8 (4-core SMP; DHCP bounces `.8`/`.250`/`.197`; ARP `dc:a6:32:1c:2e:e1`).
+  LOCAL commits ahead of origin/main (Bryan pushes; 9cc6fe4 + 32dbc39 already pushed):
+  - `9cc6fe4` **USB-MSC bulk-STALL recovery** (Stage 5): RESET_EP + ClearFeature + SET_TR_DEQ on a
+    bulk `cc=6` so a SuperSpeed first-replug enumerates clean. QEMU 9/9, HW-verified.
+  - `32dbc39` **per-ASID residency-masked TLB shootdown -- the RPi4 ~32s remote-TLBI stall is FIXED
+    on real HW** (0/48 teardown-after-idle freezes vs 6/16 baseline). Cause found via a core-warmer
+    A/B (`/proc/corewarm`): the broadcast shootdown hung core 0 in `ipi_wait` on quiesced idle cores
+    1-3; the fix skips cores that never ran a vspace. Kernel change is in the seL4 working tree +
+    `deps/patches/seL4-kernel.patch`. QEMU smp 7/7 + socket 8/8 no-regress. **The big win.**
+  - `06e0edd` **Stage S: opt-in per-process core distribution** (`/proc/coresched`, default OFF) +
+    a fastpath residency hook. Default OFF because distribution regresses IPC-bound pipelines
+    (ceiling 30->6, seL4 BKL contention) but gives a **HW-proven 3.77x CPU-bound speedup**.
+  - `4903fb9` **pipe SHM-write coalescing** (4KB writes; groundwork for SHM-ring pipes) +
+    BACKLOG multikernel re-arch entry. Correct (smp 30/30) but NO win on compute-bound `seq|wc`
+    (the pipe-write was never the bottleneck). UNFLASHED (Pi runs 2523, no coalescing).
+  - **USB hotplug epic** (Path A+B, default-ON) was done just before this session (origin/main).
+  **NEXT = the full SHM-ring pipe** (let a pipeline span cores -- the only fix for IPC-bound
+  scaling that distribution alone can't deliver): **`docs/NEXT_20260616d_shm_ring_pipe.md`**.
+  Stall-hunt + SMP detail: `docs/NEXT_20260616c_smp_tlb_stall_fix.md`. version.h = **257**.
 
 * **SESSION 2 (2026-06-15, this session): USB-MSC HW bring-up + >2TB (READ16).** Verified the
   commit plan, then HW-tested the USB driver and added 64-bit-LBA support.
