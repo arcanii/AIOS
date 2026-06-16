@@ -14,6 +14,24 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   HW-VERIFIED + PUSHED (`9e543c6`, v0.4.252). NOTE: DHCP lease BOUNCES `.8`<->`.250`
   per boot -- ARP-sweep MAC `dc:a6:32:1c:2e:e1` if `.8` is dark.
 
+* **CURRENT STATE 2026-06-16b (v0.4.258 SHM-ring session) -- direct SPSC SHM-ring pipes DONE on
+  QEMU + adversarially reviewed + COMMITTED (`b113844`, local, ahead of origin; Bryan pushes).**
+  A ring-mode pipe is a single-producer/single-consumer lock-free ring the writer AND reader both
+  map (one 4 KB cacheable-inner-shareable frame) -- data flows in USERSPACE on the producer/consumer
+  cores, `pipe_server` touched only at empty/full (the only fix for IPC-bound pipelines that Stage-S
+  distribution alone can't give). **DEFAULT OFF** behind `/proc/shmring`. QEMU green:
+  `shmring_qemu_test` 26/26 (data EXACT, sha256 match), `smp` 7/7 (ceiling 30, OFF byte-identical),
+  net_socket 8/8, netd 10/10, all 4 trees build at v0.4.258. A 20-agent review found 8 bugs total
+  (2 bring-up + 6 review), ALL FIXED + re-gated; its data-path barrier complaints were REFUTED +
+  independently re-adjudicated as correct (`load idx; dmb ishld; load data` = canonical ARM MP
+  acquire; a stale index is conservative-safe both ways). **NEXT = the #1 risk, HW-only: flash
+  `build-rpi4-netd`, `/proc/shmring.1` + `/proc/coresched.1`, confirm data exact across cores
+  (all-NUL class) + the cross-core throughput / ceiling win.** Then multi-end SPSC auto-fallback
+  (known limitation -- ring assumes one reader+writer), then the multikernel re-arch (BACKLOG).
+  Seeds: `docs/NEXT_20260616e_shm_ring_pipe_hw.md` (HW plan + the review/fix record),
+  `docs/NEXT_20260616d_shm_ring_pipe.md` (original). [[project_shm_ring]]. version.h = **258**.
+  The Pi still runs v0.4.257 build 2523 (UNFLASHED -- SHM-ring needs the HW coherency soak first).
+
 * **CURRENT STATE 2026-06-16 (v0.4.257 SMP session) -- USB hotplug epic done; RPi4 remote-TLBI
   STALL FIXED on HW; opt-in multi-core; SHM-ring pipe groundwork.** The Pi runs **v0.4.257 build
   2523** at 192.168.0.8 (4-core SMP; DHCP bounces `.8`/`.250`/`.197`; ARP `dc:a6:32:1c:2e:e1`).
