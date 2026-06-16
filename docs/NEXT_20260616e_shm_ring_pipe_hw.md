@@ -12,10 +12,58 @@ ADVERSARIALLY REVIEWED (6 real bugs found & fixed, re-gated green, 0 remaining �
 section below; the disputed data-path barriers were independently re-adjudicated as CORRECT).
 It takes the kernel out of the per-chunk pipe data path so a `cmd | cmd` pipeline can move bytes in
 USERSPACE on the producer/consumer cores. Ships **DEFAULT OFF** behind `/proc/shmring` (the
-cross-core A72 coherency path needs real-hardware soak — QEMU cannot model it). **UNCOMMITTED,
-UNFLASHED.** The remaining work is purely HW: flash `build-rpi4-netd`, arm `/proc/shmring.1` +
-`/proc/coresched.1`, and confirm (a) data stays exact across cores (the all-NUL bug class,
-[[feedback_pipe_shm_cache]]) and (b) the cross-core throughput / pipeline-ceiling win.
+cross-core A72 coherency path needs real-hardware soak — QEMU cannot model it). **COMMITTED `b113844`
+(+ HANDOVER `8ad0dec`); kernel FLASHED to the Pi (v0.4.258 build 2573) + HW-verified boot.** The
+remaining work is the cross-core COHERENCY validation — and it is BLOCKED by a HW-only puzzle: on the
+real netd-ON A72 the **direct userspace ring never engages** (`map_ok=0`, everything falls to the
+core-0 server), so the #1 risk is still unexercised, even though the SAME binaries DO map in QEMU
+(`map_ok=33`). See **`## HW BRING-UP 2026-06-16b`** below for the full narrowing + the next step
+(isolate netd-ON vs the A72, then instrument `pipe_map_ring`). The server-mediated ring path IS
+HW-verified data-exact.
+
+## HW BRING-UP 2026-06-16b — kernel HW-VERIFIED; server-ring HW-VERIFIED; DIRECT path OPEN
+
+**Flashed + boots clean.** `build-rpi4-netd` → `mkkernel8 --kernel build-rpi4-netd/images/aios_root-image-arm-bcm2711`
+(point it at the netd-ON image — `mkkernel8` DEFAULTS to the netd-OFF `build-rpi4`, which would regress the
+Pi's net) → `pi_flash.py --host 192.168.0.8`. 3-way sha OK; `/proc/version` = **AIOS v0.4.258 (build 2573),
+4-core SMP**. Non-regressive (net up, SHM-ring default-OFF). The never-before-flashed pipe coalescing (4903fb9)
+is now also HW-proven to boot.
+
+**Server-mediated ring path HW-VERIFIED (data EXACT).** Pushed ring-aware `seq`/`wc` to `/tmp` (`pi_filexfer
+push`; NOT `/bin` — no clobber, recoverable), armed `/proc/shmring.1` + `/proc/coresched.1`, ran
+`seq 1 100000 | wc -l`==100000 and `wc -c`==588895 across OFF / ON / cross-core (**9/9 exact**, board healthy).
+BUT `/proc/shmring` showed **`map_ok=0`, `push`/`pull`≈5.3M** — ALL bytes went through the core-0 server
+(`ring_server_push/pull`). So the DIRECT userspace ring — and thus **the #1 cross-core COHERENCY risk — was
+NOT exercised** (only core 0 ever touched the ring frame).
+
+**The direct path does not engage on HW — OPEN (the remaining work).** Narrowed hard:
+- Binaries ARE ring-aware: `objdump -t build-04/sbase/seq` → `pipe_map_ring`, `stdout_ring_get`, `shm_ring_*`.
+  Labels agree (client `PIPE_MAP_RING_L`=91 == server `PIPE_MAP_RING`=91; the NET 91/92 collision is a
+  different endpoint). The flashed kernel HAS the ring server code (`push`/`pull` moved → `ring_server_*` ran).
+- Ruled out: the **shell** (rebuilt + pushed ring-aware `/tmp/dash`, ran the pipeline under it → still
+  `map_ok=0`); a **build regression** — **BISECTED**: rebuilt `disk/disk_ext2.img` from the SAME
+  `build-04/sbase` and re-ran `shmring_qemu_test` → **`map_ok=33` (the direct path ENGAGES in QEMU with these
+  exact binaries)**. So it is HW-RUNTIME specific: QEMU `build-04`/netd-OFF/virt maps; HW
+  `build-rpi4-netd`/netd-ON/A72 does not.
+- The contradiction to chase: data flows via legacy `PIPE_WRITE_SHM` (push moves) yet `map_fail=0` too, so the
+  client never even ATTEMPTS `pipe_map_ring` on HW — `stdout_ring_get` isn't reaching the `seL4_Call(pipe_ep,91)`
+  despite `stdout_pipe_id>=0 && pipe_ep` (both required for the legacy push that DID run). Same binary attempts
+  ~51 maps in QEMU.
+- **NEXT — isolate netd-ON vs the A72, then instrument:** (a) run `shmring` against `build-netd` (netd-ON) in
+  QEMU — if `map_ok=0` there too it's netd-ON, not the silicon (first fix the shmring harness's netconsole
+  boot-wait for build-netd; `netd_qemu_test` proves build-netd boots+nets); OR (b) flash `build-rpi4` (netd-OFF)
+  to the Pi and test — if the direct path engages, it's netd-ON. Then add a one-line log in `pipe_map_ring` /
+  the `aios_sys_write` fd-1 path and reflash to see why `stdout_ring_get` doesn't reach the Call. **Prime
+  suspicion: a child-side `pipe_ep` / label-91 routing difference under netd-ON** (in netd-ON the child holds
+  both `pipe_ep` and `net_ep`; 91 is `NET_BIND` on `net_ep`).
+
+**netconsole discipline (HW, learned this run):** wedges HARD under `coresched.1` + load (~1 command then dies)
+and on back-to-back medium pushes. Drive recovery ONE command per fresh connection (`shmring_hw_recover.py`);
+settle ~5s between pushes. Pi was recovered to clean default-OFF v0.4.258 after the run.
+
+**HW tooling added** (`scripts/`, this session): `shmring_hw_push.py` (push tools + smoke), `shmring_hw_test.py`
+(OFF/ON/cross-core data-exact), `shmring_hw_dashtest.py` (ring-aware-dash variant), `shmring_hw_recover.py`
+(disarm + health, 1-cmd/conn).
 
 ## What shipped (the diff — 5 files + 1 new header + 1 new test)
 
