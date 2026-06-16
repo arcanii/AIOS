@@ -176,6 +176,22 @@ static void pipe_maybe_free(int pi) {
             p->xfer_buf = NULL;
             p->xfer_valid = 0;
         }
+        if (p->xfer_valid_w) {     /* v0.4.257: free the write-direction xfer page (mirror) */
+            for (int ci = 0; ci < p->xfer_copy_count_w; ci++) {
+                seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                    p->xfer_copies_w[ci], seL4_WordBits);
+                vka_cspace_free(&vka, p->xfer_copies_w[ci]);
+            }
+            p->xfer_copy_count_w = 0;
+            cspacepath_t xpw;
+            vka_cspace_make_path(&vka, p->xfer_frame_w.cptr, &xpw);
+            seL4_CNode_Revoke(xpw.root, xpw.capPtr, xpw.capDepth);
+            vspace_unmap_pages(&vspace, p->xfer_buf_w, 1, seL4_PageBits, NULL);
+            vka_free_object(&vka, &p->xfer_frame_w);
+            vka_audit_frame_release(1);
+            p->xfer_buf_w = NULL;
+            p->xfer_valid_w = 0;
+        }
         if (p->shm_valid) {
             vspace_unmap_pages(&vspace, p->shm_buf, 1, seL4_PageBits, NULL);
             vka_free_object(&vka, &p->shm_frame);
@@ -1710,8 +1726,12 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             break;
         }
         case PIPE_MAP_SHM: {
-            /* v0.4.66: lazy xfer */
+            /* v0.4.66: lazy xfer. v0.4.257 coalescing: MR1 picks the direction --
+             * 0 = READ xfer (server->reader), 1 = WRITE xfer (writer->server). The two
+             * directions use SEPARATE per-pipe pages so a writer and reader (different
+             * processes) never race on a single shared staging page. */
             int pi = (int)seL4_GetMR(0);
+            int dir = (int)seL4_GetMR(1) ? 1 : 0;
             int ci = (int)badge - 1;
             if (pi < 0 || pi >= MAX_PIPES || !pipes[pi].active
                 || ci < 0 || ci >= MAX_ACTIVE_PROCS
@@ -1720,40 +1740,37 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                 break;
             }
+            vka_object_t *xframe = dir ? &pipes[pi].xfer_frame_w : &pipes[pi].xfer_frame;
+            char    **xbuf   = dir ? &pipes[pi].xfer_buf_w        : &pipes[pi].xfer_buf;
+            int      *xvalid = dir ? &pipes[pi].xfer_valid_w      : &pipes[pi].xfer_valid;
+            seL4_CPtr *xcop  = dir ? pipes[pi].xfer_copies_w      : pipes[pi].xfer_copies;
+            int      *xcnt   = dir ? &pipes[pi].xfer_copy_count_w : &pipes[pi].xfer_copy_count;
             /* Lazy alloc: create xfer frame on first request */
-            if (!pipes[pi].xfer_valid) {
+            if (!*xvalid) {
                 vka_audit_frame(VKA_SUB_PIPE, 1);
-                if (vka_alloc_frame(&vka, seL4_PageBits,
-                        &pipes[pi].xfer_frame) != 0) {
+                if (vka_alloc_frame(&vka, seL4_PageBits, xframe) != 0) {
                     seL4_SetMR(0, 0);
                     seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                     break;
                 }
-                /* v0.4.165: map the shared xfer page CACHEABLE, matching the
-                 * client mapping below. Both ends MUST use the same memory type
-                 * or the Cortex-A72 loses coherency (the v0.4.164 bug: server
-                 * cacheable + client non-cacheable -> the server's write sat in
-                 * D-cache while the client read stale zeros from RAM -> all-NUL
-                 * output on the RPi4; QEMU does not model it). v0.4.164 matched
-                 * them as non-cacheable (correct but slow -- every transfer hits
-                 * RAM). Cacheable-on-both is coherent on this single-core PIPT
-                 * A72 (Normal inner-shareable write-back -- the standard for
-                 * shared memory) and far faster for larger transfers. */
-                void *xm = vspace_map_pages(&vspace,
-                    &pipes[pi].xfer_frame.cptr, NULL,
+                /* v0.4.165: map the shared xfer page CACHEABLE, matching the client
+                 * mapping below. Both ends MUST use the same memory type or the Cortex-A72
+                 * loses coherency (the v0.4.164 all-NUL bug; QEMU does not model it).
+                 * Cacheable-on-both is coherent on the A72 and fast for large transfers. */
+                void *xm = vspace_map_pages(&vspace, &xframe->cptr, NULL,
                     seL4_AllRights, 1, seL4_PageBits, 1);
                 if (!xm) {
-                    vka_free_object(&vka, &pipes[pi].xfer_frame);
+                    vka_free_object(&vka, xframe);
                     seL4_SetMR(0, 0);
                     seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                     break;
                 }
-                pipes[pi].xfer_buf = (char *)xm;
-                pipes[pi].xfer_valid = 1;
+                *xbuf = (char *)xm;
+                *xvalid = 1;
             }
             /* Copy frame cap to fresh slot */
             cspacepath_t xsrc, xdest;
-            vka_cspace_make_path(&vka, pipes[pi].xfer_frame.cptr, &xsrc);
+            vka_cspace_make_path(&vka, xframe->cptr, &xsrc);
             if (vka_cspace_alloc_path(&vka, &xdest) != 0) {
                 seL4_SetMR(0, 0);
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
@@ -1767,9 +1784,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                 break;
             }
-            /* Map the COPY into child VSpace -- cacheable, matching the server
-             * mapping above (v0.4.165). Same memory type on both ends keeps the
-             * shared page coherent on the A72. */
+            /* Map the COPY into child VSpace -- cacheable, matching the server mapping. */
             void *child_vaddr = vspace_map_pages(
                 &active_procs[ci].proc.vspace,
                 &xdest.capPtr, NULL,
@@ -1778,20 +1793,21 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 seL4_CNode_Delete(seL4_CapInitThreadCNode,
                     xdest.capPtr, seL4_WordBits);
                 vka_cspace_free(&vka, xdest.capPtr);
-            } else if (pipes[pi].xfer_copy_count < 2) {
-                pipes[pi].xfer_copies[pipes[pi].xfer_copy_count++] =
-                    xdest.capPtr;
+            } else if (*xcnt < 2) {
+                xcop[(*xcnt)++] = xdest.capPtr;
             }
             seL4_SetMR(0, (seL4_Word)child_vaddr);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }
         case PIPE_WRITE_SHM: {
-            /* v0.4.66: writer put data in xfer page, copy to ring buffer */
+            /* v0.4.66/257: writer put data in the WRITE xfer page, copy to ring buffer.
+             * Returns the bytes accepted (may be < wlen if the ring is full -> the client
+             * advances by the returned count + retries, exactly like the MR PIPE_WRITE). */
             int pi = (int)seL4_GetMR(0);
             int wlen = (int)seL4_GetMR(1);
             if (pi < 0 || pi >= MAX_PIPES || !pipes[pi].active
-                || !pipes[pi].xfer_valid) {
+                || !pipes[pi].xfer_valid_w) {
                 seL4_SetMR(0, (seL4_Word)-1);
                 seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                 break;
@@ -1800,10 +1816,10 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             if (wlen > PAGE_SIZE) wlen = PAGE_SIZE;
             int avail = PIPE_BUF_SIZE - p->count;
             int written = (wlen < avail) ? wlen : avail;
-            /* Copy from xfer page to ring buffer */
+            /* Copy from the write xfer page to the ring buffer */
             for (int i = 0; i < written; i++)
                 p->shm_buf[(p->head + p->count + i) % PIPE_BUF_SIZE] =
-                    p->xfer_buf[i];
+                    p->xfer_buf_w[i];
             p->count += written;
             seL4_SetMR(0, (seL4_Word)written);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));

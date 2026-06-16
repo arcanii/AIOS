@@ -201,11 +201,18 @@ typedef struct {
     char *shm_buf;                /* v0.4.65: mapped shared frame (or buf) */
     vka_object_t shm_frame;       /* v0.4.65: backing frame object */
     int shm_valid;                /* v0.4.65: 1 if shm_frame allocated */
-    char *xfer_buf;               /* v0.4.66: transfer page mapped in root */
+    char *xfer_buf;               /* v0.4.66: transfer page mapped in root (READ dir) */
     vka_object_t xfer_frame;      /* v0.4.66: transfer frame object */
     int xfer_valid;               /* v0.4.66: 1 if xfer_frame allocated */
     seL4_CPtr xfer_copies[2];    /* v0.4.67: cap copies for child mappings */
     int xfer_copy_count;          /* v0.4.67: number of active copies */
+    /* v0.4.257 coalescing: a SEPARATE write-direction xfer page (writer->server) so a
+     * writer and reader (different procs) never race on one shared page. */
+    char *xfer_buf_w;
+    vka_object_t xfer_frame_w;
+    int xfer_valid_w;
+    seL4_CPtr xfer_copies_w[2];
+    int xfer_copy_count_w;
     int head;
     int count;
     int read_closed;

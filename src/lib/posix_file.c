@@ -9,10 +9,27 @@
 static void pipe_request_shm(aios_fd_t *f) {
     if (!pipe_ep || f->shm_vaddr) return;
     seL4_SetMR(0, (seL4_Word)f->pipe_id);
+    seL4_SetMR(1, 0);   /* v0.4.257: dir=0 = READ xfer page */
     seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
-        seL4_MessageInfo_new(78 /* PIPE_MAP_SHM */, 0, 0, 1));
+        seL4_MessageInfo_new(78 /* PIPE_MAP_SHM */, 0, 0, 2));
     seL4_Word vaddr = seL4_GetMR(0);
     if (vaddr) f->shm_vaddr = (char *)vaddr;
+}
+
+/* v0.4.257 coalescing: the WRITE-direction xfer page for the current stdout pipe.
+ * Mapped lazily + cached (remapped if stdout_pipe_id changes). Lets a writer push up
+ * to 4KB per Call (PIPE_WRITE_SHM) instead of looping 900B MR-packed PIPE_WRITE. */
+static char *stdout_wshm = (void *)0;
+static int   stdout_wshm_pid = -1;
+static void stdout_request_wshm(void) {
+    if (!pipe_ep || stdout_pipe_id < 0) return;
+    if (stdout_wshm && stdout_wshm_pid == stdout_pipe_id) return;
+    seL4_SetMR(0, (seL4_Word)stdout_pipe_id);
+    seL4_SetMR(1, 1);   /* dir=1 = WRITE xfer page */
+    seL4_Call(pipe_ep, seL4_MessageInfo_new(78 /* PIPE_MAP_SHM */, 0, 0, 2));
+    seL4_Word v = seL4_GetMR(0);
+    stdout_wshm = v ? (char *)v : (void *)0;
+    stdout_wshm_pid = v ? stdout_pipe_id : -1;
 }
 
 
@@ -630,9 +647,25 @@ long aios_sys_write(va_list ap) {
             /* Write to pipe instead of serial */
             const char *src = (const char *)buf;
             size_t sent = 0;
+            int stall = 0;                 /* bounded backpressure retry (never hang) */
+            stdout_request_wshm();         /* v0.4.257: map the 4KB write xfer page once */
             while (sent < count) {
                 int chunk = (int)(count - sent);
-                if (chunk > 900) chunk = 900;  /* MR limit */
+                /* v0.4.257 coalescing fast path: up to 4KB per Call via the write xfer page,
+                 * vs 900B MR-packed PIPE_WRITE. The reply is the accepted count (< chunk if
+                 * the ring is filling) -- advance by it and re-loop. */
+                if (stdout_wshm) {
+                    int c = chunk > 4096 ? 4096 : chunk;
+                    for (int i = 0; i < c; i++) stdout_wshm[i] = src[sent + i];
+                    seL4_SetMR(0, (seL4_Word)stdout_pipe_id);
+                    seL4_SetMR(1, (seL4_Word)c);
+                    seL4_Call(pipe_ep, seL4_MessageInfo_new(79 /* PIPE_WRITE_SHM */, 0, 0, 2));
+                    int w = (int)(long)seL4_GetMR(0);
+                    if (w > 0) { sent += w; stall = 0; continue; }
+                    if (w == 0) { if (++stall > 100000) break; seL4_Yield(); continue; }
+                    stdout_wshm = (void *)0;   /* w<0: SHM unusable -> MR fallback below */
+                }
+                if (chunk > 900) chunk = 900;  /* MR limit (960B IPC ceiling) */
                 seL4_SetMR(0, (seL4_Word)stdout_pipe_id);
                 seL4_SetMR(1, (seL4_Word)chunk);
                 int mr = 2;
@@ -642,7 +675,9 @@ long aios_sys_write(va_list ap) {
                     if (i % 8 == 7 || i == chunk - 1) { seL4_SetMR(mr++, w); w = 0; }
                 }
                 seL4_Call(pipe_ep, seL4_MessageInfo_new(61, 0, 0, mr));
-                sent += chunk;
+                int mw = (int)(long)seL4_GetMR(0);
+                if (mw > 0) { sent += mw; stall = 0; }
+                else { if (++stall > 100000) break; seL4_Yield(); }
             }
             return (long)count;
         }

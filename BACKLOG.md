@@ -7,6 +7,47 @@ they're up next.
 
 ---
 
+## SMP re-architecture: per-core allocators + per-core spawn/IPC servers (multikernel-grade) (queued 2026-06-16)
+
+**The big one for real multi-core scaling of IPC-bound work.** Size: HUGE (multi-session
+research effort). Refs: docs/NEXT_20260616c_smp_tlb_stall_fix.md, the v0.4.257 IPC-redesign
+analysis (this session), [[project_stall_hunt]].
+
+WHY: AIOS pipelines are IPC-bound and the pipeline CEILING is SPAWN-bound -- fork/exec/teardown
+all run through the SINGLE core-0 servers (exec/pipe) + the lock-free, single-owner vka/cspace
+allocator (pinning everything to core 0 is what AVOIDS the "second SSH" cap-bitmap corruption).
+seL4's big kernel lock is a CLH lock taken on EVERY kernel entry -- including the fastpath
+(NODE_LOCK_SYS in c_handle_fastpath_call) -- so total kernel throughput is ~1 core's worth of
+syscalls/sec regardless of core count, and it is IMMUTABLE (load-bearing for verification).
+Result: distributing user processes to cores 1-3 (Stage S, v0.4.257, /proc/coresched) REGRESSED
+the parallel-pipeline ceiling 30 -> 6 (BKL contention + cross-core IPI + core-0 server/allocator
+serialization). Naive distribution HELPS CPU-bound work (HW-proven 3.77x) but CANNOT help
+spawn/IPC-bound pipelines. seL4's INTENDED SMP model is partitioned subsystems per core, NOT
+shared servers -- AIOS chose shared servers (simpler, single-image), the anti-pattern for SMP.
+
+THE IDEA: go multikernel-ish. Give EACH core its own allocator arena (partition the untyped pool
+per core / a per-core sub-CNode) + its own fs/pipe/exec server REPLICAS, so a process on core N
+spawns + IPCs its LOCAL servers (same-core fastpath, no cross-core IPI) from a LOCAL allocator
+(no cross-core bitmap race). Then spawn + pipe I/O parallelize across cores. Shared state (the
+FS, the global process table) gets explicit cross-core sync (message-passing or a coarse lock),
+kept off the hot path.
+
+HARD PARTS: (1) the BKL STILL serializes the IPC syscall itself -- per-core servers remove
+cross-core IPI but each core's fastpath still takes the global BKL, so the throughput win must
+come from FEWER syscalls-per-work (coalescing / SHM rings) AND local spawn-allocation, not from
+the BKL. (2) per-core untyped partitioning risks fragmentation (one core starves). (3) seL4
+gives the root task ONE CNode -- true per-core cspaces need careful sub-CNode partitioning +
+cross-core cap transfer (seL4_CNode_Copy is cross-core-safe). (4) shared FS/process-table
+consistency. (5) hardest to verify; QEMU TCG cannot show the speedup (no guest-core parallelism)
+-- needs the real 4x A72.
+
+PAYOFF: the ONLY path to scaling spawn/IPC-bound parallel pipelines past 1 core -- what Stage-S
+distribution alone cannot deliver. Exactly what a research kernel exists to try. Complementary,
+already-scoped first steps: pipe data-path coalescing (4KB SHM writes, prototyped v0.4.257) and
+the SHM-ring pipe (producer<->consumer lock-free ring, pipe_server out of the data path).
+
+---
+
 ## Process requirement -- deeper pre-flash smoke (queued 2026-06-14)
 
 **Before flashing ANY kernel to the real Pi, run the FULL QEMU gate suite**, not a
