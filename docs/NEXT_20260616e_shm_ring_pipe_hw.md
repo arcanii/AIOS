@@ -14,12 +14,15 @@ It takes the kernel out of the per-chunk pipe data path so a `cmd | cmd` pipelin
 USERSPACE on the producer/consumer cores. Ships **DEFAULT OFF** behind `/proc/shmring` (the
 cross-core A72 coherency path needs real-hardware soak — QEMU cannot model it). **COMMITTED `b113844`
 (+ HANDOVER `8ad0dec`); kernel FLASHED to the Pi (v0.4.258 build 2573) + HW-verified boot.** The
-remaining work is the cross-core COHERENCY validation — and it is BLOCKED by a HW-only puzzle: on the
-real netd-ON A72 the **direct userspace ring never engages** (`map_ok=0`, everything falls to the
-core-0 server), so the #1 risk is still unexercised, even though the SAME binaries DO map in QEMU
-(`map_ok=33`). See **`## HW BRING-UP 2026-06-16b`** below for the full narrowing + the next step
-(isolate netd-ON vs the A72, then instrument `pipe_map_ring`). The server-mediated ring path IS
-HW-verified data-exact.
+remaining work is the cross-core COHERENCY validation — and the ROOT CAUSE of why the direct ring
+"never engaged" is now FOUND + LOCAL (not netd, not A72): **the ring fast path was wired only into
+`read()`/`write()`, NOT into the stdio backend (`aios_stdio_write`) or `writev`/`readv` — which is how
+real filter tools (`seq|wc`) do pipe I/O.** So every stdio pipeline bypassed the ring (the `map_ok=33`
+seen in QEMU was the netconsole RELAY, which uses raw read/write). The fix (ring-ify those 3 paths) is
+designed + prototyped; it engages the ring but EXPOSES a direct-reader premature-EOF bug — see
+**`## HW BRING-UP 2026-06-16b`** below for the full write-up, the fix, and the precise next step. The
+fix is currently REVERTED (main green, `shmring` 26/26). The server-mediated ring path IS HW-verified
+data-exact.
 
 ## HW BRING-UP 2026-06-16b — kernel HW-VERIFIED; server-ring HW-VERIFIED; DIRECT path OPEN
 
@@ -36,26 +39,49 @@ BUT `/proc/shmring` showed **`map_ok=0`, `push`/`pull`≈5.3M** — ALL bytes we
 (`ring_server_push/pull`). So the DIRECT userspace ring — and thus **the #1 cross-core COHERENCY risk — was
 NOT exercised** (only core 0 ever touched the ring frame).
 
-**The direct path does not engage on HW — OPEN (the remaining work).** Narrowed hard:
-- Binaries ARE ring-aware: `objdump -t build-04/sbase/seq` → `pipe_map_ring`, `stdout_ring_get`, `shm_ring_*`.
-  Labels agree (client `PIPE_MAP_RING_L`=91 == server `PIPE_MAP_RING`=91; the NET 91/92 collision is a
-  different endpoint). The flashed kernel HAS the ring server code (`push`/`pull` moved → `ring_server_*` ran).
-- Ruled out: the **shell** (rebuilt + pushed ring-aware `/tmp/dash`, ran the pipeline under it → still
-  `map_ok=0`); a **build regression** — **BISECTED**: rebuilt `disk/disk_ext2.img` from the SAME
-  `build-04/sbase` and re-ran `shmring_qemu_test` → **`map_ok=33` (the direct path ENGAGES in QEMU with these
-  exact binaries)**. So it is HW-RUNTIME specific: QEMU `build-04`/netd-OFF/virt maps; HW
-  `build-rpi4-netd`/netd-ON/A72 does not.
-- The contradiction to chase: data flows via legacy `PIPE_WRITE_SHM` (push moves) yet `map_fail=0` too, so the
-  client never even ATTEMPTS `pipe_map_ring` on HW — `stdout_ring_get` isn't reaching the `seL4_Call(pipe_ep,91)`
-  despite `stdout_pipe_id>=0 && pipe_ep` (both required for the legacy push that DID run). Same binary attempts
-  ~51 maps in QEMU.
-- **NEXT — isolate netd-ON vs the A72, then instrument:** (a) run `shmring` against `build-netd` (netd-ON) in
-  QEMU — if `map_ok=0` there too it's netd-ON, not the silicon (first fix the shmring harness's netconsole
-  boot-wait for build-netd; `netd_qemu_test` proves build-netd boots+nets); OR (b) flash `build-rpi4` (netd-OFF)
-  to the Pi and test — if the direct path engages, it's netd-ON. Then add a one-line log in `pipe_map_ring` /
-  the `aios_sys_write` fd-1 path and reflash to see why `stdout_ring_get` doesn't reach the Call. **Prime
-  suspicion: a child-side `pipe_ep` / label-91 routing difference under netd-ON** (in netd-ON the child holds
-  both `pipe_ep` and `net_ep`; 91 is `NET_BIND` on `net_ep`).
+**ROOT CAUSE FOUND (2026-06-16c, fully LOCAL/QEMU — supersedes the earlier "netd-ON vs A72" guess).**
+The direct ring never engaging was NEVER a netd or A72 problem. **The SHM-ring fast path was wired only into
+`aios_sys_read`/`aios_sys_write` (the raw read()/write() syscalls), but NOT into the two paths real filter
+tools actually use:** (1) the stdio backend `aios_stdio_write` (aios_posix.c:214 — every `printf`/`fputs` to a
+piped stdout) and (2) `aios_sys_writev`/`aios_sys_readv` (how musl stdio flushes/fills its buffer). Both send
+`PIPE_WRITE`(61)/`PIPE_READ`(62) straight to the server (→ `ring_server_push/pull`, the `push`/`pull` counters)
+**without ever calling `pipe_map_ring`**. So `seq | wc` (and ~every stdio pipeline) bypasses the ring entirely
+→ `map_ok=0`. The `map_ok=33` seen over netconsole was the **netconsole relay's** pipe (the relay loop uses raw
+read()/write(), the only ring-mapping caller). Proven LOCALLY: drive `seq|wc` over the **serial** console
+(no relay) and `map_ok=0` on BOTH `build-04` (netd-OFF) and `build-netd` (netd-ON) — identical to HW. The Pi
+was behaving correctly and consistently with QEMU all along.
+
+- Repro tool: `scripts/shmring_netd_isolate.py` (boots a tree over the QEMU serial console à la
+  `netd_qemu_test`, arms `/proc/shmring.1`, runs `seq|wc`, reads `/proc/shmring`). `AIOS_ISO_KERNEL=<image>`
+  selects the tree. build-04 serial → `map_ok=0`; build-04 netconsole → `map_ok=33` (relay).
+
+**THE FIX (designed + prototyped this session, then REVERTED to keep main green — see below).** Ring-ify the
+3 missing paths, mirroring the proven `aios_sys_read`/`write` ring logic:
+1. `aios_stdio_write` (aios_posix.c, the `stdout_pipe_id>=0` branch): try the ring first. Needs a non-static
+   entry (the ring helpers are `static` in posix_file.c) — add `int aios_stdout_ring_write(const char*, size_t,
+   long*)` in posix_file.c + declare in posix_internal.h, call it before the legacy `PIPE_WRITE` loop.
+2. `aios_sys_writev` fd-pipe branch (posix_file.c): `pipe_map_ring(f->pipe_id,1)` + `shm_ring_send` per iov.
+3. `aios_sys_readv` fd-0 (`stdin_ring_get`) and fd-pipe (`pipe_map_ring(f->pipe_id,0)`) branches: `shm_ring_recv_fast`
+   per iov, fall to `PIPE_READ` on `-1` (empty+writer-live), `break` on `0` (EOF).
+(The fd-1/2 `writev` branch routes through `aios_stdio_write`, so fix #1 covers it automatically.)
+
+**THE FIX WORKS to engage the ring but EXPOSES A REAL DIRECT-READER BUG (the actual remaining work).** With
+the fix, `RINGLBL=91` fires for BOTH seq and wc (the map now happens) — but `seq 1 10 | wc -l` returns **0**
+(premature EOF) and larger sizes HANG. A server-side probe in `PIPE_MAP_RING` proved the frame the reader maps
+is correct + populated: when wc maps (dir 0) `tail=21 head=0 wclosed=1 data=31 0a 32 0a 33 0a` (= `"1\n2\n3\n"`),
+same physical frame (`cv` identical). Yet wc's `shm_ring_recv_fast` returns 0/EOF as if `avail==0`. So the
+DIRECT-READER path returns premature EOF despite the populated, coherent frame. This path was **never exercised
+before** — the 26/26 `shmring_qemu_test` ran seq|wc over the SERVER-mediated route (relay only used the direct
+read/write), so the bug hid. It is invisible server-side (direct reads don't IPC), so it needs **client-side
+instrumentation** (no serial-debug primitive exists in libaios yet — add one, or a per-fd debug counter, or
+temporarily force `recv_fast` to return -1 to confirm the server-fallback then works). Suspects: the reader's
+first `recv_fast` seeing a stale `head==tail` in its own mapping (cacheability/TLB on the freshly-mapped frame,
+or `head` already advanced), or an off-by-one in the readv EOF handling. **This is the precise next step.**
+
+**STATUS: the fix is REVERTED — main is green (`shmring_qemu_test` 26/26).** Committing the fix as-is would
+break the armed-ring suite (seq|wc → 0). Default-OFF is byte-identical either way (the ring path only activates
+when `/proc/shmring.1` is armed). Re-apply the 3-path fix above, then crack the direct-reader EOF bug, then the
+cross-core HW coherency test finally has a real pipeline exercising the direct ring.
 
 **netconsole discipline (HW, learned this run):** wedges HARD under `coresched.1` + load (~1 command then dies)
 and on back-to-back medium pushes. Drive recovery ONE command per fresh connection (`shmring_hw_recover.py`);
