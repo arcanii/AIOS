@@ -48,7 +48,7 @@ static uint32_t gov_last_ccnt  = 0;
  * governor subtracts these so its load metric tracks real work (pipe / fs / exec
  * / net plus any unregistered forked user procs), not the idle spin. */
 static int name_is_background(const char *n) {
-    return (!strcmp(n, "root") || !strcmp(n, "tlbi_probe") ||
+    return (!strcmp(n, "root") ||
             !strcmp(n, "serverstats") || !strcmp(n, "flush"));
 }
 
