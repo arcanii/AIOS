@@ -324,6 +324,30 @@ harden the netconsole relay (bulk drain + reliable end-of-command framing) --
 
 ## Known bugs & limitations (low-priority)
 
+### netconsole "null cap" console spam under reconnect churn (invoke-after-free, NON-FATAL)
+- **Symptom**: under a netconsole soak with many connect/teardown cycles (e.g.
+  `python3 scripts/netstall.py --host 192.168.0.8 --trials 30 --idle 30`), the
+  kernel debug console spams
+  `<<seL4(CPU 0) [decodeInvocation/643 T0x... "child of: 'rootserver'"]: Attempted
+  to invoke a null cap #19718.>>`, alternating between two specific cap slots
+  (e.g. #19718/#19719). Appears ONLY during reconnect churn and STOPS the instant
+  the soak ends. NON-FATAL: the kernel rejects the invalid invocation and
+  continues; the system stays fully responsive (a gentle one-shot netconsole cmd
+  returns ~1.3s, ping clean). Found 2026-06-17 during the A72 stall hunt.
+- **Diagnosis**: a latent invoke-after-free / invoke-stale-cap in the netconsole
+  connection-teardown path. A "child of: 'rootserver'" thread (a spawned server,
+  likely netconsole/net_server) invokes a per-connection cap AFTER it has been
+  freed; the two repeated slots are two stale connection references.
+- **Where to look**: `src/servers/net_server.c`, `src/boot/spawn_netd.c`,
+  `src/net/net_tcp.c` -- connection accept/close + the per-connection cap. Fix =
+  stop invoking the connection's cap after free (guard the invocation, or fix the
+  close/free ordering so the stale reference is cleared).
+- **Repro**: netstall on the real Pi (192.168.0.8); watch `/tmp/aios_serial.log`
+  (a serial monitor mirrors there). Distinguishes itself from a real freeze: the
+  Pi stays pingable throughout (see the ping-monitor method, [[project_stall_hunt]]).
+- **Severity**: LOW (console noise only; no functional impact). Worth cleaning for
+  connection-lifecycle correctness + to de-noise the console during net soaks.
+
 ### GENET real-MAC read fails -> Pi takes .127 not .8 (HARMLESS)
 - **Symptom**: on the real RPi4 the board takes DHCP lease `.127` (the fake
   fallback MAC dc:a6:32:01:02:03) instead of `.8` (the real MAC). HARMLESS -- the

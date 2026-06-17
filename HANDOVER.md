@@ -14,6 +14,48 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   HW-VERIFIED + PUSHED (`9e543c6`, v0.4.252). NOTE: DHCP lease BOUNCES `.8`<->`.250`
   per boot -- ARP-sweep MAC `dc:a6:32:1c:2e:e1` if `.8` is dark.
 
+* **CURRENT STATE 2026-06-17d -- A72 stall hunt: the WHOLE A72-register avenue is EXHAUSTED -- THREE
+  hypotheses disproven on real HW (register-config gap, L2-logic clock, full-cluster clock -- the last
+  even HARMFUL). The stall is a BCM2711 SoC-fabric/UBUS phenomenon, NOT controllable via any A72 reg. The
+  session's durable wins are a DEFINITIVE ping-monitor freeze detector + a reproducing condition
+  (--idle 30). NEXT = the BCM2711 SCB/UBUS fabric-timeout register (BACKLOG #2). Pi reverted to baseline
+  B (build 2604).**
+  Pi now runs **candidate B, v0.4.261 build 2604** at 192.168.0.8. **The breakthrough is a redirection:**
+  a fault-survivable boot probe (kernel `errata.c aios_a72_probe`) read the A72 IMP-DEF regs on the real
+  Pi4 -- **all NOMINAL** (CPUECTLR=0x40 SMPEN=1 retention=0, CPUACTLR=0, L2ACTLR=0x10 DVM-broadcast-ON).
+  So the seed's prime suspect (an A72 IMP-DEF config Linux sets + AIOS doesn't) is WRONG: Linux's
+  __cpu_setup writes nothing imp-def, both inherit the same armstub SMPEN. The gap is RUNTIME. **Research
+  (primary sources) pinned the mechanism: A72 TRM §2.4 -- the L2 control logic clock-gates after 256 idle
+  cycles; on BCM2711 its wake-up sometimes sticks to the 32.4s UBUS timeout. Control = L2ACTLR_EL1[27]
+  "Force L2 logic clock enable active" -- the register form of the proven nodes=4 cure.** Candidate B
+  writes `L2ACTLR |= (1<<27)|(1<<26)` at elfloader `crt0.S _start` (pre-MMU; MIDR-guarded to A72;
+  `AIOS_L2_CLOCK_FORCE`). build 2604 boots clean, boot probe confirms **L2ACTLR=0xC000010** (write took),
+  QEMU gate smp 7/7 + shmring 26/26. **BUT B IS REFUTED ON HW -- it does NOT cure the stall.** The
+  breakthrough METHOD: run netstall WITH a concurrent ICMP ping monitor (`/tmp/pingmon.py`, logs GAP>4s) --
+  a ping GAP = a real whole-system freeze (kernel IRQs off stops ICMP too), a netconsole death stays
+  pingable. This finally distinguishes them. Result: netstall --idle 30 trial 57 = 33.5s stall COINCIDING
+  with a ping GAP=33.2s system-unreachable (SAME event) -> a real ~33s freeze with L2ACTLR[27]+[26] active
+  (1/60 ~1.7%, no better than stock ~2.8%). So the L2-256-cycle-gate is NOT the (sole) cause; the
+  mechanism is DEEPER (SCU/fabric/BCM2711-UBUS). Earlier B "0/30"/"0-of-120" were the stall being RARE,
+  not a cure. **NEXT (now cleanly A/B-able with the ping monitor): force CORE clocks pre-MMU
+  (CPUACTLR[63] mem-sys RCG / [30] main clk / L2ACTLR[28] tag-bank clk), or bound the BCM2711 SCB/ARM
+  UBUS-timeout reg (default 0x80000, NOT PCIe 0x40a8 -- BACKLOG #2). Reproduce at --idle 30 (~1.7-2.8%);
+  --idle 8 too weak; --idle 45+ corrupts netstall (conn-deaths). **DECISION (Bryan): B is ADOPTED as the
+  new working baseline (kept -- costs only power, MAY partially help; "no better than stock" was an
+  overstatement, samples too small to tell). Improvements build ON B; old-stock (b2596) kept for a final
+  comparison. CANDIDATE B+ (= B + L2ACTLR[28] + CPUACTLR_EL1[63]+[30], force ALL cluster clocks) was
+  TESTED + REFUTED + HARMFUL: build 2606 boot probe confirmed the writes (CPUACTLR=0x8000000040000000,
+  L2ACTLR=0x1c000010) but the ping-monitored soak caught 2 freezes/72 incl a CATASTROPHIC 321.7s one
+  (vs ~33s usual). So forcing the A72 clocks is NOT the lever; B+ DISABLED (AIOS_CORE_CLOCK_FORCE
+  gated-off) + Pi reverted to B. Freeze tally (ping-confirmed): stock 1/36 33.5s, B 1/60 33.2s,
+  B+ 2/72 321.7s. Kernels add disk/kernel8_v261_candidateBplus_coreclk.img (e7de53ef).** Candidate C
+  (`tlbi vae1->vae1is`, kernel machine.h `AIOS_TLBI_BROADCAST`) built+gated but DISABLED (research:
+  L2 gate affects all tlbi -> C unlikely to help; kept as fallback). Full writeup
+  **`docs/NEXT_20260617_a72_cpuectlr_FINDINGS.md`**. Kernels: `disk/kernel8_v261_b2596_good.img`
+  (rollback), `_candidateB_l2clk.img` (b47eb898, on Pi), `_candidateC_vae1is.img`. Side-finding: a
+  pre-existing netconsole invoke-after-free cap bug ("null cap" spam under soak reconnect churn,
+  non-fatal). [[project_stall_hunt]]. version.h = **261**; local-only, Bryan pushes.
+
 * **CURRENT STATE 2026-06-17c -- NEXT = close the RPi4 idle-teardown TLBI stall via A72 CPUECTLR/cluster
   config (the "Linux gap").** Pi runs **v0.4.261 build 2596** at 192.168.0.8 (SHM-ring complete +
   HW-validated; tlbi_probe removed). The remaining open item is the ~8% idle-teardown TLBI/DVM freeze

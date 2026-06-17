@@ -1,3 +1,73 @@
+diff --git a/elfloader-tool/src/arch-arm/64/crt0.S b/elfloader-tool/src/arch-arm/64/crt0.S
+index cddd394..7fe5d24 100644
+--- a/elfloader-tool/src/arch-arm/64/crt0.S
++++ b/elfloader-tool/src/arch-arm/64/crt0.S
+@@ -13,6 +13,19 @@
+ #include <assembler.h>
+ #include <mode/assembler.h>
+ 
++/* AIOS idle-teardown TLBI/DVM stall fix (candidate B). When defined, _start
++ * forces the A72 shared L2 control-logic clock to stay active (L2ACTLR_EL1[27])
++ * BEFORE the MMU is enabled. Comment out to revert. See
++ * docs/NEXT_20260617_a72_cpuectlr_FINDINGS.md / [[project_stall_hunt]]. */
++#define AIOS_L2_CLOCK_FORCE 1
++/* Candidate B+ : also force the per-core clocks (CPUACTLR[63] mem-system RCG +
++ * [30] main clock) + L2 tag-bank clock (L2ACTLR[28]) on core 0.
++ * DISABLED 2026-06-17: B+ is REFUTED + HARMFUL on HW -- it did NOT cure the stall
++ * and made a freeze 10x WORSE (a ping-confirmed 321.7s freeze vs the usual ~33s).
++ * Forcing the A72 clocks is NOT the lever (the stall is a BCM2711 SoC-fabric/UBUS
++ * phenomenon). Kept gated-off for the record. See the FINDINGS doc. */
++/* #define AIOS_CORE_CLOCK_FORCE 1 */
++
+ .extern main
+ 
+ .section ".text.start"
+@@ -20,6 +33,45 @@ BEGIN_FUNC(_start)
+     /* Make sure interrupts are disabled */
+     msr daifset, #DAIFSET_MASK
+ 
++#ifdef AIOS_L2_CLOCK_FORCE
++    /* AIOS idle-teardown TLBI/DVM stall fix (candidate B): force the A72 shared
++     * L2 control-logic clock to stay active, here at _start while the MMU is
++     * still OFF (the TRM requires L2ACTLR be set statically pre-MMU, before any
++     * ACE/CHI/ACP traffic). Defeats the documented A72 "L2 control logic
++     * disabled after 256 idle cycles" gating whose wake-up sticks to the ~32.4s
++     * BCM2711 UBUS timeout on the first teardown `tlbi` after idle.
++     *   L2ACTLR_EL1 (S3_1_C15_C0_0): [27]=force L2 logic clk, [26]=force
++     *   L2/GIC/Timer RCG. L2ACTLR is cluster-wide, so the primary write covers
++     *   the shared L2. MIDR-guarded to Cortex-A72 (part 0xD08) so it is inert on
++     *   other cores / QEMU a53. EL2 access is un-trapped (armstub ACTLR_EL3[6]).
++     * Uses x9-x11 only (x0-x5 hold the firmware boot args -- do NOT clobber). */
++    mrs     x9, midr_el1
++    ubfx    x10, x9, #4, #12            // primary part number
++    movz    x11, #0xD08                 // Cortex-A72
++    cmp     x10, x11
++    b.ne    7f
++    mrs     x9, S3_1_C15_C0_0           // L2ACTLR_EL1
++#ifdef AIOS_CORE_CLOCK_FORCE
++    orr     x9, x9, #0x1C000000         // [28] tag-bank + [27] L2 logic + [26] L2/GIC/Timer RCG
++#else
++    orr     x9, x9, #0x0C000000         // [27] L2 logic clk + [26] L2/GIC/Timer RCG  (candidate B)
++#endif
++    msr     S3_1_C15_C0_0, x9
++#ifdef AIOS_CORE_CLOCK_FORCE
++    /* Candidate B+ : B refuted (a freeze still occurred with the L2 clocks forced),
++     * so ALSO force the per-core clocks on core 0 (where the teardown tlbi runs).
++     * CPUACTLR_EL1[63]=force mem-system RCG active, [30]=force main clock active
++     * (retention precondition satisfied: CPUECTLR[2:0]=0). Pre-MMU, so the
++     * CPUACTLR "write while idle, before MMU" rule holds. Primary core only. */
++    mrs     x9, S3_1_C15_C2_0           // CPUACTLR_EL1
++    orr     x9, x9, #0x8000000000000000 // [63] force processor mem-system RCG active
++    orr     x9, x9, #0x40000000         // [30] force main clock enable active
++    msr     S3_1_C15_C2_0, x9
++#endif
++    isb
++7:
++#endif
++
+     adrp    x19, core_stack_alloc
+     add     x19, x19, #0xff0
+     mov     sp, x19
 diff --git a/elfloader-tool/src/arch-arm/sys_boot.c b/elfloader-tool/src/arch-arm/sys_boot.c
 index a222acd..2245026 100644
 --- a/elfloader-tool/src/arch-arm/sys_boot.c

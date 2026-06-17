@@ -24,6 +24,46 @@ index 12d55f3c9..754e85d83 100644
  
  #ifdef CONFIG_BENCHMARK_TRACK_UTILISATION
      benchmark_utilisation_switch(NODE_STATE(ksCurThread), thread);
+diff --git a/include/arch/arm/arch/64/mode/machine.h b/include/arch/arm/arch/64/mode/machine.h
+index d869e3926..94824a7ad 100644
+--- a/include/arch/arm/arch/64/mode/machine.h
++++ b/include/arch/arm/arch/64/mode/machine.h
+@@ -19,6 +19,14 @@
+ #include <mode/machine_pl2.h>
+ #include <mode/hardware.h>
+ 
++/* AIOS idle-teardown TLBI/DVM stall hunt -- candidate C toggle. When defined,
++ * invalidateLocalTLB_VAASID broadcasts (tlbi vae1is) instead of local-only
++ * (tlbi vae1); see the function below. Comment out to revert to stock vae1.
++ * DISABLED: research favors candidate B (L2ACTLR[27] L2-clock-force) -- the
++ * documented 256-idle-cycle L2-logic gate affects all tlbi, local or broadcast,
++ * so C is unlikely to help. Kept gated for a fallback A/B if B fails. */
++/* #define AIOS_TLBI_BROADCAST 1 */
++
+ #define CNTPCT   "cntpct_el0"
+ #define CNTV_CTL "cntv_ctl_el0"
+ 
+@@ -251,7 +259,20 @@ static inline void invalidateLocalTLB_ASID(asid_t asid)
+ static inline void invalidateLocalTLB_VAASID(word_t mva_plus_asid)
+ {
+     dsb();
++#ifdef AIOS_TLBI_BROADCAST
++    /* AIOS stall-hunt candidate C (idle-teardown TLBI/DVM freeze): use the
++     * inner-shareable BROADCAST tlbi (what Linux SMP does) instead of the
++     * local-only `tlbi vae1`. The Pi4 probe proved DVM/CMO broadcast is
++     * ENABLED (L2ACTLR[8]=0) and SMPEN=1, so routing the teardown TLBI
++     * completion through the constantly-exercised DVM/inner-shareable path
++     * may avoid the cold local-completion path that hangs ~32s (BCM2711 UBUS
++     * timeout) on the FIRST tlbi after idle. The trailing `dsb sy` (>= ish)
++     * waits for the DVM completion. Correctness-safe: vae1is invalidates a
++     * superset of vae1 ([[project_stall_hunt]]). */
++    asm volatile("tlbi vae1is, %0" : : "r"(mva_plus_asid));
++#else
+     asm volatile("tlbi vae1, %0" : : "r"(mva_plus_asid));
++#endif
+     dsb();
+     isb();
+ }
 diff --git a/include/arch/arm/arch/machine/tlb.h b/include/arch/arm/arch/machine/tlb.h
 index 7235672db..0094b94a3 100644
 --- a/include/arch/arm/arch/machine/tlb.h
@@ -183,6 +223,167 @@ index 08f7937ee..8d0d3b6ae 100644
  #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
              invalidateASIDEntry(asid);
  #endif
+diff --git a/src/arch/arm/kernel/boot.c b/src/arch/arm/kernel/boot.c
+index 93eb4d133..c40015b07 100644
+--- a/src/arch/arm/kernel/boot.c
++++ b/src/arch/arm/kernel/boot.c
+@@ -28,6 +28,9 @@
+ #include <drivers/smmu/smmuv2.h>
+ #endif
+ 
++/* AIOS A72 IMP-DEF register probe (diagnostic, src/arch/arm/machine/errata.c) */
++void aios_a72_probe(void);
++
+ #ifdef ENABLE_SMP_SUPPORT
+ /* SMP boot synchronization works based on a global variable with the initial
+  * value 0, as the loader must zero all BSS variables. Secondary cores keep
+@@ -378,6 +381,9 @@ static BOOT_CODE bool_t try_init_kernel(
+     /* debug output via serial port is only available from here */
+     printf("Bootstrapping kernel\n");
+ 
++    /* AIOS: one-shot A72 IMP-DEF register probe (idle-teardown TLBI stall hunt) */
++    aios_a72_probe();
++
+     /* initialise the platform */
+     init_plat();
+ 
+diff --git a/src/arch/arm/machine/errata.c b/src/arch/arm/machine/errata.c
+index f8dac15c3..0adae0ff7 100644
+--- a/src/arch/arm/machine/errata.c
++++ b/src/arch/arm/machine/errata.c
+@@ -8,11 +8,132 @@
+ #include <api/types.h>
+ #include <arch/machine.h>
+ #include <arch/machine/hardware.h>
++#include <machine/io.h>
+ #include <util.h>
+ 
+ /* Prototyped here as this is referenced from assembly */
+ void arm_errata(void);
+ 
++/* ======================================================================
++ * AIOS A72 IMP-DEF register probe (DIAGNOSTIC -- remove after the stall hunt).
++ *
++ * Reads CPUECTLR_EL1 / CPUACTLR_EL1 / L2CTLR_EL1 / L2ACTLR_EL1 on the boot
++ * core and prints them + the bits relevant to the idle-teardown TLBI/DVM
++ * stall (SMPEN, dynamic-retention, the L2ACTLR DVM-broadcast controls, the
++ * CPUACTLR force-clock / treat-DSB-as-SY bits).  The RPi armstub writes
++ * ACTLR_EL3 to UN-trap EL1 access to these IMP-DEF regs, so the reads should
++ * succeed -- but to be robust against an old armstub (or a QEMU model that
++ * does not implement them) every read runs under a temporary EL1 vector
++ * table whose synchronous handler skips a trapping MRS and records it, so a
++ * trap is reported instead of halting the kernel.
++ * ====================================================================== */
++volatile word_t aios_probe_trapped;
++
++asm(
++    "   .pushsection .text, \"ax\"                  \n"
++    "   .balign 0x800                               \n"
++    "   .globl aios_probe_vtable                    \n"
++    "aios_probe_vtable:                             \n"
++    "   .rept 16                                    \n"
++    "   .balign 0x80                                \n"
++    "   b   aios_probe_trap                         \n"
++    "   .endr                                       \n"
++    "aios_probe_trap:                               \n"
++    "   adrp x9, aios_probe_trapped                 \n"
++    "   mov  w10, #1                                \n"
++    "   str  x10, [x9, #:lo12:aios_probe_trapped]   \n"
++    "   mrs  x9, elr_el1                            \n"
++    "   add  x9, x9, #4                             \n"
++    "   msr  elr_el1, x9                            \n"
++    "   eret                                        \n"
++    "   .globl aios_probe_rd_cpuectlr               \n"
++    "aios_probe_rd_cpuectlr:                        \n"
++    "   mrs  x0, S3_1_C15_C2_1                      \n"
++    "   ret                                         \n"
++    "   .globl aios_probe_rd_cpuactlr               \n"
++    "aios_probe_rd_cpuactlr:                        \n"
++    "   mrs  x0, S3_1_C15_C2_0                      \n"
++    "   ret                                         \n"
++    "   .globl aios_probe_rd_l2ctlr                 \n"
++    "aios_probe_rd_l2ctlr:                          \n"
++    "   mrs  x0, S3_1_C11_C0_2                      \n"
++    "   ret                                         \n"
++    "   .globl aios_probe_rd_l2actlr                \n"
++    "aios_probe_rd_l2actlr:                         \n"
++    "   mrs  x0, S3_1_C15_C0_0                      \n"
++    "   ret                                         \n"
++    "   .popsection                                 \n"
++);
++
++extern word_t aios_probe_rd_cpuectlr(void);
++extern word_t aios_probe_rd_cpuactlr(void);
++extern word_t aios_probe_rd_l2ctlr(void);
++extern word_t aios_probe_rd_l2actlr(void);
++extern char aios_probe_vtable[];
++
++static word_t aios_probe_one(word_t (*rd)(void), int *trapped)
++{
++    aios_probe_trapped = 0;
++    asm volatile("isb");
++    word_t v = rd();
++    asm volatile("isb");
++    *trapped = (int)aios_probe_trapped;
++    return v;
++}
++
++void aios_a72_probe(void);
++BOOT_CODE void aios_a72_probe(void)
++{
++    word_t old_vbar;
++    int t_ectlr, t_actlr, t_l2c, t_l2a;
++    word_t midr = getProcessorID();
++
++    /* Only meaningful on the Cortex-A72 (part 0xD08); these IMP-DEF encodings
++     * differ on other cores. Skip elsewhere so the probe is safe everywhere. */
++    if (((midr >> 4) & 0xFFF) != 0xD08) {
++        printf("[A72PROBE] MIDR=%"SEL4_PRIx_word" (not A72, skipping)\n", midr);
++        return;
++    }
++
++    asm volatile("mrs %0, vbar_el1" : "=r"(old_vbar));
++    asm volatile("msr vbar_el1, %0" :: "r"((word_t)aios_probe_vtable));
++    asm volatile("isb");
++
++    word_t ectlr = aios_probe_one(aios_probe_rd_cpuectlr, &t_ectlr);
++    word_t actlr = aios_probe_one(aios_probe_rd_cpuactlr, &t_actlr);
++    word_t l2c   = aios_probe_one(aios_probe_rd_l2ctlr,   &t_l2c);
++    word_t l2a   = aios_probe_one(aios_probe_rd_l2actlr,  &t_l2a);
++
++    asm volatile("msr vbar_el1, %0" :: "r"(old_vbar));
++    asm volatile("isb");
++
++    printf("[A72PROBE] MIDR=%"SEL4_PRIx_word"\n", midr);
++    if (t_ectlr) {
++        printf("[A72PROBE] CPUECTLR_EL1=TRAPPED\n");
++    } else {
++        printf("[A72PROBE] CPUECTLR_EL1=%"SEL4_PRIx_word" SMPEN=%d RET=%d\n",
++               ectlr, (int)((ectlr >> 6) & 1), (int)(ectlr & 7));
++    }
++    if (t_actlr) {
++        printf("[A72PROBE] CPUACTLR_EL1=TRAPPED\n");
++    } else {
++        printf("[A72PROBE] CPUACTLR_EL1=%"SEL4_PRIx_word" FORCECLK30=%d DSBSY53=%d\n",
++               actlr, (int)((actlr >> 30) & 1), (int)((actlr >> 53) & 1));
++    }
++    if (t_l2c) {
++        printf("[A72PROBE] L2CTLR_EL1=TRAPPED\n");
++    } else {
++        printf("[A72PROBE] L2CTLR_EL1=%"SEL4_PRIx_word"\n", l2c);
++    }
++    if (t_l2a) {
++        printf("[A72PROBE] L2ACTLR_EL1=TRAPPED\n");
++    } else {
++        printf("[A72PROBE] L2ACTLR_EL1=%"SEL4_PRIx_word" DVMDIS8=%d DSBNODVM11=%d\n",
++               l2a, (int)((l2a >> 8) & 1), (int)((l2a >> 11) & 1));
++    }
++    printf("[A72PROBE] done\n");
++}
++
+ #ifdef CONFIG_ARM_ERRATA_773022
+ /*
+  * There is an errata for Cortex-A15 up to r0p4 where the loop buffer
 diff --git a/src/plat/bcm2711/overlay-rpi4-4gb.dts b/src/plat/bcm2711/overlay-rpi4-4gb.dts
 index b2376aece..ce67f35e3 100644
 --- a/src/plat/bcm2711/overlay-rpi4-4gb.dts
