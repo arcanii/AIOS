@@ -42,8 +42,15 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   NEXT epics: multi-end SPSC auto-fallback (ring assumes 1 reader+1 writer), the throughput/ceiling-win
   measurement (TCG can't show it), perf (bigger ring / wake batching), then the multikernel re-arch (BACKLOG).
   Seeds: `docs/NEXT_20260616e_shm_ring_pipe_hw.md` (HW plan + the full fix record),
-  `docs/NEXT_20260616d_shm_ring_pipe.md` (original). [[project_shm_ring]]. version.h = **258**.
-  The Pi still runs v0.4.257 build 2523 (UNFLASHED -- SHM-ring needs the HW coherency soak first).
+  `docs/NEXT_20260616d_shm_ring_pipe.md` (original). [[project_shm_ring]].
+  - **v0.4.259 (db5d543): removed the tlbi_probe keepalive** (the v0.4.216 core-0 unmap/map hammer +
+    its `[tlbi] alive` console noise). Not load-bearing -- the 32.4s TLBI/DVM freeze is cured by the
+    no-WFI idle spin + KernelMaxNumNodes=4 + the residency-masked TLB shootdown (32dbc39), not the
+    probe. QEMU smp 7/7 + shmring 26/26, boot console now `[tlbi]`-free. **HW-sensitive -> a HW soak is
+    QUEUED** (spawn_task chip + [[project_stall_hunt]]): flash build-rpi4-netd build 2593, run
+    `scripts/netstall.py` idle-teardown + a spawn-storm, confirm the freeze stays cured; revert db5d543
+    if it recurs. **version.h = 259.** The Pi runs **v0.4.258 build 2573** (the SHM-ring HW-validation
+    flash, WITH tlbi_probe); the v0.4.259 removal is committed but UNFLASHED pending the soak.
 
 * **CURRENT STATE 2026-06-16 (v0.4.257 SMP session) -- USB hotplug epic done; RPi4 remote-TLBI
   STALL FIXED on HW; opt-in multi-core; SHM-ring pipe groundwork.** The Pi runs **v0.4.257 build
