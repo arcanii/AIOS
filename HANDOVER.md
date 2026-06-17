@@ -14,6 +14,22 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   HW-VERIFIED + PUSHED (`9e543c6`, v0.4.252). NOTE: DHCP lease BOUNCES `.8`<->`.250`
   per boot -- ARP-sweep MAC `dc:a6:32:1c:2e:e1` if `.8` is dark.
 
+* **CURRENT STATE 2026-06-17c -- NEXT = close the RPi4 idle-teardown TLBI stall via A72 CPUECTLR/cluster
+  config (the "Linux gap").** Pi runs **v0.4.261 build 2596** at 192.168.0.8 (SHM-ring complete +
+  HW-validated; tlbi_probe removed). The remaining open item is the ~8% idle-teardown TLBI/DVM freeze
+  (33-66s; `netstall.py --idle 8` = ~2/24). **Bryan's key reframing: it is NOT a BCM2711 HW limitation --
+  Linux on the same Pi4 has no such freeze -- so AIOS/seL4 is MISSING A72/cluster config Linux does.**
+  Grep-proven gap: AIOS sets NOTHING in the A72 IMP-DEF regs (`CPUECTLR_EL1`/`L2CTLR_EL1`/`CPUACTLR_EL1`)
+  -- it relies entirely on the armstub. SMPEN is effectively ON (the SHM-ring cross-core test was
+  byte-exact, which needs coherency), so the suspect is the **cluster/L2 retention / DVM config** left at
+  reset: even with the no-WFI idle, the fabric goes "cold" so the FIRST post-idle `tlbi vae1` DVM
+  completion hangs to the UBUS timeout. Plan: probe `CPUECTLR_EL1` on AIOS (may be EL3-trapped), diff vs
+  Linux's A72 setup + the RPi armstub, A/B the delta, re-soak to 0/30. **Full seed:
+  `docs/NEXT_20260617_a72_cpuectlr_stall.md`.** Ruled out already (don't re-do): tlbi_probe, idle-core
+  quiescence (corewarm WORSE), the fastpath hook, dsb-scope, tlbi-count reduction. The residual is
+  ACCEPTED + BACKLOGGED (BACKLOG.md top, `22f6a1b`) -- this session is the focused attempt at it.
+  [[project_stall_hunt]]. version.h = **261**; LOCAL commits ahead of origin (Bryan pushes).
+
 * **CURRENT STATE 2026-06-16b (v0.4.258 SHM-ring session) -- direct SPSC SHM-ring pipes DONE on
   QEMU + adversarially reviewed + COMMITTED (`b113844`, local, ahead of origin; Bryan pushes).**
   A ring-mode pipe is a single-producer/single-consumer lock-free ring the writer AND reader both
