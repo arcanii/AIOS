@@ -7,6 +7,45 @@ they're up next.
 
 ---
 
+## RPi4 idle-teardown TLBI/DVM stall -- ~8% residual; NOT a HW limit, an AIOS/seL4 config gap (queued 2026-06-17)
+
+**Symptom**: ~8% (2/24 on `netstall.py --idle 8`) of idle-then-process-teardown sequences freeze the
+WHOLE system for 33-66s (= N x 10.8s; 32.4s == 0x80000 ticks @ ~16.2kHz = the BCM2711 UBUS-timeout
+class). IRQs are off inside the kernel teardown unmap, so the tick, all threads, net, echo -- everything
+stops. Bites only the idle-then-teardown edge; light/normal use is mostly fine. The masked TLB shootdown
+(32dbc39) already cut it 6/16 -> ~2/24. ACCEPTED for now (2026-06-17) -- backlogged, not closed.
+
+**KEY: this is NOT an inherent BCM2711 fabric limitation -- Linux on the SAME Pi4 does TLBIs, idles
+cores, and tears down processes with ZERO 32.4s freezes.** So AIOS/seL4 (or the firmware/armstub it
+relies on) is MISSING some fabric/coherency/DVM setup that Linux does. The fix is to find that gap by
+COMPARING AIOS-vs-Linux on the BCM2711, not to mine a timeout register blind.
+
+**Narrowed cause (do NOT re-derive -- see [[project_stall_hunt]] "RESIDUAL NARROWED 2026-06-17")**: the
+FIRST `tlbi vae1`+dsb DVM completion AFTER idle hangs to the UBUS timeout ("teardown-after-idle stalls,
+back-to-back clean" -> the first DVM txn warms the cold fabric). RULED OUT: tlbi_probe keepalive
+(redundant, A/B-proven), idle-core DVM quiescence (corewarm A/B made it WORSE not better), the Stage-S
+fastpath residency hook (code-proven inert under core-0 pinning), dsb-scope (nsh == sy), and reducing
+the teardown TLBI count (first-after-idle, not count-dependent -> the seL4 unmap-path change won't help).
+
+**Linux-informed fix directions (the real work)**:
+1. **Compare A72 coherency/SMP config AIOS-vs-Linux.** Suspect: CPUECTLR_EL1.SMPEN (bit 6, the A72's
+   hw-coherency / inner-shareable + DVM participation enable) on cores 1-3, and the cluster power
+   config. If a secondary core isn't fully in the coherency domain, core 0's tlbi DVM completion hangs
+   on it. seL4/elfloader secondary bring-up may not set what Linux/the armstub sets. (CPUECTLR may be
+   EL3-locked -> armstub/config.txt.) Documented in the A72 TRM -- NOT a blind hunt.
+2. **The BCM2711 SCB/ARM-fabric UBUS timeout register** (DIFFERENT from the PCIe RC's UBUS_TIMEOUT
+   @0x40a8 already bounded in pcie_brcmstb.c v0.4.213, which is PCIe-only). Mine Linux's brcmstb fabric
+   driver / U-Boot / the BCM2711 TRM for a reg defaulting to 0x80000 in ARM-local/SCB space. Bound it
+   to ~ms -> the freeze becomes a blip regardless of cause.
+3. **Confirm-first diagnostic** (cheap, decisive): time `tlbi vae1`+dsb in invalidateLocalTLB_VAASID +
+   record the per-cpu GAP before a slow (>1s) tlbi (long gap = first-after-idle; short = mid-burst),
+   expose via /proc. Pins down which sub-mechanism before any fix.
+
+**Size**: deep, multi-session HW reverse-engineering (AIOS-vs-Linux fabric/coherency compare). Probes:
+`scripts/netstall.py` (idle-teardown), the `/proc/corewarm` A/B knob. **Ref**: [[project_stall_hunt]].
+
+---
+
 ## SMP re-architecture: per-core allocators + per-core spawn/IPC servers (multikernel-grade) (queued 2026-06-16)
 
 **The big one for real multi-core scaling of IPC-bound work.** Size: HUGE (multi-session
