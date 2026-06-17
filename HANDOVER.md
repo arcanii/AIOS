@@ -43,14 +43,19 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   measurement (TCG can't show it), perf (bigger ring / wake batching), then the multikernel re-arch (BACKLOG).
   Seeds: `docs/NEXT_20260616e_shm_ring_pipe_hw.md` (HW plan + the full fix record),
   `docs/NEXT_20260616d_shm_ring_pipe.md` (original). [[project_shm_ring]].
-  - **v0.4.259 (db5d543): removed the tlbi_probe keepalive** (the v0.4.216 core-0 unmap/map hammer +
-    its `[tlbi] alive` console noise). Not load-bearing -- the 32.4s TLBI/DVM freeze is cured by the
-    no-WFI idle spin + KernelMaxNumNodes=4 + the residency-masked TLB shootdown (32dbc39), not the
-    probe. QEMU smp 7/7 + shmring 26/26, boot console now `[tlbi]`-free. **HW-sensitive -> a HW soak is
-    QUEUED** (spawn_task chip + [[project_stall_hunt]]): flash build-rpi4-netd build 2593, run
-    `scripts/netstall.py` idle-teardown + a spawn-storm, confirm the freeze stays cured; revert db5d543
-    if it recurs. **version.h = 259.** The Pi runs **v0.4.258 build 2573** (the SHM-ring HW-validation
-    flash, WITH tlbi_probe); the v0.4.259 removal is committed but UNFLASHED pending the soak.
+  - **v0.4.261: removed the tlbi_probe keepalive -- HW A/B SOAK DONE (it is REDUNDANT).** The v0.4.216
+    core-0 unmap/map hammer (+ its `[tlbi] alive` console noise) was belt-and-braces. HW A/B on the real
+    Pi (`scripts/netstall.py --trials 24 --idle 8`): tlbi REMOVED = 3/24 stalled; tlbi RESTORED = 3/24
+    stalled -- IDENTICAL, so it makes NO difference -> removed for good (Pi flashed **v0.4.261 build
+    2596**). Version churn: 259 removed / 260 false-alarm restore / 261 re-removed (db5d543, 6d24258,
+    re-remove). QEMU smp 7/7 + shmring 26/26, boot console `[tlbi]`-free.
+  - **NEW OPEN ISSUE the soak surfaced (separate, pre-existing): a ~3/24 (12.5%) idle-teardown residual
+    stall** -- `sleep 8; echo` still freezes 33.5s (=3x10.8s TLBI quanta) ~12.5% of the time on the
+    CURRENT tree, REGARDLESS of tlbi_probe. The recorded "build 2518 = 0/30+" does NOT reproduce, so the
+    per-ASID masked shootdown (32dbc39) reduced (6/16->3/24) but did NOT fully cure the idle-teardown
+    freeze. Prime suspect for the regression since 2518: the Stage-S fastpath residency hook (06e0edd,
+    a kernel change in the exact TLB-shootdown residency path). **Follow-up queued** (spawn_task +
+    [[project_stall_hunt]]). **version.h = 261.** Pi runs **v0.4.261 build 2596**.
 
 * **CURRENT STATE 2026-06-16 (v0.4.257 SMP session) -- USB hotplug epic done; RPi4 remote-TLBI
   STALL FIXED on HW; opt-in multi-core; SHM-ring pipe groundwork.** The Pi runs **v0.4.257 build
