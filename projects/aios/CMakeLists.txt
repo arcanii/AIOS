@@ -176,7 +176,6 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/servers/exec_server.c
     ${AIOS_ROOT}/src/servers/pipe_server.c
     ${AIOS_ROOT}/src/servers/serverstats.c
-    ${AIOS_ROOT}/src/servers/tlbi_probe.c
     ${AIOS_ROOT}/src/servers/core_warm.c
     ${AIOS_ROOT}/src/servers/flush_server.c
     ${AIOS_ROOT}/src/boot/spawn_util.c

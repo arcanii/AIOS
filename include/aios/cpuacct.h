@@ -24,7 +24,7 @@ void aios_acct_init(void);
 /* DVFS governor load sample (src/cpu_gov.c). Returns the permille (0..1000) of
  * core-0 cycles spent on real work since the previous call: the SUM of the
  * event-driven work servers (pipe / fs / exec / net / ... -- everything but the
- * background spinners/pollers root / tlbi_probe / serverstats / flush), over the
+ * background spinners/pollers root / serverstats / flush), over the
  * PMCCNTR total. Summed positively, NOT total-minus-background: track_utilisation
  * books cycles at switch-out, so the no-WFI idle spinners under-report and a
  * total-minus-background metric reads the idle spin as work (HW-confirmed). The

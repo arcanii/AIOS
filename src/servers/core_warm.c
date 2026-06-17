@@ -50,7 +50,7 @@ static void core_warm_fn(void *a, void *b, void *c) {
 }
 
 /* Spawn the three warmers (boot thread: vka/vspace are single-owner, so all allocation
- * happens HERE -- the warmers only touch pre-allocated memory, like tlbi_probe). */
+ * happens HERE -- the warmers only touch pre-allocated memory, no runtime alloc). */
 void core_warm_start(void) {
     for (int k = 0; k < WARM_CORES; k++) {
         g_warm_buf[k] = (volatile unsigned long *)
