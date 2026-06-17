@@ -24,11 +24,18 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   net_socket 8/8, netd 10/10, all 4 trees build at v0.4.258. A 20-agent review found 8 bugs total
   (2 bring-up + 6 review), ALL FIXED + re-gated; its data-path barrier complaints were REFUTED +
   independently re-adjudicated as correct (`load idx; dmb ishld; load data` = canonical ARM MP
-  acquire; a stale index is conservative-safe both ways). **NEXT = the #1 risk, HW-only: flash
-  `build-rpi4-netd`, `/proc/shmring.1` + `/proc/coresched.1`, confirm data exact across cores
-  (all-NUL class) + the cross-core throughput / ceiling win.** Then multi-end SPSC auto-fallback
-  (known limitation -- ring assumes one reader+writer), then the multikernel re-arch (BACKLOG).
-  Seeds: `docs/NEXT_20260616e_shm_ring_pipe_hw.md` (HW plan + the review/fix record),
+  acquire; a stale index is conservative-safe both ways). **HW: kernel flashed + verified (build 2573,
+  4-core A72); server-mediated ring path HW-verified data-exact.** Then the big find (`629628c`/`8ff9445`):
+  the direct ring NEVER engaged for real pipelines because the fast path was wired only into raw
+  read()/write(), NOT the stdio backend or writev/readv (how filter tools do pipe I/O); the QEMU
+  `map_ok=33` was the netconsole RELAY. **FIXED + COMMITTED `9836f67`: 3-path ring-ification + the
+  direct-reader EOF bug (a 0-length first iov from musl buffered stdio mistaken for EOF). `seq|wc` now
+  uses the direct ring (map_ok=8, push=0 writer-direct, exact, no hang; shmring 26/26, smp 7/7, socket
+  8/8).** **NEXT = the cross-core HW coherency test, now UNBLOCKED** (a real pipeline finally exercises
+  the direct ring): flash `build-rpi4-netd`, `/proc/shmring.1` + `/proc/coresched.1`, confirm byte-exact
+  across cores (all-NUL class) + the throughput/ceiling win. Then perf (bigger ring / wake batching),
+  multi-end SPSC auto-fallback, then the multikernel re-arch (BACKLOG).
+  Seeds: `docs/NEXT_20260616e_shm_ring_pipe_hw.md` (HW plan + the full fix record),
   `docs/NEXT_20260616d_shm_ring_pipe.md` (original). [[project_shm_ring]]. version.h = **258**.
   The Pi still runs v0.4.257 build 2523 (UNFLASHED -- SHM-ring needs the HW coherency soak first).
 
