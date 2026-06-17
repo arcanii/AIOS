@@ -212,6 +212,12 @@ size_t aios_stdio_write(void *data, size_t count) {
     }
     /* Check for pipe redirect (stdout_pipe_id set by __wrap_main) */
     if (stdout_pipe_id >= 0 && pipe_ep) {
+        /* v0.4.258: SHM-ring fast path -- a stdio-buffered filter pipeline (seq|wc)
+         * copies straight into the shared ring instead of round-tripping the core-0
+         * server per chunk. Falls back to the legacy PIPE_WRITE loop when not armed. */
+        long rsent;
+        if (aios_stdout_ring_write((const char *)data, count, &rsent))
+            return (size_t)(rsent < 0 ? 0 : rsent);
         const char *src = (const char *)data;
         size_t sent = 0;
         while (sent < count) {

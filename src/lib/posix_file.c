@@ -163,6 +163,19 @@ static long shm_ring_send(int pipe_id, char *ring, const char *src, size_t count
     return (long)sent;
 }
 
+/* Non-static entry for the stdio backend (aios_stdio_write, aios_posix.c) -- the HOT
+ * path for buffered stdout to a pipe (every filter tool's printf/fputs flushes through
+ * it). Without this the ring is never used by real pipelines (only raw read()/write()
+ * callers like the netconsole relay mapped it). Returns 1 if the ring handled the write
+ * (*out = bytes sent; < count only on reader-close EPIPE), 0 if no ring (caller uses its
+ * legacy PIPE_WRITE loop). */
+int aios_stdout_ring_write(const char *src, size_t count, long *out) {
+    char *wr = stdout_ring_get();
+    if (!wr) return 0;
+    *out = shm_ring_send(stdout_pipe_id, wr, src, count);
+    return 1;
+}
+
 
 /* v0.4.79: generate /proc/self/fd directory entries (getdents64 format) */
 static int procfd_gen_dirents(char *buf, int bufsz) {
@@ -1036,9 +1049,18 @@ long aios_sys_writev(va_list ap) {
             return total;
         }
         if (f->is_pipe && !f->pipe_read && pipe_ep) {
+            /* v0.4.258: SHM-ring fast path for the writev pipe end (writev/readv are
+             * how stdio flushes/fills, so this is on the real filter-pipeline path). */
+            if (!f->ring_tried) { f->ring_vaddr = pipe_map_ring(f->pipe_id, 1); f->ring_tried = 1; }
             long total = 0;
             for (int i = 0; i < iovcnt; i++) {
                 const char *src = (const char *)iov[i].iov_base;
+                if (f->ring_vaddr) {
+                    long s = shm_ring_send(f->pipe_id, f->ring_vaddr, src, iov[i].iov_len);
+                    total += s;
+                    if (s < (long)iov[i].iov_len) break;   /* reader closed -> EPIPE */
+                    continue;
+                }
                 size_t sent = 0;
                 while (sent < iov[i].iov_len) {
                     int chunk = (int)(iov[i].iov_len - sent);
@@ -1091,12 +1113,26 @@ long aios_sys_readv(va_list ap) {
 
     long total = 0;
     for (int i = 0; i < iovcnt; i++) {
+        /* v0.4.258: a 0-length iov contributes 0 bytes and is NOT EOF -- musl's
+         * __stdio_read passes iov[0].iov_len = len - !!buf_size, so a BUFFERED
+         * FILE always presents a 0-length first iov (the real read targets iov[1]).
+         * Skip it: the SHM-ring recv_fast returns 0 for want==0, which the ring
+         * branches below would otherwise mistake for EOF -> premature end-of-stream. */
+        if (iov[i].iov_len == 0) continue;
         if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
             aios_fd_t *f = &aios_fds[fd - AIOS_FD_BASE];
             if (!f->active) return -EBADF;
             /* readv: pipe read via IPC */
             if (f->is_pipe && f->pipe_read && pipe_ep) {
                 char *dst = (char *)iov[i].iov_base;
+                /* v0.4.258: SHM-ring fast path (readv is how stdio fills its buffer). */
+                if (!f->ring_tried) { f->ring_vaddr = pipe_map_ring(f->pipe_id, 0); f->ring_tried = 1; }
+                if (f->ring_vaddr) {
+                    int rwant = (int)iov[i].iov_len; if (rwant > 4096) rwant = 4096;
+                    int rgot = shm_ring_recv_fast(f->ring_vaddr, dst, rwant);
+                    if (rgot > 0) { total += rgot; if (rgot < (int)iov[i].iov_len) break; continue; }
+                    if (rgot == 0) break;   /* EOF */
+                }
                 int want = (int)iov[i].iov_len;
                 if (want > 900) want = 900;
                 seL4_SetMR(0, (seL4_Word)f->pipe_id);
@@ -1123,6 +1159,14 @@ long aios_sys_readv(va_list ap) {
             /* stdin — check pipe redirect */
             if (stdin_pipe_id >= 0 && pipe_ep) {
                 char *dst = (char *)iov[i].iov_base;
+                /* v0.4.258: SHM-ring fast path (the wc end of seq|wc reads via readv). */
+                char *rr = stdin_ring_get();
+                if (rr) {
+                    int rwant = (int)iov[i].iov_len; if (rwant > 4096) rwant = 4096;
+                    int rgot = shm_ring_recv_fast(rr, dst, rwant);
+                    if (rgot > 0) { total += rgot; if (rgot < (int)iov[i].iov_len) break; continue; }
+                    if (rgot == 0) break;   /* EOF */
+                }
                 int want = (int)iov[i].iov_len;
                 if (want > 900) want = 900;
                 seL4_SetMR(0, (seL4_Word)stdin_pipe_id);

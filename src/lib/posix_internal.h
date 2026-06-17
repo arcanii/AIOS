@@ -234,6 +234,10 @@ extern int stdout_pipe_id;
 extern int stdin_pipe_id;
 extern int stdout_redir_idx;
 extern int stderr_redir_idx;
+
+/* v0.4.258: route the stdio stdout-pipe backend through the SHM-ring (posix_file.c).
+ * Returns 1 if the ring handled the write (*out = bytes sent), 0 if no ring. */
+int aios_stdout_ring_write(const char *src, size_t count, long *out);
 extern aios_fd_t stdout_redir_copy;  /* REDIR_COPY_V072 */
 extern aios_fd_t stderr_redir_copy;
 
