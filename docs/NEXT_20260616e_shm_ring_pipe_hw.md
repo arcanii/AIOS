@@ -21,10 +21,12 @@ real filter tools (`seq|wc`) do pipe I/O.** So every stdio pipeline bypassed the
 seen in QEMU was the netconsole RELAY, which uses raw read/write). **FIXED + COMMITTED `9836f67`
 (2026-06-17):** the 3-path ring-ification + the direct-reader premature-EOF bug (a 0-length first iov
 from musl buffered stdio mistaken for EOF). `seq|wc` now uses the direct ring (`map_ok=8`, `push=0`
-writer-direct, data exact, no hang; shmring 26/26 + smp 7/7 + socket 8/8, no regression). **The
-remaining work is now the cross-core COHERENCY validation on HW — which finally has a real pipeline
-exercising the direct ring.** Full write-up: **`## HW BRING-UP 2026-06-16b`** below. The server-mediated
-ring path was already HW-verified data-exact.
+writer-direct, data exact, no hang; shmring 26/26 + smp 7/7 + socket 8/8, no regression). **THEN the #1
+risk — A72 CROSS-CORE COHERENCY — was VALIDATED on real hardware (2026-06-17): with `shmring.1` +
+`coresched.1` the writer + reader ran on different A72 cores and the data was BYTE-EXACT (`map_ok=15`,
+`seq|wc -l`/`wc -c` exact + `sha256sum` == host reference; ~99.7 % flowed direct). THE SHM-RING IS
+COMPLETE — pipelines span cores, kernel out of the data path, byte-exact on silicon.** Full write-ups:
+**`## HW BRING-UP 2026-06-16b`** below.
 
 ## HW BRING-UP 2026-06-16b — kernel HW-VERIFIED; server-ring HW-VERIFIED; DIRECT path OPEN
 
@@ -90,12 +92,24 @@ avail=4, b0='1' b1='\n'` (correct, populated frame). **FIX: skip 0-length iovs a
 The 3-path fix (`aios_stdio_write` + `writev` fd-pipe + `readv` fd-0/fd-pipe) is re-applied alongside it.
 **VERIFIED** over the serial console (no relay → seq|wc IS the ring user): `seq 1 {10,100,1000,100000} |
 wc -l` all EXACT, `map_ok=8` (both ends of all 4 pipelines map), `push=0` (writer fully direct), no hang;
-no regression (shmring 26/26, smp 7/7 ceiling 30, socket 8/8, all 4 trees build). **NEXT (now unblocked):
-the cross-core HW coherency test finally exercises the direct ring** — flash `build-rpi4-netd`,
-`/proc/shmring.1` + `/proc/coresched.1`, run `seq | wc` / `cat | wc -c` with the stages on different A72
-cores, confirm byte-exact + the throughput/ceiling win (`scripts/shmring_netd_isolate.py` is the QEMU
-repro; the HW driver mirrors it over serial). PERF follow-up: a line-buffered writer wakes ~per line into
-the 2 KB ring (pull/wake churn) — a bigger ring or wake-batching cuts it.
+no regression (shmring 26/26, smp 7/7 ceiling 30, socket 8/8, all 4 trees build).
+
+**HW CROSS-CORE COHERENCY — VALIDATED 2026-06-17 (the #1 risk; GOAL COMPLETE).** No re-flash (the fix is
+libaios-only; the Pi's kernel build 2573 already has the ring server code). Pushed the rebuilt `seq`/`wc`/
+`sha256sum` to `/tmp` (robust push: `__put` with a 300 s timeout + 8 KB chunks — `pi_filexfer`'s default
+60 s is too short for a 460 KB binary on the cold eMMC), armed `/proc/shmring.1` + `/proc/coresched.1` so
+the writer + reader round-robin onto A72 cores 1-3 and touch the **shared** ring frame directly, and ran:
+`seq 1 100000 | wc -l` == 100000 (×3) + `wc -c` == 588895 + `seq 1 5000 | sha256sum` == the **host**
+reference (`23f90f8b…`, **byte-exact**). `/proc/shmring`: **`map_ok=15`**, `push=514`, `pull=4895`,
+`wake=0` → **~99.7 % of ~1.77 MB flowed through the DIRECT userspace ring across cores, byte-exact**. So the
+cacheable-inner-shareable mapping + the `dmb ishst/ishld/ish` release/acquire/fence barriers are CORRECT on
+real Cortex-A72 — the all-NUL / stale-index class is ruled out. Driver: `scripts/shmring_hw_xcore.py`
+(robust push + 1-cmd-per-conn test). Read `/proc/shmring` AFTER disarming coresched (the counter persists;
+netconsole wedges under coresched+load). **THE SHM-RING NOW WORKS END-TO-END: pipelines span cores, the
+kernel is out of the data path, byte-exact on hardware.** Next epics: multi-end SPSC auto-fallback (ring
+assumes 1 reader+1 writer), the throughput/ceiling-win measurement (TCG can't show it), then the multikernel
+re-arch (BACKLOG). PERF follow-up (not correctness): a line-buffered writer churns `pull`/`park` into the
+2 KB ring — a bigger ring or wake-batching cuts it.
 
 **netconsole discipline (HW, learned this run):** wedges HARD under `coresched.1` + load (~1 command then dies)
 and on back-to-back medium pushes. Drive recovery ONE command per fresh connection (`shmring_hw_recover.py`);

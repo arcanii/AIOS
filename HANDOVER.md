@@ -31,10 +31,16 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   `map_ok=33` was the netconsole RELAY. **FIXED + COMMITTED `9836f67`: 3-path ring-ification + the
   direct-reader EOF bug (a 0-length first iov from musl buffered stdio mistaken for EOF). `seq|wc` now
   uses the direct ring (map_ok=8, push=0 writer-direct, exact, no hang; shmring 26/26, smp 7/7, socket
-  8/8).** **NEXT = the cross-core HW coherency test, now UNBLOCKED** (a real pipeline finally exercises
-  the direct ring): flash `build-rpi4-netd`, `/proc/shmring.1` + `/proc/coresched.1`, confirm byte-exact
-  across cores (all-NUL class) + the throughput/ceiling win. Then perf (bigger ring / wake batching),
-  multi-end SPSC auto-fallback, then the multikernel re-arch (BACKLOG).
+  8/8).** **Then the #1 risk -- A72 CROSS-CORE COHERENCY -- was VALIDATED on real HW (2026-06-17): no
+  re-flash (libaios-only fix; kernel 2573 current), pushed seq/wc/sha256sum to /tmp, armed shmring.1 +
+  coresched.1 (writer+reader on different A72 cores), ran seq 1 100000|wc -l ==100000 (x3) + wc -c
+  ==588895 + seq 1 5000|sha256sum == HOST ref (BYTE-EXACT); map_ok=15, ~99.7% of ~1.77MB flowed DIRECT
+  across cores. The cacheable-inner-shareable + dmb ishst/ishld/ish barriers are correct on the A72; the
+  all-NUL/stale-index class is RULED OUT. Driver scripts/shmring_hw_xcore.py (robust 300s-timeout chunked
+  push; read /proc/shmring AFTER disarming coresched -- counter persists, netconsole wedges under load).**
+  **THE SHM-RING IS COMPLETE: pipelines span cores, kernel out of the data path, byte-exact on silicon.**
+  NEXT epics: multi-end SPSC auto-fallback (ring assumes 1 reader+1 writer), the throughput/ceiling-win
+  measurement (TCG can't show it), perf (bigger ring / wake batching), then the multikernel re-arch (BACKLOG).
   Seeds: `docs/NEXT_20260616e_shm_ring_pipe_hw.md` (HW plan + the full fix record),
   `docs/NEXT_20260616d_shm_ring_pipe.md` (original). [[project_shm_ring]]. version.h = **258**.
   The Pi still runs v0.4.257 build 2523 (UNFLASHED -- SHM-ring needs the HW coherency soak first).
