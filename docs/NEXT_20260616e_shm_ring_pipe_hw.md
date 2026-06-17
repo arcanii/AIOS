@@ -18,11 +18,13 @@ remaining work is the cross-core COHERENCY validation — and the ROOT CAUSE of 
 "never engaged" is now FOUND + LOCAL (not netd, not A72): **the ring fast path was wired only into
 `read()`/`write()`, NOT into the stdio backend (`aios_stdio_write`) or `writev`/`readv` — which is how
 real filter tools (`seq|wc`) do pipe I/O.** So every stdio pipeline bypassed the ring (the `map_ok=33`
-seen in QEMU was the netconsole RELAY, which uses raw read/write). The fix (ring-ify those 3 paths) is
-designed + prototyped; it engages the ring but EXPOSES a direct-reader premature-EOF bug — see
-**`## HW BRING-UP 2026-06-16b`** below for the full write-up, the fix, and the precise next step. The
-fix is currently REVERTED (main green, `shmring` 26/26). The server-mediated ring path IS HW-verified
-data-exact.
+seen in QEMU was the netconsole RELAY, which uses raw read/write). **FIXED + COMMITTED `9836f67`
+(2026-06-17):** the 3-path ring-ification + the direct-reader premature-EOF bug (a 0-length first iov
+from musl buffered stdio mistaken for EOF). `seq|wc` now uses the direct ring (`map_ok=8`, `push=0`
+writer-direct, data exact, no hang; shmring 26/26 + smp 7/7 + socket 8/8, no regression). **The
+remaining work is now the cross-core COHERENCY validation on HW — which finally has a real pipeline
+exercising the direct ring.** Full write-up: **`## HW BRING-UP 2026-06-16b`** below. The server-mediated
+ring path was already HW-verified data-exact.
 
 ## HW BRING-UP 2026-06-16b — kernel HW-VERIFIED; server-ring HW-VERIFIED; DIRECT path OPEN
 
@@ -78,10 +80,22 @@ temporarily force `recv_fast` to return -1 to confirm the server-fallback then w
 first `recv_fast` seeing a stale `head==tail` in its own mapping (cacheability/TLB on the freshly-mapped frame,
 or `head` already advanced), or an off-by-one in the readv EOF handling. **This is the precise next step.**
 
-**STATUS: the fix is REVERTED — main is green (`shmring_qemu_test` 26/26).** Committing the fix as-is would
-break the armed-ring suite (seq|wc → 0). Default-OFF is byte-identical either way (the ring path only activates
-when `/proc/shmring.1` is armed). Re-apply the 3-path fix above, then crack the direct-reader EOF bug, then the
-cross-core HW coherency test finally has a real pipeline exercising the direct ring.
+**RESOLVED + COMMITTED `9836f67` (2026-06-17).** The "direct-reader premature-EOF bug" was **the 0-length
+first iov**: musl `__stdio_read` passes `iov[0].iov_len = len - !!buf_size`, so a BUFFERED FILE always
+presents a 0-length first iov (the real read targets `iov[1]`). `shm_ring_recv_fast(want=0)` returns 0,
+which the readv ring branch took as EOF → premature end-of-stream. Found exactly as predicted above —
+added a client-side `seL4_DebugPutChar` trace (`CONFIG_PRINTING` is on in build-04) and saw `want=0,
+avail=4, b0='1' b1='\n'` (correct, populated frame). **FIX: skip 0-length iovs at the readv loop top** (a
+0-len iov is 0 bytes, not EOF; the legacy path tolerated it because `got < iov_len` is `0 < 0` = false).
+The 3-path fix (`aios_stdio_write` + `writev` fd-pipe + `readv` fd-0/fd-pipe) is re-applied alongside it.
+**VERIFIED** over the serial console (no relay → seq|wc IS the ring user): `seq 1 {10,100,1000,100000} |
+wc -l` all EXACT, `map_ok=8` (both ends of all 4 pipelines map), `push=0` (writer fully direct), no hang;
+no regression (shmring 26/26, smp 7/7 ceiling 30, socket 8/8, all 4 trees build). **NEXT (now unblocked):
+the cross-core HW coherency test finally exercises the direct ring** — flash `build-rpi4-netd`,
+`/proc/shmring.1` + `/proc/coresched.1`, run `seq | wc` / `cat | wc -c` with the stages on different A72
+cores, confirm byte-exact + the throughput/ceiling win (`scripts/shmring_netd_isolate.py` is the QEMU
+repro; the HW driver mirrors it over serial). PERF follow-up: a line-buffered writer wakes ~per line into
+the 2 KB ring (pull/wake churn) — a bigger ring or wake-batching cuts it.
 
 **netconsole discipline (HW, learned this run):** wedges HARD under `coresched.1` + load (~1 command then dies)
 and on back-to-back medium pushes. Drive recovery ONE command per fresh connection (`shmring_hw_recover.py`);
