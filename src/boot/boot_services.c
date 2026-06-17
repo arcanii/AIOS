@@ -122,11 +122,10 @@ void boot_start_services(vka_object_t *fault_ep) {
     start_server_thread("thread", (sel4utils_thread_entry_fn)thread_server_fn, thread_ep_cap);
     start_server_thread("pipe", (sel4utils_thread_entry_fn)pipe_server_fn, pipe_ep_cap);
 
-    /* v0.4.259: the v0.4.216 tlbi_probe keepalive (steady unmap/map on core 0) was
-     * REMOVED -- the BCM2711 32.4s TLBI/DVM stall is cured by the no-WFI idle spin
-     * (settings-rpi4.cmake) + KernelMaxNumNodes=4 (cores idle-spin -> SCU stays
-     * clocked) + the per-ASID residency-masked TLB shootdown (32dbc39); the probe's
-     * traffic was belt-and-braces, not load-bearing. [[project_stall_hunt]]. */
+    /* v0.4.219: TLBI keepalive (tlbi_probe.c). Steady unmap/map traffic keeps
+     * the TLB/DVM path exercised -- empirically suppresses the BCM2711 stall
+     * family alongside the no-WFI idle; cost is ~25 unmaps/s on core 0. */
+    { extern void tlbi_probe_start(void); tlbi_probe_start(); }
 
     /* v0.4.257 DIAGNOSTIC (core_warm.c): 3 idle-core warmers pinned to cores 1/2/3,
      * INERT until /proc/corewarm.1 -- tests whether keeping the idle cores active cures
