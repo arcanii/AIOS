@@ -33,6 +33,8 @@ def mapok(s):
         if t.startswith("map_ok="): return int(t.split("=")[1])
     return -1
 
+N = int(os.environ.get("AIOS_ISO_N", "100000"))
+
 def main():
     if not os.path.exists(KERNEL):
         print("FAIL: %s missing (ninja -C build-netd)" % KERNEL); return 2
@@ -61,23 +63,20 @@ def main():
         print("logged in.", flush=True)
         print("ver  :", sess.run("cat /proc/version", 15).strip(), flush=True)
         print("arm  :", sess.run("cat /proc/shmring.1", 15).strip(), flush=True)
-        for n in (10, 100, 1000, 100000):
+        sizes = (10, 100, 1000) if N == 0 else (N,)
+        for n in (10, 100, 1000, 100000) if N == 100000 else sizes:
             rr = sess.run("seq 1 %d | wc -l" % n, 45)
             print("pipe : seq 1 %d | wc -l -> %r  (want %d)" % (n, rr.strip(), n), flush=True)
-        r = "100000"
         m = sess.run("cat /proc/shmring", 15).strip()
         print("ctrs :", m, flush=True)
         sess.run("cat /proc/shmring.0", 10)
         mk = mapok(m)
-        print("\n=== ISOLATION VERDICT (build-netd / netd-ON / QEMU) ===")
-        print("data seq|wc -l =", r, "(want 100000):", "OK" if r == "100000" else "MISMATCH")
-        print("map_ok =", mk)
+        print("\n=== SHM-ring direct-path probe (serial; no netconsole relay) ===")
+        print("map_ok =", mk, "  (push/pull>0 + map_ok=0 => server-mediated; the direct ring did NOT engage)")
         if mk > 0:
-            print(">>> DIRECT RING ENGAGES on netd-ON QEMU -> the HW failure is the A72 SILICON, not netd.")
-        elif mk == 0:
-            print(">>> map_ok=0 on netd-ON QEMU -> NETD-ON is the cause (LOCAL REPRO). Debug pipe_map_ring here.")
+            print(">>> seq|wc MAPPED the ring -- direct path engaged (the 3-path stdio/writev/readv fix is in).")
         else:
-            print(">>> could not read map_ok")
+            print(">>> map_ok=0 -- seq|wc bypassed the ring (stdio backend not ring-aware; see seed doc 3-path fix).")
         return 0
     except Exception as e:
         print("EXCEPTION:", repr(e)); return 1
