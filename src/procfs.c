@@ -172,7 +172,7 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
             int nc = hw_info.cpu_count;
             if (nc >= 10) buf[w++] = '0' + nc / 10;
             buf[w++] = '0' + nc % 10;
-            const char *p3 = "-core SMP) " AIOS_BUILD_DATE "\n";
+            const char *p3 = "-core SMP) " AIOS_BUILD_TIME "\n";
             while (*p3 && w < bufsize - 1) buf[w++] = *p3++;
         }
     } else if (path[0] == 'm' && path[1] == 'o' && path[2] == 'u' && path[3] == 's') {

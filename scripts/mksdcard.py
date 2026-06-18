@@ -190,17 +190,24 @@ relocate:
             os.remove(p)
 
 
-# v0.4.235: cap the A72 ARM clock to cut heat. AIOS idle-SPINS all 4 cores (no
-# WFI/WFE -- the v0.4.228 TLBI-stall cure needs the SCU clocked), so the firmware
-# governor never sees idle and would otherwise pin the A72 at its 1500MHz max,
-# running hot doing no useful work. Capping arm_freq forces a lower steady clock
-# (the firmware drops voltage with it) -> much cooler. Trade: slower under real
-# load, acceptable on this idle-dominated system. Tune here; raise toward 1000+ if
-# interactive work feels slow. The load-driven governor is the BACKLOG follow-up.
-# RISK (HW-verify): a slower spin could change the SCU/DVM timing the stall cure
-# relies on -- watch for the 32s stall after capping; the tlbi_probe keepalive
-# should still hold it (it actively drives unmap/map traffic), but confirm.
-ARM_FREQ_CAP_MHZ = 600
+# v0.4.235 / v0.4.262: ARM-clock window for the load-driven DVFS governor
+# (src/cpu_gov.c). AIOS idle-SPINS all 4 cores (no WFI/WFE -- the v0.4.228
+# TLBI-stall cure needs the SCU clocked), so the firmware governor never sees idle.
+# The firmware clamps the governor mailbox SET_CLOCK_RATE to [arm_freq_min,
+# arm_freq], so these two values bound it.
+#   CAP (ceiling) 1000: the interactive max (feature request 2026-06-19). Well
+#     under the 1500MHz stock max, so no over_voltage needed. Dial to 900 if HW
+#     temps run hot under sustained 4-core load (the firmware throttles at 85C, so
+#     this is safe to try; watch /proc/temp).
+#   MIN (floor) 600: never idle-downclock below 600. The 32.4s idle-teardown
+#     TLBI/DVM freeze scales inversely with clock (HW-proven 600->~33s vs
+#     300->~164s), so a 600 floor caps the worst-case disconnected-idle freeze at
+#     ~33s. 600 was the old fixed cap and is thermally proven-stable. (This is the
+#     seed fallback after the BCM2711 UBUS-timeout-register cure was ruled out --
+#     project_stall_ubus_deadend.) Set both to 600 to restore the old behavior, or
+#     drop MIN to 300 to favor idle cooling over freeze severity.
+ARM_FREQ_CAP_MHZ = 1000
+ARM_FREQ_MIN_MHZ = 600
 
 
 def create_config_txt(path, mem_mb, kernel_addr=None):
@@ -230,11 +237,10 @@ def create_config_txt(path, mem_mb, kernel_addr=None):
     config += "gpu_mem=64\n"
     # v0.4.235: ARM-clock cap for thermals (see ARM_FREQ_CAP_MHZ above).
     config += f"arm_freq={ARM_FREQ_CAP_MHZ}\n"
-    # Open the ARM clock FLOOR so the DVFS governor can downclock to 300 at idle
-    # (the firmware clamps SET_CLOCK_RATE to [arm_freq_min, arm_freq]; without a
-    # floor it pins at arm_freq). Previously added by hand via a physical SD mount;
-    # now baked in (and editable flash-free via `fatswap --read/write config.txt`).
-    config += "arm_freq_min=300\n"
+    # Open the ARM clock FLOOR so the DVFS governor can downclock at idle (the
+    # firmware clamps SET_CLOCK_RATE to [arm_freq_min, arm_freq]; without a floor it
+    # pins at arm_freq). Editable flash-free via `fatswap --read/write config.txt`.
+    config += f"arm_freq_min={ARM_FREQ_MIN_MHZ}\n"
     with open(path, "w") as f:
         f.write(config)
 

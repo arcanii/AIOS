@@ -90,16 +90,23 @@ long aios_sys_uname(va_list ap) {
     if (fs_ep_cap) {
         seL4_MessageInfo_t ur = seL4_Call(fs_ep_cap,
             seL4_MessageInfo_new(17 /* FS_UNAME */, 0, 0, 0));
-        /* MR0-1=sysname, MR2-3=nodename, MR4-5=release, MR6-7=version, MR8-9=machine */
+        /* New protocol (>=12 MRs): version is 32 bytes split across MR6-7 +
+         * MR10-11 (the full kernel build timestamp); the other 4 fields are
+         * 16 bytes / 2 MRs each. MR0-1 sysname, MR2-3 nodename, MR4-5 release,
+         * MR8-9 machine. (Server keeps MR0-9 backward compatible.) */
         int nlen = (int)seL4_MessageInfo_get_length(ur);
-        if (nlen >= 10) {
-            /* Unpack all 5 fields (16 bytes each, 2 MRs each) */
-            char *fields[5] = { buf->sysname, buf->nodename, buf->release, buf->version, buf->machine };
-            for (int f = 0; f < 5; f++) {
-                seL4_Word w0 = seL4_GetMR(f * 2);
-                seL4_Word w1 = seL4_GetMR(f * 2 + 1);
-                for (int j = 0; j < 8; j++) fields[f][j] = (char)((w0 >> (j*8)) & 0xFF);
-                for (int j = 0; j < 8; j++) fields[f][8+j] = (char)((w1 >> (j*8)) & 0xFF);
+        if (nlen >= 12) {
+            const int base[4] = { 0, 2, 4, 8 };
+            char *dst[4] = { buf->sysname, buf->nodename, buf->release, buf->machine };
+            for (int f = 0; f < 4; f++)
+                for (int m = 0; m < 2; m++) {
+                    seL4_Word w = seL4_GetMR(base[f] + m);
+                    for (int j = 0; j < 8; j++) dst[f][m*8 + j] = (char)((w >> (j*8)) & 0xFF);
+                }
+            const int vmr[4] = { 6, 7, 10, 11 };
+            for (int m = 0; m < 4; m++) {
+                seL4_Word w = seL4_GetMR(vmr[m]);
+                for (int j = 0; j < 8; j++) buf->version[m*8 + j] = (char)((w >> (j*8)) & 0xFF);
             }
             return 0;
         }

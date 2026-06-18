@@ -4,10 +4,12 @@
  *
  * MECHANISM (HW-verified 2026-06-14, see feedback_rpi4_thermal_clock):
  *   - actuator: hw_arm_clock_set (VC mailbox SET_CLOCK_RATE id 3). Confirmed it
- *     PINS 300/450/600 and the firmware does NOT auto-boost back under load, so
- *     explicit control is required. Needs config.txt `arm_freq_min=300` to open
- *     the floor (arm_freq stays the heat-capped 600 ceiling); without it the set
- *     clamps to 600 and the governor is a harmless no-op.
+ *     PINS the requested MHz and the firmware does NOT auto-boost back under load,
+ *     so explicit control is required. The firmware clamps the request to
+ *     [arm_freq_min, arm_freq] from config.txt, so the governor range below
+ *     (GOV_MIN_MHZ..GOV_MAX_MHZ = 600..1000) only takes full effect with
+ *     arm_freq=1000 + arm_freq_min=600 (mksdcard.py); with the old arm_freq=600
+ *     every set clamps to 600 and the governor is a harmless no-op.
  *   - metric: aios_acct_busy_permille (src/cpuacct.c, seL4 track_utilisation).
  *     The fraction of core-0 cycles spent on the event-driven WORK servers (pipe /
  *     fs / exec / net / ...), summed positively. NOT total-minus-background: that
@@ -33,8 +35,18 @@
 
 #ifdef PLAT_RPI4
 
-#define GOV_MIN_MHZ    300u
-#define GOV_MAX_MHZ    600u
+/* v0.4.262: raised the ceiling 600->1000 (interactive perf) and the floor
+ * 300->600 (idle-teardown-freeze severity mitigation). The 32.4s TLBI/DVM freeze
+ * scales inversely with clock (HW-proven: 600MHz->~33s = one quantum, 300MHz->
+ * ~164s = ~5 quanta -- see project_stall_hunt), so never idle-downclocking below
+ * 600 caps the worst-case disconnected-idle freeze at ~33s instead of ~164s. This
+ * is the seed's "raise the DVFS floor" fallback (the BCM2711 UBUS-timeout-register
+ * cure is a confirmed dead end -- project_stall_ubus_deadend). 600 idle is
+ * thermally proven-stable (it was the old fixed arm_freq cap). The firmware
+ * clamps SET_CLOCK_RATE to [arm_freq_min, arm_freq] in config.txt, so this only
+ * takes full effect with arm_freq=1000 + arm_freq_min=600 (mksdcard.py). */
+#define GOV_MIN_MHZ    600u
+#define GOV_MAX_MHZ    1000u
 #define GOV_BUSY_HI    200     /* permille: > 20% non-background work => boost to MAX */
 #define GOV_BUSY_LO     80     /* permille: < 8% for IDLE_TICKS in a row => settle MIN */
 #define GOV_IDLE_TICKS 3       /* consecutive idle windows before downclock (~3s) */

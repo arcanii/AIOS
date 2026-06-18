@@ -282,6 +282,19 @@ def setup_build_number():
         print("  build_number.h: exists")
 
 
+def setup_build_time():
+    """Create a placeholder build_time.h if it does not exist. bump-build.sh
+    rewrites it with the real host date on every build (PRE_BUILD); this just
+    guarantees the header exists for a fresh-tree first compile."""
+    th = os.path.join(AIOS_ROOT, "include", "aios", "build_time.h")
+    if not os.path.isfile(th):
+        with open(th, "w") as f:
+            f.write('#define AIOS_BUILD_TIME "unknown"\n')
+        print("  Created build_time.h")
+    else:
+        print("  build_time.h: exists")
+
+
 def do_build():
     step("Step 6: Full build")
     venv_bin = os.path.join(AIOS_ROOT, ".venv", "bin")
@@ -306,6 +319,7 @@ def do_build():
              ".."], cwd=build_dir)
 
     setup_build_number()
+    setup_build_time()
 
     # ninja
     run(["ninja"], cwd=build_dir)

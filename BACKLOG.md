@@ -33,10 +33,17 @@ the teardown TLBI count (first-after-idle, not count-dependent -> the seL4 unmap
    config. If a secondary core isn't fully in the coherency domain, core 0's tlbi DVM completion hangs
    on it. seL4/elfloader secondary bring-up may not set what Linux/the armstub sets. (CPUECTLR may be
    EL3-locked -> armstub/config.txt.) Documented in the A72 TRM -- NOT a blind hunt.
-2. **The BCM2711 SCB/ARM-fabric UBUS timeout register** (DIFFERENT from the PCIe RC's UBUS_TIMEOUT
-   @0x40a8 already bounded in pcie_brcmstb.c v0.4.213, which is PCIe-only). Mine Linux's brcmstb fabric
-   driver / U-Boot / the BCM2711 TRM for a reg defaulting to 0x80000 in ARM-local/SCB space. Bound it
-   to ~ms -> the freeze becomes a blip regardless of cause.
+2. ~~**The BCM2711 SCB/ARM-fabric UBUS timeout register.**~~ **DEAD END (2026-06-19, two
+   primary-source research passes -- see [[project_stall_ubus_deadend]] + docs/NEXT_20260619_ubus_register_deadend.md).**
+   No writable non-PCIe fabric-timeout register exists or is wired on BCM2711: the GISB arbiter
+   (ARB_TIMER) is STB-only (no DT node, scb=plain simple-bus); ARM-local 0xFF800000 is only the
+   L1-intc + GIC-400; the ONLY UBUS_TIMEOUT is the PCIe one @0x40a8. AND the math disproves the
+   premise: every documented BCM2711/2712 fabric timeout ticks at 216MHz or 750MHz, where 0x80000 =
+   ms not 32.4s; the ~16.2kHz needed for 32.4s matches no real clock -> 0x80000<->32.4s is a
+   coincidence, not a register. The freeze is a quiesced-fabric DVM-completion hang with NO
+   software-writable bound. Do NOT blind-scan MMIO for it. SHIPPED instead (v0.4.262): clock
+   severity-mitigation -- DVFS floor 300->600 + ceiling 600->1000 (cpu_gov.c, mksdcard.py); the freeze
+   scales inversely with clock (600->~33s vs 300->~164s) so this caps worst-case severity (NOT a cure).
 3. **Confirm-first diagnostic** (cheap, decisive): time `tlbi vae1`+dsb in invalidateLocalTLB_VAASID +
    record the per-cpu GAP before a slow (>1s) tlbi (long gap = first-after-idle; short = mid-burst),
    expose via /proc. Pins down which sub-mechanism before any fix.

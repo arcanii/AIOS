@@ -398,7 +398,7 @@ int main(int argc, char *argv[]) {
         display_motd();
         /* Read /proc/hw for dynamic hardware info */
         display_hw_banner();
-        ser_puts("  Built:   " AIOS_BUILD_DATE "\n");
+        ser_puts("  Built:   " AIOS_BUILD_TIME "\n");
         ser_puts("Welcome, "); ser_puts(username); ser_puts("\n\n");
 
         /* Determine login shell from /etc/passwd */

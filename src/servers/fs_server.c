@@ -264,19 +264,25 @@ void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             break;
         }
         case FS_UNAME: {
-            /* Return system info packed in MRs:
-             * MR0-1: sysname (16 bytes)
-             * MR2-3: nodename (16 bytes)  
-             * MR4-5: release (16 bytes)
-             * MR6-7: version (16 bytes)
-             * MR8-9: machine (16 bytes) */
-            char info[80];
-            for (int i = 0; i < 80; i++) info[i] = 0;
-            
+            /* Return system info packed in MRs (8 bytes each). The layout is
+             * BACKWARD COMPATIBLE: MR0-9 are unchanged (5 x 16-byte fields), so an
+             * old disk-resident uname binary still reads sysname/nodename/release/
+             * machine correctly plus a 16-byte (truncated) version. New clients
+             * additionally read MR10-11 to recover the full 32-byte version (the
+             * kernel build timestamp "Wkd Mon DD HH:MM:SS TZ YYYY").
+             *   MR0-1:   sysname  (16)
+             *   MR2-3:   nodename (16)
+             *   MR4-5:   release  (16)
+             *   MR6-7:   version[0:16]   (first half of the build timestamp)
+             *   MR8-9:   machine  (16)
+             *   MR10-11: version[16:32]  (second half of the build timestamp) */
+            char info[96];
+            for (int i = 0; i < 96; i++) info[i] = 0;
+
             /* sysname */
             const char *s = "AIOS";
             for (int i = 0; s[i] && i < 15; i++) info[i] = s[i];
-            
+
             /* nodename — read from ext2 /etc/hostname */
             char hname[16];
             for (int i = 0; i < 16; i++) hname[i] = 0;
@@ -288,27 +294,32 @@ void fs_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
                 hname[0] = 'a'; hname[1] = 'i'; hname[2] = 'o'; hname[3] = 's';
             }
             for (int i = 0; i < 16; i++) info[16 + i] = hname[i];
-            
+
             /* release */
             s = AIOS_VERSION_STR;
             for (int i = 0; s[i] && i < 15; i++) info[32 + i] = s[i];
-            
-            /* version — seL4 + build info */
-            const char *ver = AIOS_BUILD_DATE;
-            for (int i = 0; ver[i] && i < 15; i++) info[48 + i] = ver[i];
-            
-            /* machine */
+
+            /* machine (kept at MR8-9 = info[64] for old-client compatibility) */
             s = "aarch64";
             for (int i = 0; s[i] && i < 15; i++) info[64 + i] = s[i];
-            
-            /* Pack into MRs (8 bytes per MR) */
-            for (int i = 0; i < 10; i++) {
+
+            /* version — full kernel build timestamp, split MR6-7 + MR10-11
+             * (31 chars + NUL fits 32). */
+            char ver[32];
+            for (int i = 0; i < 32; i++) ver[i] = 0;
+            const char *vt = AIOS_BUILD_TIME;
+            for (int i = 0; vt[i] && i < 31; i++) ver[i] = vt[i];
+            for (int i = 0; i < 16; i++) info[48 + i] = ver[i];        /* MR6-7  */
+            for (int i = 0; i < 16; i++) info[80 + i] = ver[16 + i];   /* MR10-11 */
+
+            /* Pack into 12 MRs (8 bytes per MR) */
+            for (int i = 0; i < 12; i++) {
                 seL4_Word w = 0;
                 for (int j = 0; j < 8; j++)
                     w |= ((seL4_Word)(uint8_t)info[i*8 + j]) << (j * 8);
                 seL4_SetMR(i, w);
             }
-            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 10));
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 12));
             break;
         }
         case FS_RENAME: {
