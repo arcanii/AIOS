@@ -1,6 +1,24 @@
-# NEXT (seed) 2026-06-19 -- finish the broadcast-TLBI A/B + the stall hunt
+# NEXT (seed) 2026-06-19 -- broadcast-TLBI A/B is DONE (REFUTED); the stall hunt continues
 
-## THE IMMEDIATE TASK: run the broadcast-TLBI A/B (it is FLASHED + waiting)
+## RESULT (2026-06-19): broadcast TLBI is REFUTED -- NOT the cure
+Ran the A/B on build 2617 (broadcast `tlbi vae1is`) with the gold detector. The freeze
+STILL happens: **pingmon GAP #1 = 33.3s (ping-confirmed whole-system freeze) + netstall
+trial-0 severe stall (105s NO-PROMPT / conn-death) in the FIRST 2 trials.** A cure needed
+0 freezes; it froze almost immediately. So the ~33s stall is **INDEPENDENT of the TLBI
+scope** (local `vae1` vs broadcast `vae1is`) -- the hypothesis (local path cold-gates, the
+broadcast path stays warm) is wrong. The freeze mechanism is deeper than the TLBI variant.
+
+Reverted: `deps/kernel/.../machine.h` `AIOS_TLBI_BROADCAST` is commented again (back to
+local `vae1`), with a REFUTED note in-place. The Pi still RUNS the broadcast kernel (build
+2617) -- it is HARMLESS (identical stall behaviour to local), so reverting the board is
+cosmetic; flash `disk/kernel8_v264.img` (the committed local baseline) to put it back on a
+committed kernel when convenient. No version bump (the experiment is discarded).
+
+## THE IMMEDIATE TASK is now the remaining candidates below (see "remaining stall candidates").
+
+---
+
+## (historical) THE TASK WAS: run the broadcast-TLBI A/B (now done -- see RESULT above)
 
 The RPi4 ~33s idle-teardown TLBI/DVM freeze (the long-standing residual, ~2.5% of teardown-after-idle)
 has had every other lever ruled out: A72-register config, L2-clock force (B/B+ refuted, B+ harmful),

@@ -15,8 +15,10 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   per boot -- ARP-sweep MAC `dc:a6:32:1c:2e:e1` if `.8` is dark.
 
 * **CURRENT STATE 2026-06-19 -- stability/robustness session; the BROADCAST-TLBI stall experiment is
-  LIVE on HW (A/B pending). Pi runs `v0.4.264 build 2617` = the BROADCAST-TLBI kernel (`tlbi vae1is`) at
-  192.168.0.8 (4-core, 1000MHz, MAC dc:a6:32:1c:2e:e1; /bin/netconsole = the v264 accept-pace binary).**
+  DONE: REFUTED. Pi runs `v0.4.264 build 2617` = the (HARMLESS) BROADCAST-TLBI kernel (`tlbi vae1is`) at
+  192.168.0.8 (4-core, 1000MHz, MAC dc:a6:32:1c:2e:e1; /bin/netconsole = the v264 accept-pace binary).
+  Source is REVERTED to local `vae1`; flash `disk/kernel8_v264.img` to put the board on the committed
+  local baseline when convenient (the broadcast kernel has identical stall behaviour, so it is cosmetic).**
   SHIPPED + HW-verified this session (committed, local on main, Bryan pushes): **v0.4.262**
   (`3acb910`+`caa2df8`) = kernel BUILD TIME in uname/version (bump-build.sh stamps build_time.h from host
   `date`; /proc/version + `uname -v` show "Fri Jun 19 ..."), ARM clock 600->1000 (cpu_gov.c GOV_MAX +
@@ -34,16 +36,19 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   (non-forking __put to `<target>.tmp` + __get byte-verify + atomic rename) -- **USE THIS for /bin
   deploys, not cp** (a forked cp gets stall-killed mid-write -> partial binary -> corrupt service).
   **THE STALL = the session's root pain** (it killed deploys, crash-looped netconsole, killed the USB
-  keyboard). A72-register + fabric-register + L2-clock theories are ALL DEAD; the strongest remaining
-  clue is that LINUX on this same Pi4 never hangs and Linux SMP uses BROADCAST `tlbi vae1is` while AIOS
-  used LOCAL `tlbi vae1`. So **candidate C (broadcast TLBI) is ENABLED + FLASHED** (build 2617;
-  `deps/kernel .../mode/machine.h` `#define AIOS_TLBI_BROADCAST 1`; objdump-verified 3x vae1is / 0 local;
-  kernel change is in the sibling seL4 tree, UNCOMMITTED). **NEXT = the A/B (PENDING):** `python3
-  /tmp/pingmon.py` + `python3 scripts/netstall.py --host 192.168.0.8 --idle 30 --trials 60` -- a ping GAP
-  coinciding with a netstall stall = a real freeze; compare to the local-TLBI baseline (~2.5%/33s). If
-  broadcast CURES it -> commit the kernel change + `build_environment.sh --capture-patches` (or hand-edit
-  deps/patches/seL4-kernel.patch) + bump version; if NOT -> revert AIOS_TLBI_BROADCAST (comment the
-  #define). **INCIDENT LESSON (cost ~1h):** writing directly to a live service binary (`/bin/netconsole`)
+  keyboard). **Candidate C (broadcast `tlbi vae1is`) was the last A72/TLBI-ISA lever -- A/B DONE 2026-06-19:
+  REFUTED.** Ping-monitored soak (pingmon + netstall --idle 30) froze in the FIRST 2 trials: pingmon
+  GAP #1 = 33.3s (real whole-system freeze) + netstall trial-0 105s severe stall. A cure needed 0 freezes,
+  so the ~33s stall is INDEPENDENT of the TLBI scope (local vs broadcast). Source reverted (machine.h
+  `AIOS_TLBI_BROADCAST` re-commented + a REFUTED note; the committed deps/patches/seL4-kernel.patch already
+  carries it commented, so it = the local baseline). **EVERY A72/TLBI-ISA lever is now ruled out:**
+  register-config gap, L2-logic clock (B), full-cluster clock (B+, harmful), broadcast-vs-local (C). The
+  freeze is the BCM2711 SoC FABRIC/UBUS DVM-completion quiescence, below the A72 ISA. **NEXT stall
+  candidates (deeper, multi-session RE): (1) verify CPUECTLR.SMPEN on cores 1-3** (the boot probe only read
+  core 0 -- if a secondary is not fully in the inner-shareable/DVM domain, core 0's tlbi completion hangs
+  on it; extend errata.c aios_a72_probe to the secondaries); **(2) deep AIOS-vs-Linux teardown/coherency
+  diff** (Linux on this exact Pi4 never freezes -- the principled fix). Mitigations already shipped + kept:
+  nodes=4, masked TLB shootdown, clock floor 600 (these contain it for normal use, ~2.5% residual). **INCIDENT LESSON (cost ~1h):** writing directly to a live service binary (`/bin/netconsole`)
   via `cp` OR raw `__put` gets stall-killed mid-write -> 4095-byte partial -> getty crash-loops it ->
   ~33s-stall storm + USB-keyboard death + fork-pool exhaustion. Recovery: SERIAL `cp /tmp/netconsole_new
   /bin/netconsole` (serial rides stalls -- no netconsole 30s SIGKILL; **/tmp PERSISTS, it is ext2 not
