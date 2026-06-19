@@ -14,6 +14,37 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   HW-VERIFIED + PUSHED (`9e543c6`, v0.4.252). NOTE: DHCP lease BOUNCES `.8`<->`.250`
   per boot -- ARP-sweep MAC `dc:a6:32:1c:2e:e1` if `.8` is dark.
 
+* **CURRENT STATE 2026-06-19 (candidate 2 -- MECHANISM SOLVED + the "Linux approach" keep-warm SHIPPED;
+  the resolution A/B is the open item).** Pi runs **v0.4.266 build 2632** at 192.168.0.8 (fabwarm on core 1,
+  DEFAULT-INERT). **The ~33s freeze mechanism is solved** (3-agent research + A72 r0p3 TRM): the teardown
+  `tlbi ; dsb` emits a DVM Sync the `dsb` cannot retire until the BCM2711 **SCB / 128-bit AMBA fabric**
+  returns DVM-Complete; after idle the SoC idles the AXI snoop interface (ACINACTM) / clock-starves that
+  fabric, so the FIRST post-idle DVM Sync hangs to the ~33s SoC timeout. Linux never freezes because its
+  constant timer/DMA bus traffic keeps the fabric warm; AIOS's no-WFI `yield` idle spins the CPU but makes
+  NO bus transactions. This EXPLAINS every prior refutation (broadcast scope, L2ACTLR[27] -- the stall is
+  the external-fabric DVM-Complete, not the A72 ISA) and CORRECTS two myths (the 0x80000=32.4s math -- it is
+  8.0s @ 65536Hz; and "no BCM2711 fabric-clock register exists"). Full writeup
+  **docs/NEXT_20260619_candidate2_fabric_dvm.md**; config levers (core_freq 250->500, AXI_QUIET_TIME) parked
+  in BACKLOG.md. **THE FIX (Bryan's call -- the principled traffic approach, not a config knob):
+  `src/servers/fabric_warm.c` + `/proc/fabwarm`** -- a DEFAULT-INERT thread that when armed busy-loops light
+  UNCACHED GPLEV0 reads (~1kHz, paced via cntpct) to keep the cluster SCB AXI/snoop link warm so core 0's
+  post-idle teardown DVM-Sync completes (distinct from the refuted cacheable `corewarm`: Device-memory reads
+  = bus warmth with NO DVM contention). **HARD-WON LESSON (cost ~3 flash/test cycles): the keep-warm thread
+  MUST run on CORE 1, not core 0.** A busy-loop on core 0 monopolizes the shell/netconsole core and hangs a
+  BLOCKED shell (the board went unresponsive twice when armed -- both RECOVERED via `/proc/fabwarm.0`; no
+  power cycle). Core 1 is idle-only (all AIOS threads pin to core 0) so monopolizing it starves nothing --
+  the proven `core_warm` pattern. **HW-verified armed-responsive (build 2632): arm -> `sleep` + `echo`
+  return, iters runs at ~1kHz (reads are FAST, not stalling on the cold fabric), disarms clean; mild
+  netconsole slowdown when armed (minor fabric contention), fully inert when disarmed.** Full QEMU gate
+  green (SMP 7/7, shmring 26/26, socket 8/8, netd 10/10). **Committed `a06ac18` (v0.4.266; local on main,
+  Bryan pushes).** **OPEN ITEM = the resolution A/B (RUNNING / re-run if needed): does keeping the fabric
+  warm actually prevent the freeze? Metric = `/proc/freezes` (NOT netstall raw timing -- the mild
+  armed-slowdown perturbs it) with fabwarm DISARMED vs ARMED over a `netstall --idle 30` soak. If armed
+  freezes << disarmed (ideally 0) -> THE CURE (then make fabwarm default-ON in a follow-up). If no
+  difference -> core-1 warmth does not reach core 0's link; try core-0 keep-warm via a BLOCKING timer
+  heartbeat (NOT a busy-loop -- that wedges core 0), or the backlogged core_freq=500 fabric-clock A/B.**
+  [[project_stall_hunt]].
+
 * **CURRENT STATE 2026-06-19 (candidate 1, SMPEN-on-secondaries) -- the LAST A72 per-core domain lever is
   RULED OUT: all four cores boot SMPEN=1. The stall hunt's A72/ISA avenue is now completely exhausted.**
   Extended the A72 boot probe to the secondary cores (the old `aios_a72_probe` only read core 0). New
