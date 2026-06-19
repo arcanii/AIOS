@@ -14,6 +14,44 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   HW-VERIFIED + PUSHED (`9e543c6`, v0.4.252). NOTE: DHCP lease BOUNCES `.8`<->`.250`
   per boot -- ARP-sweep MAC `dc:a6:32:1c:2e:e1` if `.8` is dark.
 
+* **CURRENT STATE 2026-06-19 -- stability/robustness session; the BROADCAST-TLBI stall experiment is
+  LIVE on HW (A/B pending). Pi runs `v0.4.264 build 2617` = the BROADCAST-TLBI kernel (`tlbi vae1is`) at
+  192.168.0.8 (4-core, 1000MHz, MAC dc:a6:32:1c:2e:e1; /bin/netconsole = the v264 accept-pace binary).**
+  SHIPPED + HW-verified this session (committed, local on main, Bryan pushes): **v0.4.262**
+  (`3acb910`+`caa2df8`) = kernel BUILD TIME in uname/version (bump-build.sh stamps build_time.h from host
+  `date`; /proc/version + `uname -v` show "Fri Jun 19 ..."), ARM clock 600->1000 (cpu_gov.c GOV_MAX +
+  mksdcard arm_freq=1000) + floor 300->600 (GOV_MIN + arm_freq_min=600; caps the idle-teardown freeze at
+  ONE ~33s quantum), and **the BCM2711 SCB/UBUS fabric-timeout-register cure is a CONFIRMED DEAD END**
+  (two primary-source passes: no such reg exists/wired; 0x80000@16.2kHz matches no real clock =
+  coincidence -- [[project_stall_ubus_deadend]]). **v0.4.263** (`840ad4d`) = graceful spawn ceiling
+  (vka_audit_check_headroom pre-check in fork.c do_fork + pipe_server PIPE_EXEC, before the destructive
+  teardown; free the minted new_fault_ep + reply on PIPE_EXEC configure/elf_load failure; rate-limited
+  reject log -- no more sel4utils lib cascade under spawn storms; smp gate ceiling still 30). **v0.4.264**
+  (`b391eca`) = netconsole 200ms accept-pace (anti-wedge; HW-validated 5/5 + 10/10 rapid reconnects, no
+  box wedge). **TOOLS** (`2b7a362`, `819ba10`): `scripts/aios_nc.py` = robust HELD-connection netconsole
+  driver -- **USE THIS to drive the Pi, not reconnect-per-command** (it rides the ~33s stall via a 50s
+  timeout + avoids the back-to-back-conn wedge); `scripts/pi_deploy.py` = ATOMIC disk-binary deploy
+  (non-forking __put to `<target>.tmp` + __get byte-verify + atomic rename) -- **USE THIS for /bin
+  deploys, not cp** (a forked cp gets stall-killed mid-write -> partial binary -> corrupt service).
+  **THE STALL = the session's root pain** (it killed deploys, crash-looped netconsole, killed the USB
+  keyboard). A72-register + fabric-register + L2-clock theories are ALL DEAD; the strongest remaining
+  clue is that LINUX on this same Pi4 never hangs and Linux SMP uses BROADCAST `tlbi vae1is` while AIOS
+  used LOCAL `tlbi vae1`. So **candidate C (broadcast TLBI) is ENABLED + FLASHED** (build 2617;
+  `deps/kernel .../mode/machine.h` `#define AIOS_TLBI_BROADCAST 1`; objdump-verified 3x vae1is / 0 local;
+  kernel change is in the sibling seL4 tree, UNCOMMITTED). **NEXT = the A/B (PENDING):** `python3
+  /tmp/pingmon.py` + `python3 scripts/netstall.py --host 192.168.0.8 --idle 30 --trials 60` -- a ping GAP
+  coinciding with a netstall stall = a real freeze; compare to the local-TLBI baseline (~2.5%/33s). If
+  broadcast CURES it -> commit the kernel change + `build_environment.sh --capture-patches` (or hand-edit
+  deps/patches/seL4-kernel.patch) + bump version; if NOT -> revert AIOS_TLBI_BROADCAST (comment the
+  #define). **INCIDENT LESSON (cost ~1h):** writing directly to a live service binary (`/bin/netconsole`)
+  via `cp` OR raw `__put` gets stall-killed mid-write -> 4095-byte partial -> getty crash-loops it ->
+  ~33s-stall storm + USB-keyboard death + fork-pool exhaustion. Recovery: SERIAL `cp /tmp/netconsole_new
+  /bin/netconsole` (serial rides stalls -- no netconsole 30s SIGKILL; **/tmp PERSISTS, it is ext2 not
+  ramfs**, so pushed binaries survive a reboot). `pi_deploy.py` exists precisely to prevent this. Memory
+  consolidated 28KB->11KB. Rollback kernels in disk/: `kernel8_v264.img` (local-TLBI baseline),
+  `kernel8_v264_bcast.img` (broadcast, ON PI), `kernel8_v261_candidateB_l2clk.img`. version.h = **264**.
+  Full seed: `docs/NEXT_20260619_broadcast_tlbi_stall.md`. [[project_stall_hunt]] [[project_netconsole]].**
+
 * **CURRENT STATE 2026-06-17d -- A72 stall hunt: the WHOLE A72-register avenue is EXHAUSTED -- THREE
   hypotheses disproven on real HW (register-config gap, L2-logic clock, full-cluster clock -- the last
   even HARMFUL). The stall is a BCM2711 SoC-fabric/UBUS phenomenon, NOT controllable via any A72 reg. The
