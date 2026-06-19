@@ -128,7 +128,17 @@ void fabric_warm_start(void)
 #endif
     sel4utils_start_thread(&th, fabric_warm_fn, NULL, NULL, 1);
     aios_acct_register("fabwarm", th.tcb.cptr);
-    printf("[fabwarm] SCB-fabric keep-warm on core 1 (idle; /proc/fabwarm.1 to arm)\n");
+
+    /* v0.4.267: DEFAULT-ON. The "Linux approach" is now the active fix for the
+     * idle-teardown DVM freeze -- arm the keep-warm at boot so the SCB fabric
+     * stays warm without manual intervention. `/proc/fabwarm.0` disables it
+     * (reverts to the mitigations-only baseline -- nodes=4 + masked shootdown +
+     * clock floor); `/proc/fabwarm.1` re-arms. Validated empirically via
+     * /proc/freezes (the freeze is too rare for a quick A/B). */
+    g_fabwarm_armed = 1;
+    arch_dsb();                          /* publish the flag before the wake */
+    seL4_Signal(g_fabwarm_ntfn);
+    printf("[fabwarm] SCB-fabric keep-warm ARMED on core 1 (default-on; /proc/fabwarm.0 to disable)\n");
 }
 
 /* /proc/fabwarm[.0|.1] -- the live A/B knob. .1 = arm (core 1 keeps the fabric
