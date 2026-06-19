@@ -59,6 +59,15 @@
 #define NETCON_BUF      1024              /* I/O buffer                    */
 #define NETCON_IO       900               /* AIOS socket/pipe I/O cap      */
 #define NETCON_POLL_NS  (10 * 1000 * 1000)        /* 10ms nap on EAGAIN    */
+/* v0.4.264: settle between consecutive client connections. Rapid back-to-back
+ * connects (each forks a dash -c) can hit an SMP/allocator race on the core-0
+ * servers and wedge the whole box (2026-06-11 HW: ~5 instant connects = net +
+ * HDMI + keyboard all dead). This paces the accept loop so per-connection
+ * fork+teardown bursts are serialized. 200ms is FAR below the ~8s idle threshold
+ * of the idle-teardown TLBI stall, so it cannot trigger that freeze; and it only
+ * costs reconnect-per-command clients ~200ms/cmd -- a HELD-connection client
+ * (scripts/aios_nc.py) pays it once at disconnect, i.e. never in practice. */
+#define NETCON_ACCEPT_PACE_NS (200 * 1000 * 1000) /* 200ms between connections */
 
 /* Per-operation deadlines, in 10ms ticks (reset on any progress). NOTE: AIOS
  * nanosleep granularity is ~10ms, so a sub-10ms nap rounds up and buys nothing;
@@ -383,6 +392,12 @@ int main(int argc, char **argv)
         int cfd = accept(lfd, (void *)0, (void *)0);
         if (cfd < 0) { printf("[netcon] accept() failed\n"); continue; }
         serve_client(cfd);
+        /* v0.4.264: pace consecutive connections (see NETCON_ACCEPT_PACE_NS) so a
+         * rapid-reconnect storm cannot wedge the box. The serve above already
+         * reaped its dash (waitpid); this lets the net_server socket free + the
+         * VKA watermark refill settle before the next accept. */
+        struct timespec pace = { 0, NETCON_ACCEPT_PACE_NS };
+        nanosleep(&pace, (void *)0);
     }
 
     close(lfd);
