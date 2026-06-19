@@ -36,15 +36,18 @@
 #ifdef PLAT_RPI4
 
 /* v0.4.262: raised the ceiling 600->1000 (interactive perf) and the floor
- * 300->600 (idle-teardown-freeze severity mitigation). The 32.4s TLBI/DVM freeze
- * scales inversely with clock (HW-proven: 600MHz->~33s = one quantum, 300MHz->
- * ~164s = ~5 quanta -- see project_stall_hunt), so never idle-downclocking below
- * 600 caps the worst-case disconnected-idle freeze at ~33s instead of ~164s. This
- * is the seed's "raise the DVFS floor" fallback (the BCM2711 UBUS-timeout-register
- * cure is a confirmed dead end -- project_stall_ubus_deadend). 600 idle is
- * thermally proven-stable (it was the old fixed arm_freq cap). The firmware
- * clamps SET_CLOCK_RATE to [arm_freq_min, arm_freq] in config.txt, so this only
- * takes full effect with arm_freq=1000 + arm_freq_min=600 (mksdcard.py). */
+ * 300->600 (idle-teardown-freeze severity mitigation). The ~32.4s TLBI/DVM freeze
+ * is a FIXED fabric (UBUS-class) timeout, so its duration is CLOCK-INDEPENDENT --
+ * one ~33s quantum at 600 AND at 1000 (HW-confirmed 2026-06-19: 1/40 idle30 soak
+ * at 1000MHz stalled 33.0s, ping-confirmed; not worsened by the higher clock).
+ * What scales is the QUANTUM COUNT below 600: at 300MHz a freeze runs ~164s
+ * (multi-quantum). So the FLOOR is the lever -- never idle-downclocking below 600
+ * caps the worst case at ~33s (1 quantum) vs ~164s; the CEILING raise is perf-only
+ * and does NOT shorten or regress the freeze. The BCM2711 UBUS-timeout-register
+ * cure is a confirmed dead end (project_stall_ubus_deadend). 600 idle is thermally
+ * proven-stable (the old fixed arm_freq cap). The firmware clamps SET_CLOCK_RATE
+ * to [arm_freq_min, arm_freq] in config.txt, so this only takes full effect with
+ * arm_freq=1000 + arm_freq_min=600 (mksdcard.py). */
 #define GOV_MIN_MHZ    600u
 #define GOV_MAX_MHZ    1000u
 #define GOV_BUSY_HI    200     /* permille: > 20% non-background work => boost to MAX */

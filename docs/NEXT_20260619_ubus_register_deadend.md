@@ -66,25 +66,40 @@ re-architecture (BACKLOG).
   HW temps run hot under sustained 4-core load -- one constant. To favor idle cooling over freeze
   severity, drop ARM_FREQ_MIN_MHZ + GOV_MIN_MHZ back to 300.
 
-## 3. PENDING HW VERIFICATION (Pi was OFFLINE this session -- MAC dc:a6:32:1c:2e:e1 absent from ARP)
+## 3. HW VERIFICATION -- DONE 2026-06-19 (Pi came back online at 192.168.0.8 mid-session)
 
-When the Pi is back on the network (re-check 192.168.0.8 / .250 / .197 and ARP):
-1. **QEMU gate FIRST** (mandatory pre-flash): smp 7/7, shmring 26/26, socket 8/8, netd 10/10.
-2. **Build + flash the kernel** (safe -- with the old arm_freq=600 still on the card, GOV_MAX=1000
-   clamps to 600, a harmless no-op until config.txt changes):
-   `ninja -C build-rpi4-netd` -> `mkkernel8 --kernel build-rpi4-netd/images/aios_root-image-arm-bcm2711`
-   -> `pi_flash.py --host <ip>`. Verify the banner build number + `cat /proc/version` shows the build
-   timestamp.
-3. **Raise the clock ceiling** (flash-free): `fatswap` config.txt `arm_freq=600 -> 1000` (and
-   `arm_freq_min=300 -> 600` if the card still has the old floor), reboot. OR reflash the SD with the
-   updated mksdcard.py (bakes 1000/600). Then `cat /proc/cpufreq` under load should show up to 1000;
-   watch `/proc/temp` (should stay < ~75C; firmware throttles at 85C).
-4. **Soak** with the gold detector: `python3 /tmp/pingmon.py` + `python3 scripts/netstall.py --host <ip>
-   --idle 30 --trials 60`. A ping GAP coinciding with a netstall stall = a real freeze. Expectation: the
-   freeze is NOT cured (no register cure exists) but worst-case severity drops (idle-teardown freezes
-   capped ~33s, never ~164s). Recreate /tmp/pingmon.py from the seed if gone.
-5. Keep a known-good kernel8 + the balenaEtcher SD recovery ready (a bad config.txt is fatswap-revertible;
-   a bad flash needs the recovery image).
+All deployed + verified on the real Pi over the network (flash-free):
+1. **QEMU gate (pre-flash): GREEN** -- smp 7/7, shmring 26/26, socket 8/8, netd 10/10.
+2. **Kernel flashed**: `mkkernel8 --kernel build-rpi4-netd/images/aios_root-image-arm-bcm2711 --output
+   disk/kernel8_v262.img` -> `pi_flash.py --host 192.168.0.8 --kernel disk/kernel8_v262.img`. Banner
+   verified: **AIOS v0.4.262 (build 2610)**. (My kernel == the running candidate B -- zero kernel changes
+   this session -- so the flash was low-risk.) Rollback preserved: disk/kernel8_v261_candidateB_l2clk.img.
+3. **Build time LIVE on HW**: `/proc/version` =
+   `AIOS v0.4.262 (build 2610) (seL4 15.0.0, arm,cortex-a72, 4-core SMP) Fri Jun 19 08:39:26 JST 2026`.
+4. **Clock raised to 1000MHz**: config.txt edited flash-free -- generated the canonical config via
+   mksdcard.create_config_txt (arm_freq=1000, arm_freq_min=600), pushed + `fatswap` (sha-verified
+   src==disk), reboot. HW-confirmed `arm_cur_mhz=1000 arm_max_mhz=1000` (was 600). Temp 59.9C at boot,
+   63.7C after the soak -- well under the 85C throttle (21C headroom). NO throttling
+   confirmed: arm_cur stayed 1000 even at governor busy=945. (A 4-wide compute burst
+   hit the existing process-capacity "Cannot fork" ceiling -- NOT thermal; a sustained
+   heavy build would run hotter but the firmware auto-throttles at 85C.)
+5. **Soak (pingmon + netstall --idle 30 --trials 40 at 1000MHz)**: 1/40 STALLED (2.5%), trial 8 =
+   33.0s residual, 0 conn-deaths, 39 clean. pingmon GAP #1 = 33.1s COINCIDED with trial 8 = a confirmed
+   real whole-system freeze. **KEY: the freeze is ~33s = ONE quantum, NOT worsened at 1000MHz** -- the
+   ~32.4s fabric timeout is CLOCK-INDEPENDENT (a fixed UBUS-class timeout, not ARM-clock-scaled). So:
+   - The CEILING raise (600->1000) is purely the perf feature; it does NOT shorten the freeze and does
+     NOT regress it (still ~2.5% / 1 quantum, same as 600MHz baseline).
+   - The FLOOR raise (300->600) is the real freeze-severity mitigation: it caps the worst case at ~33s
+     (1 quantum) by never idle-downclocking to 300, where the prior session measured ~164s (multi-quantum).
+   - The freeze RATE is unchanged (the cure is dead -- section 1). Light/normal use stays mostly fine.
+6. **uname full timestamp on HW**: rebuilt sbase (`build_sbase.py`) for the new client + pushed the new
+   `uname` to `/bin` (the disk binary; `/proc/version` and the getty banner are root-task and shipped via
+   the kernel8 flash). NOTE: this /bin overwrite is a manual network deploy -- it reverts on a full disk
+   image reflash unless mkdisk is rebuilt; the canonical path is a disk reflash.
+
+Discipline notes: netconsole WEDGES on back-to-back connections / chokes on large pushes (the 460KB uname
+push broke once, succeeded on retry with settle) -- drive it gently, 1-cmd-per-conn, settle ~15-20s. Keep
+disk/kernel8_v261_candidateB_l2clk.img + the balenaEtcher SD recovery ready.
 
 ## 4. Notes
 - `hw/rpi4/config.txt` is VESTIGIAL (the old v0.4.98 static file; referenced only in comments).
