@@ -14,6 +14,20 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   HW-VERIFIED + PUSHED (`9e543c6`, v0.4.252). NOTE: DHCP lease BOUNCES `.8`<->`.250`
   per boot -- ARP-sweep MAC `dc:a6:32:1c:2e:e1` if `.8` is dark.
 
+* **CURRENT STATE 2026-06-19 (candidate 2 DEPLOYED -- the keep-warm is now DEFAULT-ON; the board USES the
+  Linux fix).** Pi runs **v0.4.267 build 2635** at 192.168.0.8 (fabwarm armed at boot on core 1; committed
+  `b3f7615`). Bryan: "we are still getting freezes so we should move to implement the linux solution" (the
+  disarmed baseline froze 4x during boot alone). Made fabwarm DEFAULT-ON (`fabric_warm_start` arms +
+  Signals the thread at boot; `/proc/fabwarm.0` disables -> mitigations-only baseline). **INITIAL SIGNAL
+  POSITIVE: boot freezes 4 (disarmed build 2632) -> 1 (default-on build 2635)** -- the survivor is an
+  early-boot teardown before fabwarm spawns mid-boot. HW: boots ARMED (armed=1, iters ~1kHz) + responsive
+  (mild netconsole slowdown when armed). **VALIDATION IS EMPIRICAL/ONGOING (freeze too rare for a quick
+  A/B): watch /proc/freezes over normal use vs ~2.5%/teardown; if it does NOT drop -> revert
+  /proc/fabwarm.0 and try (a) spawning fabwarm earlier in boot, (b) a core-0 BLOCKING timer heartbeat,
+  (c) the backlogged core_freq 250->500.** QEMU correctness gate green; SMP/shmring shed 1 timing-only
+  check each under default-on = QEMU host-load artifact (always-busy core-1 vCPU), not a real-board
+  regression. Mechanism + the default-INERT precursor (a06ac18) detailed below. [[project_stall_hunt]].
+
 * **CURRENT STATE 2026-06-19 (candidate 2 -- MECHANISM SOLVED + the "Linux approach" keep-warm SHIPPED;
   the resolution A/B is the open item).** Pi runs **v0.4.266 build 2632** at 192.168.0.8 (fabwarm on core 1,
   DEFAULT-INERT). **The ~33s freeze mechanism is solved** (3-agent research + A72 r0p3 TRM): the teardown
