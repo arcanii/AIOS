@@ -15,6 +15,30 @@ class). IRQs are off inside the kernel teardown unmap, so the tick, all threads,
 stops. Bites only the idle-then-teardown edge; light/normal use is mostly fine. The masked TLB shootdown
 (32dbc39) already cut it 6/16 -> ~2/24. ACCEPTED for now (2026-06-17) -- backlogged, not closed.
 
+**UPDATE 2026-06-19 -- MECHANISM SOLVED + active approach chosen; the config levers are backlogged here.**
+Candidate-2 research (3 agents + the A72 r0p3 TRM) solved it: the hang is the teardown `dsb` waiting on
+**DVM-Complete from the BCM2711 SCB / 128-bit AMBA fabric**, which quiesces after idle (the SoC asserts
+ACINACTM to idle the AXI master snoop interface -- an A72 INPUT software cannot deassert). Every A72-ISA
+lever is refuted (incl **SMPEN on cores 1-3 = all 1**, 2026-06-19 -> direction #1 below is DONE/refuted) and
+**no writable BCM2711 fabric register exists**; the "0x80000 = 32.4s @ 16.2kHz" premise is also arithmetically
+wrong (the PM clock is 65536Hz -> 0x80000 = 8.0s). Linux is immune via TRAFFIC (timer/DMA keep the fabric
+warm), not config. **ACTIVE APPROACH (NOT backlogged -- being HW-A/B'd): the "Linux approach" fabric
+keep-warm** -- a core-0, light, periodic UNCACHED-MMIO read during idle keeps the SCB AXI link warm so the
+post-idle teardown DVM-Sync completes (src/servers/fabric_warm.c, `/proc/fabwarm`, v0.4.266; distinct from the
+refuted heavy-cacheable corewarm). Full mechanism + ranked levers: **docs/NEXT_20260619_candidate2_fabric_dvm.md**.
+**BACKLOGGED config investigations (revisit if keep-warm falls short):**
+- **(a) core_freq 250 -> 500** -- AIOS HARD-PINS the FABRIC clock low (mksdcard.py core_freq=250 +
+  core_freq_min=250, for mini-UART baud stability) vs the Pi4 default 500. Raising it tests the
+  fabric-clock-SPEED axis. Flash-free via `fatswap config.txt`; the mini-UART serial garbles at 500 (drive
+  the A/B over netconsole + `/proc/freezes`). Cheap + decisive.
+- **(b) AXI_QUIET_TIME instrument** (ARM_LOCAL+0x30, Core-0 IRQ; BCM2711 ARM-peripherals datasheet Tbl 110)
+  -- arm it to timestamp bus-quiesce-onset vs stall-onset; confirms the premise + finds the minimal
+  keep-warm interval for the fabric thread.
+- **(c) L2ACTLR[8] DISABLE_DVM_CMO_BROADCAST** -- one-MSR A/B (LOW confidence; the [11] "regardless" clause
+  means the DVM Sync likely still fires).
+- Tools: **`/proc/freezes`** (v0.4.265) = passive in-use freeze-rate counter; pingmon + `netstall --idle 30`
+  = the gold whole-system-freeze A/B.
+
 **KEY: this is NOT an inherent BCM2711 fabric limitation -- Linux on the SAME Pi4 does TLBIs, idles
 cores, and tears down processes with ZERO 32.4s freezes.** So AIOS/seL4 (or the firmware/armstub it
 relies on) is MISSING some fabric/coherency/DVM setup that Linux does. The fix is to find that gap by

@@ -133,6 +133,12 @@ void boot_start_services(vka_object_t *fault_ep) {
      * the residual remote-TLB-shootdown spawn-storm stall (project_stall_hunt). */
     { extern void core_warm_start(void); core_warm_start(); }
 
+    /* v0.4.266 (fabric_warm.c): SCB-fabric keep-warm thread on core 1, INERT until
+     * /proc/fabwarm.1 -- the "Linux approach" to the ~33s idle-teardown DVM freeze
+     * (light uncached fabric reads keep the cluster's SCB AXI/snoop link from
+     * quiescing, so core 0's post-idle teardown DVM-Sync completes; project_stall_hunt). */
+    { extern void fabric_warm_start(void); fabric_warm_start(); }
+
     proc_add("pipe_server", 200);
 
     /* USB driver thread -- spawn whenever the xHCI controller is up (v0.4.255 Path A), not

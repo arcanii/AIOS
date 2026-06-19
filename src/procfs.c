@@ -25,6 +25,9 @@ int xhci_diag_cmd(const char *args, char *buf, int bufsize);
 /* Idle-core warmer A/B knob at /proc/corewarm (impl in src/servers/core_warm.c) -- a
  * stall-hunt diagnostic, inert until armed. */
 int core_warm_cmd(const char *args, char *buf, int bufsize);
+/* SCB-fabric keep-warm A/B knob at /proc/fabwarm (impl in src/servers/fabric_warm.c) --
+ * the "Linux approach" to the idle-teardown DVM freeze; inert until armed. */
+int fabric_warm_cmd(const char *args, char *buf, int bufsize);
 /* System mouse state at /proc/mouse (impl in src/usb/xhci.c). */
 int xhci_mouse_state(char *buf, int bufsize);
 /* V3D GPU bring-up probe/poke at /proc/v3d (impl in src/gpu/v3d.c). Phase 0:
@@ -763,6 +766,14 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         int cw = core_warm_cmd(path + 8, buf, bufsize);
         if (cw < 0) return -1;
         w = cw;
+    } else if (path[0] == 'f' && path[1] == 'a' && path[2] == 'b'
+            && path[3] == 'w' && path[4] == 'a' && path[5] == 'r' && path[6] == 'm') {
+        /* /proc/fabwarm[.0|.1] -- SCB-fabric keep-warm A/B knob (the "Linux approach"
+         * to the idle-teardown DVM freeze, src/servers/fabric_warm.c). .1 arms core-0
+         * keep-warm, .0 disarms, bare = status. */
+        int fw = fabric_warm_cmd(path + 7, buf, bufsize);
+        if (fw < 0) return -1;
+        w = fw;
     } else if (path[0] == 'c' && path[1] == 'o' && path[2] == 'r' && path[3] == 'e'
             && path[4] == 's' && path[5] == 'c' && path[6] == 'h' && path[7] == 'e'
             && path[8] == 'd') {
