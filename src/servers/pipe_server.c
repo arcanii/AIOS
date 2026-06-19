@@ -1847,6 +1847,17 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 break;
             }
 
+            /* v0.4.263: refuse the exec when the memory pool is low BEFORE tearing
+             * down the old image, so exec() returns -1 and the original process
+             * survives (POSIX exec-failure semantics) instead of
+             * sel4utils_elf_load failing mid-load + dumping the seL4-lib cascade.
+             * Mirrors exec_server's pre-spawn headroom check. */
+            if (vka_audit_check_headroom(2000) < 0) {
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+
             ap->ignore_next_fault = 1;
             /* v0.4.109: release old process's audit pages before destroy */
             vka_audit_release_proc_pages(&ap->audit_pages_allocated);
@@ -1887,8 +1898,16 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             sel4utils_process_t *proc = &ap->proc;
             int err = sel4utils_configure_process_custom(proc, &vka, &vspace, cfg);
             if (err) {
+                /* v0.4.263: free the minted fault ep (a root cslot) + reply -1.
+                 * This path previously leaked new_fault_ep AND never replied (the
+                 * caller hung) -- the leak compounded under a spawn-storm. */
+                seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                                  new_fault_ep.cptr, seL4_WordBits);
+                vka_cspace_free(&vka, new_fault_ep.cptr);
                 ap->active = 0;
                 proc_remove(old_pid);
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                 break;
             }
 
@@ -1908,8 +1927,15 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 &proc->vspace, &vspace, &vka, &vka, &elf);
             if (!proc->entry_point) {
                 sel4utils_destroy_process(proc, &vka);
+                /* v0.4.263: free the minted fault ep (a root cslot) + reply -1.
+                 * This path previously leaked new_fault_ep AND never replied. */
+                seL4_CNode_Delete(seL4_CapInitThreadCNode,
+                                  new_fault_ep.cptr, seL4_WordBits);
+                vka_cspace_free(&vka, new_fault_ep.cptr);
                 ap->active = 0;
                 proc_remove(old_pid);
+                seL4_SetMR(0, (seL4_Word)-1);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
                 break;
             }
             proc->sysinfo = sel4utils_elf_get_vsyscall(&elf);

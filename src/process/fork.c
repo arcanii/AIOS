@@ -282,6 +282,12 @@ int do_fork(int parent_idx) {
     }
     if (child_idx < 0) return -1;
 
+    /* v0.4.263: refuse to fork when the memory pool is low, BEFORE allocating
+     * anything, rather than letting sel4utils_elf_load fail mid-load and dump the
+     * seL4-lib allocation cascade to the console. The caller's fork() gets -1 ->
+     * a clean "Cannot fork". Mirrors exec_server's pre-spawn headroom check. */
+    if (vka_audit_check_headroom(2000) < 0) return -1;
+
     /* 2. Mint badged pipe_ep as child fault endpoint.
      * Faults arrive on pipe_ep with badge = child_idx + 1,
      * distinguishable from PIPE_* IPC by label < PIPE_CREATE. */

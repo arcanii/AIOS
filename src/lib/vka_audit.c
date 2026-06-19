@@ -103,9 +103,17 @@ int vka_audit_check_headroom(int needed_pages) {
         }
     }
     if (free_est < needed_pages) {
-        AIOS_LOG_ERROR_V("Insufficient memory: free_pages=",
-                         (unsigned long)(free_est < 0 ? 0 : free_est));
-        AIOS_LOG_ERROR_V("Spawn requires pages=", (unsigned long)needed_pages);
+        /* v0.4.263: rate-limit the rejection log. A spawn-storm at the ceiling
+         * (e.g. a wide pipeline or a fork-bomb) would otherwise flood the console
+         * with this line on every refused spawn. Log the first + every 64th; the
+         * caller still returns a clean error to the shell ("Cannot fork") each
+         * time. This is the graceful-degradation path -- the alternative was
+         * sel4utils_elf_load failing mid-load + dumping a multi-line lib cascade. */
+        static int reject_n = 0;
+        if ((reject_n++ & 63) == 0) {
+            AIOS_LOG_ERROR_V("Insufficient memory, spawn refused: free_pages=",
+                             (unsigned long)(free_est < 0 ? 0 : free_est));
+        }
         return -1;
     }
     return 0;
