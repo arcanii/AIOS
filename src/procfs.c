@@ -32,6 +32,9 @@ int xhci_mouse_state(char *buf, int bufsize);
 int v3d_diag_cmd(const char *args, char *buf, int bufsize);
 /* fb_console scroll/flush diagnostics at /proc/fbcon (impl in src/boot/fb_console.c). */
 int fb_console_diag(char *buf, int bufsize);
+/* Idle-teardown freeze counter at /proc/freezes (impl in src/servers/pipe_server.c).
+ * The pipe server catches the ~33s BCM2711 fabric stall as an over-long msg handle. */
+int pipe_freezes_format(char *buf, int bufsize);
 
 proc_entry_t proc_table[PROC_MAX];
 static int next_pid = 1;
@@ -96,7 +99,7 @@ static int procfs_list(void *ctx, uint32_t ino, char *buf, int bufsize) {
     (void)ctx; (void)ino;
     int w = 0;
     /* List virtual files */
-    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- netstat\n", "- filehits\n", "- serverstats\n", "- flush\n", "- cow\n", "- cmdline\n", "- xhci\n", "- mouse\n", "- fbcon\n", "- v3d\n", "- cpufreq\n", "- temp\n", "- cpuacct\n",
+    const char *entries[] = { "d .\n", "d ..\n", "- hw\n", "- version\n", "- uptime\n", "- mounts\n", "- status\n", "- log\n", "- meminfo\n", "- cpuinfo\n", "- stat\n", "- loadavg\n", "- vka\n", "- cachestats\n", "- netstat\n", "- filehits\n", "- serverstats\n", "- freezes\n", "- flush\n", "- cow\n", "- cmdline\n", "- xhci\n", "- mouse\n", "- fbcon\n", "- v3d\n", "- cpufreq\n", "- temp\n", "- cpuacct\n",
 #if defined(PLAT_RPI4)
         "- genet\n",
 #endif
@@ -522,6 +525,12 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
             && path[9] == 't' && path[10] == 's') {
         /* v0.4.121: /proc/serverstats -- in-process server health probe */
         w = serverstats_format(buf, bufsize);
+    } else if (path[0] == 'f' && path[1] == 'r' && path[2] == 'e'
+            && path[3] == 'e' && path[4] == 'z') {
+        /* v0.4.265: /proc/freezes -- idle-teardown whole-system stall counter
+         * (the pipe server catches the ~33s fabric freeze as an over-long msg
+         * handle). Lets the real in-use stall rate be measured over days. */
+        w = pipe_freezes_format(buf, bufsize);
     } else if (path[0] == 'f' && path[1] == 'l' && path[2] == 'u'
             && path[3] == 's' && path[4] == 'h' && path[5] == '\0') {
         /* v0.4.188: /proc/flush -- periodic write-back flusher stats */

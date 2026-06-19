@@ -26,6 +26,39 @@ static uint64_t pipe_diag_ms(uint64_t t0) {
     if (!f) f = 54000000;
     return (mono_ticks() - t0) * 1000ull / f;
 }
+
+/* v0.4.265: idle-teardown freeze counter (/proc/freezes). The ~33s BCM2711
+ * fabric/UBUS DVM stall freezes the whole system inside the kernel; the pipe
+ * server is central enough that it catches the freeze as an over-long message
+ * handle (the same dms the SLOW print uses). Count handles that overran
+ * PIPE_FREEZE_MS -- far above any normal slow op (forks/execs are sub-second),
+ * below one ~10.8s stall quantum -- so the REAL in-use stall rate can be
+ * measured over days (a true denominator), not just inferred from synthetic
+ * netstall. See memory project_stall_hunt. */
+#define PIPE_FREEZE_MS 8000ull
+static uint64_t pipe_freeze_count;
+static uint64_t pipe_freeze_worst_ms;
+static uint64_t pipe_freeze_total_ms;
+static uint64_t pipe_freeze_last_ms;
+static uint64_t pipe_msg_count;
+
+int pipe_freezes_format(char *buf, int bufsize);
+int pipe_freezes_format(char *buf, int bufsize)
+{
+    return snprintf(buf, (size_t)bufsize,
+        "freezes %lu\n"
+        "worst_ms %lu\n"
+        "total_ms %lu\n"
+        "last_ms %lu\n"
+        "msgs %lu\n"
+        "threshold_ms %lu\n",
+        (unsigned long)pipe_freeze_count,
+        (unsigned long)pipe_freeze_worst_ms,
+        (unsigned long)pipe_freeze_total_ms,
+        (unsigned long)pipe_freeze_last_ms,
+        (unsigned long)pipe_msg_count,
+        (unsigned long)PIPE_FREEZE_MS);
+}
 #include "aios/vka_audit.h"
 /* Signal fetch: client retrieves and clears pending bits */
 #ifndef PIPE_SIG_FETCH
@@ -1199,6 +1232,12 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 printf("[pipe] SLOW msg label=%lu badge=%lu took %lums\n",
                        (unsigned long)diag_prev_label,
                        (unsigned long)diag_prev_badge, (unsigned long)dms);
+            if (dms >= PIPE_FREEZE_MS) {
+                pipe_freeze_count++;
+                pipe_freeze_total_ms += dms;
+                pipe_freeze_last_ms = dms;
+                if (dms > pipe_freeze_worst_ms) pipe_freeze_worst_ms = dms;
+            }
             diag_prev_label = (seL4_Word)~0ul;
         }
         seL4_MessageInfo_t msg = seL4_Recv(ep, &badge);
@@ -1206,6 +1245,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
         diag_prev_t0 = mono_ticks();
         diag_prev_label = label;
         diag_prev_badge = badge;
+        pipe_msg_count++;
 
         /* ---- Fault detection: labels below PIPE_CREATE are seL4 faults ---- */
         if (label < PIPE_CREATE && badge > 0 && badge <= MAX_ACTIVE_PROCS) {
