@@ -14,6 +14,32 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   HW-VERIFIED + PUSHED (`9e543c6`, v0.4.252). NOTE: DHCP lease BOUNCES `.8`<->`.250`
   per boot -- ARP-sweep MAC `dc:a6:32:1c:2e:e1` if `.8` is dark.
 
+* **CURRENT STATE 2026-06-19 (candidate 1, SMPEN-on-secondaries) -- the LAST A72 per-core domain lever is
+  RULED OUT: all four cores boot SMPEN=1. The stall hunt's A72/ISA avenue is now completely exhausted.**
+  Extended the A72 boot probe to the secondary cores (the old `aios_a72_probe` only read core 0). New
+  `errata.c aios_a72_probe_secondary(word_t core)` reads `CPUECTLR_EL1` under the fault-survivable
+  temporary-EL1-vtable path; called from `boot.c try_init_kernel_secondary_core` right after `NODE_LOCK_SYS`
+  so it runs SERIALIZED under the big kernel lock (the shared trap flag + UART are race-free, and the
+  primary is spinning silently in `release_secondary_cpus()` for that window). HW serial
+  (`/tmp/aios_serial.log` after a pi_flash reboot, build 2622): **core 0/1/2/3 ALL print
+  `CPUECTLR_EL1=0x40 SMPEN=1 RET=0`** -- identical (L2ACTLR=0xc000010 = candidate-B clock-force, DVM
+  broadcast ENABLED). So EVERY secondary is fully in the inner-shareable/DVM domain; the hypothesis (a
+  secondary with SMPEN=0 hangs core-0's `tlbi` completion to the fabric timeout) is **REFUTED**. With this,
+  EVERY A72/TLBI-ISA + per-core lever is ruled out (register-config gap, L2-logic clock B, full-cluster
+  clock B+ [harmful], broadcast-vs-local C, and now SMPEN on the secondaries). The ~33s freeze is
+  conclusively below the A72 ISA -- a BCM2711 SoC-fabric/SCU/UBUS DVM-completion quiescence.
+  **DISPOSITION:** the probe is a KEEPER (permanent all-core diagnostic, parallel to the core-0 probe),
+  captured into `deps/patches/seL4-kernel.patch`; **NO version bump** (still v0.4.264; running build 2622 =
+  the committed local-`vae1` baseline + the all-core probe -- the broadcast build 2617 is gone). Full QEMU
+  gate GREEN pre-flash (smp 7/7, shmring 26/26, socket 8/8, netd 10/10; the secondary probe fires harmlessly
+  on QEMU a53 as three `(not A72)` lines). NO stall A/B was needed -- a direct register refutation, not a
+  fix to soak (also spares the fragile box). The old `disk/kernel8_v264.img` revert is now MOOT (it predates
+  + lacks the probe; the board is already on a committed-equivalent kernel). **NEXT = the ONLY remaining
+  stall candidate: the deep AIOS-vs-Linux teardown/coherency-setup diff** (Linux on this exact Pi4 never
+  freezes -- the principled multi-session fix). Mitigations kept (contain it to ~2.5%): nodes=4, masked TLB
+  shootdown, clock floor 600. Full writeup `docs/NEXT_20260619_smpen_secondary_FINDINGS.md`.
+  [[project_stall_hunt]].**
+
 * **CURRENT STATE 2026-06-19 -- stability/robustness session; the BROADCAST-TLBI stall experiment is
   DONE: REFUTED. Pi runs `v0.4.264 build 2617` = the (HARMLESS) BROADCAST-TLBI kernel (`tlbi vae1is`) at
   192.168.0.8 (4-core, 1000MHz, MAC dc:a6:32:1c:2e:e1; /bin/netconsole = the v264 accept-pace binary).

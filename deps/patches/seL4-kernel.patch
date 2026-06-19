@@ -25,25 +25,36 @@ index 12d55f3c9..754e85d83 100644
  #ifdef CONFIG_BENCHMARK_TRACK_UTILISATION
      benchmark_utilisation_switch(NODE_STATE(ksCurThread), thread);
 diff --git a/include/arch/arm/arch/64/mode/machine.h b/include/arch/arm/arch/64/mode/machine.h
-index d869e3926..94824a7ad 100644
+index d869e3926..b83da4234 100644
 --- a/include/arch/arm/arch/64/mode/machine.h
 +++ b/include/arch/arm/arch/64/mode/machine.h
-@@ -19,6 +19,14 @@
+@@ -19,6 +19,25 @@
  #include <mode/machine_pl2.h>
  #include <mode/hardware.h>
  
-+/* AIOS idle-teardown TLBI/DVM stall hunt -- candidate C toggle. When defined,
-+ * invalidateLocalTLB_VAASID broadcasts (tlbi vae1is) instead of local-only
-+ * (tlbi vae1); see the function below. Comment out to revert to stock vae1.
-+ * DISABLED: research favors candidate B (L2ACTLR[27] L2-clock-force) -- the
-+ * documented 256-idle-cycle L2-logic gate affects all tlbi, local or broadcast,
-+ * so C is unlikely to help. Kept gated for a fallback A/B if B fails. */
++/* AIOS idle-teardown TLBI/DVM stall hunt -- candidate C (broadcast TLBI). When
++ * defined, invalidateLocalTLB_VAASID broadcasts (tlbi vae1is) instead of local-
++ * only (tlbi vae1); see the function below. Comment out to revert to stock vae1.
++ * ENABLED 2026-06-19 for a HW A/B. Rationale: the A72-register + fabric-register
++ * + L2-clock theories are all DEAD (project_stall_ubus_deadend); the strongest
++ * remaining clue is that LINUX on this same Pi4 never hangs, and Linux SMP uses
++ * the inner-shareable BROADCAST tlbi vae1is, while AIOS uses local tlbi vae1
++ * (core-0 pinning makes local sufficient for correctness). Hypothesis: the
++ * broadcast DVM path stays warm from constant 4-core coherency traffic, whereas
++ * the local-only path cold-gates after idle and its dsb hangs to the ~33s
++ * timeout. Correctness-safe: vae1is invalidates a superset of vae1.
++ * REFUTED 2026-06-19 (HW A/B, build 2617): the freeze STILL happens with vae1is
++ * active -- ping-confirmed GAP #1 = 33.3s + netstall trial-0 severe stall in the
++ * first 2 trials. So the ~33s stall is INDEPENDENT of the TLBI scope (local vs
++ * broadcast); the hypothesis is wrong. Reverted to local vae1. Next candidates:
++ * verify CPUECTLR.SMPEN on cores 1-3, then the AIOS-vs-Linux teardown/coherency
++ * diff (Linux on this Pi4 never freezes). Kept gated-off for the record. */
 +/* #define AIOS_TLBI_BROADCAST 1 */
 +
  #define CNTPCT   "cntpct_el0"
  #define CNTV_CTL "cntv_ctl_el0"
  
-@@ -251,7 +259,20 @@ static inline void invalidateLocalTLB_ASID(asid_t asid)
+@@ -251,7 +270,20 @@ static inline void invalidateLocalTLB_ASID(asid_t asid)
  static inline void invalidateLocalTLB_VAASID(word_t mva_plus_asid)
  {
      dsb();
@@ -224,20 +235,33 @@ index 08f7937ee..8d0d3b6ae 100644
              invalidateASIDEntry(asid);
  #endif
 diff --git a/src/arch/arm/kernel/boot.c b/src/arch/arm/kernel/boot.c
-index 93eb4d133..c40015b07 100644
+index 93eb4d133..83813218c 100644
 --- a/src/arch/arm/kernel/boot.c
 +++ b/src/arch/arm/kernel/boot.c
-@@ -28,6 +28,9 @@
+@@ -28,6 +28,10 @@
  #include <drivers/smmu/smmuv2.h>
  #endif
  
 +/* AIOS A72 IMP-DEF register probe (diagnostic, src/arch/arm/machine/errata.c) */
 +void aios_a72_probe(void);
++void aios_a72_probe_secondary(word_t core);
 +
  #ifdef ENABLE_SMP_SUPPORT
  /* SMP boot synchronization works based on a global variable with the initial
   * value 0, as the loader must zero all BSS variables. Secondary cores keep
-@@ -378,6 +381,9 @@ static BOOT_CODE bool_t try_init_kernel(
+@@ -287,6 +291,11 @@ BOOT_CODE static bool_t try_init_kernel_secondary_core(void)
+ #endif /* CONFIG_ARM_HYPERVISOR_SUPPORT */
+     NODE_LOCK_SYS;
+ 
++    /* Read this secondary's CPUECTLR.SMPEN now that we hold the big kernel lock
++     * (serialized -- the probe shares a trap flag + the UART with the other
++     * secondaries). Diagnostic for the idle-teardown stall; see errata.c. */
++    aios_a72_probe_secondary(getCurrentCPUIndex());
++
+     clock_sync_test();
+     ksNumCPUs++;
+ 
+@@ -378,6 +387,9 @@ static BOOT_CODE bool_t try_init_kernel(
      /* debug output via serial port is only available from here */
      printf("Bootstrapping kernel\n");
  
@@ -248,10 +272,10 @@ index 93eb4d133..c40015b07 100644
      init_plat();
  
 diff --git a/src/arch/arm/machine/errata.c b/src/arch/arm/machine/errata.c
-index f8dac15c3..0adae0ff7 100644
+index f8dac15c3..f8d7f6d10 100644
 --- a/src/arch/arm/machine/errata.c
 +++ b/src/arch/arm/machine/errata.c
-@@ -8,11 +8,132 @@
+@@ -8,11 +8,177 @@
  #include <api/types.h>
  #include <arch/machine.h>
  #include <arch/machine/hardware.h>
@@ -379,6 +403,51 @@ index f8dac15c3..0adae0ff7 100644
 +               l2a, (int)((l2a >> 8) & 1), (int)((l2a >> 11) & 1));
 +    }
 +    printf("[A72PROBE] done\n");
++}
++
++/* ----------------------------------------------------------------------
++ * SECONDARY-core CPUECTLR.SMPEN probe (DIAGNOSTIC -- remove after the stall
++ * hunt).  The boot probe above runs only on the boot core; this runs once on
++ * each secondary.  Called from try_init_kernel_secondary_core() AFTER the
++ * secondary has taken the big kernel lock (NODE_LOCK_SYS), so it executes
++ * serialized: the shared trap flag (aios_probe_trapped) and the UART are
++ * race-free, and the primary is spinning silently in release_secondary_cpus()
++ * for this whole window.  Goal: confirm SMPEN=1 on cores 1-3.  A secondary with
++ * SMPEN=0 would not join the inner-shareable DVM domain, so core 0's tlbi
++ * completion could hang on it to the BCM2711 fabric timeout -- the leading
++ * remaining suspect for the idle-teardown stall.  Reuses the fault-survivable
++ * read path (temporary EL1 vector table) so a trapping MRS reports TRAPPED
++ * instead of halting the secondary.
++ * ---------------------------------------------------------------------- */
++void aios_a72_probe_secondary(word_t core);
++BOOT_CODE void aios_a72_probe_secondary(word_t core)
++{
++    word_t midr = getProcessorID();
++
++    /* CPUECTLR_EL1 is an A72 (part 0xD08) IMP-DEF encoding; skip elsewhere. */
++    if (((midr >> 4) & 0xFFF) != 0xD08) {
++        printf("[A72PROBE] core=%d MIDR=%"SEL4_PRIx_word" (not A72)\n",
++               (int)core, midr);
++        return;
++    }
++
++    word_t old_vbar;
++    int trapped;
++    asm volatile("mrs %0, vbar_el1" : "=r"(old_vbar));
++    asm volatile("msr vbar_el1, %0" :: "r"((word_t)aios_probe_vtable));
++    asm volatile("isb");
++
++    word_t ectlr = aios_probe_one(aios_probe_rd_cpuectlr, &trapped);
++
++    asm volatile("msr vbar_el1, %0" :: "r"(old_vbar));
++    asm volatile("isb");
++
++    if (trapped) {
++        printf("[A72PROBE] core=%d CPUECTLR_EL1=TRAPPED\n", (int)core);
++    } else {
++        printf("[A72PROBE] core=%d CPUECTLR_EL1=%"SEL4_PRIx_word" SMPEN=%d RET=%d\n",
++               (int)core, ectlr, (int)((ectlr >> 6) & 1), (int)(ectlr & 7));
++    }
 +}
 +
  #ifdef CONFIG_ARM_ERRATA_773022
