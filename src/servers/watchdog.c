@@ -46,7 +46,31 @@
 /* Staleness threshold. Normal teardowns complete in <1s; the freeze is ~32.4s. 9s
  * cleanly separates them (no normal op blocks core-0 userspace 9s) while detecting a
  * stall well before it ends. */
-#define WD_STALL_MS    9000ull
+#define WD_STALL_MS    9000ull        /* #3: detection threshold (tunable; 9s is proven false-trip-free) */
+
+/* #1a: BCM2711 PM hardware watchdog (dev_pm_vaddr, paddr 0xFE100000) -- the same block
+ * the `reboot` command uses (aios_root.c). Petted by the core-1 watchdog every loop so the
+ * board AUTO-RECOVERS from a TOTAL wedge (one where even the timer-masked core-1 watchdog
+ * dies, e.g. the manual-power-cycle case): no pet -> the SoC resets. A normal 32s core-0
+ * freeze is NOT a total wedge (core 1 keeps petting), so it does NOT reset. Gated default-OFF
+ * (/proc/watchdog.hwdog.1) -- arming it requires the watchdog enabled, and disabling either
+ * disarms the PM block so the board never resets unexpectedly. */
+#define WD_PM_PASSWORD  0x5A000000u
+#define WD_PM_RSTC      (0x1C / 4)
+#define WD_PM_WDOG      (0x24 / 4)
+#define WD_PM_WDOG_MASK 0x000FFFFFu
+#define WD_PM_RSTC_CLR  0xFFFFFFCFu
+#define WD_PM_RSTC_FULL 0x00000020u
+/* ~max timeout (20-bit field). PM watchdog ticks ~16 kHz -> ~64s; far longer than the ~50ms
+ * pet interval (no spurious reset) yet a wedge auto-recovers within ~a minute. */
+#define WD_PM_TIMEOUT   WD_PM_WDOG_MASK
+
+/* #1b: ACT LED (GPIO 42, a direct SoC pin; aios_root.c sets GPFSEL4 to output). A visible
+ * out-of-band stall signal -- no serial needed. dev_gpio_vaddr: GPSET1 @0x20, GPCLR1 @0x2c,
+ * GPIO 42 -> bit (42-32)=10. */
+#define WD_LED_GPSET1   (0x20 / 4)
+#define WD_LED_GPCLR1   (0x2C / 4)
+#define WD_LED_BIT      (1u << 10)
 
 /* Shared in the root vspace: core-0 liveness stamp (written by the core-0 heartbeat
  * thread, read by the core-1 watchdog). 64-bit aligned -> atomic read/write on A72. */
@@ -59,8 +83,47 @@ volatile uint64_t g_wd_stalls;          /* count of detected core-0 stalls */
 volatile uint64_t g_wd_worst_ms;        /* worst detected stall duration */
 volatile uint64_t g_wd_last_ms;         /* most recent detected stall duration */
 volatile uint64_t g_wd_hb_iters;        /* core-0 heartbeat iteration counter (liveness of the probe itself) */
+volatile uint64_t g_wd_last_tick;       /* #2: cntpct when the last stall was detected (/proc/laststall) */
+volatile int      g_hwdog_armed;        /* #1a: PM HW-watchdog pet engaged (total-wedge auto-reset) */
 static seL4_CPtr  g_hb_ntfn;            /* parks the core-0 heartbeat when disabled (prio 200 -> wakes cleanly) */
 static seL4_CPtr  g_wd_ntfn;            /* parks the core-1 watchdog when disabled (woken cross-core via IPI) */
+
+/* #1b: drive the ACT LED (no syscall; harmless if GPIO unmapped / not output). */
+static inline void wd_led(int on)
+{
+    volatile uint32_t *g = dev_gpio_vaddr;
+    if (g) {
+        g[on ? WD_LED_GPSET1 : WD_LED_GPCLR1] = WD_LED_BIT;
+    }
+}
+/* #1a: refresh the PM hardware watchdog (no syscall -- a plain MMIO write). */
+static inline void wd_pm_pet(void)
+{
+    volatile uint32_t *pm = dev_pm_vaddr;
+    if (pm) {
+        pm[WD_PM_WDOG] = WD_PM_PASSWORD | (WD_PM_TIMEOUT & WD_PM_WDOG_MASK);
+    }
+}
+/* #1a: arm (start the countdown + enable reset-on-expiry) / disarm the PM watchdog. */
+static void wd_pm_arm(void)
+{
+    volatile uint32_t *pm = dev_pm_vaddr;
+    if (!pm) {
+        return;
+    }
+    pm[WD_PM_WDOG] = WD_PM_PASSWORD | (WD_PM_TIMEOUT & WD_PM_WDOG_MASK);
+    uint32_t rstc = pm[WD_PM_RSTC];
+    pm[WD_PM_RSTC] = WD_PM_PASSWORD | (rstc & WD_PM_RSTC_CLR) | WD_PM_RSTC_FULL;
+}
+static void wd_pm_disarm(void)
+{
+    volatile uint32_t *pm = dev_pm_vaddr;
+    if (!pm) {
+        return;
+    }
+    uint32_t rstc = pm[WD_PM_RSTC];
+    pm[WD_PM_RSTC] = WD_PM_PASSWORD | (rstc & WD_PM_RSTC_CLR);   /* clear FULL_RESET -> no reset on expiry */
+}
 
 static inline uint64_t wd_now(void)
 {
@@ -166,7 +229,9 @@ static void wd_watchdog_fn(void *a, void *b, void *c)
             if (!signaled) {
                 signaled = 1;
                 stall_start_hb = hb;
+                g_wd_last_tick = now;     /* #2: record for /proc/laststall */
                 g_wd_stalls++;
+                wd_led(1);                /* #1b: ACT LED ON for the duration of the stall */
                 wd_uart_puts("\r\n[WDOG] core0 STALLED (core1 alive, no tick/BKL) -- stalls=");
                 wd_uart_put_u(g_wd_stalls);
                 wd_uart_puts("\r\n");
@@ -178,9 +243,16 @@ static void wd_watchdog_fn(void *a, void *b, void *c)
             if (dur_ms > g_wd_worst_ms) {
                 g_wd_worst_ms = dur_ms;
             }
+            wd_led(0);                    /* #1b: ACT LED OFF on recovery */
             wd_uart_puts("[WDOG] core0 recovered after ");
             wd_uart_put_u(dur_ms);
             wd_uart_puts("ms\r\n");
+        }
+        /* #1a: refresh the PM HW watchdog while armed (no syscall). Done every loop so a
+         * normal core-0 freeze (core 1 still looping) never resets, but a TOTAL wedge
+         * (core 1 dead -> this loop stops) lets the PM watchdog expire -> SoC reset. */
+        if (g_hwdog_armed) {
+            wd_pm_pet();
         }
         uint64_t until = now + pace;
         while (wd_now() < until) {
@@ -237,9 +309,50 @@ void watchdog_start(void)
            WD_CORE);
 }
 
-/* /proc/watchdog[.0|.1] -- status + enable/disable. */
+/* #2: /proc/laststall -- serial-independent view of the most recent detected stall (the
+ * FTDI serial adapter is flaky; this is readable over netconsole). */
+int watchdog_laststall_cmd(char *buf, int bufsize)
+{
+    if (!g_wd_stalls) {
+        return snprintf(buf, bufsize, "laststall: none detected (watchdog %s)\n",
+                        g_wd_enabled ? "enabled" : "DISABLED -- /proc/watchdog.1 to enable");
+    }
+    uint64_t now = wd_now();
+    uint64_t ago_ms = (now > g_wd_last_tick) ? (now - g_wd_last_tick) * 1000ull / wd_freq() : 0;
+    return snprintf(buf, bufsize,
+        "laststall: %llums ago, last_dur=%llums worst_dur=%llums total=%llu (watchdog %s)\n",
+        (unsigned long long)ago_ms, (unsigned long long)g_wd_last_ms,
+        (unsigned long long)g_wd_worst_ms, (unsigned long long)g_wd_stalls,
+        g_wd_enabled ? "enabled" : "disabled");
+}
+
+/* /proc/watchdog[.0|.1] -- status + enable/disable; .hwdog.[0|1] -- PM HW-watchdog auto-reset. */
 int watchdog_cmd(const char *args, char *buf, int bufsize)
 {
+    /* #1a: .hwdog.1 / .hwdog.0 -- arm/disarm the PM hardware watchdog (total-wedge auto-reset). */
+    if (args[0] == '.' && args[1] == 'h' && args[2] == 'w' && args[3] == 'd'
+            && args[4] == 'o' && args[5] == 'g') {
+        if (args[6] == '.' && args[7] == '1') {
+            if (!g_wd_enabled) {
+                return snprintf(buf, bufsize, "hwdog: refused -- enable the watchdog first (/proc/watchdog.1)\n");
+            }
+            if (!dev_pm_vaddr) {
+                return snprintf(buf, bufsize, "hwdog: unavailable -- PM block not mapped (QEMU?)\n");
+            }
+            wd_pm_arm();
+            g_hwdog_armed = 1;
+            arch_dsb();
+            return snprintf(buf, bufsize, "hwdog: ARMED -- PM watchdog petted by core %d; a TOTAL wedge auto-resets the SoC (~%us)\n",
+                            WD_CORE, (unsigned)(WD_PM_TIMEOUT / 16384u));
+        }
+        if (args[6] == '.' && args[7] == '0') {
+            g_hwdog_armed = 0;   /* stop petting FIRST */
+            arch_dsb();
+            wd_pm_disarm();      /* then clear reset-on-expiry -> board will not reset */
+            return snprintf(buf, bufsize, "hwdog: disarmed (no auto-reset)\n");
+        }
+        return snprintf(buf, bufsize, "hwdog: armed=%d (.1 arm / .0 disarm; requires watchdog enabled)\n", g_hwdog_armed);
+    }
     if (args[0] == '.' && args[1] == '1') {
         g_core0_hb_tick = wd_now();   /* fresh stamp so the watchdog does not false-trip at enable */
         g_wd_enabled = 1;
@@ -253,15 +366,23 @@ int watchdog_cmd(const char *args, char *buf, int bufsize)
         return snprintf(buf, bufsize, "watchdog: ENABLED (core-%d out-of-band watchdog watching core 0)\n", WD_CORE);
     }
     if (args[0] == '.' && args[1] == '0') {
+        /* Safety: stop petting + disarm the PM watchdog BEFORE parking the loop, so disabling
+         * the watchdog can never leave the SoC counting down to a reset. Also clear the LED. */
+        if (g_hwdog_armed) {
+            g_hwdog_armed = 0;
+            arch_dsb();
+            wd_pm_disarm();
+        }
+        wd_led(0);
         g_wd_enabled = 0;
         arch_dsb();
-        return snprintf(buf, bufsize, "watchdog: disabled (core-%d watchdog parked; core 1 free)\n", WD_CORE);
+        return snprintf(buf, bufsize, "watchdog: disabled (core-%d watchdog parked; core 1 free; hwdog off)\n", WD_CORE);
     }
     uint64_t now = wd_now();
     uint64_t age_ms = (now > g_core0_hb_tick) ? (now - g_core0_hb_tick) * 1000ull / wd_freq() : 0;
     return snprintf(buf, bufsize,
-        "watchdog: enabled=%d core0_hb_age_ms=%llu hb_iters=%llu stalls=%llu worst_ms=%llu last_ms=%llu thresh_ms=%llu\n",
-        g_wd_enabled, (unsigned long long)age_ms, (unsigned long long)g_wd_hb_iters,
+        "watchdog: enabled=%d hwdog=%d core0_hb_age_ms=%llu hb_iters=%llu stalls=%llu worst_ms=%llu last_ms=%llu thresh_ms=%llu\n",
+        g_wd_enabled, g_hwdog_armed, (unsigned long long)age_ms, (unsigned long long)g_wd_hb_iters,
         (unsigned long long)g_wd_stalls, (unsigned long long)g_wd_worst_ms,
         (unsigned long long)g_wd_last_ms, (unsigned long long)WD_STALL_MS);
 }

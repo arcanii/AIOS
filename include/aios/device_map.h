@@ -30,5 +30,6 @@ extern volatile uint32_t *dev_pm_vaddr;      /* 0xFE100000, 1 page (PM/watchdog;
 extern volatile uint32_t *dev_pcie_vaddr;    /* 0xFD500000, 10 pages (brcmstb PCIe regs) */
 extern volatile uint32_t *dev_v3d_vaddr;     /* 0xFEC00000, 8 pages (V3D hub + core0, contiguous) */
 extern volatile uint32_t *dev_v3d_asb_vaddr; /* 0xFEC11000, 1 page (RPiVid ASB power bridges) */
+extern volatile uint32_t *dev_armlocal_vaddr; /* 0xFF800000, 1 page (ARM-local; AXI_QUIET_TIME @ +0x30). Best-effort: NULL if not a device untyped */
 
 #endif /* AIOS_DEVICE_MAP_H */

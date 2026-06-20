@@ -24,6 +24,7 @@ volatile uint32_t *dev_pm_vaddr;
 volatile uint32_t *dev_pcie_vaddr;
 volatile uint32_t *dev_v3d_vaddr;
 volatile uint32_t *dev_v3d_asb_vaddr;
+volatile uint32_t *dev_armlocal_vaddr;   /* 0xFF800000 ARM-local (AXI_QUIET_TIME @ +0x30); best-effort */
 
 #ifdef PLAT_RPI4
 
@@ -31,6 +32,7 @@ volatile uint32_t *dev_v3d_asb_vaddr;
 #define RPI4_MUART_PADDR 0xFE215000UL
 #define RPI4_PM_PADDR 0xFE100000UL     /* power management / watchdog */
 #define RPI4_V3D_ASB_PADDR 0xFEC11000UL /* RPiVid ASB V3D power bridges (1 page) */
+#define RPI4_ARMLOCAL_PADDR 0xFF800000UL /* ARM-local block (AXI_QUIET_TIME @ +0x30); diagnostic */
 
 struct dev_req {
     uint64_t paddr;          /* page-aligned */
@@ -104,8 +106,13 @@ void prealloc_rpi4_devices(void)
         reqs[n++] = (struct dev_req){ RPI4_V3D_ASB_PADDR, 1,
                                       &dev_v3d_asb_vaddr, "v3dasb" };
     }
+    /* ARM-local block (0xFF800000): the AXI_QUIET_TIME fabric-quiesce detector lives at +0x30
+     * (BCM2711 datasheet 6.5.2). Diagnostic only (cure space closed) -- best-effort: if it is
+     * not exposed as a device untyped, map_dev returns NULL and the loop just records that. It
+     * is the highest paddr, so the ascending watermark reaches it last. */
+    reqs[n++] = (struct dev_req){ RPI4_ARMLOCAL_PADDR, 1, &dev_armlocal_vaddr, "armlocal" };
 
-    /* Insertion sort ascending by paddr (n <= 9). This ordering is the whole
+    /* Insertion sort ascending by paddr (n <= 10). This ordering is the whole
      * point -- claim low addresses before the watermark passes them. */
     for (int i = 1; i < n; i++) {
         struct dev_req k = reqs[i];

@@ -31,6 +31,10 @@ int fabric_warm_cmd(const char *args, char *buf, int bufsize);
 /* MVD-1 out-of-band watchdog status/knob at /proc/watchdog (impl in src/servers/watchdog.c)
  * -- core-0 liveness + a core-1 watchdog that survives the teardown freeze. */
 int watchdog_cmd(const char *args, char *buf, int bufsize);
+/* Serial-independent last-stall view at /proc/laststall (impl in src/servers/watchdog.c). */
+int watchdog_laststall_cmd(char *buf, int bufsize);
+/* ARM-local AXI_QUIET_TIME diagnostic at /proc/axiquiet (the fabric-quiesce detector). */
+extern volatile uint32_t *dev_armlocal_vaddr;
 /* System mouse state at /proc/mouse (impl in src/usb/xhci.c). */
 int xhci_mouse_state(char *buf, int bufsize);
 /* V3D GPU bring-up probe/poke at /proc/v3d (impl in src/gpu/v3d.c). Phase 0:
@@ -785,6 +789,26 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         int wd = watchdog_cmd(path + 8, buf, bufsize);
         if (wd < 0) return -1;
         w = wd;
+    } else if (path[0] == 'l' && path[1] == 'a' && path[2] == 's' && path[3] == 't'
+            && path[4] == 's' && path[5] == 't' && path[6] == 'a' && path[7] == 'l'
+            && path[8] == 'l') {
+        /* /proc/laststall -- serial-independent last-detected-stall view (watchdog.c). */
+        int ls = watchdog_laststall_cmd(buf, bufsize);
+        if (ls < 0) return -1;
+        w = ls;
+    } else if (path[0] == 'a' && path[1] == 'x' && path[2] == 'i' && path[3] == 'q'
+            && path[4] == 'u' && path[5] == 'i' && path[6] == 'e' && path[7] == 't') {
+        /* /proc/axiquiet -- dump the ARM-local block (AXI_QUIET_TIME @ +0x30 is the BCM2711
+         * fabric-quiesce detector). Diagnostic only; the cure space is closed. NULL if the
+         * ARM-local page was not exposed as a device untyped. */
+        volatile uint32_t *al = dev_armlocal_vaddr;
+        if (!al) {
+            w = snprintf(buf, bufsize, "axiquiet: ARM-local (0xFF800000) not mapped (not a device untyped)\n");
+        } else {
+            w = snprintf(buf, bufsize,
+                "axiquiet: ARM-local 0xFF800000 mapped @ %p\n  +0x00=0x%08x +0x0C=0x%08x +0x30(AXI_QUIET_TIME)=0x%08x +0x34=0x%08x\n",
+                (void *)al, al[0x00 / 4], al[0x0C / 4], al[0x30 / 4], al[0x34 / 4]);
+        }
     } else if (path[0] == 'c' && path[1] == 'o' && path[2] == 'r' && path[3] == 'e'
             && path[4] == 's' && path[5] == 'c' && path[6] == 'h' && path[7] == 'e'
             && path[8] == 'd') {
