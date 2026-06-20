@@ -14,8 +14,82 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   HW-VERIFIED + PUSHED (`9e543c6`, v0.4.252). NOTE: DHCP lease BOUNCES `.8`<->`.250`
   per boot -- ARP-sweep MAC `dc:a6:32:1c:2e:e1` if `.8` is dark.
 
+* **CURRENT STATE 2026-06-20 (session 2) -- THE BAND HYPOTHESIS (block below) IS REFUTED, and so are two
+  more cure attempts. The ~32.4s teardown freeze is the BCM2711 SCB-fabric DVM-Sync hanging when the fabric
+  has quiesced after idle, and it is UNREACHABLE from every CPU/GPU/TLB/register/clock lever. DECISION
+  (Bryan): accept + mitigate; keep the lazy-TLB for its IPI-perf win. Board runs `v0.4.268 build 2691` at
+  192.168.0.8 (lazy-TLB + the TLBI profiler/monitor; NO DTS trim, NO keep-warm; RAM available 3877 = full
+  DRAM).** Four refutations this session, all the same root mechanism:
+  1. **DTS trim (the band hypothesis) -- REFUTED.** Trimmed usable DRAM to end at 0xf8000000 (exclude the
+     top 64MB). HW: the stall RELOCATED, did not vanish -- `/proc/freezes`=3, profiler `pa=0xf40c7000 /
+     0xf6da9000 / 0xf4443000` (all band=0, BELOW the trim; hbT=0 = the old band is now empty yet it still
+     froze). The "fatal band" was a CORRELATION ARTIFACT: the LIFO allocator drops the heavy PIPE_MMAP_ANON
+     pool at the TOP of DRAM, so stalls correlated with the top band; trimming just moved the pool (and the
+     stall) down. The `gap=0` "mid-burst" clue was likewise a red herring.
+  2. **Lazy-TLB teardown (88 per-page `tlbi vae1` -> 1 `tlbi aside1`) -- REFUTED as a cure, but KEPT for
+     perf.** Implemented in the seL4 tree (`AIOS_LAZY_TLB_TEARDOWN`, tlb.h/vspace.c/fastpath.h): unmapPage
+     of a NON-current ASID defers the per-page flush (pending-flush bitmap), consumed by one aside1 at the
+     next setVMRoot / fastpath switch-to / deleteASID; self-munmap (asid==current) still flushes eagerly.
+     QEMU gate GREEN, HW correct. But `[reap] SLOW destroy=32401ms`: the ONE unavoidable deleteASID aside1
+     (the dying-ASID flush) STILL stalls 32.4s. The stall is FABRIC-STATE-driven, not tlbi-COUNT-driven --
+     the first teardown DVM-Sync after idle hangs whether there are 88 or 1. You cannot have zero
+     DVM-Syncs per teardown (the ASID must be flushed before reuse). The "88x fewer" reasoning was WRONG.
+     KEPT anyway: it cuts the per-teardown remote-IPI storm ~88x (the `ipi`-climbing perf bug -- boot-era
+     asids resident {0,1,2,3}), a real teardown-latency/IPI win independent of the freeze.
+  3. **V3D DMA bus-master keep-warm -- REFUTED.** `/proc/v3d.warm.1` -> display_server renders cube frames
+     back-to-back (RFC verified climbing = continuous GPU DMA; board responsive via yield). Armed soak = 3
+     freezes (asid=1 root self-munmaps), same rate as disarmed. FAILS because (a) Pi4 V3D DMA is
+     NON-COHERENT -- it never joins the ARM DVM/snoop domain the teardown DVM-Sync waits on; (b) during a
+     CPU-bound teardown the root monopolizes core 0, so display_server cannot kick frames -> the GPU idles
+     mid-teardown anyway. Reverted (code removed; kept lazy-TLB only).
+  WHY no lever works: Linux's immunity is its constant timer-tick + scheduler COHERENT activity, not DMA
+  per se; AIOS's no-WFI busy-yield idle makes NO bus transactions, and no keep-warm thread can synthesize
+  the coherent traffic. Combined with the handover's prior exhaustion (every CPU keep-warm, all A72
+  registers, core_freq, broadcast-vs-local TLBI, SMPEN), the cure space reachable in software is EMPTY.
+  Remaining theoretical avenue = a coherent external bus-master or a VideoCore-firmware fabric-retention
+  knob (uncharted; the handover found no such register). Diagnostics/monitor KEPT: the TLBI profiler
+  (`[TLBISTALL]`, machine.h+errata.c+vspace.c+tlb.h) + `/proc/freezes`. seL4 changes captured in
+  `deps/patches/seL4-kernel.patch` (35.9KB, now includes the lazy-TLB). [[project_stall_hunt]].
+
+* **CURRENT STATE 2026-06-20 -- ROOT CAUSE FOUND. The ~32s teardown freeze is PHYSICAL-REGION-SPECIFIC, NOT
+  idle-quiescence: the unmap `tlbi+dsb` hangs ONLY for pages whose PHYSICAL address is in the top 64MB of
+  usable DRAM [0xf8000000, 0xfc000000) (the band just below the 0xfc000000 peripheral window). Every
+  "idle-quiescence HW watchdog" / keep-warm framing in the entries BELOW is SUPERSEDED/WRONG.** Pi runs
+  **v0.4.267 build 2669** at 192.168.0.8 (the ENHANCED TLBI-STALL PROFILER; core_freq=250).
+  HOW WE GOT HERE (this session, after refuting EVERY keep-warm + core_freq + A72 register -- see
+  docs/NEXT_20260620_dvm_heartbeat.md): built an enhanced profiler that, per stall, reports
+  core/dur/gap/bpos/bms/asid/va/**PA**/PTE/ipi/**band/hbS/lbS**/qgap. Impl: `machine.h` hook (times the
+  tlbi+dsb) -> `errata.c` `aios_tlbi_profile`; `vspace.c` `unmapPage` stashes the page's paddr+pte; `tlb.h`
+  counts real remote-IPI tlbis. RESULTS: (1) **gap=0 ALWAYS** -> the stall is MID-BURST; the FIRST
+  post-idle tlbi is FAST -> the idle-quiescence theory (basis of fabwarm/beacon/heartbeat) is WRONG.
+  (2) the stalling VA is invariant (0x10006000-0x10011000 = the process mmap region = PIPE_MMAP_ANON musl
+  malloc/TLS pages) but bpos varies -> it follows the PAGE not the position. (3) the **PA is ALWAYS
+  0xf8xxxxxx-0xfbxxxxxx** (10+ samples); PTE = normal cacheable inner-shareable (AttrIndx=4) -> it is the
+  PADDR, not the page type. WHY ALL PRIOR FIXES FAILED: keep-warms made CPU/cache traffic, never traffic on
+  THAT band's path; core_freq/registers never touched it. ROOT-CAUSE MECHANISM IN OUR CODE: the kernel
+  exposes the top band as usable DRAM (`deps/kernel/src/plat/bcm2711/overlay-rpi4-4gb.dts` memory@0 range 2
+  = base 0x40000000 size 0xbc000000 -> end 0xfc000000), and the LIFO root-task allocator hands out the
+  HIGHEST-paddr untyped FIRST, so the heavy PIPE_MMAP_ANON pool lands in the band -> its teardown tlbis
+  stall. WHY the band itself is fatal (hypothesis, not yet pinned): it routes through a path that quiesces
+  after idle -- VideoCore firmware lives at top-of-RAM, or it is the memory-controller/peripheral boundary.
+  (It is NOT gpu_mem: the DTS puts the GPU/fb reservation LOW at 0x3a000000-0x40000000.)
+  **STAGED FIX (NOT yet implemented/tested): trim that DTS range-2 size 0xbc000000 -> 0xb8000000 (end DRAM at
+  0xf8000000, excluding the top 64MB). Anon-mmap then falls to low DRAM -> no stall. V3D's 8MB pool (also
+  from the VKA) moves below 0xf8000000 but the GPU MMU maps any DRAM so it is fine. Costs 64MB; also closes a
+  latent kernel/VideoCore memory overlap.**
+  **DO FIRST NEXT SESSION -- CONFIRM then FIX: (a) re-run `netstall.py --idle 30 --trials 10` with ONE
+  serial monitor (this session a DOUBLE monitor on /dev/cu.usbserial-0001 GARBLED the band lines -- killed
+  the dup; ALWAYS one reader), grep the serial for `hbS=.. lbS=..`; lbS (low-band stalls) must stay 0 while
+  hbS climbs + lbT large -> root cause LOCKED. (b) implement the DTS trim, flash, netstall -> expect the
+  stall GONE.** SECONDARY (separate perf bug, NOT the stall cause): ipi climbs ~thousands -- residency
+  {0,1,2,3} for boot-era asids that ran on cores 1-3 before pinning; the masked shootdown silently
+  broadcasts. Fix by clearing residency on pinning / not marking during boot. All diagnostics are UNCOMMITTED
+  (sibling seL4 tree: machine.h, errata.c, vspace.c, tlb.h, idle.S reverted to busy-yield, crt0.S band-6/8
+  experiments gated-OFF). [[project_stall_hunt]].
+
 * **CURRENT STATE 2026-06-19 (candidate 2 DEPLOYED -- the keep-warm is now DEFAULT-ON; the board USES the
-  Linux fix).** Pi runs **v0.4.267 build 2635** at 192.168.0.8 (fabwarm armed at boot on core 1; committed
+  Linux fix). [SUPERSEDED 2026-06-20 -- keep-warm is REFUTED; the stall is the top-DRAM-band physical region,
+  not idle-quiescence; fabwarm is known-ineffective.]** Pi runs **v0.4.267 build 2635** at 192.168.0.8 (fabwarm armed at boot on core 1; committed
   `b3f7615`). Bryan: "we are still getting freezes so we should move to implement the linux solution" (the
   disarmed baseline froze 4x during boot alone). Made fabwarm DEFAULT-ON (`fabric_warm_start` arms +
   Signals the thread at boot; `/proc/fabwarm.0` disables -> mitigations-only baseline). **INITIAL SIGNAL
