@@ -81,11 +81,29 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   FULLY REALIZED. Default-OFF (/proc/watchdog .1 enable / .0 disable / status). **CAUTION: heavy stall-testing
   WEDGED the board once this session (needed a physical power-cycle) -- be GENTLE (short netstall runs).**
 
-  **NEXT-SESSION PRIORITIES (ranked):** (1) **MVD-1 polish (optional)** -- add a HW-watchdog reset (or GPIO
-  signal) on a detected stall, tune the 9s threshold, consider default-ON. (2) Add **/proc/laststall**
-  (serial-independent capture -- the FTDI adapter is flaky). (3) Map AXI_QUIET_TIME (doc already corrected this
-  session). seL4 tree changes (residency mask + lazy-TLB + diagnostics + timer-mask) captured in
-  deps/patches/seL4-kernel.patch (940 lines). [[project_stall_hunt]].
+  **(F) MVD-1 POLISH SHIPPED (v0.4.272, 630d337) + MVD-2 REVIEWED = NOT WORTHWHILE.** Four follow-ups, all
+  HW-tested: (#1) the watchdog now ACTS -- ACT-LED (GPIO 42) during a stall + PM HW-watchdog auto-recovery
+  (/proc/watchdog.hwdog.1, default-OFF: core-1 pets the BCM2711 PM watchdog every loop; a normal 32s freeze
+  keeps petting [no reset], a TOTAL wedge stops petting -> SoC auto-resets in ~63s -- HW-PROVEN the board stays
+  up via petting); (#2) /proc/laststall (serial-independent); (#3) WD_STALL_MS tunable #define (9s,
+  false-trip-free -- prio-200 heartbeat); (#4) /proc/axiquiet -- **ARM_LOCAL 0xFF800000 is NOT a userspace
+  device untyped** (`[devmap] armlocal -> 0`), so AXI_QUIET_TIME is unmappable without a kernel change (not
+  worth it). **MVD-2 VERDICT (3-agent feasibility review): the freeze is coherency-path-specific NOT a total
+  fabric freeze (the watchdog wrote to the mini-UART DURING it; Pi4 GENET DMA is non-coherent), so the I/O
+  HARDWARE could move packets through a freeze, AND the I/O-server split is tractable (~800-1200 LOC + a small
+  seL4 GIC setIRQTarget patch). BUT the BIG KERNEL LOCK is the wall: a serving thread must syscall, and core 0
+  holds the BKL ~32s. Removing it = full fine-grained locking = 2+ YEARS + an Isabelle proof rewrite
+  (infeasible); the only shortcut (drop the BKL around the teardown dsb with per-ASID locking) is ~2-3 weeks
+  but with UNPROVEN TLB-coherency safety = silent-corruption risk on a VERIFIED microkernel. Breaking seL4's
+  verified BKL serialization to dodge a HW freeze is self-defeating (it trades away the verification that is
+  the reason to use seL4), for a niche benefit (keep a shell alive through a ~2.5%/teardown 32s freeze).
+  => MVD-2 is NOT WORTHWHILE. The pragmatic ceiling = MVD-1 + the HW-watchdog auto-recovery (DONE): observe,
+  report out-of-band, auto-reboot a true hang in ~63s. The box no longer goes silently dark.**
+
+  **NEXT-SESSION PRIORITIES:** the stall work is at a natural stopping point (freeze accepted; observe + report
+  + auto-recover all shipped; cure space + MVD-2 both closed). Optional: consider making the watchdog +
+  hwdog DEFAULT-ON for production unattended operation. seL4 tree changes (residency mask + lazy-TLB +
+  diagnostics + timer-mask) captured in deps/patches/seL4-kernel.patch (940 lines). [[project_stall_hunt]].
 
 * **CURRENT STATE 2026-06-20 (session 3) -- RESEARCH + DIAGNOSTICS. Two deep research workflows re-confirmed
   the cure space is closed BUT surfaced one promising untried cure (GENET MDIO poll) + proved multi-core
