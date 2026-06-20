@@ -14,6 +14,35 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   HW-VERIFIED + PUSHED (`9e543c6`, v0.4.252). NOTE: DHCP lease BOUNCES `.8`<->`.250`
   per boot -- ARP-sweep MAC `dc:a6:32:1c:2e:e1` if `.8` is dark.
 
+* **CURRENT STATE 2026-06-21 (session 5) -- USB MSC Stage 5 bulk-STALL recovery HW-VERIFIED; the last
+  HW-pending item from the stall-hunt era is closed. The stall hunt itself stays concluded.** Board =
+  **v0.4.273 build 2729** at 192.168.0.8 (netd-OFF build-rpi4). 1 code commit on `main` (`191552f`; Bryan
+  pushes). Pivoted off the (concluded) stall hunt to clear a HW-pending verification while the board was clean.
+  - **What was pending:** Stage 5 USB bulk-STALL recovery (`bot_ep_recover`, v0.4.257) was QEMU-verified 9/9
+    but had never run on real hardware. It could not be observed over netconsole: the runtime USB driver logs
+    recovery to SERIAL only (confirmed -- `/proc/log` holds only boot lines; runtime re-enumerations leave no
+    ring trace) AND `/proc/xhci.stalltest` is a write-only inject knob with no recovery counter. (SHM-ring, the
+    OTHER "HW-pending" index line, was already HW-validated 2026-06-17 -- a STALE index entry, not real work.)
+  - **The fix (`191552f`):** added a persistent `g_msc_stall_recoveries` counter (incremented only after a
+    successful EP reset in `bot_ep_recover`) surfaced as `msc-stall: inject=N recoveries=M` in `/proc/xhci` --
+    netconsole-observable; recovery logic byte-identical. Extended `usb_msc_stall_recovery_qemu_test.py` to
+    assert it (now 10/10).
+  - **HW result (build 2729, 4TB Buffalo on the VL805 hub, SuperSpeed port 3):** armed `inject=3`, replug ->
+    **`recoveries=3 inject=0`** = `bot_ep_recover` EXECUTED 3x on the real VL805 (the counter only climbs after
+    the controller accepts Reset-Endpoint). The HW-pending core -- does the recovery path run on silicon? -- is
+    ANSWERED: yes. The injected STALL storm transiently aborted enumeration (`msc ok=0`) but the drive
+    re-enumerated clean to healthy 4TB (`ok=1`) via the Path-B hub reconcile = a robustness win, no wedge.
+  - **Finding -- the fault injection is QEMU-faithful but NOT HW-faithful:** the fake STALL leaves the EP
+    RUNNING, so `bot_ep_recover` Reset-EPs a NON-Halted EP (the VL805 treats that as disruptive; QEMU tolerates
+    it). So injected tests CANNOT demonstrate TRANSPARENT in-session recovery on HW -- that stays QEMU-proven
+    (10/10) and on HW needs a GENUINE natural STALL (a SuperSpeed first-replug; none reproduced this session --
+    boot-enum `recoveries=0`, the `inject=3` replug showed exactly 3). Recorded in an `xhci.c` HW-NOTE comment.
+  - **Net:** Stage 5 recovery path HW-proven to execute + the system robust to a STALL storm; transparent
+    recovery QEMU-proven. The pragmatic verification ceiling for an opportunistic error path is reached. Board
+    left clean (`inject=0`, `msc ok=1`, drive healthy). QEMU gate green pre-flash (`usb_msc_stall_recovery`
+    10/10; smp 4/5 + shmring 25/26 host-load sheds; socket 8/8; netd 10/10). NEXT (open tracks): USB Stage 6
+    multi-sector read; V3D Phase 4b; security privesc fixes; net SSH-one-session-per-boot. [[project_usb_msc]].
+
 * **CURRENT STATE 2026-06-20 (session 4) -- THE STALL HUNT REACHED A NATURAL CONCLUSION. The ~32.4s
   idle-teardown freeze is INCURABLE (cure space closed) but now fully SURVIVABLE + auto-recovering, and the
   ambitious "keep serving through a freeze" (MVD-2) was reviewed and judged NOT WORTHWHILE.** Board =
