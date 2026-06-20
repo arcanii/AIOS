@@ -7,13 +7,15 @@ they're up next.
 
 ---
 
-## RPi4 idle-teardown TLBI/DVM stall -- ~8% residual; NOT a HW limit, an AIOS/seL4 config gap (queued 2026-06-17)
+## RPi4 idle-teardown TLBI/DVM stall -- MAJOR OPEN CONCERN (NOT concluded; mitigated, not cured) [queued 2026-06-17]
 
 **Symptom**: ~8% (2/24 on `netstall.py --idle 8`) of idle-then-process-teardown sequences freeze the
 WHOLE system for 33-66s (= N x 10.8s; 32.4s == 0x80000 ticks @ ~16.2kHz = the BCM2711 UBUS-timeout
 class). IRQs are off inside the kernel teardown unmap, so the tick, all threads, net, echo -- everything
 stops. Bites only the idle-then-teardown edge; light/normal use is mostly fine. The masked TLB shootdown
 (32dbc39) already cut it 6/16 -> ~2/24. ACCEPTED for now (2026-06-17) -- backlogged, not closed.
+
+**2026-06-21 -- STILL A MAJOR OPEN CONCERN (Bryan: do NOT conclude it).** Sessions 2-4 mapped the space: the freeze is INCURABLE from software config -- every keep-warm (incl. Linux's EXACT GENET MDIO PHY-poll), every clock/register/voltage lever REFUTED. Root cause = the BCM2711 SCB-fabric DVM-Sync hanging when the fabric quiesces after idle (the first post-idle teardown `tlbi;dsb` waits on DVM-Complete to ~32.4s). MVD-1 (a timer-masked core-1 pure-userspace watchdog, src/servers/watchdog.c, default-OFF) + a PM HW-watchdog auto-recovery SHIP AS MITIGATION (observe + report out-of-band on the mini-UART + auto-reboot a TOTAL wedge in ~63s) -- but the system STILL FREEZES ~32.4s. That is SURVIVAL, NOT a cure. MVD-2 (keep other cores SERVING through a freeze) reviewed = blocked by the Big-Kernel-Lock (2+yr Isabelle-proof rewrite) -- not worthwhile. **THE REMAINING REAL FIX is ARCHITECTURAL: an seL4 ASID-generation / lazy-TLB redesign so process teardown issues NO per-unmap `tlbi vae1` (invalidate a whole ASID on recycle), removing the DVM-Sync entirely.** Multi-session, correctness-critical. Do NOT let the mitigation reframe this as solved. Full arc: [[project_stall_hunt]] sessions 2-4 + [[feedback_stall_open_concern]] + HANDOVER.
 
 **UPDATE 2026-06-19 -- MECHANISM SOLVED + active approach chosen; the config levers are backlogged here.**
 Candidate-2 research (3 agents + the A72 r0p3 TRM) solved it: the hang is the teardown `dsb` waiting on

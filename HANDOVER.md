@@ -15,9 +15,9 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   per boot -- ARP-sweep MAC `dc:a6:32:1c:2e:e1` if `.8` is dark.
 
 * **CURRENT STATE 2026-06-21 (session 5) -- USB MSC Stage 5 bulk-STALL recovery HW-VERIFIED; the last
-  HW-pending item from the stall-hunt era is closed. The stall hunt itself stays concluded.** Board =
+  HW-pending item from the stall-hunt era is closed. The stall hunt is NOT concluded -- it stays a MAJOR OPEN CONCERN, BACKLOGGED (the freeze is mitigated via MVD-1, NOT cured; Bryan: never frame it as done -- [[feedback_stall_open_concern]]).** Board =
   **v0.4.273 build 2729** at 192.168.0.8 (netd-OFF build-rpi4). 1 code commit on `main` (`191552f`; Bryan
-  pushes). Pivoted off the (concluded) stall hunt to clear a HW-pending verification while the board was clean.
+  pushes). Pivoted off the (backlogged-but-still-open) stall hunt to clear a HW-pending verification while the board was clean.
   - **What was pending:** Stage 5 USB bulk-STALL recovery (`bot_ep_recover`, v0.4.257) was QEMU-verified 9/9
     but had never run on real hardware. It could not be observed over netconsole: the runtime USB driver logs
     recovery to SERIAL only (confirmed -- `/proc/log` holds only boot lines; runtime re-enumerations leave no
@@ -43,7 +43,7 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
     10/10; smp 4/5 + shmring 25/26 host-load sheds; socket 8/8; netd 10/10). NEXT (open tracks): USB Stage 6
     multi-sector read; V3D Phase 4b; security privesc fixes; net SSH-one-session-per-boot. [[project_usb_msc]].
 
-* **CURRENT STATE 2026-06-20 (session 4) -- THE STALL HUNT REACHED A NATURAL CONCLUSION. The ~32.4s
+* **CURRENT STATE 2026-06-20 (session 4) -- THE STALL HUNT IS BACKLOGGED -- A MAJOR OPEN CONCERN (mitigated via MVD-1, NOT cured; do NOT call it concluded). The ~32.4s
   idle-teardown freeze is INCURABLE (cure space closed) but now fully SURVIVABLE + auto-recovering, and the
   ambitious "keep serving through a freeze" (MVD-2) was reviewed and judged NOT WORTHWHILE.** Board =
   **v0.4.272 build 2726** at 192.168.0.8. 9 commits on `main` (Bryan pushes). seL4 changes (residency mask +
@@ -149,7 +149,7 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   => MVD-2 is NOT WORTHWHILE. The pragmatic ceiling = MVD-1 + the HW-watchdog auto-recovery (DONE): observe,
   report out-of-band, auto-reboot a true hang in ~63s. The box no longer goes silently dark.**
 
-  **NEXT-SESSION PRIORITIES:** the stall work is at a natural stopping point (freeze accepted; observe + report
+  **NEXT-SESSION PRIORITIES:** the stall work is BACKLOGGED as a MAJOR OPEN CONCERN (Bryan 2026-06-21: never conclude it; the real fix is the seL4 ASID-gen/lazy-TLB redesign) (freeze accepted; observe + report
   + auto-recover all shipped; cure space + MVD-2 both closed). Optional: consider making the watchdog +
   hwdog DEFAULT-ON for production unattended operation. seL4 tree changes (residency mask + lazy-TLB +
   diagnostics + timer-mask) captured in deps/patches/seL4-kernel.patch (940 lines). [[project_stall_hunt]].
