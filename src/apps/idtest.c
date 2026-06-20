@@ -35,12 +35,18 @@ int main(void) {
     }
     printf("idtest: PIPE_SET_IDENTITY(0) rc = %ld (0=accepted, -1=denied)\n", rc);
 
-    /* Did we actually gain root fs access? mkdir under /etc is root-only and
-     * FS_MKDIR returns a real, fs_check_path_write-gated status (unlike open
-     * O_CREAT, which hands back a usable fd even when the create is denied). */
+    /* Did we actually gain root fs access? Two root-only probes under /etc, both
+     * fs_check_path_write-gated: FS_MKDIR, and (v0.4.275) open(O_CREAT). The latter
+     * used to hand back a usable fd even when the create was DENIED (silent-fail), so
+     * idtest avoided it; that is now fixed (posix_file.c honors the FS_WRITE_FILE
+     * status), so a non-root open(O_CREAT,/etc) fails too. Either probe succeeding =
+     * real root write access = privesc. */
     int r = mkdir("/etc/.idtestd", 0755);
-    int can_write = (r == 0);
     if (r == 0) rmdir("/etc/.idtestd");
+    int ofd = open("/etc/.idtestf", O_CREAT | O_WRONLY, 0644);
+    if (ofd >= 0) { close(ofd); unlink("/etc/.idtestf"); }
+    printf("idtest: mkdir(/etc) rc=%d  open(O_CREAT,/etc) fd=%d\n", r, ofd);
+    int can_write = (r == 0) || (ofd >= 0);
 
     if (before == 0) {
         /* Root: the probe should be able to write /etc (sanity for the test). */

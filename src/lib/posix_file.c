@@ -453,6 +453,13 @@ long aios_sys_openat(va_list ap) {
             seL4_SetMR(mr, 0); /* data_len = 0 */
             seL4_Call(fs_ep_cap,
                 seL4_MessageInfo_new(15 /* FS_WRITE_FILE */, 0, 0, mr + 1));
+            /* v0.4.274: honor the create result. fs_server replies MR0 = -1 when
+             * fs_check_path_write denies the create (e.g. a non-root process in a
+             * write-protected dir). Previously the reply was ignored, so open(O_CREAT)
+             * there returned a USABLE fd although no file was created (silent-fail
+             * follow-up from the identity-privesc audit). Fail the open per POSIX. */
+            if ((int)(long)seL4_GetMR(0) != 0)
+                return -EACCES;
         }
         /* v0.4.72: write-only fd with resolved path and correct size */
         if (is_wronly || is_rdwr) {{
