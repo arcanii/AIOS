@@ -66,14 +66,24 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   mode 2) as an A/B knob. **=> the cure space is EMPTY (every keep-warm incl. Linux's actual mechanism, every
   clock/register/voltage lever refuted). The ONLY remaining path for the freeze is MVD-1 (SURVIVE, not cure).**
 
-  **NEXT-SESSION PRIORITIES (ranked):** (1) **MVD-1 watchdog** (task #6) -- now THE top item (the cure space is
-  closed); needs the timer-IRQ-mask requirement from finding (C): a pure-userspace core-1 loop with its timer
-  IRQ MASKED (so it never enters the kernel for a tick -> never blocks on the BKL), reads core 0's heartbeat,
-  pokes mini-UART/GPIO out-of-band on a stall. The hard part is masking the per-core timer IRQ (likely a kernel
-  change: do not program / mask the timer on the watchdog core). (2) Add **/proc/laststall** (serial-independent
-  capture -- the FTDI adapter is flaky). (3) Map AXI_QUIET_TIME (doc already corrected this session).
-  Diagnostics build 2711 UNCOMMITTED-in-seL4-tree (captured in deps/patches/seL4-kernel.patch, 917 lines).
-  [[project_stall_hunt]].
+  **(E) MVD-1 WATCHDOG: foundation BUILT + core thesis HW-PROVEN (aaa716b, v0.4.271 build 2721); core-0
+  heartbeat is the one piece left.** Two of the three parts are done + proven: (1) **kernel timer-mask** (seL4
+  boot.c: skip `setIRQState(IRQTimer)` for core 1 -> CNTV PPI masked -> core 1 takes no tick -> never blocks on
+  the BKL; IPIs stay enabled) -- VALIDATED (full QEMU gate green, SMP W=20/20 with the mask). (2) **pure-
+  userspace core-1 watchdog** (src/servers/watchdog.c, busy-loop + direct mini-UART poke via dev_uart_vaddr) --
+  **HW-PROVEN: `[WDOG] core0 STALLED (core1 alive, no tick/BKL)` printed to the SERIAL console by the timer-
+  masked core-1 watchdog, out-of-band** = the survive-the-freeze win. (3) **core-0 liveness = WIP**: the
+  prio-1 core-0 heartbeat thread (stamps g_core0_hb_tick) STARVES because core 0 is SATURATED by busy-polling
+  servers (/proc/cpuacct: pipe 27% xhci 21% root 18% serverstats 16% flush 16% ~= 98%; also explains the kernel
+  profiler's "core 0 never idles"). FIX = piggyback the bump on a busy core-0 server loop. Default-OFF
+  (/proc/watchdog). **CAUTION: heavy stall-testing WEDGED the board this session (needed a physical
+  power-cycle) -- be GENTLE (short netstall runs).**
+
+  **NEXT-SESSION PRIORITIES (ranked):** (1) **Finish MVD-1** -- fix the core-0 heartbeat (piggyback the
+  g_core0_hb_tick bump on a busy core-0 server loop so it rides an already-scheduled thread; the timer-mask +
+  OOB poke are DONE + HW-PROVEN). (2) Add **/proc/laststall** (serial-independent capture -- the FTDI adapter
+  is flaky). (3) Map AXI_QUIET_TIME (doc already corrected this session). seL4 tree changes (residency mask +
+  lazy-TLB + diagnostics + timer-mask) captured in deps/patches/seL4-kernel.patch (940 lines). [[project_stall_hunt]].
 
 * **CURRENT STATE 2026-06-20 (session 3) -- RESEARCH + DIAGNOSTICS. Two deep research workflows re-confirmed
   the cure space is closed BUT surfaced one promising untried cure (GENET MDIO poll) + proved multi-core
