@@ -1534,7 +1534,9 @@ static int setup_hub(struct usb_dev *hub, uint32_t hub_root_port, uint32_t hub_s
  * can only be confirmed by a GENUINE STALL (a natural SuperSpeed first-replug; HW-proven 2026-06-21
  * build 2729: inject=3 -> recoveries=3 + drive re-enumerated healthy 4TB; no natural STALL repro'd). */
 static volatile uint32_t g_msc_stall_inject;
-/* v0.4.273: persistent count of bulk-STALL recoveries (EP reset succeeded). The runtime
+/* v0.4.273: persistent count of bulk-STALL recoveries -- incremented each time bot_ep_recover
+ * gets past a Reset-Endpoint that did NOT time out (i.e. the controller returned a completion
+ * event; for a genuine Halted-EP STALL that completion is success). The runtime
  * USB driver logs recovery to SERIAL only, and g_msc_stall_inject is write-only via /proc,
  * so this counter is the netconsole-observable proof that the recovery path ran on real HW
  * (read inject + recoveries in /proc/xhci: arm inject=N, replug, expect inject=0 recoveries+=N). */
@@ -1605,7 +1607,7 @@ static void bot_ep_recover(struct usb_dev *d, int dir_in) {
         AIOS_LOG_WARN("MSC bulk-EP reset timed out -- controller wedged, skipping recovery");
         return;
     }
-    g_msc_stall_recoveries++;   /* v0.4.273: EP reset OK -> a genuine recovery; HW-observable via /proc/xhci */
+    g_msc_stall_recoveries++;   /* v0.4.273: Reset-EP completed (not a controller-wedge timeout) -> recovery proceeds; HW-observable via /proc/xhci */
     /* Device side: clear ENDPOINT_HALT so the device un-stalls the pipe (BOT 5.3.x). The xHC
      * Reset Endpoint above is what un-wedges OUR ring, so this is best-effort. Both this and the
      * Set TR Dequeue below are checked + logged loudly: an HW poll timeout/failure here must be
