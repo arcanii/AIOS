@@ -14,12 +14,32 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   HW-VERIFIED + PUSHED (`9e543c6`, v0.4.252). NOTE: DHCP lease BOUNCES `.8`<->`.250`
   per boot -- ARP-sweep MAC `dc:a6:32:1c:2e:e1` if `.8` is dark.
 
-* **CURRENT STATE 2026-06-20 (session 4) -- THE RESIDENCY/IPI BUG IS FIXED + HW-VERIFIED. The ~32.4s
-  teardown freeze no longer IPI-storms the idle siblings (the asid-1 teardown is now core-LOCAL); a NEW
-  finding pins the REMAINING multi-core coupling on the Big-Kernel-Lock + timer tick, not the residency.**
-  Board = **v0.4.269 build 2707** at 192.168.0.8 (residency shootdown-mask + fabwarm DEFAULT-OFF + res=/rmask=
-  diagnostic; sha-verified flash, banner-confirmed). seL4 changes captured in `deps/patches/seL4-kernel.patch`
-  (917 lines). Diagnostics (PMU/heartbeat/profiler) KEPT.
+* **CURRENT STATE 2026-06-20 (session 4) -- THE STALL HUNT REACHED A NATURAL CONCLUSION. The ~32.4s
+  idle-teardown freeze is INCURABLE (cure space closed) but now fully SURVIVABLE + auto-recovering, and the
+  ambitious "keep serving through a freeze" (MVD-2) was reviewed and judged NOT WORTHWHILE.** Board =
+  **v0.4.272 build 2726** at 192.168.0.8. 9 commits on `main` (Bryan pushes). seL4 changes (residency mask +
+  lazy-TLB + diagnostics + core-1 timer-mask) in `deps/patches/seL4-kernel.patch` (940 lines). The arc, top to
+  bottom:
+  - **Residency/IPI bug FIXED + HW-verified** (`42e5497` v0.4.269): every freeze was `asid=1` (root vspace)
+    with `residency[1]={0,1,2,3}` from the keep-warm threads' boot-time marks -> a shootdown-mask makes
+    teardowns core-LOCAL (`ipi` climbing 73264->101120 -> flat 0). Detail (A)/(B) below.
+  - **NEW finding: the remaining sibling-freeze is the BKL + timer tick, NOT the residency** -- removing the
+    IPI is necessary but not sufficient (the kernel idle thread takes the timer IRQ during the stall and
+    blocks on the BKL core 0 holds ~32s). Detail (C) below. This set up MVD-1.
+  - **Cure space DEFINITIVELY CLOSED** (`909d01c` v0.4.270): over_voltage=6 + the GENET MDIO poll (Linux's
+    EXACT PHY_POLL lever) both REFUTED -- every keep-warm / clock / register / voltage lever is exhausted.
+    Detail (D) below.
+  - **MVD-1 watchdog COMPLETE + HW-PROVEN** (`95c822d` v0.4.271): a timer-masked, pure-userspace core-1
+    watchdog stays alive through each 32s freeze and reports it OUT-OF-BAND on the mini-UART -- every `[WDOG]`
+    detection correlates perfectly with the kernel's `[TLBISTALL]`. Detail (E) below.
+  - **Watchdog ACTIONS + MVD-2 verdict** (`630d337` v0.4.272): the watchdog now ACTS (ACT-LED + PM HW-watchdog
+    auto-recovery: a TOTAL wedge auto-reboots in ~63s), plus /proc/laststall + /proc/axiquiet; MVD-2 reviewed =
+    NOT WORTHWHILE (the BKL is the wall -- removing it is a 2+yr proof rewrite, the shortcut risks silent
+    corruption on a verified kernel, for a niche benefit). Detail (F) below.
+  **Net: the freeze is accepted; the box no longer goes silently dark (observe + report + auto-reboot a true
+  hang); the cure AND survivability spaces are fully mapped.** /proc/watchdog + /proc/watchdog.hwdog are
+  DEFAULT-OFF (enable for production). Diagnostics (PMU/heartbeat/profiler/res=/rmask=) KEPT. Board left clean:
+  watchdog disabled, residency fix active, ~66C.
 
   **(A) ROOT CAUSE PINNED (session-3 PMU was right; session-4 found the exact source).** A baseline capture
   (build 2699) caught 8 stalls, EVERY ONE `asid=1` (the immortal root-task vspace) with `ipi` climbing
