@@ -23,7 +23,7 @@ import time
 
 
 def open_serial(dev, baud):
-    fd = os.open(dev, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
+    fd = os.open(dev, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)   # O_RDWR: macOS FTDI rejects tcsetattr on a read-only fd (EINVAL)
     speed = getattr(termios, "B%d" % baud)
     a = termios.tcgetattr(fd)
     a[0] &= ~(termios.IGNBRK | termios.BRKINT | termios.PARMRK | termios.ISTRIP

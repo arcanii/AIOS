@@ -744,21 +744,27 @@ static void arm_int_buf(struct usb_dev *d, uint32_t buf_idx) {
  * a SAFE no-op; the lock keys stay software-only (the documented backlog state). Fix
  * direction for that session is in the #if 0 below + docs/NEXT_20260615g. */
 static void set_leds_runtime(struct usb_dev *d, int bits) {
-    (void)d; (void)bits;
-    g_led_last_cc = 0xFFFFFFFFu;   /* sentinel: runtime LED not attempted (HW-wedges, disabled) */
-#if 0  /* HW-WEDGES the keyboard -- re-enable ONLY in a serial-capture HW-iteration session */
-    if (!d->led_buf) return;
+    if (!d->led_buf) { g_led_last_cc = 0xFFFFFFFFu; return; }
+    /* v0.4.276 LED runtime (serial-capture HW iteration): Stop the interrupt-IN EP (quiesce the
+     * LS keyboard behind the VL805 TT so the EP0 SET_REPORT does not contend with armed int-IN
+     * transfers -> the bare-SET_REPORT STALL), set the LED, then RESUME the int ring from the
+     * dequeue pointer the controller wrote into the OUTPUT device context during the Stop (NOT a
+     * forced ring restart, which desynced the cycle bit + wedged). Doorbell to restart the EP.
+     * All steps print to serial ([led-rt]) so a wedge is diagnosable. Keypress-wiring stays OFF
+     * until the /proc/xhci.led poke proves this path. */
     uint32_t evt[4];
-    cmd_submit(0, 0, TRB_STOP_EP, d->slot, d->dci, evt);   /* quiesce the int-IN EP */
-    set_leds(d, bits);                                     /* this half WORKS on HW (LED changes) */
-    /* WRONG re-arm (wedges). Fix direction: read the EP context TR Dequeue Pointer the
-     * HW wrote AFTER the Stop and resume from THERE (do not force ring start); ZERO the
-     * report buffers before re-priming so no stale report ('r') is re-delivered; drain
-     * the Stop-Endpoint Transfer/Command events first. */
-    d->int_enq = 0; d->int_proc = 0; d->int_cycle = 1;
-    cmd_submit(d->int_ring_pa | 1, 0, TRB_SET_TR_DEQ, d->slot, d->dci, evt);
-    for (uint32_t i = 0; i < INT_RING_BUFS; i++) arm_int_buf(d, i);
-#endif
+    int sc = cmd_submit(0, 0, TRB_STOP_EP, d->slot, d->dci, evt);   /* quiesce int-IN */
+    set_leds(d, bits);                                              /* EP0 SET_REPORT; sets g_led_last_cc */
+    int rc = (int)g_led_last_cc;
+    /* OUTPUT device context: slot ctx @0, EP ctx for dci @ dci*CTX_SZ; ep[2]=deq_lo|DCS, ep[3]=deq_hi */
+    volatile uint32_t *oep = (volatile uint32_t *)(d->dev_ctx + (uint32_t)d->dci * CTX_SZ);
+    uint64_t hw_deq = ((uint64_t)oep[3] << 32) | (oep[2] & ~0xFull);
+    uint32_t dcs    = oep[2] & 1u;
+    long long idx   = (long long)(((int64_t)hw_deq - (int64_t)d->int_ring_pa) / 16);
+    int dq = cmd_submit(hw_deq | dcs, 0, TRB_SET_TR_DEQ, d->slot, d->dci, evt);
+    doorbell(d->slot, d->dci);                                      /* Stopped -> Running from the dequeue */
+    printf("[led-rt] stop=%d setrep=%d hwdeq=0x%llx dcs=%u idx=%lld setdeq=%d enq=%u cyc=%u\n",
+           sc, rc, (unsigned long long)hw_deq, dcs, idx, dq, d->int_enq, d->int_cycle);
 }
 
 /* Apply the Ctrl modifier to a decoded character, producing the terminal control code:
