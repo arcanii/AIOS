@@ -1525,8 +1525,20 @@ static int setup_hub(struct usb_dev *hub, uint32_t hub_root_port, uint32_t hub_s
  * report CC_STALL to bot_scsi AFTER the real transfer has completed -- so the ring/dequeue
  * state stays consistent and recovery's Set TR Dequeue lands on the live cursor (a no-op there),
  * while the recovery commands themselves still run + log. Set via /proc/xhci.stalltest.N;
- * default 0 (inert). On real HW the STALL is genuine (the endpoint really is Halted). */
+ * default 0 (inert). On real HW the STALL is genuine (the endpoint really is Halted).
+ * v0.4.273 HW NOTE: arming this on real HW is a QEMU-style aid only -- the fake STALL leaves the
+ * EP RUNNING, so bot_ep_recover issues Reset-Endpoint on a NON-Halted EP, which the VL805 treats
+ * as disruptive + aborts the in-progress enumeration (the drive then re-enumerates clean via the
+ * hub reconcile -> msc ok=1). It still HW-proves the recovery commands EXECUTE on silicon (the
+ * msc-stall recoveries counter below climbs in /proc/xhci), but TRANSPARENT in-session recovery
+ * can only be confirmed by a GENUINE STALL (a natural SuperSpeed first-replug; HW-proven 2026-06-21
+ * build 2729: inject=3 -> recoveries=3 + drive re-enumerated healthy 4TB; no natural STALL repro'd). */
 static volatile uint32_t g_msc_stall_inject;
+/* v0.4.273: persistent count of bulk-STALL recoveries (EP reset succeeded). The runtime
+ * USB driver logs recovery to SERIAL only, and g_msc_stall_inject is write-only via /proc,
+ * so this counter is the netconsole-observable proof that the recovery path ran on real HW
+ * (read inject + recoveries in /proc/xhci: arm inject=N, replug, expect inject=0 recoveries+=N). */
+static volatile uint32_t g_msc_stall_recoveries;
 
 /* Enqueue one NORMAL TRB on a bulk ring, ring the doorbell, and wait (via the event-
  * ring dispatcher) for its Transfer Event on (slot, dci). Returns the completion code
@@ -1593,6 +1605,7 @@ static void bot_ep_recover(struct usb_dev *d, int dir_in) {
         AIOS_LOG_WARN("MSC bulk-EP reset timed out -- controller wedged, skipping recovery");
         return;
     }
+    g_msc_stall_recoveries++;   /* v0.4.273: EP reset OK -> a genuine recovery; HW-observable via /proc/xhci */
     /* Device side: clear ENDPOINT_HALT so the device un-stalls the pipe (BOT 5.3.x). The xHC
      * Reset Endpoint above is what un-wedges OUR ring, so this is best-effort. Both this and the
      * Set TR Dequeue below are checked + logged loudly: an HW poll timeout/failure here must be
@@ -2329,6 +2342,8 @@ int xhci_diag_cmd(const char *args, char *buf, int bufsize) {
         "msc: ok=%d automount=%d mount_pending=%d nsectors=%lu blksz=%u\n",
         xhci_msc_ok, g_msc_automount, g_msc_mount_pending,
         md ? (unsigned long)md->msc_nsectors : 0, md ? md->msc_blocksize : 0); }
+    w += snprintf(buf + w, bufsize - w,
+        "msc-stall: inject=%u recoveries=%u\n", g_msc_stall_inject, g_msc_stall_recoveries);
     w += snprintf(buf + w, bufsize - w,
         "slots=%u ports=%u  kbd_ok=%d  evt_deq=%u cyc=%u  key_events=%u int_errs=%u  last SET_REPORT cc=%d USBSTS=0x%x\n",
         max_slots, max_ports, xhci_kbd_ok, evt_deq, evt_cycle, g_key_events, g_int_err_events,

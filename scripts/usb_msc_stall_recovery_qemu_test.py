@@ -80,7 +80,7 @@ def main():
             "-kernel", KERNEL]
 
     p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    poke = cat1 = wr = alive = ""
+    poke = cat1 = wr = alive = xstat = ""
     mounted = None
     try:
         for _ in range(70):
@@ -103,6 +103,7 @@ def main():
             nc("echo %s > /mnt/usb/stall_rt.txt" % MARK)
             wr = nc("cat /mnt/usb/stall_rt.txt")
             alive = nc("echo STILLALIVE")
+            xstat = nc("cat /proc/xhci")   # v0.4.273: confirm the persistent recovery counter
     finally:
         p.terminate()
         try: p.wait(5)
@@ -124,6 +125,8 @@ def main():
     chk("write persisted to USB image (offline)", MARK.encode() in img)
     chk("controller not wedged", "controller wedged" not in log and "READ_CAPACITY failed" not in log)
     chk("system still responsive after recovery", "STILLALIVE" in alive)
+    chk("recovery counter incremented (/proc/xhci: inject consumed, recoveries=1)",
+        "inject=0 recoveries=1" in xstat)
 
     for f in (LOG, STICK):
         try: os.remove(f)
