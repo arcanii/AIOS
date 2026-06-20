@@ -139,6 +139,12 @@ void boot_start_services(vka_object_t *fault_ep) {
      * quiescing, so core 0's post-idle teardown DVM-Sync completes; project_stall_hunt). */
     { extern void fabric_warm_start(void); fabric_warm_start(); }
 
+    /* v0.4.271 (watchdog.c): MVD-1 -- a core-0 liveness heartbeat + a core-1
+     * out-of-band watchdog that SURVIVES the ~32.4s teardown freeze (core 1's timer
+     * IRQ is masked in the kernel so it never blocks on the BKL) and reports it live
+     * over the mini-UART while core 0 is wedged. Default-OFF; /proc/watchdog.1 enables. */
+    { extern void watchdog_start(void); watchdog_start(); }
+
     proc_add("pipe_server", 200);
 
     /* USB driver thread -- spawn whenever the xHCI controller is up (v0.4.255 Path A), not

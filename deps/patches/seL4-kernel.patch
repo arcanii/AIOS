@@ -472,7 +472,7 @@ index 08f7937ee..ab153943c 100644
              invalidateASIDEntry(asid);
  #endif
 diff --git a/src/arch/arm/kernel/boot.c b/src/arch/arm/kernel/boot.c
-index 93eb4d133..83813218c 100644
+index 93eb4d133..7c714d859 100644
 --- a/src/arch/arm/kernel/boot.c
 +++ b/src/arch/arm/kernel/boot.c
 @@ -28,6 +28,10 @@
@@ -486,7 +486,30 @@ index 93eb4d133..83813218c 100644
  #ifdef ENABLE_SMP_SUPPORT
  /* SMP boot synchronization works based on a global variable with the initial
   * value 0, as the loader must zero all BSS variables. Secondary cores keep
-@@ -287,6 +291,11 @@ BOOT_CODE static bool_t try_init_kernel_secondary_core(void)
+@@ -279,14 +283,32 @@ BOOT_CODE static bool_t try_init_kernel_secondary_core(void)
+     }
+     setIRQState(IRQIPI, CORE_IRQ_TO_IRQT(getCurrentCPUIndex(), irq_remote_call_ipi));
+     setIRQState(IRQIPI, CORE_IRQ_TO_IRQT(getCurrentCPUIndex(), irq_reschedule_ipi));
+-    /* Enable per-CPU timer interrupts */
+-    setIRQState(IRQTimer, CORE_IRQ_TO_IRQT(getCurrentCPUIndex(), KERNEL_TIMER_IRQ));
++    /* Enable per-CPU timer interrupts.
++     * AIOS MVD-1 (project_stall_hunt session-4): SKIP the timer PPI on the dedicated
++     * watchdog core (core 1) so a pure-userspace thread pinned there never takes a
++     * timer tick -> never enters the kernel -> never blocks on the big kernel lock
++     * core 0 holds for ~32s during the teardown freeze. The timer PPI (CNTV, PPI 27)
++     * stays masked from the NUM_PPI loop above; the GIC-400 enable_set[0] is banked
++     * per-core so this affects core 1 only. The IPIs (remote-call + reschedule) above
++     * are LEFT ENABLED -- core 1 must still be schedulable (the watchdog is woken by a
++     * reschedule IPI) and must still service TLB shootdowns under coresched. Core 1
++     * cannot be preempted by a tick, so it must run a single never-blocking busy-loop
++     * (watchdog.c); a keep-warm A/B or coresched on core 1 is thus disabled while the
++     * watchdog owns it -- acceptable (both are refuted/experimental). */
++    if (getCurrentCPUIndex() != 1) {
++        setIRQState(IRQTimer, CORE_IRQ_TO_IRQT(getCurrentCPUIndex(), KERNEL_TIMER_IRQ));
++    }
+ #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
+     setIRQState(IRQReserved, CORE_IRQ_TO_IRQT(getCurrentCPUIndex(), INTERRUPT_VGIC_MAINTENANCE));
+     setIRQState(IRQReserved, CORE_IRQ_TO_IRQT(getCurrentCPUIndex(), INTERRUPT_VTIMER_EVENT));
  #endif /* CONFIG_ARM_HYPERVISOR_SUPPORT */
      NODE_LOCK_SYS;
  
@@ -498,7 +521,7 @@ index 93eb4d133..83813218c 100644
      clock_sync_test();
      ksNumCPUs++;
  
-@@ -378,6 +387,9 @@ static BOOT_CODE bool_t try_init_kernel(
+@@ -378,6 +400,9 @@ static BOOT_CODE bool_t try_init_kernel(
      /* debug output via serial port is only available from here */
      printf("Bootstrapping kernel\n");
  

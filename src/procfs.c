@@ -28,6 +28,9 @@ int core_warm_cmd(const char *args, char *buf, int bufsize);
 /* SCB-fabric keep-warm A/B knob at /proc/fabwarm (impl in src/servers/fabric_warm.c) --
  * the "Linux approach" to the idle-teardown DVM freeze; inert until armed. */
 int fabric_warm_cmd(const char *args, char *buf, int bufsize);
+/* MVD-1 out-of-band watchdog status/knob at /proc/watchdog (impl in src/servers/watchdog.c)
+ * -- core-0 liveness + a core-1 watchdog that survives the teardown freeze. */
+int watchdog_cmd(const char *args, char *buf, int bufsize);
 /* System mouse state at /proc/mouse (impl in src/usb/xhci.c). */
 int xhci_mouse_state(char *buf, int bufsize);
 /* V3D GPU bring-up probe/poke at /proc/v3d (impl in src/gpu/v3d.c). Phase 0:
@@ -774,6 +777,14 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         int fw = fabric_warm_cmd(path + 7, buf, bufsize);
         if (fw < 0) return -1;
         w = fw;
+    } else if (path[0] == 'w' && path[1] == 'a' && path[2] == 't' && path[3] == 'c'
+            && path[4] == 'h' && path[5] == 'd' && path[6] == 'o' && path[7] == 'g') {
+        /* /proc/watchdog[.0|.1] -- MVD-1 out-of-band watchdog (src/servers/watchdog.c).
+         * bare = status (core-0 hb age, stall count, worst/last ms); .0 disables (parks
+         * the core-1 watchdog, frees core 1); .1 enables. */
+        int wd = watchdog_cmd(path + 8, buf, bufsize);
+        if (wd < 0) return -1;
+        w = wd;
     } else if (path[0] == 'c' && path[1] == 'o' && path[2] == 'r' && path[3] == 'e'
             && path[4] == 's' && path[5] == 'c' && path[6] == 'h' && path[7] == 'e'
             && path[8] == 'd') {
