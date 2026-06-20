@@ -59,6 +59,7 @@ volatile uint64_t g_wd_stalls;          /* count of detected core-0 stalls */
 volatile uint64_t g_wd_worst_ms;        /* worst detected stall duration */
 volatile uint64_t g_wd_last_ms;         /* most recent detected stall duration */
 volatile uint64_t g_wd_hb_iters;        /* core-0 heartbeat iteration counter (liveness of the probe itself) */
+static seL4_CPtr  g_hb_ntfn;            /* parks the core-0 heartbeat when disabled (prio 200 -> wakes cleanly) */
 static seL4_CPtr  g_wd_ntfn;            /* parks the core-1 watchdog when disabled (woken cross-core via IPI) */
 
 static inline uint64_t wd_now(void)
@@ -119,15 +120,24 @@ static void wd_uart_put_u(uint64_t v)
 static void wd_core0_hb_fn(void *a, void *b, void *c)
 {
     (void)a; (void)b; (void)c;
-    /* ALWAYS busy-loop stamping core-0 liveness -- never park. A same-core seL4_Signal does
-     * not reliably schedule a parked prio-1 thread (the signalling thread keeps the core), so
-     * this thread must stay permanently runnable: it then runs in core 0's idle slots (prio 1
-     * preempts only the prio-0 kernel idle), replacing the no-WFI idle busy-loop at zero extra
-     * cost. The stamp is frozen exactly when core 0 is wedged IN the kernel. Gating lives in
-     * the WATCHDOG (which reads this), not here -- stamping always is cheap and harmless. */
+    /* Core-0 liveness heartbeat. Runs at the SERVER priority (200) and yields after each
+     * stamp, so it round-robins with the prio-200 servers that saturate core 0 (several
+     * yield-spin -- e.g. serverstats' probe_sleep). A prio-1 thread NEVER gets CPU here
+     * (the busy-polling servers starve it -- /proc/cpuacct: pipe/xhci/root/serverstats/flush
+     * ~= 98%; this is also why the kernel idle never runs on core 0). At prio 200 + yield it
+     * gets a slice every round-robin cycle -> g_core0_hb_tick stays fresh, and is FROZEN
+     * exactly when core 0 is wedged IN the kernel (no userspace runs then). seL4_Yield is a
+     * syscall, but this is core 0 (its timer is intact) -- only the core-1 watchdog must
+     * avoid syscalls. Parks when disabled so the default-off path adds nothing to core 0. */
     for (;;) {
-        g_core0_hb_tick = wd_now();
-        g_wd_hb_iters++;
+        while (!g_wd_enabled) {
+            seL4_Wait(g_hb_ntfn, NULL);
+        }
+        while (g_wd_enabled) {
+            g_core0_hb_tick = wd_now();
+            g_wd_hb_iters++;
+            seL4_Yield();
+        }
     }
 }
 
@@ -185,22 +195,24 @@ static void wd_watchdog_fn(void *a, void *b, void *c)
  * enabled. Boot thread: vka/vspace/cspace are single-owner, so allocate here. */
 void watchdog_start(void)
 {
-    vka_object_t nobj;
-    if (vka_alloc_notification(&vka, &nobj)) {
+    vka_object_t n1, n2;
+    if (vka_alloc_notification(&vka, &n1) || vka_alloc_notification(&vka, &n2)) {
         printf("[watchdog] no ntfn -- watchdog unavailable\n");
         return;
     }
-    g_wd_ntfn = nobj.cptr;
+    g_hb_ntfn = n1.cptr;
+    g_wd_ntfn = n2.cptr;
     g_core0_hb_tick = wd_now();
 
-    /* core-0 liveness heartbeat (prio 1, core 0) */
+    /* core-0 liveness heartbeat (prio 200 == server prio, core 0): must match the busy
+     * servers' priority to get scheduled in their round-robin (a lower prio starves). */
     sel4utils_thread_t hb;
     if (sel4utils_configure_thread(&vka, &vspace, &vspace, 0,
             simple_get_cnode(&simple), seL4_NilData, &hb)) {
         printf("[watchdog] core0-hb configure failed\n");
         return;
     }
-    seL4_TCB_SetPriority(hb.tcb.cptr, simple_get_tcb(&simple), 1);
+    seL4_TCB_SetPriority(hb.tcb.cptr, simple_get_tcb(&simple), 200);
 #if CONFIG_MAX_NUM_NODES > 1
     seL4_TCB_SetAffinity(hb.tcb.cptr, 0);
 #endif
@@ -229,8 +241,12 @@ void watchdog_start(void)
 int watchdog_cmd(const char *args, char *buf, int bufsize)
 {
     if (args[0] == '.' && args[1] == '1') {
+        g_core0_hb_tick = wd_now();   /* fresh stamp so the watchdog does not false-trip at enable */
         g_wd_enabled = 1;
         arch_dsb();
+        if (g_hb_ntfn) {
+            seL4_Signal(g_hb_ntfn);   /* wake the parked core-0 heartbeat (prio 200 -> scheduled) */
+        }
         if (g_wd_ntfn) {
             seL4_Signal(g_wd_ntfn);   /* wake the parked core-1 watchdog (cross-core reschedule IPI) */
         }
