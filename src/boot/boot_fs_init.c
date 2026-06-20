@@ -105,8 +105,12 @@ int usb_msc_mount(void) {
     extern int xhci_msc_ok;
     extern int usb_blk_read(uint64_t sector, void *buf);
     extern int usb_blk_write(uint64_t sector, const void *buf);
+    extern int usb_blk_read_multi(uint64_t sector, void *buf, int count);
     if (!xhci_msc_ok) return -1;
     blk_cache_register_backend(2, usb_blk_read, usb_blk_write);
+    /* v0.4.274 Stage 6: an 8-sector cache line-fill becomes ONE SCSI READ (was 8 single-sector
+     * reads). Same DMA bounce + g_msc_req path; the cache only calls with count = line size. */
+    blk_cache_register_read_multi(2, usb_blk_read_multi);
     /* v0.4.256: a replug may be a DIFFERENT drive on the same dev_id 2. blk_cache (the back
      * cache) was invalidated on unplug (device_teardown); also clear the ext2 front cache
      * here so this (re)init + subsequent reads come from the new drive, not stale blocks. */

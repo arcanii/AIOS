@@ -77,6 +77,7 @@ def main():
     chk("READ_CAPACITY (%d sectors)" % EXPECT_SECTORS, "%d sectors" % EXPECT_SECTORS in log)
     chk("READ(10) LBA0 == 'AIOSMSC!'", ("USB MSC LBA0: " + EXPECT_LBA0) in log)
     chk("WRITE(10) self-test PASS", "WRITE(10) self-test (LBA1, QEMU disk): PASS" in log)
+    chk("multi-sector READ(8) self-test PASS (Stage 6)", "multi-sector READ(8) self-test: PASS" in log)
     chk("WRITE persisted to image (LBA1)", lba1_ok)
 
     for f in (LOG, STICK):

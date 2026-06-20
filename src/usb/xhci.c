@@ -1541,6 +1541,10 @@ static volatile uint32_t g_msc_stall_inject;
  * so this counter is the netconsole-observable proof that the recovery path ran on real HW
  * (read inject + recoveries in /proc/xhci: arm inject=N, replug, expect inject=0 recoveries+=N). */
 static volatile uint32_t g_msc_stall_recoveries;
+/* v0.4.274 Stage 6: result of the read-only multi-sector READ self-test, run once per enumeration
+ * (netconsole-observable via /proc/xhci, since runtime USB enumeration logs only to serial). */
+static volatile int g_msc_multi_n;    /* sectors in the last multi-sector self-test (0 = not run) */
+static volatile int g_msc_multi_ok;   /* 1 = PASS (multi-read sector 0 == a single READ(10) of LBA 0) */
 
 /* Enqueue one NORMAL TRB on a bulk ring, ring the doorbell, and wait (via the event-
  * ring dispatcher) for its Transfer Event on (slot, dci). Returns the completion code
@@ -1773,13 +1777,15 @@ static int scsi_rw16(struct usb_dev *d, int write, uint64_t lba, uint16_t count,
     return bot_scsi(d, cdb, 16, write ? 0 : 1, data_pa, (uint32_t)count * d->msc_blocksize);
 }
 
-/* One-block read/write that picks READ(10)/WRITE(10) for LBAs that fit the 32-bit field
- * (the proven path, unchanged for < 2TB drives) and READ(16)/WRITE(16) above it. */
-static int scsi_blk_rw(struct usb_dev *d, int write, uint64_t lba, uint64_t data_pa) {
-    if (lba > 0xFFFFFFFFu)
-        return scsi_rw16(d, write, lba, 1, data_pa);
-    return write ? scsi_write_10(d, (uint32_t)lba, 1, data_pa)
-                 : scsi_read_10 (d, (uint32_t)lba, 1, data_pa);
+/* Multi-block read/write that picks READ(10)/WRITE(10) for LBAs that fit the 32-bit field
+ * (the proven path, unchanged for < 2TB drives) and READ(16)/WRITE(16) above it. Transfers
+ * `count` logical blocks (count*blocksize must fit data_pa's buffer); a run that would straddle
+ * the 2^32 LBA boundary takes the 64-bit path so the high blocks stay addressable. */
+static int scsi_blk_rw(struct usb_dev *d, int write, uint64_t lba, uint16_t count, uint64_t data_pa) {
+    if (lba + (uint64_t)count - 1 > 0xFFFFFFFFu)
+        return scsi_rw16(d, write, lba, count, data_pa);
+    return write ? scsi_write_10(d, (uint32_t)lba, count, data_pa)
+                 : scsi_read_10 (d, (uint32_t)lba, count, data_pa);
 }
 
 /* Enumerate a USB Mass Storage (class 8 / Bulk-Only 0x50) device: find the two bulk
@@ -1893,13 +1899,28 @@ static int setup_msc(struct usb_dev *d) {
      * test above only covers READ(10). scsi_blk_rw auto-selects READ(16) for the high LBA. */
     if (d->msc_nsectors > 0x100000000ULL) {
         uint64_t last = d->msc_nsectors - 1;
-        if (scsi_blk_rw(d, 0, last, d->msc_buf_pa + 128) == 0) {
+        if (scsi_blk_rw(d, 0, last, 1, d->msc_buf_pa + 128) == 0) {
             volatile uint8_t *s = d->msc_buf + 128;
             printf("[xhci] USB MSC last-LBA(16) @%lu: OK %02x %02x %02x %02x\n",
                    (unsigned long)last, s[0], s[1], s[2], s[3]);
         } else {
             AIOS_LOG_WARN("MSC READ(16) high-LBA self-test failed");
         }
+    }
+    /* v0.4.274 Stage 6: read-only MULTI-SECTOR self-test -- read up to 8 sectors at LBA 0 in
+     * ONE SCSI READ into the msc_io page, then compare sector 0 against a fresh single-sector
+     * READ(10). Proves the multi-block backend (usb_blk_read_multi -> scsi_blk_rw count>1) on
+     * real HW for ANY drive -- the runtime FS multi-fill path cannot be exercised on a non-ext2
+     * drive (e.g. the 4TB Buffalo declines mount). Read-only = safe on a real drive. */
+    {
+        int mn = (d->msc_nsectors >= 8) ? 8 : (int)d->msc_nsectors;
+        volatile uint8_t *m = d->msc_io, *one = d->msc_buf + 128;
+        int mok = mn > 0 &&
+                  (scsi_blk_rw(d, 0, 0, (uint16_t)mn, d->msc_io_pa) == 0) &&
+                  (scsi_read_10(d, 0, 1, d->msc_buf_pa + 128)       == 0);
+        if (mok) for (int i = 0; i < 512; i++) if (m[i] != one[i]) { mok = 0; break; }
+        g_msc_multi_n = mn; g_msc_multi_ok = mok;   /* /proc/xhci: netconsole-observable on HW */
+        printf("[xhci] USB MSC multi-sector READ(%d) self-test: %s\n", mn, mok ? "PASS" : "FAIL");
     }
     /* WRITE(10) self-test -- ONLY on the QEMU emulated disk (DESTRUCTIVE, never a real
      * drive). Write a pattern to LBA 1, read it back, compare. Proves the bulk-OUT data
@@ -1945,6 +1966,7 @@ static volatile struct {
     int      pending;     /* a request is posted */
     int      write;       /* 1 = write, 0 = read */
     uint64_t lba;         /* 64-bit: >2TB drives use READ(16)/WRITE(16) via scsi_blk_rw */
+    int      count;       /* v0.4.274: logical blocks (1 = single sector; up to 8 = read-multi line fill) */
     int      status;      /* result, set by the driver thread (0 = ok) */
     int      done;        /* set by the driver thread on completion */
 } g_msc_req;
@@ -1956,7 +1978,8 @@ static void msc_service_request(void) {
     if (!g_msc_req.pending) return;
     struct usb_dev *d = g_msc_dev;
     int rc = -1;
-    if (d) rc = scsi_blk_rw(d, g_msc_req.write, g_msc_req.lba, d->msc_io_pa);
+    if (d) rc = scsi_blk_rw(d, g_msc_req.write, g_msc_req.lba,
+                            (uint16_t)(g_msc_req.count ? g_msc_req.count : 1), d->msc_io_pa);
     g_msc_req.status = (rc == 0) ? 0 : -1;
     arch_dsb();
     g_msc_req.pending = 0;
@@ -1971,9 +1994,9 @@ int usb_blk_read(uint64_t sector, void *buf) {
     if (!d || sector >= d->msc_nsectors) return -1;
     int rc;
     if (!g_msc_driver_running || g_msc_mount_inline) {
-        rc = scsi_blk_rw(d, 0, sector, d->msc_io_pa);
+        rc = scsi_blk_rw(d, 0, sector, 1, d->msc_io_pa);
     } else {
-        g_msc_req.write = 0; g_msc_req.lba = sector;
+        g_msc_req.write = 0; g_msc_req.lba = sector; g_msc_req.count = 1;
         g_msc_req.status = -1; g_msc_req.done = 0; arch_dsb();
         g_msc_req.pending = 1; arch_dsb();
         while (!g_msc_req.done) seL4_Yield();
@@ -1989,12 +2012,42 @@ int usb_blk_write(uint64_t sector, const void *buf) {
     { volatile uint8_t *s = d->msc_io; const uint8_t *in = buf;
       for (int i = 0; i < 512; i++) s[i] = in[i]; arch_dsb(); }   /* into the DMA buffer first */
     if (!g_msc_driver_running || g_msc_mount_inline)
-        return scsi_blk_rw(d, 1, sector, d->msc_io_pa) == 0 ? 0 : -1;
-    g_msc_req.write = 1; g_msc_req.lba = sector;
+        return scsi_blk_rw(d, 1, sector, 1, d->msc_io_pa) == 0 ? 0 : -1;
+    g_msc_req.write = 1; g_msc_req.lba = sector; g_msc_req.count = 1;
     g_msc_req.status = -1; g_msc_req.done = 0; arch_dsb();
     g_msc_req.pending = 1; arch_dsb();
     while (!g_msc_req.done) seL4_Yield();
     return g_msc_req.status == 0 ? 0 : -1;
+}
+
+/* v0.4.274 Stage 6: blk_cache drive-2 multi-block backend -- read `count` (<=8) contiguous
+ * sectors in ONE SCSI READ into the msc_io page, then copy out. The cache line-fill calls this
+ * with count = BLK_CACHE_LINE_SECTORS (8), so an 8-sector line becomes ONE READ(10) instead of 8
+ * -- the Stage 6 perf win. msc_io is exactly one 4KB page = 8 sectors, so each chunk is bounded to
+ * 8; a larger request loops. Direct transfer during enumeration/mount (sole consumer), else the
+ * g_msc_req queue + spin-wait, exactly like usb_blk_read. */
+int usb_blk_read_multi(uint64_t sector, void *buf, int count) {
+    struct usb_dev *d = g_msc_dev;
+    if (!d || count <= 0) return -1;
+    if (sector + (uint64_t)count > d->msc_nsectors) return -1;
+    uint8_t *o = buf;
+    while (count > 0) {
+        int n = count > 8 ? 8 : count;   /* msc_io = one page = 8 sectors */
+        int rc;
+        if (!g_msc_driver_running || g_msc_mount_inline) {
+            rc = scsi_blk_rw(d, 0, sector, (uint16_t)n, d->msc_io_pa);
+        } else {
+            g_msc_req.write = 0; g_msc_req.lba = sector; g_msc_req.count = n;
+            g_msc_req.status = -1; g_msc_req.done = 0; arch_dsb();
+            g_msc_req.pending = 1; arch_dsb();
+            while (!g_msc_req.done) seL4_Yield();
+            rc = g_msc_req.status;
+        }
+        if (rc != 0) return -1;
+        { volatile uint8_t *s = d->msc_io; for (int i = 0; i < n * 512; i++) o[i] = s[i]; }
+        sector += (uint64_t)n; o += n * 512; count -= n;
+    }
+    return 0;
 }
 
 /* v0.4.255 Path A: mount a runtime-hotplugged MSC drive at /mnt/usb. Called ONLY from the
@@ -2346,6 +2399,9 @@ int xhci_diag_cmd(const char *args, char *buf, int bufsize) {
         md ? (unsigned long)md->msc_nsectors : 0, md ? md->msc_blocksize : 0); }
     w += snprintf(buf + w, bufsize - w,
         "msc-stall: inject=%u recoveries=%u\n", g_msc_stall_inject, g_msc_stall_recoveries);
+    w += snprintf(buf + w, bufsize - w,
+        "msc-multi: selftest=%s n=%d (Stage 6 multi-sector read)\n",
+        g_msc_multi_n ? (g_msc_multi_ok ? "PASS" : "FAIL") : "n/a", g_msc_multi_n);
     w += snprintf(buf + w, bufsize - w,
         "slots=%u ports=%u  kbd_ok=%d  evt_deq=%u cyc=%u  key_events=%u int_errs=%u  last SET_REPORT cc=%d USBSTS=0x%x\n",
         max_slots, max_ports, xhci_kbd_ok, evt_deq, evt_cycle, g_key_events, g_int_err_events,
