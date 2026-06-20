@@ -54,14 +54,26 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   never enters the kernel for a tick -> never blocks on the BKL), (3) be PURE USERSPACE (no syscalls in the
   hot loop, like fabric_warm.c).** Only then does a watchdog core keep running while core 0 is wedged.
 
-  **NEXT-SESSION PRIORITIES (ranked):** (1) **MVD-1 watchdog** (task #6) -- now with the timer-IRQ-mask
-  requirement from finding (C); reads core 0's heartbeat from a pure-userspace core-1 loop with its timer
-  masked, pokes mini-UART/GPIO out-of-band on a stall. (2) **GENET MDIO-poll keep-warm** (task #4) -- the
-  untried Linux-immunity cure; note GENET is netd-owned (`genet_regs` private), so a root-vspace keep-warm
-  must use the root's `dev_genet_vaddr` mapping with a BENIGN GENET register read (avoid MDIO-bus contention
-  with netd's PHY poll). (3) **over_voltage A/B** (`scripts/set_overvolt.py 6`, flash-free; expect FAIL).
-  (4) Add **/proc/laststall** (serial-independent capture). (5) Map AXI_QUIET_TIME (doc already corrected
-  this session). Diagnostics build 2707 UNCOMMITTED-in-seL4-tree (captured in the patch). [[project_stall_hunt]].
+  **(D) TWO MORE CURE LEVERS REFUTED -> the cure space is now DEFINITIVELY CLOSED.** (1) **over_voltage A/B**
+  (build 2707, flash-free `set_overvolt.py 6`): stall PERSISTS (dur=32399ms); active-signature confirmed by a
+  +5C idle-temp delta (79.3C->84.2C->79.3C on revert -- firmware genuinely applied it). AVS/DVFS idle-voltage
+  droop is NOT the cause. (2) **GENET MDIO-poll keep-warm** (build 2711, v0.4.270 -- Linux's EXACT PHY_POLL
+  lever): added `/proc/fabwarm.2` = a core-1 ~1kHz MDIO read of the PHY BMSR via the root's `dev_genet_vaddr`
+  (netd does not auto-poll MDIO -> no contention). ARMED + ACTIVE (iters 5524->209483 at ~1.1kHz; the stall
+  capture's own hb_ms[1]=233186 = core 1 busy with the keep-warm AT the stall = active-signature embedded in
+  the negative result). Stall STILL persists (4+ stalls dur~32.4s, ipi=0, rmask=0x1). REFUTED. Non-coherent
+  GENET-block MDIO traffic does NOT warm the SCB DVM-completion/snoop path. Kept default-OFF (fabric_warm.c
+  mode 2) as an A/B knob. **=> the cure space is EMPTY (every keep-warm incl. Linux's actual mechanism, every
+  clock/register/voltage lever refuted). The ONLY remaining path for the freeze is MVD-1 (SURVIVE, not cure).**
+
+  **NEXT-SESSION PRIORITIES (ranked):** (1) **MVD-1 watchdog** (task #6) -- now THE top item (the cure space is
+  closed); needs the timer-IRQ-mask requirement from finding (C): a pure-userspace core-1 loop with its timer
+  IRQ MASKED (so it never enters the kernel for a tick -> never blocks on the BKL), reads core 0's heartbeat,
+  pokes mini-UART/GPIO out-of-band on a stall. The hard part is masking the per-core timer IRQ (likely a kernel
+  change: do not program / mask the timer on the watchdog core). (2) Add **/proc/laststall** (serial-independent
+  capture -- the FTDI adapter is flaky). (3) Map AXI_QUIET_TIME (doc already corrected this session).
+  Diagnostics build 2711 UNCOMMITTED-in-seL4-tree (captured in deps/patches/seL4-kernel.patch, 917 lines).
+  [[project_stall_hunt]].
 
 * **CURRENT STATE 2026-06-20 (session 3) -- RESEARCH + DIAGNOSTICS. Two deep research workflows re-confirmed
   the cure space is closed BUT surfaced one promising untried cure (GENET MDIO poll) + proved multi-core

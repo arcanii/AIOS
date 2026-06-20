@@ -50,14 +50,57 @@
  * negligible fabric load -- far below saturating it against GENET DMA. */
 #define FABWARM_HZ  1000u
 
+/* v0.4.269 GENET-MDIO mode (session-4): the session-3 primary-source research found
+ * Linux's RPi4 immunity is its ~1 Hz GENET PHY link-poll over MDIO (BCM2711 GENET has no
+ * link IRQ -> phylib PHY_POLL=HZ), a DIFFERENT SCB sub-block than the refuted GPLEV0/GPIO
+ * read. Mode 2 mirrors it: a periodic MDIO read of the PHY status register via the root's
+ * GENET mapping (dev_genet_vaddr). Each MDIO read kicks the UMAC MDIO state machine -> a
+ * burst of MDIO-clock activity crossing the GENET block on the SCB. netd does NOT auto-poll
+ * MDIO (only at init + on-demand /proc/genet), so a core-1 keep-warm does not contend with
+ * it -- DO NOT run /proc/genet during a keep-warm soak. Register layout mirrors net_genet.c. */
+#define UMAC_MDIO_CMD_IDX   ((0x0800 + 0x614) / 4)
+#define MDIO_START_BUSY     (1u << 29)
+#define MDIO_READ           (2u << 26)
+#define MDIO_PMD_SHIFT      21
+#define MDIO_REG_SHIFT      16
+#define FABWARM_PHY_ADDR    1   /* BCM54213 default PHY address (net_genet.c) */
+#define FABWARM_MII_BMSR    1   /* PHY Basic Mode Status register */
+
+/* Keep-warm mode: 1 = GPLEV0/GPIO read (refuted), 2 = GENET MDIO read (Linux's lever). */
+static volatile int      g_fabwarm_mode = 1;
 static volatile int      g_fabwarm_armed;
 static seL4_CPtr         g_fabwarm_ntfn;
 static volatile uint64_t g_fabwarm_iters;
+
+/* One uncached MDIO read of the PHY status register via the GENET block. Kicks the MDIO
+ * state machine then polls START_BUSY clear (bounded -- never hang the core-1 spin). The
+ * result is discarded; this is a fabric-traffic generator, not a link check. */
+static inline void genet_mdio_touch(void)
+{
+    volatile uint32_t *g = dev_genet_vaddr;
+    if (!g) {
+        return;   /* QEMU / GENET unmapped */
+    }
+    g[UMAC_MDIO_CMD_IDX] = MDIO_START_BUSY | MDIO_READ |
+                           ((uint32_t)FABWARM_PHY_ADDR << MDIO_PMD_SHIFT) |
+                           ((uint32_t)FABWARM_MII_BMSR << MDIO_REG_SHIFT);
+    arch_dsb();
+    for (int i = 0; i < 4000; i++) {
+        if (!(g[UMAC_MDIO_CMD_IDX] & MDIO_START_BUSY)) {
+            break;
+        }
+    }
+    (void)g[UMAC_MDIO_CMD_IDX];   /* read the result word (more GENET-block traffic) */
+}
 
 /* One uncached read of a VideoCore-side register = one ARM->VC AXI transaction.
  * On QEMU dev_gpio_vaddr is NULL (no-op; the fabric freeze does not exist there). */
 static inline void fabric_touch(void)
 {
+    if (g_fabwarm_mode == 2) {
+        genet_mdio_touch();
+        return;
+    }
     volatile uint32_t *g = dev_gpio_vaddr;
     if (g) {
         (void)g[GPLEV0_IDX];
@@ -146,13 +189,16 @@ void fabric_warm_start(void)
  * warm), .0 = disarm (core 1 returns to idle), bare = status. */
 int fabric_warm_cmd(const char *args, char *buf, int bufsize)
 {
-    if (args[0] == '.' && args[1] == '1') {
+    if (args[0] == '.' && (args[1] == '1' || args[1] == '2')) {
+        g_fabwarm_mode = (args[1] == '2') ? 2 : 1;
         g_fabwarm_armed = 1;
-        arch_dsb();                                  /* publish the flag before the wake */
+        arch_dsb();                                  /* publish the flags before the wake */
         if (g_fabwarm_ntfn) {
             seL4_Signal(g_fabwarm_ntfn);
         }
-        return snprintf(buf, bufsize, "fabwarm: ARMED -- core 1 keeping the SCB fabric warm\n");
+        return snprintf(buf, bufsize,
+            "fabwarm: ARMED mode=%d (%s) -- core 1 generating SCB fabric traffic\n",
+            g_fabwarm_mode, g_fabwarm_mode == 2 ? "GENET MDIO" : "GPLEV0");
     }
     if (args[0] == '.' && args[1] == '0') {
         g_fabwarm_armed = 0;
@@ -160,6 +206,7 @@ int fabric_warm_cmd(const char *args, char *buf, int bufsize)
         return snprintf(buf, bufsize, "fabwarm: disarmed -- core 1 returning to idle\n");
     }
     return snprintf(buf, bufsize,
-        "fabwarm: armed=%d iters=%llu gpio=%p (.1 arm / .0 disarm)\n",
-        g_fabwarm_armed, (unsigned long long)g_fabwarm_iters, (void *)dev_gpio_vaddr);
+        "fabwarm: armed=%d mode=%d iters=%llu gpio=%p genet=%p (.1 GPLEV0 / .2 GENET-MDIO / .0 disarm)\n",
+        g_fabwarm_armed, g_fabwarm_mode, (unsigned long long)g_fabwarm_iters,
+        (void *)dev_gpio_vaddr, (void *)dev_genet_vaddr);
 }
