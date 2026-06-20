@@ -14,6 +14,49 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   HW-VERIFIED + PUSHED (`9e543c6`, v0.4.252). NOTE: DHCP lease BOUNCES `.8`<->`.250`
   per boot -- ARP-sweep MAC `dc:a6:32:1c:2e:e1` if `.8` is dark.
 
+* **CURRENT STATE 2026-06-21 (session 6) -- THE STALL CURE IS SCOPED: the seL4 ASID-GENERATION redesign
+  (`docs/NEXT_20260621_asid_generation.md`) is the one architectural cure left, and the stall hit LIVE this
+  session (3 freezes, repeatedly killing the keyboard) -- vindicating "never conclude it". Board = v0.4.276
+  build 2738 at 192.168.0.8 (netd-OFF). This session's code is UNCOMMITTED WIP (see below); Bryan pushes.**
+  - **STALL = the headline, and it bit LIVE.** Typing on the HDMI keyboard, an `ls`/`cat` teardown triggered
+    `[TLBISTALL] asid=1 va=0x117ce000 dur=32395ms` -- a ROOT SELF-MUNMAP per-page `tlbi vae1` (NOT the deleteASID
+    `aside1`), which errored the keyboard int-IN EP (`cc=36` -> keyboard dead -> replug to recover). A keyboard
+    attached makes the stalls FREQUENT (every few commands; matches the old "stall per quantum with a keyboard"
+    note). **NEW INSIGHT: the dominant stall is the self-munmap per-page `tlbi vae1` (current asid, eager flush),
+    not just the teardown `aside1` -- so the cure must kill BOTH.** Reframed as a MAJOR OPEN CONCERN
+    ([[feedback_stall_open_concern]]): MVD-1 only SURVIVES it; the system still freezes 32.4s.
+  - **THE CURE, SCOPED: seL4 ASID-GENERATION recycling (`docs/NEXT_20260621_asid_generation.md`).** Every ISA
+    lever is exhausted -- local vs broadcast `tlbi` (both froze 2026-06-19), `dsb sy` vs `dsb nsh` (both froze
+    32399ms, build 2122), every keep-warm/clock/voltage. The A72 emits the DVM-Sync from ANY `tlbi;dsb`
+    regardless. So the cure is to NOT ISSUE the teardown/self-munmap `tlbi` at all: decouple the seL4 asid from
+    the HARDWARE asid, recycle hw asids via a generation counter (`deleteASID` = no flush; self-munmap = assign a
+    FRESH hw asid + reload TTBR0, no `tlbi`; full flush ONLY at generation wrap -- rare + warm-fabric). Removes the
+    after-idle `tlbi` that hangs. Correctness-critical (a bug = silent cross-process TLB corruption) + DIVERGES
+    from seL4's Isabelle proof (ships TESTED-not-PROVEN -- Bryan's call). Injection points grounded in the doc:
+    `setVMRoot`/`armv_contextSwitch` ([vspace.c:912]), `deleteASID` ([vspace.c:1237]), `invalidateTLBByASID`
+    ([vspace.c:1089]). Multi-session. SEED PROMPT at the end of the doc + handed to Bryan this session.
+  - **HW-VERIFIED this session (USB):** Stage 5 STALL recovery -- the NATURAL transparent recovery finally
+    reproduced (re-plug -> `inject=0 recoveries=4`, drive healthy = a GENUINE bulk STALL recovered transparently
+    on the VL805, closing last session's loose end). Stage 6 multi-sector read HW-VERIFIED (`msc-multi:
+    selftest=PASS n=8` on the 4TB Buffalo). Both observable in `/proc/xhci`.
+  - **Also: O_CREAT silent-fail FIXED** (v0.4.275 `bc528ef` -- `open(O_CREAT)` on a denied create returns -EACCES;
+    idtest extended, identity 6/6). **sshd CONFIRMED WORKING on :2222** (the "down" was a wrong-port test -- AIOS
+    sshd is 2222 not 22; multi-session was already fixed v0.4.178). **THREE "open tracks" were STALE-INDEX
+    (already done): SHM-ring HW-coherency, identity-privesc, SSH-multi-session** -- MEMORY.md index lines corrected.
+    Serial capture restored: `scripts/sercap.py` now opens **O_RDWR** (macOS FTDI rejects `tcsetattr` on a
+    read-only fd -> EINVAL).
+  - **UNCOMMITTED WIP (the board RUNS it; source not committed): v0.4.276 runtime keyboard-LED** -- `xhci.c`
+    `set_leds_runtime` re-enabled (Stop-EP -> SET_REPORT -> resume the int ring from the `dev_ctx` HW dequeue ->
+    doorbell; `[led-rt]` serial diagnostics; keypress-wiring still OFF, only the `/proc/xhci.led` poke fires it).
+    FLASHED (build 2738) but UNTESTED -- the LED poke test got derailed by the stall storm (the stall kills the
+    same int-IN EP the LED manipulates). NEXT for the LED: poke `/proc/xhci.led.2` + read the serial `[led-rt]`
+    line + confirm the Caps LED lit + that typing survives. **RELATED HIGH-VALUE IDEA: an int-IN EP RECOVERY** at
+    [xhci.c:888](src/usb/xhci.c) (the driver detects `int-IN err cc=36` but only re-arms; add Reset-EP + re-arm,
+    the bulk `bot_ep_recover` pattern) so the keyboard SELF-HEALS after every stall -- no replug. Same int-IN EP
+    mechanism as the LED.
+  - **COMMIT the WIP** (LED `xhci.c` + `version.h` 276 + the `sercap.py` O_RDWR fix + the scope doc), Bryan pushes.
+    Board: v0.4.276 build 2738, Buffalo + keyboard attached (stall-prone), FTDI serial on `/dev/cu.usbserial-0001`.
+
 * **CURRENT STATE 2026-06-21 (session 5) -- USB MSC Stage 5 bulk-STALL recovery HW-VERIFIED; the last
   HW-pending item from the stall-hunt era is closed. The stall hunt is NOT concluded -- it stays a MAJOR OPEN CONCERN, BACKLOGGED (the freeze is mitigated via MVD-1, NOT cured; Bryan: never frame it as done -- [[feedback_stall_open_concern]]).** Board =
   **v0.4.273 build 2729** at 192.168.0.8 (netd-OFF build-rpi4). 1 code commit on `main` (`191552f`; Bryan
