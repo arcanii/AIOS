@@ -31,7 +31,7 @@ index 12d55f3c9..9f44f29ab 100644
  #ifdef CONFIG_BENCHMARK_TRACK_UTILISATION
      benchmark_utilisation_switch(NODE_STATE(ksCurThread), thread);
 diff --git a/include/arch/arm/arch/64/mode/machine.h b/include/arch/arm/arch/64/mode/machine.h
-index d869e3926..cfec15386 100644
+index d869e3926..9ad64cc19 100644
 --- a/include/arch/arm/arch/64/mode/machine.h
 +++ b/include/arch/arm/arch/64/mode/machine.h
 @@ -19,6 +19,25 @@
@@ -60,7 +60,7 @@ index d869e3926..cfec15386 100644
  #define CNTPCT   "cntpct_el0"
  #define CNTV_CTL "cntv_ctl_el0"
  
-@@ -248,12 +267,45 @@ static inline void invalidateLocalTLB_ASID(asid_t asid)
+@@ -248,12 +267,57 @@ static inline void invalidateLocalTLB_ASID(asid_t asid)
      isb();
  }
  
@@ -73,12 +73,23 @@ index d869e3926..cfec15386 100644
 + * core (tests the residency/ipi_wait hypothesis -- expect 0 under core-0
 + * pinning). Impl in errata.c; the remote-IPI counter is bumped in tlb.h. */
 +#define AIOS_TLBISTALL_PROFILE 1
-+void aios_tlbi_profile(word_t t0, word_t t1, word_t mva_plus_asid);
++/* Snapshot the 5 stall-profiler PMU event counters (PMEVCNTR0..4_EL0) into a[0..4] =
++ * {inst_retired, bus_access, mem_access, l2d_refill, cpu_cycles}. EL1-accessible (no EL2
++ * trap); if the PMU is unarmed (QEMU a53) the reads just return 0 -- no fault. */
++#define AIOS_PMU_READ5(a) do { \
++    asm volatile("mrs %0, S3_3_C14_C8_0" : "=r"((a)[0])); \
++    asm volatile("mrs %0, S3_3_C14_C8_1" : "=r"((a)[1])); \
++    asm volatile("mrs %0, S3_3_C14_C8_2" : "=r"((a)[2])); \
++    asm volatile("mrs %0, S3_3_C14_C8_3" : "=r"((a)[3])); \
++    asm volatile("mrs %0, S3_3_C14_C8_4" : "=r"((a)[4])); \
++} while (0)
++void aios_tlbi_profile(word_t t0, word_t t1, word_t mva_plus_asid, const word_t *pm0, const word_t *pm1);
 +
  static inline void invalidateLocalTLB_VAASID(word_t mva_plus_asid)
  {
 +#if AIOS_TLBISTALL_PROFILE
-+    word_t _ts_t0;
++    word_t _ts_t0, _pm0[5];
++    AIOS_PMU_READ5(_pm0);
 +    asm volatile("mrs %0, " CNT_CT : "=r"(_ts_t0));
 +#endif
      dsb();
@@ -99,18 +110,19 @@ index d869e3926..cfec15386 100644
      dsb();
      isb();
 +#if AIOS_TLBISTALL_PROFILE
-+    word_t _ts_t1;
++    word_t _ts_t1, _pm1[5];
 +    asm volatile("mrs %0, " CNT_CT : "=r"(_ts_t1));
-+    aios_tlbi_profile(_ts_t0, _ts_t1, mva_plus_asid);
++    AIOS_PMU_READ5(_pm1);
++    aios_tlbi_profile(_ts_t0, _ts_t1, mva_plus_asid, _pm0, _pm1);
 +#endif
  }
  
  /* Invalidate all stage 1 and stage 2 translations used at
 diff --git a/include/arch/arm/arch/machine/tlb.h b/include/arch/arm/arch/machine/tlb.h
-index 7235672db..6c7637646 100644
+index 7235672db..468751c1b 100644
 --- a/include/arch/arm/arch/machine/tlb.h
 +++ b/include/arch/arm/arch/machine/tlb.h
-@@ -47,6 +47,65 @@ static inline void invalidateTranslationASID(hw_asid_t hw_asid)
+@@ -47,6 +47,71 @@ static inline void invalidateTranslationASID(hw_asid_t hw_asid)
      SMP_COND_STATEMENT(doRemoteInvalidateTranslationASID(hw_asid, MASK(CONFIG_MAX_NUM_NODES)));
  }
  
@@ -156,6 +168,12 @@ index 7235672db..6c7637646 100644
 + * so the fastpath vspace switch (switchToThread_fp), compiled before vspace.c in the unity
 + * build, can mark too -- required before any user thread runs off core 0. */
 +void aios_mark_asid_residency(word_t asid);
++/* AIOS session-4 residency shootdown-mask (project_stall_hunt). Definitions in arm/64
++ * vspace.c; prototyped here so the TLBI-stall profiler (errata.c) can reach them in the
++ * unity build. The mask is widened inline by aios_mark_asid_residency (a non-root vspace
++ * running on a secondary core == coresched), not via a migrateTCB hook. */
++extern word_t aios_resident_cores_mask;      /* cores a teardown shootdown may IPI ({core0} default) */
++word_t aios_asid_residency_raw(word_t asid); /* raw residency bitmap (profiler diagnostic) */
 +#endif
 +
 +/* AIOS lazy-TLB teardown (project_stall_hunt). A process teardown unmaps its pages one
@@ -177,10 +195,10 @@ index 7235672db..6c7637646 100644
  {
      invalidateTranslationAllLocal();
 diff --git a/src/arch/arm/64/idle.S b/src/arch/arm/64/idle.S
-index c47710bcb..3b2656663 100644
+index c47710bcb..5ebfba6fc 100644
 --- a/src/arch/arm/64/idle.S
 +++ b/src/arch/arm/64/idle.S
-@@ -9,6 +9,19 @@
+@@ -9,6 +9,34 @@
  .section .text, "ax"
  
  BEGIN_FUNC(idle_thread)
@@ -198,14 +216,29 @@ index c47710bcb..3b2656663 100644
 +     * kept OFF only because it deepened the quiescence (made the stall worse).
 +     * The real cure is the AIOS-vs-Linux coherency/retention-config diff; see
 +     * docs/NEXT_20260620_dvm_heartbeat.md. */
-+    1: yield
++1:
++    yield
++    /* AIOS per-core liveness heartbeat (diagnostic): stamp CNTPCT into this core's padded
++       64-byte slot (aios_core_heartbeat, errata.c) every idle iteration. The TLBI-stall
++       profiler then reports, after a core-0 teardown stall, whether THIS core kept running
++       through the ~32.4s (sibling lag ~=0 => core-LOCAL => a watchdog core survives) or
++       also froze (lag ~=dur => cluster-WIDE). Each core owns its own cache line, so these
++       stores generate NO cross-core snoop traffic (unlike the refuted corewarm). The idle
++       loop never returns, so clobbering x0-x2 is free. */
++    mrs x0, mpidr_el1
++    and x0, x0, #0xff
++    adrp x1, aios_core_heartbeat
++    add x1, x1, #:lo12:aios_core_heartbeat
++    add x1, x1, x0, lsl #6          /* x1 = &aios_core_heartbeat[core*8] (core*64 bytes) */
++    mrs x2, cntpct_el0
++    str x2, [x1]
      b 1b
  END_FUNC(idle_thread)
 diff --git a/src/arch/arm/64/kernel/vspace.c b/src/arch/arm/64/kernel/vspace.c
-index 08f7937ee..39976616f 100644
+index 08f7937ee..ab153943c 100644
 --- a/src/arch/arm/64/kernel/vspace.c
 +++ b/src/arch/arm/64/kernel/vspace.c
-@@ -765,6 +765,79 @@ bool_t CONST isValidVTableRoot(cap_t cap)
+@@ -765,6 +765,128 @@ bool_t CONST isValidVTableRoot(cap_t cap)
      return isValidNativeRoot(cap);
  }
  
@@ -230,13 +263,62 @@ index 08f7937ee..39976616f 100644
 +void aios_mark_asid_residency(word_t asid)
 +{
 +    if (likely(asid < AIOS_RESID_NASIDS)) {
-+        armKSASIDResidency[asid] |= (uint8_t)BIT(getCurrentCPUIndex());
++        word_t cpu = getCurrentCPUIndex();
++        armKSASIDResidency[asid] |= (uint8_t)BIT(cpu);
++        /* Widen the shootdown mask the first time GENUINE distributed work runs on a
++         * secondary core: a NON-root vspace (asid != IT_ASID) executing off core 0 ==
++         * coresched /proc/coresched.1 (user procs have their own asid >= 2). The keep-warm
++         * DIAGNOSTIC threads (fabwarm core 1, core_warm cores 1/2/3) also run on secondaries
++         * but in the ROOT vspace (asid == IT_ASID == 1), so they do NOT widen it -- which is
++         * exactly what keeps the default-config teardown of the immortal root asid
++         * core-LOCAL (the freeze the mask neutralizes). Sticky: once distributed work has
++         * run, full residency is honored thereafter so no recycled-asid stale TLB can slip
++         * past on a core the mask had been hiding. (Must be inside aios_mark, not the
++         * migrateTCB SetAffinity path -- the keep-warm threads SetAffinity to cores 1/2/3 at
++         * boot, which would mis-fire a migrate-based latch; only actually RUNNING a non-root
++         * vspace on a secondary is the true coresched signal.) */
++        if (cpu != 0 && asid != IT_ASID) {
++            aios_resident_cores_mask = MASK(CONFIG_MAX_NUM_NODES);
++        }
 +    }
 +}
-+static inline word_t aios_asid_residency(asid_t asid)
++
++/* AIOS 2026-06-20 session-4 -- the cores a teardown TLB shootdown is allowed to IPI.
++ * Default BIT(0) (core 0 only). Rationale (project_stall_hunt session-3 PMU/heartbeat
++ * capture): EVERY ~32.4s teardown freeze is asid=1 (the immortal root-task vspace), and
++ * residency[1] = {0,1,2,3} because the keep-warm DIAGNOSTIC threads -- fabwarm (core 1)
++ * and core_warm (cores 1/2/3), both spawned in the ROOT vspace -- run their entry code
++ * once on cores 1-3 before parking, marking residency[1] for those cores; the bits never
++ * clear because asid 1 is never deleteASID'd. So every root self-munmap + the dying-proc
++ * aside1 IPI'd the idle siblings, and core 0's stalled dsb dragged them into THEIR own
++ * tlbi;dsb on the same parked BCM2711 SCB fabric -- the heartbeat proved cores 2,3 froze
++ * for the full stall (hb_ms[2,3] == dur). Under the default all-threads-pinned-to-core-0
++ * model those siblings only ever run the idle thread (global kernel vspace) or a PARKED
++ * keep-warm, so they hold no LIVE user translation they will consult again -- masking
++ * their residency bit out makes a teardown stay core-LOCAL (no remote IPI), so the freeze
++ * no longer spreads cluster-wide and a watchdog core can survive it. Latched WIDE (sticky)
++ * by aios_mark_asid_residency the first time a NON-root vspace runs on a secondary core
++ * (genuine coresched distribution), so distributed user work stays shootdown-correct. NOTE
++ * the keep-warm threads DO SetAffinity to cores 1/2/3 at boot, so a migrateTCB-based latch
++ * would mis-fire -- the widen lives in aios_mark instead, keyed on a non-root asid. */
++word_t aios_resident_cores_mask = 1; /* BIT(0) */
++/* Raw (un-masked) residency bitmap of an asid -- for the TLBI-stall profiler diagnostic
++ * (errata.c), which prints res= (raw) vs rmask= so the fix's effect is self-evident. */
++word_t aios_asid_residency_raw(word_t asid)
 +{
 +    if (likely(asid < AIOS_RESID_NASIDS)) {
 +        return (word_t)armKSASIDResidency[asid];
++    }
++    return 0;
++}
++
++static inline word_t aios_asid_residency(asid_t asid)
++{
++    if (likely(asid < AIOS_RESID_NASIDS)) {
++        /* AIOS: honor only the cores distributed user work may actually run on
++         * (aios_resident_cores_mask, default {core0}). Stale boot-era bits for the
++         * idle/parked siblings are masked out so the teardown tlbi stays local. */
++        return (word_t)armKSASIDResidency[asid] & aios_resident_cores_mask;
 +    }
 +    /* AIOS 2026-06-20: untracked ASID (>= AIOS_RESID_NASIDS). The old default was
 +     * MASK(all) = full broadcast, which the enhanced TLBI profiler caught firing
@@ -285,7 +367,7 @@ index 08f7937ee..39976616f 100644
  void setVMRoot(tcb_t *tcb)
  {
      cap_t threadRoot;
-@@ -788,6 +861,11 @@ void setVMRoot(tcb_t *tcb)
+@@ -788,6 +910,11 @@ void setVMRoot(tcb_t *tcb)
      }
  
      armv_contextSwitch(vspaceRoot, asid);
@@ -297,7 +379,7 @@ index 08f7937ee..39976616f 100644
  }
  
  static bool_t setVMRootForFlush(vspace_root_t *vspace, asid_t asid)
-@@ -803,6 +881,7 @@ static bool_t setVMRootForFlush(vspace_root_t *vspace, asid_t asid)
+@@ -803,6 +930,7 @@ static bool_t setVMRootForFlush(vspace_root_t *vspace, asid_t asid)
      }
  
      armv_contextSwitch(vspace, asid);
@@ -305,7 +387,7 @@ index 08f7937ee..39976616f 100644
      return true;
  }
  
-@@ -975,7 +1054,7 @@ static inline void invalidateTLBByASID(asid_t asid)
+@@ -975,7 +1103,7 @@ static inline void invalidateTLBByASID(asid_t asid)
      }
      invalidateTranslationASID(asid_map_asid_map_vspace_get_stored_hw_vmid(asid_map));
  #else
@@ -314,7 +396,7 @@ index 08f7937ee..39976616f 100644
  #endif
  }
  
-@@ -997,10 +1076,25 @@ static inline void invalidateTLBByASIDVA(asid_t asid, vptr_t vaddr)
+@@ -997,10 +1125,25 @@ static inline void invalidateTLBByASIDVA(asid_t asid, vptr_t vaddr)
      uint64_t hw_asid = asid_map_asid_map_vspace_get_stored_hw_vmid(asid_map);
      invalidateTranslationSingle((hw_asid << 48) | vaddr >> seL4_PageBits);
  #else
@@ -341,7 +423,7 @@ index 08f7937ee..39976616f 100644
  
  void unmapPageTable(asid_t asid, vptr_t vptr, pte_t *target_pt)
  {
-@@ -1063,7 +1157,32 @@ void unmapPage(vm_page_size_t page_size, asid_t asid, vptr_t vptr, pptr_t pptr)
+@@ -1063,7 +1206,32 @@ void unmapPage(vm_page_size_t page_size, asid_t asid, vptr_t vptr, pptr_t pptr)
      *(lu_ret.ptSlot) = pte_pte_invalid_new();
      cleanByVA_PoU((vptr_t)lu_ret.ptSlot, pptr_to_paddr(lu_ret.ptSlot));
      assert(asid < BIT(16));
@@ -374,7 +456,7 @@ index 08f7937ee..39976616f 100644
  }
  
  void deleteASID(asid_t asid, vspace_root_t *vspace)
-@@ -1077,6 +1196,14 @@ void deleteASID(asid_t asid, vspace_root_t *vspace)
+@@ -1077,6 +1245,14 @@ void deleteASID(asid_t asid, vspace_root_t *vspace)
          if (asid_map_get_type(asid_map) == asid_map_asid_map_vspace &&
              (vspace_root_t *)asid_map_asid_map_vspace_get_vspace_root(asid_map) == vspace) {
              invalidateTLBByASID(asid);
@@ -427,10 +509,10 @@ index 93eb4d133..83813218c 100644
      init_plat();
  
 diff --git a/src/arch/arm/machine/errata.c b/src/arch/arm/machine/errata.c
-index f8dac15c3..ba7bd6fcc 100644
+index f8dac15c3..ecf11b2fa 100644
 --- a/src/arch/arm/machine/errata.c
 +++ b/src/arch/arm/machine/errata.c
-@@ -8,11 +8,270 @@
+@@ -8,11 +8,342 @@
  #include <api/types.h>
  #include <arch/machine.h>
  #include <arch/machine/hardware.h>
@@ -508,6 +590,32 @@ index f8dac15c3..ba7bd6fcc 100644
 +    return v;
 +}
 +
++/* AIOS PMU init (diagnostic): program 5 A72 event counters so the TLBI-stall profiler
++ * can dump what core 0 actually did across the ~32.4s freeze. EL1 PMU access is live (no
++ * EL2 -> no MDCR_EL2.TPM trap; seL4 already enables PMCR.E for cpuacct). We only ADD the
++ * event counters; PMCCNTR is left untouched (the profiler uses CNTPCT for wall-clock).
++ * Counters are 32-bit and may wrap on a 32s stall, but the qualitative read survives:
++ * INST_RETIRED~=0 => wedged on ONE instruction (the dsb), and BUS_ACCESS ~=0 (clean wait
++ * on a parked fabric) vs large (a retry storm) discriminates the mechanism. Called per-core
++ * from the A72 boot probes; A72-guarded so QEMU a53 leaves the counters off (prints 0s). */
++BOOT_CODE static void aios_pmu_init(void)
++{
++    word_t midr = getProcessorID();
++    if (((midr >> 4) & 0xFFF) != 0xD08) {
++        return;
++    }
++    word_t pmcr;
++    asm volatile("mrs %0, S3_3_C9_C12_0" : "=r"(pmcr));           /* PMCR_EL0 */
++    asm volatile("msr S3_3_C9_C12_0, %0" :: "r"(pmcr | 1u));      /* E: master enable (idempotent) */
++    asm volatile("msr S3_3_C14_C12_0, %0" :: "r"((word_t)0x08)); /* PMEVTYPER0 = INST_RETIRED */
++    asm volatile("msr S3_3_C14_C12_1, %0" :: "r"((word_t)0x19)); /* PMEVTYPER1 = BUS_ACCESS */
++    asm volatile("msr S3_3_C14_C12_2, %0" :: "r"((word_t)0x13)); /* PMEVTYPER2 = MEM_ACCESS */
++    asm volatile("msr S3_3_C14_C12_3, %0" :: "r"((word_t)0x17)); /* PMEVTYPER3 = L2D_CACHE_REFILL */
++    asm volatile("msr S3_3_C14_C12_4, %0" :: "r"((word_t)0x11)); /* PMEVTYPER4 = CPU_CYCLES */
++    asm volatile("msr S3_3_C9_C12_1, %0" :: "r"((word_t)0x1f));  /* PMCNTENSET_EL0: enable cnt 0..4 */
++    asm volatile("isb");
++}
++
 +void aios_a72_probe(void);
 +BOOT_CODE void aios_a72_probe(void)
 +{
@@ -559,6 +667,7 @@ index f8dac15c3..ba7bd6fcc 100644
 +               l2a, (int)((l2a >> 8) & 1), (int)((l2a >> 11) & 1));
 +    }
 +    printf("[A72PROBE] done\n");
++    aios_pmu_init();   /* arm the stall-profiler PMU counters on the boot core */
 +}
 +
 +/* ----------------------------------------------------------------------
@@ -604,6 +713,7 @@ index f8dac15c3..ba7bd6fcc 100644
 +        printf("[A72PROBE] core=%d CPUECTLR_EL1=%"SEL4_PRIx_word" SMPEN=%d RET=%d\n",
 +               (int)core, ectlr, (int)((ectlr >> 6) & 1), (int)(ectlr & 7));
 +    }
++    aios_pmu_init();   /* arm the stall-profiler PMU counters on this secondary core */
 +}
 +
 +/* ----------------------------------------------------------------------
@@ -644,9 +754,23 @@ index f8dac15c3..ba7bd6fcc 100644
 +#define AIOS_GPUBAND_HI 0xfc000000ull
 +volatile word_t aios_lowband_tlbi, aios_highband_tlbi;
 +volatile word_t aios_lowband_stall, aios_highband_stall;
++/* AIOS per-core liveness heartbeat: idle.S stamps CNTPCT into this core's padded
++ * (64-byte, no false-share) slot every idle iteration. On a teardown stall the issuing
++ * core (in the kernel, not idling) shows a large lag; a SIBLING showing ~0 lag proves it
++ * kept running through the stall (core-LOCAL -> multi-core survives), while ~stall-duration
++ * means it froze too (cluster-WIDE). The decisive un-pinning-feasibility test. */
++volatile word_t aios_core_heartbeat[AIOS_TLBI_NCORES * 8];
 +
-+void aios_tlbi_profile(word_t t0, word_t t1, word_t mva_plus_asid);
-+void aios_tlbi_profile(word_t t0, word_t t1, word_t mva_plus_asid)
++#ifdef ENABLE_SMP_SUPPORT
++/* AIOS session-4 residency-fix signature (definitions in arm/64 vspace.c). File-scope
++ * externs so the profiler print below can show res= (raw residency) vs rmask= (the masked
++ * cores a teardown may IPI) without a nested-extern warning. */
++extern word_t aios_resident_cores_mask;
++word_t aios_asid_residency_raw(word_t asid);
++#endif
++
++void aios_tlbi_profile(word_t t0, word_t t1, word_t mva_plus_asid, const word_t *pm0, const word_t *pm1);
++void aios_tlbi_profile(word_t t0, word_t t1, word_t mva_plus_asid, const word_t *pm0, const word_t *pm1)
 +{
 +    word_t freq;
 +    asm volatile("mrs %0, cntfrq_el0" : "=r"(freq));
@@ -680,21 +804,51 @@ index f8dac15c3..ba7bd6fcc 100644
 +        word_t burst_ms = (t1 - aios_burst_start_t[core]) * 1000ull / freq;
 +        word_t asid = mva_plus_asid >> 48;
 +        word_t va = (mva_plus_asid & 0xFFFFFFFFFFFFull) << 12;
++        /* AIOS session-4 residency-fix signature: res = the RAW per-ASID core-residency
++         * bitmap; rmask = the cores a shootdown may IPI (the fix's mask, default 0x1). On
++         * the stalling asid=1 these read res=0xf rmask=0x1 -> the teardown stays core-LOCAL
++         * (no IPI to the idle siblings), so ipi STOPS climbing and hb_ms[1,2,3]~=0. The
++         * extern decls are at file scope (above) to avoid a nested-extern warning. */
++#ifdef ENABLE_SMP_SUPPORT
++        unsigned res = (unsigned)aios_asid_residency_raw(asid);
++        unsigned rmask = (unsigned)aios_resident_cores_mask;
++#else
++        unsigned res = 0, rmask = 1;
++#endif
 +        int qg[AIOS_TLBI_NCORES];
 +        for (int c = 0; c < AIOS_TLBI_NCORES; c++) {
 +            qg[c] = (int)((t1 - aios_last_tlbi_t[c]) * 1000ull / freq);
 +        }
-+        printf("[TLBISTALL] core=%d dur=%dms gap=%dms bpos=%d bms=%d asid=%d va=0x%"SEL4_PRIx_word
++        /* PMU deltas across the tlbi+dsb (what the wedged core did): inst~=0 + cyc large
++         * => clocked but stuck on ONE instruction (the dsb); bus~=0 => a clean wait on a
++         * PARKED fabric, vs large => a retry storm (a different bug). 32-bit counters masked
++         * to their mod-2^32 delta -- a large value may have wrapped, but ~0-vs-large holds. */
++        int d_inst = (int)((pm1[0] - pm0[0]) & 0xffffffffu);
++        int d_bus  = (int)((pm1[1] - pm0[1]) & 0xffffffffu);
++        int d_mem  = (int)((pm1[2] - pm0[2]) & 0xffffffffu);
++        int d_l2   = (int)((pm1[3] - pm0[3]) & 0xffffffffu);
++        int d_cyc  = (int)((pm1[4] - pm0[4]) & 0xffffffffu);
++        /* per-core heartbeat lag (ms since each core last stamped idle.S); a SIBLING ~=0 =
++         * alive through the stall (core-LOCAL), ~=dur = froze too; -1 = never idled. */
++        int hbl[AIOS_TLBI_NCORES];
++        for (int c = 0; c < AIOS_TLBI_NCORES; c++) {
++            word_t h = aios_core_heartbeat[c * 8];
++            hbl[c] = h ? (int)((t1 - h) * 1000ull / freq) : -1;
++        }
++        printf("[TLBISTALL] core=%d dur=%dms gap=%dms bpos=%d bms=%d asid=%d res=0x%x rmask=0x%x va=0x%"SEL4_PRIx_word
 +               " pa=0x%"SEL4_PRIx_word" pte=0x%"SEL4_PRIx_word
 +               " n=%d ipi=%d band=%d hbS=%d lbS=%d hbT=%d lbT=%d"
-+               " qgap_ms=[%d,%d,%d,%d]\n",
++               " qgap_ms=[%d,%d,%d,%d]"
++               " pmu=[inst=%d bus=%d mem=%d l2=%d cyc=%d] hb_ms=[%d,%d,%d,%d]\n",
 +               (int)core, (int)dur_ms, (int)gap_ms,
-+               (int)aios_burst_cnt[core], (int)burst_ms, (int)asid, va,
++               (int)aios_burst_cnt[core], (int)burst_ms, (int)asid, res, rmask, va,
 +               aios_last_unmap_paddr, aios_last_unmap_pte,
 +               (int)aios_tlbistall_count, (int)aios_tlbi_ipi_sent,
 +               hb, (int)aios_highband_stall, (int)aios_lowband_stall,
 +               (int)aios_highband_tlbi, (int)aios_lowband_tlbi,
-+               qg[0], qg[1], qg[2], qg[3]);
++               qg[0], qg[1], qg[2], qg[3],
++               d_inst, d_bus, d_mem, d_l2, d_cyc,
++               hbl[0], hbl[1], hbl[2], hbl[3]);
 +    }
 +}
 +

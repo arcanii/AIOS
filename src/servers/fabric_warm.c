@@ -129,16 +129,17 @@ void fabric_warm_start(void)
     sel4utils_start_thread(&th, fabric_warm_fn, NULL, NULL, 1);
     aios_acct_register("fabwarm", th.tcb.cptr);
 
-    /* v0.4.267: DEFAULT-ON. The "Linux approach" is now the active fix for the
-     * idle-teardown DVM freeze -- arm the keep-warm at boot so the SCB fabric
-     * stays warm without manual intervention. `/proc/fabwarm.0` disables it
-     * (reverts to the mitigations-only baseline -- nodes=4 + masked shootdown +
-     * clock floor); `/proc/fabwarm.1` re-arms. Validated empirically via
-     * /proc/freezes (the freeze is too rare for a quick A/B). */
-    g_fabwarm_armed = 1;
-    arch_dsb();                          /* publish the flag before the wake */
-    seL4_Signal(g_fabwarm_ntfn);
-    printf("[fabwarm] SCB-fabric keep-warm ARMED on core 1 (default-on; /proc/fabwarm.0 to disable)\n");
+    /* v0.4.269: DEFAULT-OFF (reverted from the v0.4.267 default-on). The GPLEV0
+     * keep-warm is REFUTED -- a Device read crosses the ARM->VC AXI link but never
+     * warms the cluster SCB snoop/DVM interface core 0's teardown dsb waits on
+     * (project_stall_hunt: every CPU keep-warm refuted on HW). Leaving it ARMED also
+     * kept core 1 busy-spinning in the ROOT vspace (asid 1), which marked residency[1]
+     * bit 1 -- one of the {1,2,3} bits that made every asid=1 teardown IPI-storm the
+     * idle siblings (the freeze the residency mask now neutralizes). Disarmed, core 1
+     * returns to the idle thread (global vspace), so the residency mask over cores 1-3
+     * is provably safe and the heartbeat can show core 1 surviving a core-0 stall.
+     * /proc/fabwarm.1 still arms it for an A/B. */
+    printf("[fabwarm] SCB-fabric keep-warm available on core 1 (default-OFF, refuted; /proc/fabwarm.1 to A/B)\n");
 }
 
 /* /proc/fabwarm[.0|.1] -- the live A/B knob. .1 = arm (core 1 keeps the fabric

@@ -14,6 +14,142 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   HW-VERIFIED + PUSHED (`9e543c6`, v0.4.252). NOTE: DHCP lease BOUNCES `.8`<->`.250`
   per boot -- ARP-sweep MAC `dc:a6:32:1c:2e:e1` if `.8` is dark.
 
+* **CURRENT STATE 2026-06-20 (session 4) -- THE RESIDENCY/IPI BUG IS FIXED + HW-VERIFIED. The ~32.4s
+  teardown freeze no longer IPI-storms the idle siblings (the asid-1 teardown is now core-LOCAL); a NEW
+  finding pins the REMAINING multi-core coupling on the Big-Kernel-Lock + timer tick, not the residency.**
+  Board = **v0.4.269 build 2707** at 192.168.0.8 (residency shootdown-mask + fabwarm DEFAULT-OFF + res=/rmask=
+  diagnostic; sha-verified flash, banner-confirmed). seL4 changes captured in `deps/patches/seL4-kernel.patch`
+  (917 lines). Diagnostics (PMU/heartbeat/profiler) KEPT.
+
+  **(A) ROOT CAUSE PINNED (session-3 PMU was right; session-4 found the exact source).** A baseline capture
+  (build 2699) caught 8 stalls, EVERY ONE `asid=1` (the immortal root-task vspace) with `ipi` climbing
+  73264->101120 and `hb_ms[2,3]==dur`. The `residency[1]={0,1,2,3}` bits come from the KEEP-WARM DIAGNOSTIC
+  threads: `fabric_warm.c` (core 1, DEFAULT-ON) + `core_warm.c` (cores 1/2/3, parked) are spawned in the
+  ROOT vspace and run their entry code once on cores 1-3 before parking -> they mark `residency[1]` for those
+  cores, and the bits NEVER clear (asid 1 is never `deleteASID`'d). So every root self-munmap + the dying-proc
+  `aside1` IPI-stormed the idle siblings, and core 0's stalled `dsb` dragged them into THEIR own `tlbi;dsb`.
+
+  **(B) THE FIX (HW-verified, 3/3 post-fix stalls).** Two parts: (1) **residency shootdown-mask** (seL4
+  `vspace.c`): `aios_asid_residency()` now returns `residency[asid] & aios_resident_cores_mask`, default
+  `BIT(0)`; the mask latches WIDE (sticky) only when a NON-root vspace (`asid != IT_ASID`) actually RUNS on a
+  secondary core = genuine coresched `/proc/coresched.1` (user procs have asid>=2). The keep-warms run the
+  ROOT asid on secondaries so they do NOT widen it -- which is what keeps the immortal-root teardown
+  core-local. (A first cut latched on a migrateTCB hook; the `rmask=` diagnostic IMMEDIATELY caught it
+  mis-firing -- the keep-warms `SetAffinity` to cores 1/2/3 at boot, so the migrate latch widened the mask
+  during boot. Moved the latch into `aios_mark_asid_residency`, keyed on the non-root asid. The diagnostic
+  earned its keep.) (2) **fabwarm DEFAULT-OFF** (refuted GPLEV0 keep-warm; reverts the v0.4.267 default-on) so
+  core 1 idles and the fix is provably safe + the heartbeat readable. Result: `res=0xf rmask=0x1 ipi=0` across
+  3 consecutive stalls (baseline was `ipi` climbing) -- the IPI storm is ELIMINATED and asid-1 teardowns are
+  core-LOCAL. QEMU gate green (smp 4/5 + shmring 25/26 host-load sheds; socket 8/8, netd 10/10).
+
+  **(C) NEW FINDING -- the residency fix is NECESSARY but NOT SUFFICIENT for "siblings survive"; the
+  REMAINING coupling is the BKL + the per-core timer tick, NOT the residency.** Even with `ipi=0`,
+  `hb_ms[1,2,3]` STILL read `==dur` (cores 1,2,3 froze the whole stall). Mechanism: the kernel idle thread
+  (idle.S, where the heartbeat stamps) runs with IRQs ON; during core 0's 32s stall core 0 holds the BIG
+  KERNEL LOCK, so each sibling's periodic TIMER IRQ enters the kernel and blocks in `clh_lock_acquire` ~32s.
+  The idle heartbeat therefore CANNOT demonstrate survival (it is kernel-side, BKL-coupled). The handover's
+  session-3 expectation "hb_ms[2,3]~=0 after the residency fix" was OPTIMISTIC -- it overlooked the
+  timer-tick-BKL coupling. **=> MVD-1 must do THREE things to actually survive a core-0 stall: (1) the
+  residency fix [done -- no TLB-IPI to the watchdog core], (2) MASK the timer IRQ on the watchdog core (so it
+  never enters the kernel for a tick -> never blocks on the BKL), (3) be PURE USERSPACE (no syscalls in the
+  hot loop, like fabric_warm.c).** Only then does a watchdog core keep running while core 0 is wedged.
+
+  **NEXT-SESSION PRIORITIES (ranked):** (1) **MVD-1 watchdog** (task #6) -- now with the timer-IRQ-mask
+  requirement from finding (C); reads core 0's heartbeat from a pure-userspace core-1 loop with its timer
+  masked, pokes mini-UART/GPIO out-of-band on a stall. (2) **GENET MDIO-poll keep-warm** (task #4) -- the
+  untried Linux-immunity cure; note GENET is netd-owned (`genet_regs` private), so a root-vspace keep-warm
+  must use the root's `dev_genet_vaddr` mapping with a BENIGN GENET register read (avoid MDIO-bus contention
+  with netd's PHY poll). (3) **over_voltage A/B** (`scripts/set_overvolt.py 6`, flash-free; expect FAIL).
+  (4) Add **/proc/laststall** (serial-independent capture). (5) Map AXI_QUIET_TIME (doc already corrected
+  this session). Diagnostics build 2707 UNCOMMITTED-in-seL4-tree (captured in the patch). [[project_stall_hunt]].
+
+* **CURRENT STATE 2026-06-20 (session 3) -- RESEARCH + DIAGNOSTICS. Two deep research workflows re-confirmed
+  the cure space is closed BUT surfaced one promising untried cure (GENET MDIO poll) + proved multi-core
+  "survive the stall" is feasible as a watchdog; the PMU+heartbeat diagnostics are IMPLEMENTED + FLASHED
+  (build 2699) but the capture is BLOCKED on a wedged USB-serial adapter.** Board = **v0.4.268 build 2699**
+  = the committed clean baseline (lazy-TLB + profiler) PLUS UNCOMMITTED PMU/heartbeat diagnostics (seL4 tree:
+  machine.h/errata.c/idle.S). RAM 3877 (full DRAM, no trim). Committed baseline is still `8797f64` (v0.4.268);
+  the diagnostics sit uncommitted on top.
+
+  **(A) The Linux-vs-AIOS gap (primary-source) -> the most promising UNTRIED cure.** Linux on RPi4 never
+  freezes -- not via any register/barrier/TLB-structure delta (its boot/coherency setup is byte-identical; it
+  DOES WFI + DOES go bus-quiet), but because it emits a **~1 Hz floor of REAL peripheral MMIO/DMA** that keeps
+  the BCM2711 SCB DVM-completion logic clocked: chiefly the **GENET PHY link-poll over MDIO every 1 second**
+  (BCM2711 GENET has NO link-change IRQ, so Linux phylib runs PHY_POLL = HZ -- an MDIO read traversing the
+  GENET block on the SCB), plus opportunistic GENET RX DMA + USB. The TIMER TICK does NOT warm the fabric
+  (CNTPCT is a system-register read, zero bus traffic -- exactly why every AIOS CPU keep-warm failed). **=>
+  UNTRIED CURE LEAD: a periodic (~1 kHz, above the quiesce onset) GENET-block MDIO register read from a core-1
+  thread (Linux's exact mechanism), DISTINCT from the refuted fabwarm GPLEV0/GPIO read (different SCB
+  sub-block).** Could still fail (GENET DMA is non-coherent), but it is the only lever that maps to Linux's
+  actual immunity. (No Linux analog of this freeze exists; the only A72 DSB-stall errata 838569/848970 are the
+  MIRROR -- they stall when the bus is too BUSY.)
+
+  **(B) Multi-core "survive the stall": FEASIBLE as a watchdog -- the hang is CORE-LOCAL.** Spec-proven (A72
+  TRM 7.5/7.7 + ARM ARM): the hung tlbi;dsb wedges ONLY the issuing core (DSB completion is per-PE; the A72
+  SCU services intra-cluster coherency WITHOUT touching the external ACE/SCB core 0 hangs on; the DVM-Sync is
+  awaited by the issuing core's DSB). AIOS data corroborates (masked-shootdown stalled with
+  aios_tlbi_ipi_sent=0). **BUT the Big Kernel Lock is the software coupling:** core 0 holds the BKL during the
+  stall, so any sibling that ENTERS THE KERNEL (syscall/fault/IRQ) spins in clh_lock_acquire ~32s. Un-pinning
+  helps IFF the survivor stays in USERSPACE. **MVD-1 (RECOMMENDED, low-risk):** a core-1 out-of-band watchdog
+  -- userspace-only (private status page + direct mini-UART/GPIO poke), never enters the kernel, same safety
+  as fabric_warm.c; reads core 0's heartbeat, emits "[WDOG] core0 stalled" out-of-band + optional HW-watchdog
+  reset. The attainable "1-2 cores stuck beats whole-box wedged" win + real-time visibility. **MVD-2 (HARD,
+  multi-session):** split the reaper off the I/O servers -- blocked by (1) the shared UNLOCKED global allocator
+  (core-0 pinning IS the lock, boot_services.c:28), (2) net IRQ can't be retargeted without a kernel patch
+  (GIC-400 ITARGETSR; no seL4 invocation sets SPI target CPU), (3) the >=2048-ASID residency fallback becomes a
+  stale-TLB CORRUPTION landmine if a proc runs on core 1, (4) cross-core shootdowns RE-IMPORT the stall. AND
+  even done perfectly a live net thread needs the SCB warm = the bet fabwarm LOST -> no live network shell. SMP
+  re-arch backlog.
+
+  **(C) AXI_QUIET_TIME corrects a dead-end doc.** docs/NEXT_20260619_ubus_register_deadend.md WRONGLY says
+  ARM_LOCAL (0xFF800000) has "no fabric/quiesce block." BCM2711 datasheet 6.5.2 documents **AXI_QUIET_TIME @
+  offset 0x30** -- IRQ "if no AXI bus traffic for a programmable time ... software can confirm bus traffic from
+  the ARM cluster to VideoCore has ceased." It instruments the CAUSE + measures the keep-warm period. Only
+  raises an IRQ (can't bound the hang -- the doc's broader no-writable-timeout conclusion stands). #1 new
+  diagnostic; ACTION = correct the doc + map the page.
+
+  **(D) PMU + heartbeat diagnostics: FLASHED (build 2699) + CAPTURED (serial restored by replug). 5/5
+  stalls, two results.** Impl: errata.c (aios_pmu_init programs PMEVCNTR0-4 = INST_RETIRED/BUS_ACCESS/
+  MEM_ACCESS/L2D_REFILL/CPU_CYCLES + aios_core_heartbeat[] + extended aios_tlbi_profile), machine.h
+  (AIOS_PMU_READ5), idle.S (per-core cntpct stamp). The [TLBISTALL] line now also prints pmu=[...] + hb_ms=[...].
+   - **PMU (DECISIVE, 5/5 identical): `pmu=[inst=21 bus=7..67 mem~12 l2~8 cyc=<wraps>]`.** inst~=21 (~=0) =>
+     core 0 is CLOCKED but WEDGED ON ESSENTIALLY ONE INSTRUCTION (the dsb); bus < 100 across the WHOLE 32.4s
+     => a CLEAN WAIT on a parked fabric, NOT a retry storm. **RETIRES the "live arbiter" branch** -- the core
+     is parked on a DVM-Sync completion that never returns, issuing no bus traffic. (cyc wraps ~11x in 32s
+     = a 32-bit counter, useless for duration; negatives print as huge uint64 = a cosmetic seL4 printf %d quirk
+     to fix; CNTPCT remains the wall-clock source.)
+   - **Heartbeat (ROUGH but a CLEAR signal -- it CHANGES the multi-core picture): the stall is NOT cleanly
+     core-local in practice.** hb_ms[2,3] ~= the STALL DURATION every capture (32.4s @ 1-quantum, 64.8s @
+     2-quantum) => CORES 2,3 FREEZE for the full stall. The `ipi` counter climbing (43743 -> 64593) is the
+     cause: the teardown of a boot-era-residency asid (residency {0,1,2,3}) IPIs cores 2,3 (the masked-shootdown
+     "separate perf bug"), and they hang in THEIR OWN tlbi;dsb on the same parked fabric. (cores 0,1 show
+     hb=never/growing -- they never run idle_thread; core 0 is always busy, core 1's state needs a look; the
+     probe needs polish for a clean per-core read.) **=> THE RESIDENCY/IPI BUG IS NOW A PREREQUISITE FOR
+     MULTI-CORE SURVIVAL, not merely a perf bug:** clearing boot-era residency (on pinning / not marking during
+     boot) makes teardowns NOT IPI siblings -> the stall becomes core-LOCAL (matching the spec's per-PE-dsb
+     proof) -> a watchdog core (MVD-1) survives. Without it the remote shootdown spreads the stall cluster-wide.
+     Build 2699 diagnostics are UNCOMMITTED.
+
+  **(E) Test-validity audit (Bryan's catch).** Re-verified all 3 negative HW tests ran on a kernel WITH the
+  change: every flash passed pull-back byte-verify + on-card sha + post-reboot /proc/version build#, AND the
+  RESULT carried a live-only signature -- DTS trim (RAM 3813 + relocated stalls) and lazy-TLB (the asid=8 vae1
+  stalls VANISHED, replaced by asid=1 + [reap] destroy=32401ms aside1) are AIRTIGHT. GAP: the V3D keep-warm was
+  armed + RFC-climbing PRE-soak but NOT verified active THROUGHOUT (could have self-disarmed); the mechanism
+  (non-coherent DMA) still refutes it but the empirical test is not clean. LESSON: deployed != active; passive
+  mitigations need a liveness assert DURING the test.
+
+  **NEXT-SESSION PRIORITIES (ranked):** (1) **Fix the residency/IPI bug** (clear boot-era residency {0,1,2,3}
+  on pinning, or do not mark during boot; vspace.c armKSASIDResidency) -- now the GATE for multi-core survival
+  (the heartbeat proved the remote shootdown spreads the stall to cores 2,3) AND the ipi-storm perf fix; then
+  re-capture the heartbeat (expect cores 2,3 to survive a core-0 stall = core-local). (2) Try the **GENET
+  MDIO-poll keep-warm** (the untried cure mapping to Linux's real immunity; core-1 thread, ~1 kHz GENET MDIO
+  read, distinct from the refuted GPLEV0 read). (3) The cheap **over_voltage idle-voltage A/B**
+  (`scripts/set_overvolt.py 6`, flash-free; expect FAIL -> closes the avenue). (4) Build **MVD-1** (core-1
+  watchdog, AFTER the residency fix). (5) Polish the heartbeat probe (cores 0/1 never stamp; fix the %d-negative
+  printf) + add **/proc/laststall** (serial-independent capture -- the FTDI adapter is flaky/goes stale). (6)
+  Map **AXI_QUIET_TIME** + correct the dead-end doc. Diagnostics build 2699 UNCOMMITTED (keep-as-monitor vs
+  strip TBD). [[project_stall_hunt]].
+
 * **CURRENT STATE 2026-06-20 (session 2) -- THE BAND HYPOTHESIS (block below) IS REFUTED, and so are two
   more cure attempts. The ~32.4s teardown freeze is the BCM2711 SCB-fabric DVM-Sync hanging when the fabric
   has quiesced after idle, and it is UNREACHABLE from every CPU/GPU/TLB/register/clock lever. DECISION

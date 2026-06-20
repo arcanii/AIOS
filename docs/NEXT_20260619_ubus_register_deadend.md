@@ -18,6 +18,15 @@ Evidence (all primary-sourced):
   (address container, zero registers). Canonical STB GISB base 0xf0400000 is not in BCM2711's map.
 - **ARM-local 0xFF800000 is ONLY the L1-intc + GIC-400** (DT-proven, bcm2711.dtsi soc ranges). No
   fabric/arbiter/timeout/sun_top_ctrl block. The seed's "~0xff8xxxxx" hypothesis is REFUTED.
+  - **CORRECTION 2026-06-20 (session-3 primary-source research):** this bullet is too strong. The
+    BCM2711 ARM-local block at 0xFF800000 DOES contain a fabric-related register the DT does not name:
+    **AXI_QUIET_TIME @ offset 0x30** (BCM2711 peripherals datasheet 6.5.2 -- the ARM-local "AXI Quiet"
+    block raises a Core-0 IRQ "if no AXI bus traffic from the ARM cluster to VideoCore for a
+    programmable time"). It is a fabric-quiesce DETECTOR, not a writable transaction-timeout, so it can
+    only INSTRUMENT the freeze (timestamp bus-quiesce onset vs stall onset) + measure a keep-warm
+    period -- it cannot BOUND the hang. So the doc's HEADLINE conclusion (no software-writable fabric
+    timeout that could turn the 32s freeze into a blip) STILL STANDS; only the "no quiesce block at all"
+    phrasing was wrong. ACTION: map the ARM-local page + arm AXI_QUIET_TIME as the #1 cause-instrument.
 - The **only** `UBUS_TIMEOUT` in all of Linux/U-Boot is the PCIe RC's at 0xFD500000+0x40a8 (already
   bounded v0.4.213). No second non-PCIe copy. `biuctrl.c` (A72 CPU<->fabric tuning) has only
   credits/throttle/prefetch, no DVM/transaction timeout, and is unwired on BCM2711.
