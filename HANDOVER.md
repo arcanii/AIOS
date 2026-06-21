@@ -18,11 +18,13 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   (DECISIVE). The freeze is core 0 CLOCKED-BUT-WEDGED on a SINGLE fabric-dependent instruction,
   POSITION-INDEPENDENT (4 code sites); leading hypothesis = a COLD CACHEABLE DRAM LOAD, not a dsb. Stall
   stays a MAJOR OPEN CONCERN ([[feedback_stall_open_concern]]) -- a MEASUREMENT step toward the
-  architectural fix, NOT a cure.** Board = v0.4.287 build 2799 at 192.168.0.8 (localization v0.4.286 +
-  DRAM-DMA keep-warm cure attempt, both HW-tested; dmawarm disarmed, default-OFF on reboot). Commits
-  `06f7b37` + `c17f25e` (+ this session's dma_warm commit) on `main` (Bryan pushes). Board still stalls
-  (cure refuted); watchdog+hwdog default-on survive the ongoing freezes; netconsole wedges under churn
-  (power-cycle to recover).
+  architectural fix, NOT a cure.** Board = v0.4.288 build 2805 at 192.168.0.8 (localization v0.4.286 +
+  TWO cure attempts -- external DRAM-DMA keep-warm v0.4.287 + coherent cache-miss keep-warm v0.4.288 --
+  BOTH HW-tested + REFUTED; both keep-warms default-OFF). Commits `06f7b37` + `c17f25e` + `5b4f05c` (+ the
+  v0.4.288 mode-3 commit) on `main` (Bryan pushes). **ALL traffic-based prevention exhausted -> the cure
+  pivots to KERNEL-REDESIGN CIRCUMVENTION (stop a 1-core wedge freezing the cluster).** Board still stalls;
+  watchdog+hwdog default-on survive the ongoing freezes; netconsole wedges under churn (power-cycle to
+  recover).
   Full detail + interpretation matrix + HW result: `docs/NEXT_20260621_stall_session8_localize.md`.
   - **HW RESULT (DECISIVE, 10+ stalls): core 0 ALWAYS `iovf=0`** (wedged on ONE instruction -- retired
     <2^32 over the whole 32.4s) with a tiny `bus` delta (`bovf=0` = clean wait on a PARKED fabric). Caught
@@ -56,6 +58,20 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
     software cannot deassert; external masters cannot keep it warm). The "cold-DRAM-load" is the A72's first
     EXTERNAL transaction after ITS port parked. ELIMINATES the external-master keep-warm class. `dma_warm.c`
     KEPT default-OFF as a documented A/B knob (like refuted fabwarm/corewarm).
+  - **CURE ATTEMPT 2 -- COHERENT cache-miss keep-warm (v0.4.288 build 2805) = ALSO REFUTED ON HW.** Made the
+    A72 cluster ITSELF issue continuous COHERENT traffic: `fabwarm` MODE 3 (`/proc/fabwarm.3`,
+    src/servers/fabric_warm.c) -- a core-1 thread cyclically reading a PRIVATE 2MB buffer (> 1MB L2) so every
+    line MISSES -> coherent DRAM reads on the cluster ACE master (distinct from refuted Device-read modes 1/2
+    + cache-hitting corewarm). Ran with watchdog parked (`/proc/watchdog.0` frees core 1; both are prio-1 on
+    the timer-masked core 1 -> can't be time-sliced). **Verified running throughout (741,918 passes = ~1.5 TB
+    of coherent reads, 5.3 GB/s), netstall = 5/10 = SAME as baseline; 7 [STAGECP], 6 GAPs. Core 1's 5.3 GB/s
+    coherent reads did NOT keep core 0's path warm.** => the quiescence is CORE-0-SPECIFIC or DEEPER than any
+    A72 traffic. **The ENTIRE traffic-based prevention space is now exhausted (DMA / coherent / Device /
+    cacheable -- ALL refuted). Software prevention is dead -> the cure pivots to KERNEL-REDESIGN
+    CIRCUMVENTION** (design workflow `wf_8791f3fb-dc7`): (1) move the wedge OUTSIDE the BKL (a fabric "wake"
+    op at kernel entry before NODE_LOCK so a wedge doesn't hold the lock) + coresched; (2) try-lock+defer in
+    the IRQ path; (3) a CORE-0 sleeping-timer heartbeat (the one prevention lead left, IF core-0-specific);
+    (4) fine-grained locking [infeasible]. `fabwarm` mode 3 KEPT default-OFF.
   - **The PMU OVERFLOW FLAG was the key hardening** (3-lens adversarial review caught that a 32-bit delta
     masked over 32.4s wraps unpredictably -> false "wedged"): `iovf` cleanly separates the ONE wedged core
     (`iovf=0`) from BKL-spinning siblings (`iovf=1`). Without it the result would have been ambiguous.

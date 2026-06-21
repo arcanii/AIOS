@@ -205,6 +205,38 @@ coupling so a wedged core 0 does not freeze the whole cluster (the only path tha
 defeating the fabric quiescence). STILL A MAJOR OPEN CONCERN. `dma_warm.c` is KEPT default-OFF as a
 documented A/B knob (like the refuted fabwarm/corewarm) -- it is the first proper external-DRAM-traffic test.
 
+## CURE ATTEMPT 2: COHERENT cache-miss keep-warm -- ALSO REFUTED (v0.4.288, HW-tested 2026-06-21)
+
+The DMA refutation pointed at the A72 cluster's OWN ACE/snoop interface, so the next lever was to make the
+A72 cluster ITSELF issue continuous COHERENT transactions (which an external DMA cannot). Added `fabwarm`
+**mode 3** (`src/servers/fabric_warm.c`, `/proc/fabwarm.3`): a core-1 thread cyclically reading a PRIVATE
+2MB buffer (> the 1MB A72 L2) so every line MISSES -> a steady stream of COHERENT DRAM reads on the cluster
+ACE master, with no cross-core DVM contention (distinct from the refuted Device-read modes 1/2 and the
+cache-hitting corewarm). Ran with the watchdog parked (`/proc/watchdog.0`) so core 1 was free (both are
+prio-1 on the timer-masked core 1 -- two equal-prio busy-loops cannot be time-sliced without a tick).
+
+**HW A/B RESULT -- REFUTED.** Mode 3 verified running throughout (`iters` 8109->16136 in 3s pre-run, then
+**741,918 full passes over the whole run = ~1.5 TB of coherent DRAM reads**, `sink` advancing). `netstall
+--idle 30 --trials 10` = **5/10 STALLED -- SAME as baseline**; 7 `[STAGECP]` freezes (same `iovf=0` core-0
+wedge), 6 pingmon GAPs. **Core 1 issuing 5.3 GB/s of continuous coherent reads did NOT keep core 0's path
+warm.**
+
+**WHAT THIS PROVES (the decisive negative):** the quiescence is NOT kept warm by ANOTHER core's traffic --
+not even maximal COHERENT traffic. So it is either CORE-0-SPECIFIC (each core's request path to the SCB can
+park independently; only that core's own traffic warms it) or DEEPER than any A72-issued transaction
+(SCB/VideoCore-side). **The entire traffic-based prevention space is now exhausted: external DMA
+(non-coherent), coherent cache-miss (core 1), Device-MMIO (core 1), cacheable cross-core RMW -- ALL
+refuted.** Prevention from software is effectively dead.
+
+=> The cure pivots to KERNEL-REDESIGN CIRCUMVENTION (stop a 1-core wedge from freezing the cluster), not
+prevention. Leading options (design workflow `wf_8791f3fb-dc7`): (1) move the wedge OUTSIDE the BKL --
+issue a deliberate fabric "wake" op at kernel entry BEFORE NODE_LOCK so the ~32.4s wedge happens with the
+BKL free (cores 1-3 don't block) + pair with coresched so other cores keep serving; (2) try-lock + defer
+in the IRQ path so siblings don't spin 32.4s on the BKL; (3) a CORE-0 timer-driven (sleeping, not
+busy-loop) heartbeat -- the one prevention lead the mode-3 result still leaves open IF the quiescence is
+core-0-specific; (4) full fine-grained locking [infeasible, 2+yr proof rewrite]. `fabwarm` mode 3 KEPT
+default-OFF as a documented A/B knob. STILL A MAJOR OPEN CONCERN.
+
 ## Status
 Built + HW-tested (v0.4.286 build 2784 localization; v0.4.287 build 2799 DMA-keep-warm REFUTED), QEMU gate
 green-equivalent, kernel diff in

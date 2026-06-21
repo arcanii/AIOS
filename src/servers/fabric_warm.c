@@ -32,6 +32,8 @@
  * boot via /proc/freezes + pingmon.
  */
 #include <stdio.h>
+#include <stdlib.h>                /* malloc (mode-3 coherent buffer) */
+#include <string.h>               /* memset */
 #include <sel4/sel4.h>
 #include <sel4utils/thread.h>
 #include <vspace/vspace.h>
@@ -66,11 +68,26 @@
 #define FABWARM_PHY_ADDR    1   /* BCM54213 default PHY address (net_genet.c) */
 #define FABWARM_MII_BMSR    1   /* PHY Basic Mode Status register */
 
-/* Keep-warm mode: 1 = GPLEV0/GPIO read (refuted), 2 = GENET MDIO read (Linux's lever). */
+/* Keep-warm mode: 1 = GPLEV0/GPIO read (refuted), 2 = GENET MDIO read (refuted),
+ * 3 = COHERENT cache-MISS read (session-8). */
 static volatile int      g_fabwarm_mode = 1;
 static volatile int      g_fabwarm_armed;
 static seL4_CPtr         g_fabwarm_ntfn;
 static volatile uint64_t g_fabwarm_iters;
+
+/* v0.4.288 (session-8) MODE 3 -- COHERENT cache-MISS keep-warm. The session-8 DMA-keep-warm
+ * refutation localized the quiesce to the A72 CLUSTER's OWN ACE/snoop master interface (ACINACTM),
+ * NOT the SCB->memory path -- an external master cannot keep it warm. The remaining lever: make the
+ * A72 cluster itself issue continuous COHERENT transactions so its snoop/coherency logic never idles.
+ * fabwarm mode 1 (GPLEV0) + mode 2 (MDIO) were DEVICE (non-coherent) reads -> never touched the snoop
+ * path; corewarm (cross-core cacheable RMW) cache-HIT (no ACE traffic) + caused DVM contention. Mode 3
+ * reads a PRIVATE buffer LARGER than the 1MB L2, cyclically, so every line MISSES -> a steady stream of
+ * coherent DRAM reads on the cluster ACE master, with NO cross-core DVM contention. Buffer is cacheable
+ * (the misses must go coherent). On core 1 (idle-only) like the rest of fabwarm; the cluster ACE port is
+ * shared by all cores, so core-1 coherent traffic keeps the WHOLE cluster's coherency logic active. */
+#define COHBUF_SIZE  (2u * 1024u * 1024u)   /* 2MB > 1MB A72 L2 -> guaranteed misses when cycled */
+static volatile uint8_t *g_cohbuf;
+static volatile uint32_t g_cohsink;
 
 /* One uncached MDIO read of the PHY status register via the GENET block. Kicks the MDIO
  * state machine then polls START_BUSY clear (bounded -- never hang the core-1 spin). The
@@ -97,6 +114,21 @@ static inline void genet_mdio_touch(void)
  * On QEMU dev_gpio_vaddr is NULL (no-op; the fabric freeze does not exist there). */
 static inline void fabric_touch(void)
 {
+    if (g_fabwarm_mode == 3) {
+        /* One full pass of coherent cache-MISS reads (one stride per cache line). The buffer
+         * (2MB) > L2 (1MB), so cycling it evicts+re-misses -> continuous coherent DRAM reads on
+         * the cluster ACE master. volatile load prevents the compiler eliding it. A full pass
+         * (~2MB) takes ~ms, so the paced outer loop calls this back-to-back = continuous. */
+        volatile uint8_t *b = g_cohbuf;
+        if (b) {
+            uint32_t s = g_cohsink;
+            for (unsigned i = 0; i < COHBUF_SIZE; i += 64) {
+                s += b[i];
+            }
+            g_cohsink = s;
+        }
+        return;
+    }
     if (g_fabwarm_mode == 2) {
         genet_mdio_touch();
         return;
@@ -152,6 +184,15 @@ static void fabric_warm_fn(void *a, void *b, void *c)
  * one allocation happens HERE). Inert until armed via /proc/fabwarm.1. */
 void fabric_warm_start(void)
 {
+    /* v0.4.288 mode-3 coherent cache-miss keep-warm buffer (2MB cacheable, > 1MB L2). Best-effort;
+     * faulted in + set non-zero so the cycling reads are real coherent DRAM misses. */
+    g_cohbuf = (volatile uint8_t *)malloc(COHBUF_SIZE);
+    if (g_cohbuf) {
+        memset((void *)g_cohbuf, 1, COHBUF_SIZE);
+    } else {
+        printf("[fabwarm] mode-3 coherent buffer alloc failed (2MB) -- /proc/fabwarm.3 unavailable\n");
+    }
+
     vka_object_t nobj;
     if (vka_alloc_notification(&vka, &nobj)) {
         printf("[fabwarm] no ntfn -- keep-warm unavailable\n");
@@ -189,16 +230,21 @@ void fabric_warm_start(void)
  * warm), .0 = disarm (core 1 returns to idle), bare = status. */
 int fabric_warm_cmd(const char *args, char *buf, int bufsize)
 {
-    if (args[0] == '.' && (args[1] == '1' || args[1] == '2')) {
-        g_fabwarm_mode = (args[1] == '2') ? 2 : 1;
+    if (args[0] == '.' && (args[1] == '1' || args[1] == '2' || args[1] == '3')) {
+        int mode = args[1] - '0';
+        if (mode == 3 && !g_cohbuf) {
+            return snprintf(buf, bufsize, "fabwarm: mode 3 unavailable (2MB coherent buffer alloc failed)\n");
+        }
+        g_fabwarm_mode = mode;
         g_fabwarm_armed = 1;
         arch_dsb();                                  /* publish the flags before the wake */
         if (g_fabwarm_ntfn) {
             seL4_Signal(g_fabwarm_ntfn);
         }
+        const char *nm = mode == 3 ? "COHERENT cache-miss" : mode == 2 ? "GENET MDIO" : "GPLEV0";
         return snprintf(buf, bufsize,
-            "fabwarm: ARMED mode=%d (%s) -- core 1 generating SCB fabric traffic\n",
-            g_fabwarm_mode, g_fabwarm_mode == 2 ? "GENET MDIO" : "GPLEV0");
+            "fabwarm: ARMED mode=%d (%s) -- core 1 generating %s traffic\n",
+            mode, nm, mode == 3 ? "coherent DRAM-read" : "SCB fabric");
     }
     if (args[0] == '.' && args[1] == '0') {
         g_fabwarm_armed = 0;
@@ -206,7 +252,7 @@ int fabric_warm_cmd(const char *args, char *buf, int bufsize)
         return snprintf(buf, bufsize, "fabwarm: disarmed -- core 1 returning to idle\n");
     }
     return snprintf(buf, bufsize,
-        "fabwarm: armed=%d mode=%d iters=%llu gpio=%p genet=%p (.1 GPLEV0 / .2 GENET-MDIO / .0 disarm)\n",
+        "fabwarm: armed=%d mode=%d iters=%llu cohbuf=%p sink=0x%x (.1 GPLEV0 / .2 GENET-MDIO / .3 COHERENT-cache-miss / .0 disarm)\n",
         g_fabwarm_armed, g_fabwarm_mode, (unsigned long long)g_fabwarm_iters,
-        (void *)dev_gpio_vaddr, (void *)dev_genet_vaddr);
+        (void *)g_cohbuf, g_cohsink);
 }
