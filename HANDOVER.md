@@ -21,7 +21,10 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   Commits on `main` (Bryan pushes): `d40d8e6` v0.4.277 (ASID-gen), `147ea34` v0.4.282 (stall localized),
   `3e6d33a` v0.4.283 (coresched S1), `811481d` (handover docs), `5d4c56d` v0.4.284 (watchdog default-on).
   The stall STAYS a MAJOR OPEN CONCERN -- never "solved"
-  ([[feedback_stall_open_concern]]). Detail: [[project_asid_generation]] + `docs/NEXT_20260621_asid_generation_IMPL.md`.**
+  ([[feedback_stall_open_concern]]). Detail: [[project_asid_generation]] + `docs/NEXT_20260621_asid_generation_IMPL.md`.
+  **>>> NEXT SESSION: `docs/NEXT_20260621_stall_session8_seed.md` has the full stall state + a
+  paste-ready SEED PROMPT for continuing the answers/mitigation search. POWER-CYCLE the Pi first
+  (netconsole-wedged from the coresched test). <<<**
   - **ASID-generation TLB recycling SHIPPED (v0.4.277, gated `AIOS_ASID_GEN`, non-hyp/Pi only).** Decouples
     the seL4 logical asid from the hw asid (TTBR0[63:48]); recycles by a 32-bit generation so teardown +
     self-munmap issue NO per-asid `tlbi`. Host-validated (`scripts/asidgen_host_test.c` 4/4), adversarially
