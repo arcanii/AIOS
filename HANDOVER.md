@@ -117,19 +117,19 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
     timeout), shmring 25/26 (1 timing shed), socket 8/8, netd 10/10. build-rpi4 (non-hyp) built clean with
     stages 1-7,9,10,11,12 all present. The instrumentation touches no external bus (sysreg reads + per-core
     cacheable stores) so it cannot warm the fabric / mask the stall. Adversarially reviewed (3-lens workflow).
-  - **>>> NEXT (localization DONE; external-master keep-warm DONE+REFUTED; remaining cures are hard):**
-    (1) the DMA-keep-warm refutation localized the quiesce to the A72 CLUSTER's own ACE port -- so the only
-    keep-warm that could work is a CORE-0-side periodic EXTERNAL transaction during idle (e.g. a core-0
-    blocking-timer heartbeat that does an uncached read every ~10ms; the variant never cleanly tried --
-    fabwarm ran on core 1). CAVEAT: core-1 fabwarm (A72 Device reads) was ALSO refuted, so the quiesce may
-    be deeper than the cluster ACE port (VideoCore/SCB-side) and even a core-0 keep-warm may fail -- test it
-    but temper expectations. (2) The ARCHITECTURAL cure: drop the BKL coupling so a wedged core 0 does not
-    freeze the whole cluster (the only path independent of defeating the fabric quiesce; 2+yr proof-rewrite
-    or a silent-corruption-risk lock-drop -- see the MVD-2 verdict). (3) Phase-2 cold-load-vs-dsb confirm
-    (register-safe asm checkpoint around the restore `ldp`; spec in workflow `wf_5e364d17-60d`) -- now mostly
-    moot (the cure is refuted regardless of which instruction). To re-run any HW A/B: power-cycle, `sercap
-    /tmp/x.log`, board on v0.4.287 (or `pi_flash.py --build`), `pingmon` + `netstall --idle 30 --trials 10`,
-    grep [STAGECP]. STILL A MAJOR OPEN CONCERN. <<<**
+  - **>>> NEXT -- THE CURE SPACE IS NOW EXHAUSTED ON EVERY SOFTWARE-REACHABLE FRONT (s8):** prevention dead
+    (all keep-warms refuted incl. 5.3 GB/s coherent), timeout-bound DEAD (seed lead #4 closed -- no ARM-side
+    register; the 32.4s is a CLOCK-INDEPENDENT fixed silicon force-complete in the SCB/VPU fabric, GISB
+    arbiter REFUTED [STB-only, not on BCM2711], only an undocumented VPU-firmware knob remains, none found),
+    user-responsiveness blocked (coresched wedges the Pi) / infeasible (fine-grained-locking BKL removal =
+    2+yr proof rewrite). WHAT STANDS: decisive LOCALIZATION + the SIBLING-TIMER-MASK circumvention (cluster
+    survives a 1-core wedge) + MVD-1 (survive/report/auto-reset = the user-responsiveness ceiling). The one
+    remaining UNBLOCKED productive item is **MITIGATION POLISH (seed lead #5): watchdog-driven
+    netconsole/getty auto-recovery** so the box is truly unattended (netconsole wedges under churn today ->
+    power-cycle). Long-shots only: a VPU-firmware/config.txt fabric-timeout knob (undocumented). The stall
+    STAYS A MAJOR OPEN CONCERN ([[feedback_stall_open_concern]]) -- never "solved" -- but is now fully
+    characterized + thoroughly mapped. To re-run any HW A/B: power-cycle, `sercap /tmp/x.log`, board on
+    v0.4.289 (or `pi_flash.py --build`), `pingmon` + `netstall --idle 30 --trials 10`, grep [STAGECP]. <<<**
   - Kernel diff in `deps/patches/seL4-kernel.patch` (1532 lines). KEPT: ASID-gen + coresched S1/S2 +
     watchdog default-on + [TLBISTALL]/[DSBSTALL]/[STAGECP] (now with PMU overflow flags + kent_lag)
     profilers + MVD-1.

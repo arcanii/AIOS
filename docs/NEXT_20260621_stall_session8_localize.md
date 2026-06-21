@@ -303,6 +303,35 @@ coresched is enabled (they'd lose timer preemption). The clean-`allidle` reflash
 (a stall wedged netconsole -- pi_flash is atomic so the kernel8 is intact on the pre-clamp build); the
 result stands on the unambiguous absence-of-sibling-lines signal regardless of the cosmetic allidle render.
 
+## TIMEOUT-REGISTER HUNT (seed lead #4) -- CLOSED: no ARM-side register; fixed silicon force-complete
+
+The 32.4s is a FIXED SoC timeout (deterministic to the ms), so the highest-impact lever would be to BOUND it
+(32.4s -> ~ms blip = effectively cured). A deep research pass (web + local source, workflow `wf_2aaa5157-2fc`,
+4 lenses convergent) DEFINITIVELY closes this:
+- **No ARM-side register bounds the ARM/SCB-cluster timeout.** Exhaustive BCM2711 datasheet search: ARM_LOCAL
+  (0xFF800000) has NO bus-transaction-timeout (AXI_QUIET_TIME @ +0x30 is a quiesce DETECTOR, 20-bit, max
+  ~0.87s -- can't even express 32.4s; ARM_CONTROL.AXIERRIRQ_EN @ +0x00 bit6 only unmasks the L2 error IRQ
+  that fires AT t=32.4s -- the freeze IS the wait for that response, so it can't shorten it). ARMC (0x7E00B000)
+  is a pure interrupt controller. U-Boot/ARM-TF set no ARM-side bus timeout on rpi4.
+- **The GISB arbiter (the prime suspect) is REFUTED 3x:** the Broadcom GISB arbiter (Linux `brcmstb_gisb.c`,
+  the programmable `ARB_TIMER`) is a Set-Top-Box-only block -- NOT instantiated on BCM2711 (no `gisb` node;
+  BCM2711 absent from the driver's of_match; the kernel.dts `scb` node is a bare `simple-bus` with no reg
+  block). Blindly probing a guessed GISB base = undecoded MMIO -> SError. Do not.
+- **The 32.4s is CLOCK-INDEPENDENT** (HW-proven identical at arm_freq 600/1000 + core_freq 250/500) -> it is
+  a FIXED INTERNAL SILICON force-complete in the SCB/VideoCore fabric, configured by VPU firmware, NOT a
+  software-programmable divider. There is genuinely no register to write.
+- The PCIe `UBUS_TIMEOUT` (0xFD50_40A8, default 0x80000 == 32.4s, AIOS bounds to 0x1000 since v0.4.213) is
+  the PROVEN exemplar + clock-anchor (~16 kHz tick) but is PCIe-block-ONLY (the cluster freeze persists with
+  PCIe off). The only theoretical lever left is an undocumented VPU-firmware knob (none found publicly).
+
+**=> Lead #4 is CLOSED (re-confirming + thoroughly grounding [[project_stall_ubus_deadend]]). Combined with
+prevention being dead (all keep-warms refuted), the stall's CURE is now EXHAUSTED on every software-reachable
+front. What stands: the LOCALIZATION (decisive), the SIBLING-TIMER-MASK circumvention (cluster survives a
+1-core wedge), and MVD-1 (survive + report + hwdog auto-reset) as the user-responsiveness ceiling. The only
+remaining theoretical cures -- fine-grained-locking BKL removal (infeasible, 2+yr proof rewrite) or a working
+coresched (blocked by this same per-core fabric stall) -- are both out of reach. STILL A MAJOR OPEN
+CONCERN, but the cure space is now fully + thoroughly mapped.**
+
 ## Status
 Built + HW-tested (v0.4.286 build 2784 localization; v0.4.287 build 2799 DMA-keep-warm REFUTED), QEMU gate
 green-equivalent, kernel diff in
