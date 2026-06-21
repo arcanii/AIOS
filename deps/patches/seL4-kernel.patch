@@ -344,10 +344,10 @@ index c47710bcb..5ebfba6fc 100644
      b 1b
  END_FUNC(idle_thread)
 diff --git a/src/arch/arm/64/kernel/vspace.c b/src/arch/arm/64/kernel/vspace.c
-index 08f7937ee..54aa7a308 100644
+index 08f7937ee..bec7b8160 100644
 --- a/src/arch/arm/64/kernel/vspace.c
 +++ b/src/arch/arm/64/kernel/vspace.c
-@@ -765,6 +765,229 @@ bool_t CONST isValidVTableRoot(cap_t cap)
+@@ -765,6 +765,284 @@ bool_t CONST isValidVTableRoot(cap_t cap)
      return isValidNativeRoot(cap);
  }
  
@@ -496,6 +496,31 @@ index 08f7937ee..54aa7a308 100644
 +word_t aios_hwasid_gen_now = 1;
 +word_t aios_hwasid_wraps   = 0;
 +
++/* AIOS coresched safety S1 (Linux PCID reserved-asid; host-test-proven in asidgen_host_test.c).
++ * armKSActiveSel4Asid[c] = the sel4 asid core c is currently running (its TTBR0 hw asid =
++ * armKSHwAsid[that].hw_asid), recorded at the end of aios_hwasid_for. At a generation WRAP, every
++ * still-running vspace's hw asid is RESERVED for the whole new generation (and its entry re-stamped
++ * into the new gen with the SAME hw), so a peer core that keeps running across the wrap never has
++ * its hw asid handed to a DIFFERENT vspace (which would be a silent cross-process stale TLB hit).
++ * g_hwasid_reserved[] is the fixed reserved set captured AT the wrap (<= one per core); the handout
++ * loop skips those values for the rest of the generation -- NOT just while the asid stays active,
++ * because the carried asid owns that hw value until the next wrap flush. Dormant under the default
++ * all-threads-on-core-0 config (only one asid is ever active), but REQUIRED before a user vspace
++ * runs on a secondary core (coresched / unpinning core 0). */
++static word_t armKSActiveSel4Asid[CONFIG_MAX_NUM_NODES];
++static uint16_t g_hwasid_reserved[CONFIG_MAX_NUM_NODES];
++static word_t g_hwasid_nreserved;
++
++static inline bool_t aios_hwasid_is_reserved(uint16_t v)
++{
++    for (word_t i = 0; i < g_hwasid_nreserved; i++) {
++        if (g_hwasid_reserved[i] == v) {
++            return true;
++        }
++    }
++    return false;
++}
++
 +/* The asid currently loaded in TTBR0 on THIS core = the running thread's vspace asid (matches
 + * the self-detection in unmapPage). asidInvalid (0) when on the global/kernel vspace. */
 +static inline asid_t aios_current_user_asid(void)
@@ -515,19 +540,19 @@ index 08f7937ee..54aa7a308 100644
 +    if (unlikely(sel4_asid == 0 || sel4_asid >= AIOS_HWASID_NASIDS)) {
 +        return sel4_asid;
 +    }
++    word_t core = SMP_TERNARY(getCurrentCPUIndex(), 0);
 +    aios_hwasid_ent_t *e = &armKSHwAsid[sel4_asid];
 +    if (e->gen != g_hwasid_gen) {
 +        if (unlikely(g_hwasid_next > AIOS_HWASID_MAX)) {
 +            /* GENERATION WRAP: ONE full local flush (+ residency-masked remote). Rare, and it
 +             * fires during ACTIVE context switching (warm fabric), NOT the after-idle cold path
-+             * that hangs. NOTE coresched: a vspace running on a PEER core keeps its old hw asid
-+             * across the wrap and could alias a reissued value -> needs per-core reserved-asid
-+             * (Linux PCID model; host-test-proven necessary AND sufficient in
-+             * scripts/asidgen_host_test.c). DEFERRED: provably moot under the default
-+             * all-threads-pinned-to-core-0 config (the wrap fires in-kernel mid-switch; the only
-+             * vspace that runs next is the freshly resolved one). MUST be added before coresched
-+             * (/proc/coresched.1) is trusted. */
++             * that hangs. S1 reserved-asid below carries every still-running vspace across the
++             * wrap so coresched peers stay coherent. */
++            uint32_t prev_gen = g_hwasid_gen;
 +            g_hwasid_gen++;
++            if (g_hwasid_gen == 0) {
++                g_hwasid_gen = 1;   /* gen 0 is the "never bound" sentinel; never use it */
++            }
 +            invalidateLocalTLB();
 +#ifdef ENABLE_SMP_SUPPORT
 +            doRemoteInvalidateTranslationAll(aios_resident_cores_mask);
@@ -535,37 +560,67 @@ index 08f7937ee..54aa7a308 100644
 +            g_hwasid_next = 1;
 +            aios_hwasid_wraps++;
 +            aios_hwasid_gen_now = g_hwasid_gen;
-+        }
-+        e->hw_asid = (uint16_t)g_hwasid_next++;
-+        e->gen     = g_hwasid_gen;
-+        aios_hwasid_assigns++;
-+#ifdef CONFIG_DEBUG_BUILD
-+        /* on-HW tripwire (throttled): within a generation g_hwasid_next is monotonic, so two LIVE
-+         * asids can never share a hw value unless the recycler regresses. Loud, non-fatal. */
-+        if ((aios_hwasid_assigns & 0x3F) == 0) {
-+            for (word_t a = 1; a < AIOS_HWASID_NASIDS; a++) {
-+                if (a != sel4_asid && armKSHwAsid[a].gen == g_hwasid_gen &&
-+                    armKSHwAsid[a].hw_asid == e->hw_asid) {
-+                    printf("[ASIDGEN-BUG] hw=0x%x shared by sel4 asids 0x%x and 0x%x\n",
-+                           (unsigned)e->hw_asid, (unsigned)a, (unsigned)sel4_asid);
-+                    break;
++            /* S1: reserve + re-stamp every still-running vspace's hw asid into the new generation. */
++            g_hwasid_nreserved = 0;
++            for (word_t c = 0; c < CONFIG_MAX_NUM_NODES; c++) {
++                word_t a = armKSActiveSel4Asid[c];
++                if (a != 0 && a < AIOS_HWASID_NASIDS && armKSHwAsid[a].gen == prev_gen) {
++                    uint16_t h = armKSHwAsid[a].hw_asid;
++                    armKSHwAsid[a].gen = g_hwasid_gen;   /* carry into new gen, keep its hw asid */
++                    if (!aios_hwasid_is_reserved(h)) {
++                        g_hwasid_reserved[g_hwasid_nreserved++] = h;
++                    }
 +                }
 +            }
 +        }
-+        if ((aios_hwasid_assigns & 0xFFF) == 0) {
-+            printf("[ASIDGEN] assigns=0x%"SEL4_PRIx_word" gen=0x%"SEL4_PRIx_word
-+                   " wraps=0x%"SEL4_PRIx_word"\n",
-+                   aios_hwasid_assigns, (word_t)g_hwasid_gen, aios_hwasid_wraps);
-+        }
++        if (e->gen != g_hwasid_gen) {   /* may have been re-stamped by the reservation above */
++            while (g_hwasid_next <= AIOS_HWASID_MAX && aios_hwasid_is_reserved((uint16_t)g_hwasid_next)) {
++                g_hwasid_next++;   /* skip hw asids reserved for vspaces carried across the wrap */
++            }
++            e->hw_asid = (uint16_t)g_hwasid_next++;
++            e->gen     = g_hwasid_gen;
++            aios_hwasid_assigns++;
++#ifdef CONFIG_DEBUG_BUILD
++            /* on-HW tripwire (throttled): within a generation g_hwasid_next is monotonic and the
++             * reserved set is skipped, so two LIVE asids can never share a hw value unless the
++             * recycler regresses. Loud, non-fatal. */
++            if ((aios_hwasid_assigns & 0x3F) == 0) {
++                for (word_t a = 1; a < AIOS_HWASID_NASIDS; a++) {
++                    if (a != sel4_asid && armKSHwAsid[a].gen == g_hwasid_gen &&
++                        armKSHwAsid[a].hw_asid == e->hw_asid) {
++                        printf("[ASIDGEN-BUG] hw=0x%x shared by sel4 asids 0x%x and 0x%x\n",
++                               (unsigned)e->hw_asid, (unsigned)a, (unsigned)sel4_asid);
++                        break;
++                    }
++                }
++            }
++            if ((aios_hwasid_assigns & 0xFFF) == 0) {
++                printf("[ASIDGEN] assigns=0x%"SEL4_PRIx_word" gen=0x%"SEL4_PRIx_word
++                       " wraps=0x%"SEL4_PRIx_word"\n",
++                       aios_hwasid_assigns, (word_t)g_hwasid_gen, aios_hwasid_wraps);
++            }
 +#endif
++        }
 +    }
++    armKSActiveSel4Asid[core] = sel4_asid;   /* S1: this core now runs sel4_asid */
 +    return e->hw_asid;
 +}
 +
 +/* Abandon a logical asid's hw binding: its (now stale) TLB entries are never consulted again
 + * under a live binding -- different asids get fresh hw values, and the abandoned value is wiped
 + * at the next gen wrap before it can be reissued. This is the replacement for a teardown/unmap
-+ * `tlbi` (no DVM-Sync, no stall). The next aios_hwasid_for for this asid assigns a fresh hw. */
++ * `tlbi` (no DVM-Sync, no stall). The next aios_hwasid_for for this asid assigns a fresh hw.
++ *
++ * COMPLETE under the default all-threads-on-core-0 config: a self-munmap clears+reloads on the
++ * only core that runs the asid (aios_asid_gen_invalidate), so no stale entry survives. CORESCHED
++ * S2 (DEFERRED, required before a user vspace runs on a secondary core): if `sel4_asid` is resident
++ * on a PEER core (aios_asid_residency(sel4_asid) has a bit other than self), that peer keeps running
++ * the OLD hw asid -- with the just-removed page still in its TLB -- until its next context switch
++ * re-resolves (gen mismatch -> fresh hw). To close that window immediately, this must send a masked
++ * remote IPI (the residency-shootdown infra) to force peers to re-resolve/flush before the unmap
++ * returns. Not wired yet: under core-0 pinning residency is always {core0} so no peer ever runs the
++ * asid (moot); host-test-tracked, and it re-introduces exactly the cross-core IPI the stall work
++ * avoids, so it belongs with the coresched (/proc/coresched.1) enablement, not before. */
 +static inline void aios_hwasid_clear(word_t sel4_asid)
 +{
 +    if (likely(sel4_asid < AIOS_HWASID_NASIDS)) {
@@ -577,7 +632,7 @@ index 08f7937ee..54aa7a308 100644
  void setVMRoot(tcb_t *tcb)
  {
      cap_t threadRoot;
-@@ -787,7 +1010,13 @@ void setVMRoot(tcb_t *tcb)
+@@ -787,7 +1065,13 @@ void setVMRoot(tcb_t *tcb)
          return;
      }
  
@@ -592,7 +647,7 @@ index 08f7937ee..54aa7a308 100644
  }
  
  static bool_t setVMRootForFlush(vspace_root_t *vspace, asid_t asid)
-@@ -802,7 +1031,8 @@ static bool_t setVMRootForFlush(vspace_root_t *vspace, asid_t asid)
+@@ -802,7 +1086,8 @@ static bool_t setVMRootForFlush(vspace_root_t *vspace, asid_t asid)
          return false;
      }
  
@@ -602,7 +657,7 @@ index 08f7937ee..54aa7a308 100644
      return true;
  }
  
-@@ -958,8 +1188,30 @@ void decreaseASIDBindCB(asid_t asid)
+@@ -958,8 +1243,30 @@ void decreaseASIDBindCB(asid_t asid)
  }
  #endif
  
@@ -633,7 +688,7 @@ index 08f7937ee..54aa7a308 100644
  #ifdef CONFIG_ARM_SMMU
      word_t bind_cb = getASIDBindCB(asid);
      if (unlikely(bind_cb)) {
-@@ -975,12 +1227,20 @@ static inline void invalidateTLBByASID(asid_t asid)
+@@ -975,12 +1282,20 @@ static inline void invalidateTLBByASID(asid_t asid)
      }
      invalidateTranslationASID(asid_map_asid_map_vspace_get_stored_hw_vmid(asid_map));
  #else
@@ -655,16 +710,16 @@ index 08f7937ee..54aa7a308 100644
  #ifdef CONFIG_ARM_SMMU
      word_t bind_cb = getASIDBindCB(asid);
      if (unlikely(bind_cb)) {
-@@ -997,10 +1257,31 @@ static inline void invalidateTLBByASIDVA(asid_t asid, vptr_t vaddr)
+@@ -997,9 +1312,30 @@ static inline void invalidateTLBByASIDVA(asid_t asid, vptr_t vaddr)
      uint64_t hw_asid = asid_map_asid_map_vspace_get_stored_hw_vmid(asid_map);
      invalidateTranslationSingle((hw_asid << 48) | vaddr >> seL4_PageBits);
  #else
 -    invalidateTranslationSingle((asid << 48) | vaddr >> seL4_PageBits);
 +    invalidateTranslationSingleMask((asid << 48) | vaddr >> seL4_PageBits,
 +                                    SMP_TERNARY(aios_asid_residency(asid), 0));   /* AIOS: residency-masked */
- #endif
- }
- 
++#endif
++}
++
 +#if AIOS_LAZY_TLB_TEARDOWN
 +/* Consume a deferred teardown flush (lazy-TLB): if this ASID has per-page invalidations
 + * that unmapPage skipped, do the single covering `tlbi aside1` (residency-masked) NOW,
@@ -681,14 +736,13 @@ index 08f7937ee..54aa7a308 100644
 +        armKSASIDPendingFlush[asid] = 0;
 +        invalidateTLBByASID(asid);
 +    }
+ #endif
+ }
 +#endif
-+}
-+#endif
-+
+ 
  
  void unmapPageTable(asid_t asid, vptr_t vptr, pte_t *target_pt)
- {
-@@ -1027,9 +1308,17 @@ void unmapPageTable(asid_t asid, vptr_t vptr, pte_t *target_pt)
+@@ -1027,9 +1363,17 @@ void unmapPageTable(asid_t asid, vptr_t vptr, pte_t *target_pt)
      }
      /* If we found a pt then ptSlot won't be null */
      assert(ptSlot != NULL);
@@ -707,7 +761,7 @@ index 08f7937ee..54aa7a308 100644
  }
  
  void unmapPage(vm_page_size_t page_size, asid_t asid, vptr_t vptr, pptr_t pptr)
-@@ -1060,10 +1349,55 @@ void unmapPage(vm_page_size_t page_size, asid_t asid, vptr_t vptr, pptr_t pptr)
+@@ -1060,10 +1404,55 @@ void unmapPage(vm_page_size_t page_size, asid_t asid, vptr_t vptr, pptr_t pptr)
          return;
      }
  
@@ -736,7 +790,7 @@ index 08f7937ee..54aa7a308 100644
 +     * asid) instead of any `tlbi`. Supersedes the lazy-TLB deferral below -- it kills BOTH the
 +     * self-munmap per-page vae1 (the DOMINANT stall, live-captured asid=1 va=0x117ce000 this
 +     * session) AND the non-current deferred aside1, with the same no-tlbi mechanism. */
-     invalidateTLBByASIDVA(asid, vptr);
++    invalidateTLBByASIDVA(asid, vptr);
 +#elif AIOS_LAZY_TLB_TEARDOWN
 +    /* Lazy-TLB teardown: if this page belongs to an ASID OTHER than the one running on this
 +     * core right now, the owning process cannot translate the page before its next
@@ -756,7 +810,7 @@ index 08f7937ee..54aa7a308 100644
 +        }
 +    }
 +#else
-+    invalidateTLBByASIDVA(asid, vptr);
+     invalidateTLBByASIDVA(asid, vptr);
 +#endif
 +#if AIOS_TEARDOWN_CHECKPOINTS
 +    aios_checkpoint(4);   /* unmapPage end (3->4 or 3->7->4 wedge = ASID-gen invalidate/reload) */
@@ -764,7 +818,7 @@ index 08f7937ee..54aa7a308 100644
  }
  
  void deleteASID(asid_t asid, vspace_root_t *vspace)
-@@ -1077,6 +1411,14 @@ void deleteASID(asid_t asid, vspace_root_t *vspace)
+@@ -1077,6 +1466,14 @@ void deleteASID(asid_t asid, vspace_root_t *vspace)
          if (asid_map_get_type(asid_map) == asid_map_asid_map_vspace &&
              (vspace_root_t *)asid_map_asid_map_vspace_get_vspace_root(asid_map) == vspace) {
              invalidateTLBByASID(asid);
