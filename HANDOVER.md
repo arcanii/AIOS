@@ -62,15 +62,20 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
     residency-masked `tlbi` (the original, HW-proven residency-shootdown path) for a PEER-resident vspace
     instead of abandoning its hw asid -- so coresched (`/proc/coresched.1`, the existing `aios_assign_core`
     round-robin) is ASID-gen-correct. Dormant under core-0 pinning. Verified: host 4/4, build-rpi4 clean,
-    QEMU smp 4/5 (W=6..18 distributed-correct). **The coresched MULTI-CORE HW test (the real S1/S2 run with
-    ASID-gen active on secondaries) is DEFERRED:** the netconsole wedged under connection churn (self-
-    inflicted -- I overlapped the v0.4.285 deploy with the test, and a 32.4s stall hit mid-deploy). The
-    board is ALIVE (ICMP) on v0.4.285 build 2774 but the netconsole shell is stuck; **it wants a
-    power-cycle to clear** (the kernel is fine -- not a total wedge, so the hwdog correctly did not fire).
-    On a clean board: `/proc/coresched.1` then distributed pipelines (`seq|grep|wc`), watch for ZERO
-    `[ASIDGEN-BUG]` + correct output. Coresched correctness is otherwise QEMU + host + review validated +
-    S2 reuses proven code. LESSON: never run an HW test while a deploy is still in flight; wait for the
-    pi_flash banner-PASS first (drive netconsole gently -- it wedges under churn).
+    QEMU smp 4/5 (W=6..18 distributed-correct). **HW RESULT -- CORESCHED (unpin) WEDGES THE Pi,
+    REPRODUCIBLE: enabling `/proc/coresched.1` reliably drops the netconsole + wedges the board (twice;
+    the 2nd on a clean freshly-booted v0.4.285 board, no deploy running -- so NOT the churn I first
+    blamed). Board stays ALIVE on ICMP (net stack/core 0 up) but the shell is dead -> wants a
+    power-cycle.** No serial trace of the moment (sercap was not running), so [ASIDGEN-BUG] vs a stall-
+    storm is unconfirmed. **LIKELY CAUSE -- coresched is BLOCKED BY THE UNSOLVED FABRIC STALL:**
+    distributing user work to cores 1-3 exposes those cores to the same idle->wake freeze (cluster-wide)
+    AND widens the residency mask so teardowns IPI peers -> coresched amplifies the stall and wedges the
+    box. So unpin and the stall are COUPLED: cannot safely unpin until the (fabric-fundamental) stall is
+    addressed. S2 is correct groundwork (QEMU+host+review validated, reuses the proven residency-shootdown
+    path) but DO NOT enable /proc/coresched.1 on the Pi until this is investigated (with serial capture
+    running -- `/proc/coresched.1` then watch serial for [ASIDGEN-BUG]/fault/[TLBISTALL] storm). DEFAULT
+    is SAFE (coresched off, resets on reboot). LESSON: run sercap BEFORE any coresched/stall HW test;
+    wait for pi_flash banner-PASS before testing; netconsole wedges under churn.
   - Board left on v0.4.285 build 2774 (ASID-gen + S1 + S2 + `[STAGECP]`/`[DSBSTALL]` diagnostics + watchdog
     default-on; teardown clean ON; `AIOS_TEARDOWN_NO_CLEAN` knob default-off), ALIVE but netconsole-wedged
     -> power-cycle for a clean board. seL4 changes in `deps/patches/seL4-kernel.patch` (1429 lines);
