@@ -272,6 +272,37 @@ practical CEILING for user responsiveness; the trylock-bailout (#1) is the one r
 raises the cluster-survivability FLOOR and is the right next experiment -- but go in expecting "cluster
 survives, user work still blocked," NOT "responsive through the freeze."**
 
+## CIRCUMVENTION RESULT: sibling timer-mask -- WORKS (v0.4.289, HW-tested 2026-06-21)
+
+The recommended trylock-with-IRQ-bailout has a HARD BLOCKER discovered while reading the code: the BKL is
+a CLH (FIFO) lock (lock.h) -- a waiter that has enqueued via the tail-exchange (lock.h:67) CANNOT cleanly
+leave the queue mid-wait (its successor would wait on its req forever; a check-before-enqueue trylock still
+races into the queue). A correct never-spins CLH trylock is not cleanly possible. So the CORRECT way to
+keep idle siblings alive is to PREVENT them entering the BKL contention at all: **extend MVD-1's timer-mask
+from core 1 to ALL secondaries** (`AIOS_SIBLING_TIMER_MASK`, boot.c try_init_kernel_secondary_core). With
+no timer tick, cores 1,2,3 stay in the idle.S busy-loop during a core-0 wedge -> never take a timer IRQ ->
+never enter c_handle_interrupt -> never block on the BKL core 0 holds. Added an all-cores `allidle=[...]`
+field to the [STAGECP] print as the A/B oracle (idle.S heartbeat lag of every core).
+
+**HW A/B RESULT -- IT WORKS.** netstall --idle 30 --trials 10: core 0 still wedges (6/10, 3 pingmon GAPs --
+the freeze itself is unpreventable + the net stack is on core 0). BUT across **5/5 core-0 wedges, ZERO
+`core=2`/`core=3` [STAGECP] lines appeared** -- in EVERY prior build (v0.4.282-288, 30+ wedges) a core-0
+wedge ALWAYS dragged in core=2 + core=3 blocked-on-BKL lines (`idle_lag~=dur`, `iovf=1`). Now ONLY `core=0`
+fires; the `allidle[2,3]` field shows cores 2,3 stamping idle.S concurrently (alive). **The BKL cascade is
+broken: a 1-core wedge no longer freezes the cluster -- cores 1,2,3 stay alive.** This is the FIRST change
+all session to alter the freeze's blast radius.
+
+**HONEST SCOPE (unchanged from the design verdict):** core 0 still wedges ~32.4s, and because ALL user
+threads + the net stack are pinned to core 0, the box is STILL network-unresponsive during a wedge. This
+buys CLUSTER-SURVIVABILITY (cores 1-3 + any IRQ-driven secondary service stay live), NOT user
+responsiveness -- a real improvement over MVD-1 (where cores 1-3 also froze) but not a cure. To convert it
+to user-responsiveness needs coresched distributing work to the now-survivable cores 1-3 -- which is
+independently blocked (enabling it wedges the Pi) and re-exposes them to the same per-core freeze.
+`AIOS_SIBLING_TIMER_MASK` default-ON; SAFE only under core-0 pinning (cores 1-3 idle-only); MUST be 0 if
+coresched is enabled (they'd lose timer preemption). The clean-`allidle` reflash (clamp fix) failed mid-push
+(a stall wedged netconsole -- pi_flash is atomic so the kernel8 is intact on the pre-clamp build); the
+result stands on the unambiguous absence-of-sibling-lines signal regardless of the cosmetic allidle render.
+
 ## Status
 Built + HW-tested (v0.4.286 build 2784 localization; v0.4.287 build 2799 DMA-keep-warm REFUTED), QEMU gate
 green-equivalent, kernel diff in

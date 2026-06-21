@@ -925,7 +925,7 @@ index 8104d73df..f93d06d86 100644
  #ifdef TRACK_KERNEL_ENTRIES
      ksKernelEntry.path = Entry_Interrupt;
 diff --git a/src/arch/arm/kernel/boot.c b/src/arch/arm/kernel/boot.c
-index 93eb4d133..7c714d859 100644
+index 93eb4d133..d199bd853 100644
 --- a/src/arch/arm/kernel/boot.c
 +++ b/src/arch/arm/kernel/boot.c
 @@ -28,6 +28,10 @@
@@ -939,7 +939,7 @@ index 93eb4d133..7c714d859 100644
  #ifdef ENABLE_SMP_SUPPORT
  /* SMP boot synchronization works based on a global variable with the initial
   * value 0, as the loader must zero all BSS variables. Secondary cores keep
-@@ -279,14 +283,32 @@ BOOT_CODE static bool_t try_init_kernel_secondary_core(void)
+@@ -279,14 +283,50 @@ BOOT_CODE static bool_t try_init_kernel_secondary_core(void)
      }
      setIRQState(IRQIPI, CORE_IRQ_TO_IRQT(getCurrentCPUIndex(), irq_remote_call_ipi));
      setIRQState(IRQIPI, CORE_IRQ_TO_IRQT(getCurrentCPUIndex(), irq_reschedule_ipi));
@@ -957,9 +957,27 @@ index 93eb4d133..7c714d859 100644
 +     * cannot be preempted by a tick, so it must run a single never-blocking busy-loop
 +     * (watchdog.c); a keep-warm A/B or coresched on core 1 is thus disabled while the
 +     * watchdog owns it -- acceptable (both are refuted/experimental). */
-+    if (getCurrentCPUIndex() != 1) {
++    /* AIOS session-8 CLUSTER-SURVIVAL CIRCUMVENTION (AIOS_SIBLING_TIMER_MASK). The CLH big-kernel-lock
++     * cannot be cleanly trylock-bailed (FIFO queue: a waiter that has enqueued via the tail-exchange
++     * cannot leave the queue mid-wait, lock.h:67). So instead of bailing out of the BKL contention, we
++     * PREVENT idle siblings from ever entering it: mask the timer PPI on ALL secondaries (not just the
++     * core-1 watchdog), so with no tick they stay in the idle.S busy-loop during a core-0 wedge ->
++     * never take a timer IRQ -> never block on the BKL core 0 holds ~32.4s -> the cluster survives a
++     * 1-core wedge. SAFE ONLY under all-threads-pinned-to-core-0 (cores 1-3 are idle-only here); set to
++     * 0 if coresched ever distributes runnable work to 1-3 (they would lose timer preemption). A/B
++     * oracle: a core-0 [STAGECP] wedge then shows cores 1,2,3 idle_lag~=0 (alive in idle.S) instead of
++     * ~=dur (BKL-blocked). IPIs (remote-call + reschedule) stay enabled above, so shootdowns + wakeups
++     * still work. */
++#ifndef AIOS_SIBLING_TIMER_MASK
++#define AIOS_SIBLING_TIMER_MASK 1
++#endif
++#if AIOS_SIBLING_TIMER_MASK
++    /* mask the timer on EVERY secondary (skip setIRQState(IRQTimer) for all of 1,2,3) */
++#else
++    if (getCurrentCPUIndex() != 1) {   /* MVD-1: core 1 (watchdog) only */
 +        setIRQState(IRQTimer, CORE_IRQ_TO_IRQT(getCurrentCPUIndex(), KERNEL_TIMER_IRQ));
 +    }
++#endif
  #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
      setIRQState(IRQReserved, CORE_IRQ_TO_IRQT(getCurrentCPUIndex(), INTERRUPT_VGIC_MAINTENANCE));
      setIRQState(IRQReserved, CORE_IRQ_TO_IRQT(getCurrentCPUIndex(), INTERRUPT_VTIMER_EVENT));
@@ -974,7 +992,7 @@ index 93eb4d133..7c714d859 100644
      clock_sync_test();
      ksNumCPUs++;
  
-@@ -378,6 +400,9 @@ static BOOT_CODE bool_t try_init_kernel(
+@@ -378,6 +418,9 @@ static BOOT_CODE bool_t try_init_kernel(
      /* debug output via serial port is only available from here */
      printf("Bootstrapping kernel\n");
  
@@ -985,10 +1003,10 @@ index 93eb4d133..7c714d859 100644
      init_plat();
  
 diff --git a/src/arch/arm/machine/errata.c b/src/arch/arm/machine/errata.c
-index f8dac15c3..e73fa52b9 100644
+index f8dac15c3..1b1c101f3 100644
 --- a/src/arch/arm/machine/errata.c
 +++ b/src/arch/arm/machine/errata.c
-@@ -8,11 +8,481 @@
+@@ -8,11 +8,493 @@
  #include <api/types.h>
  #include <arch/machine.h>
  #include <arch/machine/hardware.h>
@@ -1365,10 +1383,22 @@ index f8dac15c3..e73fa52b9 100644
 +            int d_cyc  = (int)((pm[4] - aios_cp_pmu[core][4]) & 0xffffffffu);
 +            int iovf = (int)(ovf & 1u);          /* INST_RETIRED (cnt0) overflowed this interval? */
 +            int bovf = (int)((ovf >> 1) & 1u);   /* BUS_ACCESS   (cnt1) overflowed this interval?  */
++            /* session-8 cluster-survival A/B oracle: idle.S heartbeat lag of ALL cores. On a core-0
++             * wedge, allidle[1..3]~=0 => siblings stayed alive in idle.S (the AIOS_SIBLING_TIMER_MASK
++             * circumvention worked); ~=dur => they blocked on the BKL (the old cascade). */
++            int allidle[AIOS_TLBI_NCORES];
++            for (int c = 0; c < AIOS_TLBI_NCORES; c++) {
++                word_t h = aios_core_heartbeat[c * 8];
++                /* clamp h>=now (a sibling stamping CONCURRENTLY with this core's `now` read =
++                 * alive) to 0 instead of letting (now-h) underflow to garbage. So ALIVE prints a
++                 * clean 0, BLOCKED prints ~dur, never-idled prints -1. */
++                allidle[c] = h ? (now > h ? (int)((now - h) * 1000ull / freq) : 0) : -1;
++            }
 +            printf("[STAGECP] core=%d prev=%d this=%d dur=%dms idle_lag=%dms kent_lag=%dms"
-+                   " pmu=[inst=%d iovf=%d bus=%d bovf=%d cyc=%d]\n",
++                   " pmu=[inst=%d iovf=%d bus=%d bovf=%d cyc=%d] allidle=[%d,%d,%d,%d]\n",
 +                   (int)core, (int)prev_s, (int)stage, (int)dur_ms,
-+                   idle_lag, kent_lag, d_inst, iovf, d_bus, bovf, d_cyc);
++                   idle_lag, kent_lag, d_inst, iovf, d_bus, bovf, d_cyc,
++                   allidle[0], allidle[1], allidle[2], allidle[3]);
 +        }
 +    }
 +    aios_cp_last_t[core] = now;

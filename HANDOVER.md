@@ -18,12 +18,14 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   (DECISIVE). The freeze is core 0 CLOCKED-BUT-WEDGED on a SINGLE fabric-dependent instruction,
   POSITION-INDEPENDENT (4 code sites); leading hypothesis = a COLD CACHEABLE DRAM LOAD, not a dsb. Stall
   stays a MAJOR OPEN CONCERN ([[feedback_stall_open_concern]]) -- a MEASUREMENT step toward the
-  architectural fix, NOT a cure.** Board = v0.4.288 build 2805 at 192.168.0.8 (localization v0.4.286 +
-  TWO cure attempts -- external DRAM-DMA keep-warm v0.4.287 + coherent cache-miss keep-warm v0.4.288 --
-  BOTH HW-tested + REFUTED; both keep-warms default-OFF). Commits `06f7b37` + `c17f25e` + `5b4f05c` (+ the
-  v0.4.288 mode-3 commit) on `main` (Bryan pushes). **ALL traffic-based prevention exhausted -> the cure
-  pivots to KERNEL-REDESIGN CIRCUMVENTION (stop a 1-core wedge freezing the cluster).** Board still stalls;
-  watchdog+hwdog default-on survive the ongoing freezes; netconsole wedges under churn (power-cycle to
+  architectural fix, NOT a cure.** Board = v0.4.289 build 2811 at 192.168.0.8 (localization v0.4.286 +
+  TWO keep-warm cure attempts v0.4.287/288 BOTH REFUTED + the v0.4.289 CIRCUMVENTION that WORKS). Commits
+  `06f7b37` + `c17f25e` + `5b4f05c` + `828eab0` (+ the v0.4.289 commit) on `main` (Bryan pushes).
+  **ALL traffic-based prevention exhausted (DMA/coherent/Device/cacheable). The cure PIVOTED to
+  KERNEL-REDESIGN CIRCUMVENTION -- and the first one WORKS: the sibling-timer-mask (v0.4.289) stops a
+  1-core wedge from cascading into a cluster freeze.** Board still stalls (core 0 still wedges; box still
+  net-unresponsive -- net is on core 0); watchdog+hwdog default-on survive; netconsole wedges under churn
+  (power-cycle to
   recover).
   Full detail + interpretation matrix + HW result: `docs/NEXT_20260621_stall_session8_localize.md`.
   - **HW RESULT (DECISIVE, 10+ stalls): core 0 ALWAYS `iovf=0`** (wedged on ONE instruction -- retired
@@ -72,6 +74,23 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
     op at kernel entry before NODE_LOCK so a wedge doesn't hold the lock) + coresched; (2) try-lock+defer in
     the IRQ path; (3) a CORE-0 sleeping-timer heartbeat (the one prevention lead left, IF core-0-specific);
     (4) fine-grained locking [infeasible]. `fabwarm` mode 3 KEPT default-OFF.
+  - **CIRCUMVENTION THAT WORKS -- SIBLING TIMER-MASK (v0.4.289 build 2811). The trylock-bailout has a HARD
+    BLOCKER: the BKL is a CLH (FIFO) lock -- a waiter that enqueued (tail-exchange, lock.h:67) cannot
+    cleanly leave the queue mid-wait, so a never-spins CLH trylock is not cleanly possible.** The correct
+    fix is to PREVENT idle siblings entering the BKL contention: `AIOS_SIBLING_TIMER_MASK` (boot.c
+    try_init_kernel_secondary_core) extends MVD-1's timer-mask from core 1 to ALL secondaries -> with no
+    tick, cores 1,2,3 stay in idle.S during a core-0 wedge -> never take a timer IRQ -> never block on the
+    BKL. Added an all-cores `allidle=[...]` field to [STAGECP] (errata.c) as the A/B oracle. **HW A/B: core
+    0 still wedges (6/10, 3 GAPs -- freeze unpreventable, net on core 0) BUT across 5/5 core-0 wedges, ZERO
+    core=2/core=3 [STAGECP] lines (vs ALWAYS-present in 30+ prior wedges); allidle shows cores 2,3 alive in
+    idle.S. THE BKL CASCADE IS BROKEN -- a 1-core wedge no longer freezes the cluster.** First change all
+    session to alter the freeze blast radius. HONEST SCOPE: buys CLUSTER-SURVIVABILITY (cores 1-3 + IRQ
+    secondary services stay live), NOT user-responsiveness (all user work + net pinned to core 0, which
+    still wedges) -- a real gain over MVD-1 (where 1-3 also froze) but not a cure. `AIOS_SIBLING_TIMER_MASK`
+    default-ON; SAFE only under core-0 pinning; MUST be 0 if coresched distributes work to 1-3. (The clean-
+    allidle clamp reflash failed mid-push from a stall storm -- pi_flash atomic, kernel8 intact on the
+    pre-clamp build; result stands on the absence-of-sibling-lines signal. Board on the pre-clamp v0.4.289;
+    the committed source has the clamp.)
   - **The PMU OVERFLOW FLAG was the key hardening** (3-lens adversarial review caught that a 32-bit delta
     masked over 32.4s wraps unpredictably -> false "wedged"): `iovf` cleanly separates the ONE wedged core
     (`iovf=0`) from BKL-spinning siblings (`iovf=1`). Without it the result would have been ambiguous.
