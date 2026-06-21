@@ -138,6 +138,9 @@ void boot_start_services(vka_object_t *fault_ep) {
      * (light uncached fabric reads keep the cluster's SCB AXI/snoop link from
      * quiescing, so core 0's post-idle teardown DVM-Sync completes; project_stall_hunt). */
     { extern void fabric_warm_start(void); fabric_warm_start(); }
+    /* NOTE: dma_warm_init() (session-8 DRAM keep-warm) now runs EARLY in aios_root.c, right after
+     * prealloc_rpi4_devices -- it must grab its sub-1GB scratch region BEFORE boot_net_init/v3d_init
+     * exhaust the low untypeds (a late call here failed with "no <1GB region"). */
 
     /* v0.4.271 (watchdog.c): MVD-1 -- a core-0 liveness heartbeat + a core-1
      * out-of-band watchdog that SURVIVES the ~32.4s teardown freeze (core 1's timer

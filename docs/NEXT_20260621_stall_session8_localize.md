@@ -171,8 +171,43 @@ work. Full per-site candidate analysis + checkpoint spec: workflow run `wf_5e364
 Board left on v0.4.286 build 2784, ALIVE on ICMP but netconsole-wedged from the test churn (power-cycle
 to restore netconsole). Watchdog + hwdog default-on so it survives + auto-recovers the ongoing freezes.
 
+## CURE ATTEMPT: autonomous DRAM-DMA keep-warm -- REFUTED (v0.4.287, HW-tested 2026-06-21)
+
+The cold-DRAM-load hypothesis implied a cure: keep the SCB->memory path warm during idle with REAL DRAM
+traffic (the one keep-warm class never tried -- all prior ones were CPU-side/DVM-path). Built
+`src/servers/dma_warm.c`: a BCM2711 legacy-DMA channel with a SELF-LOOPING control block copying a
+dedicated sub-1GB scratch buffer forever, autonomously in HW (no CPU kicks -> runs even while core 0 is
+wedged). `/proc/dmawarm.1` arms, `.0` disarms; default-OFF. Picks an ARM-free channel from the VC
+`GET_DMA_CHANNELS` mask (chose chan 6); 3-lens adversarially reviewed (the two "blocker/major" findings --
+a claimed WAITS/PERMAP overlap and a cacheable-CB hazard -- were both FALSE POSITIVES, refuted against the
+datasheet [PERMAP=20:16, WAITS=25:21, adjacent] and the non-cacheable mapping [last arg cacheable=0]).
+
+**HW A/B RESULT -- REFUTED.** With the DMA armed + CONFIRMED RUNNING throughout (`active=1 err=0
+dst0=0xa5a5a5a5`, self-loop CONBLK loaded, chan 6 priority 8), `netstall --idle 30 --trials 10` =
+**6/10 STALLED -- IDENTICAL to the OFF baseline (6/10)**. pingmon caught 3 real ICMP GAPs (33.0/12.1/32.8s);
+2 `[STAGECP]` core-0 freezes fired (same `prev=11 this=9 iovf=0` wedge signature). Continuous external DRAM
+traffic makes ZERO difference to the stall rate.
+
+**WHAT THIS PROVES (a sharp negative result):** the quiescence is NOT the shared SCB->memory-controller
+path -- an external bus master keeps THAT busy with no effect. It is the **A72 cluster's OWN ACE/snoop
+master interface** (ACINACTM, A72 TRM 2.4: the cluster idles its AXI master snoop interface when the
+cluster's snoop traffic stops -- an A72 INPUT software cannot deassert). An external master (DMA on the
+SCB) cannot keep the A72 cluster's port active, so core 0's FIRST external transaction after its own port
+quiesced still wedges. The "cold-DRAM-load" is best understood as the A72's first external transaction
+(load-fill or barrier) after ITS interface parked -- which is why the wedge floats across instructions/sites
+but is always core 0's first post-idle fabric op. This eliminates the entire EXTERNAL-MASTER keep-warm class.
+
+**Remaining cure directions (all uncertain):** (1) make the A72 CLUSTER keep its ACE port warm during idle
+-- a CORE-0-side periodic external transaction (the variant never cleanly tested: fabwarm ran on core 1,
+but core 0 is the core that wedges; though core-1 fabwarm Device-reads were ALSO refuted, suggesting the
+quiescence may be deeper/VideoCore-side than the cluster ACE port). (2) The ARCHITECTURAL fix: drop the BKL
+coupling so a wedged core 0 does not freeze the whole cluster (the only path that does not depend on
+defeating the fabric quiescence). STILL A MAJOR OPEN CONCERN. `dma_warm.c` is KEPT default-OFF as a
+documented A/B knob (like the refuted fabwarm/corewarm) -- it is the first proper external-DRAM-traffic test.
+
 ## Status
-Built + HW-tested (v0.4.286 build 2784), QEMU gate green-equivalent, kernel diff in
+Built + HW-tested (v0.4.286 build 2784 localization; v0.4.287 build 2799 DMA-keep-warm REFUTED), QEMU gate
+green-equivalent, kernel diff in
 `deps/patches/seL4-kernel.patch`. KEPT: ASID-gen + coresched S1/S2 + watchdog default-on + the
 [TLBISTALL]/[DSBSTALL]/[STAGECP] profilers (now with PMU overflow flags + kent_lag) + MVD-1. The freeze
 is NOT cured -- this measurement DECISIVELY localized it (fabric-fundamental, position-independent).

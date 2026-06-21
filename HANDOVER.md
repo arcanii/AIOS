@@ -18,9 +18,11 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   (DECISIVE). The freeze is core 0 CLOCKED-BUT-WEDGED on a SINGLE fabric-dependent instruction,
   POSITION-INDEPENDENT (4 code sites); leading hypothesis = a COLD CACHEABLE DRAM LOAD, not a dsb. Stall
   stays a MAJOR OPEN CONCERN ([[feedback_stall_open_concern]]) -- a MEASUREMENT step toward the
-  architectural fix, NOT a cure.** Board = v0.4.286 build 2784 at 192.168.0.8 (flashed + HW-tested);
-  commit `06f7b37` on `main` (Bryan pushes). Board left ALIVE on ICMP but netconsole-wedged from the test
-  churn (power-cycle to restore netconsole; watchdog+hwdog default-on survive the ongoing freezes).
+  architectural fix, NOT a cure.** Board = v0.4.287 build 2799 at 192.168.0.8 (localization v0.4.286 +
+  DRAM-DMA keep-warm cure attempt, both HW-tested; dmawarm disarmed, default-OFF on reboot). Commits
+  `06f7b37` + `c17f25e` (+ this session's dma_warm commit) on `main` (Bryan pushes). Board still stalls
+  (cure refuted); watchdog+hwdog default-on survive the ongoing freezes; netconsole wedges under churn
+  (power-cycle to recover).
   Full detail + interpretation matrix + HW result: `docs/NEXT_20260621_stall_session8_localize.md`.
   - **HW RESULT (DECISIVE, 10+ stalls): core 0 ALWAYS `iovf=0`** (wedged on ONE instruction -- retired
     <2^32 over the whole 32.4s) with a tiny `bus` delta (`bovf=0` = clean wait on a PARKED fabric). Caught
@@ -35,11 +37,25 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   - **LEADING MECHANISM (Phase-2 design workflow `wf_5e364d17-60d`, high confidence): a COLD CACHEABLE DRAM
     LOAD, not a dsb.** After ~30s idle the TCB-context (restore_user_context `ldp`), scheduler/`ksCurThread`,
     and kernel-stack lines go cold; the first DRAM fill THROUGH the parked SCB hangs to the fixed ~32.4s
-    timeout. Unifies the 4 sites; fits `inst=0` + small-nonzero `bus` (one line-fill) + fixed-timeout. This
-    SHARPENS the cure: a memory-fill timeout (not a DVM-barrier) => the only viable keep-warm is a COHERENT
-    external bus-master (DMA) touching DRAM during idle -- CPU-side keep-warms all refuted. Note: `aios_
-    checkpoint(11)` is recorded just BEFORE the restore asm, so a wedge on the TCB-restore `ldp` presents as
-    SITE B; SITE A is the same mechanism one stage earlier (cold `schedule()`/`activateThread()` read).
+    timeout. Unifies the 4 sites; fits `inst=0` + small-nonzero `bus` (one line-fill) + fixed-timeout. Note:
+    `aios_checkpoint(11)` is recorded just BEFORE the restore asm, so a wedge on the TCB-restore `ldp`
+    presents as SITE B; SITE A is the same mechanism one stage earlier (cold `schedule()`/`activateThread()`
+    read).
+  - **CURE ATTEMPT -- AUTONOMOUS DRAM-DMA KEEP-WARM (v0.4.287 build 2799) = REFUTED ON HW.** The cold-load
+    hypothesis implied: keep the SCB->memory path warm with REAL DRAM traffic (the one keep-warm class never
+    tried). Built `src/servers/dma_warm.c` -- a BCM2711 legacy-DMA channel with a SELF-LOOPING control block
+    copying a sub-1GB scratch buffer forever, autonomously in HW (no CPU kicks -> runs even while core 0 is
+    wedged); `/proc/dmawarm.1` arm / `.0` disarm, default-OFF; ARM-free channel from the VC
+    `GET_DMA_CHANNELS` mask (chan 6); 3-lens reviewed (both "blocker/major" findings were FALSE POSITIVES --
+    WAITS/PERMAP are adjacent [20:16]/[25:21] not overlapping, and the mapping is non-cacheable [last arg=0]).
+    **HW A/B: DMA armed + CONFIRMED RUNNING throughout (`active=1 err=0 dst0=0xa5a5a5a5`, self-loop loaded),
+    `netstall --idle 30 --trials 10` = 6/10 STALLED = IDENTICAL to the OFF baseline (6/10); pingmon 3 real
+    GAPs; 2 `[STAGECP]` (same `prev=11 this=9 iovf=0`). Continuous EXTERNAL DRAM traffic = ZERO effect.**
+    PROVES the quiescence is NOT the shared SCB->memory-controller path -- it is the A72 CLUSTER's OWN
+    ACE/snoop master interface (ACINACTM, TRM 2.4: idles when cluster snoop traffic stops; an A72 INPUT
+    software cannot deassert; external masters cannot keep it warm). The "cold-DRAM-load" is the A72's first
+    EXTERNAL transaction after ITS port parked. ELIMINATES the external-master keep-warm class. `dma_warm.c`
+    KEPT default-OFF as a documented A/B knob (like refuted fabwarm/corewarm).
   - **The PMU OVERFLOW FLAG was the key hardening** (3-lens adversarial review caught that a 32-bit delta
     masked over 32.4s wraps unpredictably -> false "wedged"): `iovf` cleanly separates the ONE wedged core
     (`iovf=0`) from BKL-spinning siblings (`iovf=1`). Without it the result would have been ambiguous.
@@ -66,16 +82,19 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
     timeout), shmring 25/26 (1 timing shed), socket 8/8, netd 10/10. build-rpi4 (non-hyp) built clean with
     stages 1-7,9,10,11,12 all present. The instrumentation touches no external bus (sysreg reads + per-core
     cacheable stores) so it cannot warm the fabric / mask the stall. Adversarially reviewed (3-lens workflow).
-  - **>>> NEXT (the localization is DONE; remaining work is OPTIONAL / fabric-level):** (1) Phase 2 --
-    ONE more shot to CONFIRM cold-load-vs-dsb: a register-SAFE asm checkpoint bracketing the
-    restore_user_context `ldp` chain + a `schedule()`/`activateThread()` checkpoint + add
-    L2D_CACHE_REFILL/MEM_ACCESS to the print (spec in workflow `wf_5e364d17-60d`; needs a power-cycle +
-    careful asm review; does NOT change the mitigation). (2) FABRIC-LEVEL cure (seed lead #4): if it IS a
-    cold-DRAM-LOAD timeout, try a COHERENT external bus-master (DMA engine) DRAM-touch heartbeat during
-    idle to keep the memory fabric out of deep-quiesce -- the one keep-warm class never tried (all
-    CPU-side ones refuted). (3) ARCHITECTURAL cure: drop the BKL coupling so a wedged core 0 does not
-    freeze the whole cluster. To re-run the HW A/B: power-cycle, `sercap /tmp/x.log`, board already on
-    v0.4.286 (or `pi_flash.py --build`), `pingmon` + `netstall --idle 30 --trials 10`, grep [STAGECP]. <<<**
+  - **>>> NEXT (localization DONE; external-master keep-warm DONE+REFUTED; remaining cures are hard):**
+    (1) the DMA-keep-warm refutation localized the quiesce to the A72 CLUSTER's own ACE port -- so the only
+    keep-warm that could work is a CORE-0-side periodic EXTERNAL transaction during idle (e.g. a core-0
+    blocking-timer heartbeat that does an uncached read every ~10ms; the variant never cleanly tried --
+    fabwarm ran on core 1). CAVEAT: core-1 fabwarm (A72 Device reads) was ALSO refuted, so the quiesce may
+    be deeper than the cluster ACE port (VideoCore/SCB-side) and even a core-0 keep-warm may fail -- test it
+    but temper expectations. (2) The ARCHITECTURAL cure: drop the BKL coupling so a wedged core 0 does not
+    freeze the whole cluster (the only path independent of defeating the fabric quiesce; 2+yr proof-rewrite
+    or a silent-corruption-risk lock-drop -- see the MVD-2 verdict). (3) Phase-2 cold-load-vs-dsb confirm
+    (register-safe asm checkpoint around the restore `ldp`; spec in workflow `wf_5e364d17-60d`) -- now mostly
+    moot (the cure is refuted regardless of which instruction). To re-run any HW A/B: power-cycle, `sercap
+    /tmp/x.log`, board on v0.4.287 (or `pi_flash.py --build`), `pingmon` + `netstall --idle 30 --trials 10`,
+    grep [STAGECP]. STILL A MAJOR OPEN CONCERN. <<<**
   - Kernel diff in `deps/patches/seL4-kernel.patch` (1532 lines). KEPT: ASID-gen + coresched S1/S2 +
     watchdog default-on + [TLBISTALL]/[DSBSTALL]/[STAGECP] (now with PMU overflow flags + kent_lag)
     profilers + MVD-1.

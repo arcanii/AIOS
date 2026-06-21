@@ -178,6 +178,7 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/servers/serverstats.c
     ${AIOS_ROOT}/src/servers/core_warm.c
     ${AIOS_ROOT}/src/servers/fabric_warm.c
+    ${AIOS_ROOT}/src/servers/dma_warm.c
     ${AIOS_ROOT}/src/servers/watchdog.c
     ${AIOS_ROOT}/src/servers/flush_server.c
     ${AIOS_ROOT}/src/boot/spawn_util.c

@@ -28,6 +28,9 @@ int core_warm_cmd(const char *args, char *buf, int bufsize);
 /* SCB-fabric keep-warm A/B knob at /proc/fabwarm (impl in src/servers/fabric_warm.c) --
  * the "Linux approach" to the idle-teardown DVM freeze; inert until armed. */
 int fabric_warm_cmd(const char *args, char *buf, int bufsize);
+/* Autonomous DRAM-DMA keep-warm A/B knob at /proc/dmawarm (impl in src/servers/dma_warm.c) --
+ * session-8 cure attempt for the idle->wake cold-DRAM-load freeze; inert until armed. */
+int dma_warm_cmd(const char *args, char *buf, int bufsize);
 /* MVD-1 out-of-band watchdog status/knob at /proc/watchdog (impl in src/servers/watchdog.c)
  * -- core-0 liveness + a core-1 watchdog that survives the teardown freeze. */
 int watchdog_cmd(const char *args, char *buf, int bufsize);
@@ -781,6 +784,14 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         int fw = fabric_warm_cmd(path + 7, buf, bufsize);
         if (fw < 0) return -1;
         w = fw;
+    } else if (path[0] == 'd' && path[1] == 'm' && path[2] == 'a'
+            && path[3] == 'w' && path[4] == 'a' && path[5] == 'r' && path[6] == 'm') {
+        /* /proc/dmawarm[.0|.1] -- session-8 autonomous DRAM-DMA keep-warm (the cold-DRAM-load
+         * cure attempt, src/servers/dma_warm.c). .1 arms a self-looping DMA that keeps the
+         * SCB->memory path warm during idle, .0 disarms, bare = status. */
+        int dw = dma_warm_cmd(path + 7, buf, bufsize);
+        if (dw < 0) return -1;
+        w = dw;
     } else if (path[0] == 'w' && path[1] == 'a' && path[2] == 't' && path[3] == 'c'
             && path[4] == 'h' && path[5] == 'd' && path[6] == 'o' && path[7] == 'g') {
         /* /proc/watchdog[.0|.1] -- MVD-1 out-of-band watchdog (src/servers/watchdog.c).

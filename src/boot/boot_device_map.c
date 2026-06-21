@@ -25,6 +25,7 @@ volatile uint32_t *dev_pcie_vaddr;
 volatile uint32_t *dev_v3d_vaddr;
 volatile uint32_t *dev_v3d_asb_vaddr;
 volatile uint32_t *dev_armlocal_vaddr;   /* 0xFF800000 ARM-local (AXI_QUIET_TIME @ +0x30); best-effort */
+volatile uint32_t *dev_dma_vaddr;        /* 0xFE007000 BCM2711 legacy DMA controller; session-8 DRAM keep-warm; best-effort */
 
 #ifdef PLAT_RPI4
 
@@ -33,6 +34,7 @@ volatile uint32_t *dev_armlocal_vaddr;   /* 0xFF800000 ARM-local (AXI_QUIET_TIME
 #define RPI4_PM_PADDR 0xFE100000UL     /* power management / watchdog */
 #define RPI4_V3D_ASB_PADDR 0xFEC11000UL /* RPiVid ASB V3D power bridges (1 page) */
 #define RPI4_ARMLOCAL_PADDR 0xFF800000UL /* ARM-local block (AXI_QUIET_TIME @ +0x30); diagnostic */
+#define RPI4_DMA_PADDR 0xFE007000UL       /* BCM2711 legacy DMA controller (channels 0-14, 1 page) */
 
 struct dev_req {
     uint64_t paddr;          /* page-aligned */
@@ -68,7 +70,7 @@ static void *map_dev(uint64_t paddr, int npages, seL4_CPtr *out_caps)
 
 void prealloc_rpi4_devices(void)
 {
-    struct dev_req reqs[12];
+    struct dev_req reqs[13];
     int n = 0;
 
     reqs[n++] = (struct dev_req){ RPI4_GPIO_PADDR,  1, &dev_gpio_vaddr, "gpio" };
@@ -111,6 +113,11 @@ void prealloc_rpi4_devices(void)
      * not exposed as a device untyped, map_dev returns NULL and the loop just records that. It
      * is the highest paddr, so the ascending watermark reaches it last. */
     reqs[n++] = (struct dev_req){ RPI4_ARMLOCAL_PADDR, 1, &dev_armlocal_vaddr, "armlocal" };
+    /* BCM2711 legacy DMA controller (0xFE007000): session-8 autonomous DRAM keep-warm
+     * (src/servers/dma_warm.c). One page covers legacy channels 0-14. Sits between the VC
+     * mailbox (0xFE00B000) and PM (0xFE100000); the ascending sort places it. Best-effort:
+     * if not exposed as a device untyped, map_dev returns NULL and dma_warm_init no-ops. */
+    reqs[n++] = (struct dev_req){ RPI4_DMA_PADDR, 1, &dev_dma_vaddr, "dma" };
 
     /* Insertion sort ascending by paddr (n <= 10). This ordering is the whole
      * point -- claim low addresses before the watermark passes them. */

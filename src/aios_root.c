@@ -249,6 +249,13 @@ int main(int argc, char *argv[]) {
      * v0.4.98 GENET + display disable. */
     prealloc_rpi4_devices();
 
+    /* v0.4.287 (dma_warm.c): session-8 DRAM-DMA keep-warm. Allocate its sub-1GB scratch region
+     * + program the self-loop DMA control block HERE -- EARLY, right after the device map and
+     * BEFORE boot_net_init (GENET grabs a 128KB low region) and v3d_init (8MB pool) exhaust the
+     * low (<1GB) untypeds. INERT until /proc/dmawarm.1. No-op on QEMU. (dev_dma_vaddr +
+     * dev_vcmbox_vaddr are mapped by prealloc_rpi4_devices above; vka/vspace are ready.) */
+    { extern void dma_warm_init(void); dma_warm_init(); }
+
     /* RPi4 LED diagnostic: 3 fast blinks = root task reached.
      * Visible on ACT LED (GPIO 42) without serial adapter. */
     if (dev_gpio_vaddr) {
