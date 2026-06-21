@@ -68,6 +68,15 @@
  * costs reconnect-per-command clients ~200ms/cmd -- a HELD-connection client
  * (scripts/aios_nc.py) pays it once at disconnect, i.e. never in practice. */
 #define NETCON_ACCEPT_PACE_NS (200 * 1000 * 1000) /* 200ms between connections */
+/* v0.4.290 mitigation polish (seed lead #5): a BLOCKING accept() returns <0 only on a
+ * REAL error (it blocks while idle), so repeated failures mean the listening socket /
+ * net-stack slot got corrupted under reconnect churn -- the "netconsole wedges under
+ * churn, power-cycle to recover" mode. After this many CONSECUTIVE failures, rebuild the
+ * listener (close + re-socket/bind/listen) to self-heal without a power-cycle; if the
+ * rebuild also fails, exit so getty's supervisor respawns a fresh netconsole. This also
+ * fixes a latent busy-spin: the old `if (cfd<0) continue;` looped with NO nap, pinning
+ * core 0 at 100% (+ log spam) on a persistent accept error. */
+#define NETCON_ACCEPT_FAIL_MAX  8
 
 /* Per-operation deadlines, in 10ms ticks (reset on any progress). NOTE: AIOS
  * nanosleep granularity is ~10ms, so a sub-10ms nap rounds up and buys nothing;
@@ -356,29 +365,36 @@ static void serve_client(int cfd)
     close(cfd);
 }
 
+/* Open (or re-open) the listening socket. Returns the fd, or -1. Factored out so the
+ * accept loop can REBUILD it to self-heal a churn-corrupted listener (lead #5). */
+static int open_listener(void)
+{
+    int lfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (lfd < 0) { printf("[netcon] socket() failed\n"); return -1; }
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(NETCON_PORT);
+    addr.sin_addr.s_addr = 0;
+    if (bind(lfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        printf("[netcon] bind(%d) failed\n", NETCON_PORT);
+        close(lfd); return -1;
+    }
+    if (listen(lfd, 1) < 0) {
+        printf("[netcon] listen() failed\n");
+        close(lfd); return -1;
+    }
+    return lfd;
+}
+
 int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
 
     signal(SIGINT, SIG_IGN);  /* a stray Ctrl-C must not kill the server */
 
-    int lfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (lfd < 0) { printf("[netcon] socket() failed\n"); return 1; }
-
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(NETCON_PORT);
-    addr.sin_addr.s_addr = 0;
-
-    if (bind(lfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        printf("[netcon] bind(%d) failed\n", NETCON_PORT);
-        close(lfd); return 1;
-    }
-    if (listen(lfd, 1) < 0) {
-        printf("[netcon] listen() failed\n");
-        close(lfd); return 1;
-    }
+    int lfd = open_listener();
+    if (lfd < 0) { printf("[netcon] initial listener open failed\n"); return 1; }
 
     /* v0.4.253-fix: the startup banner was REMOVED. netconsole is getty-spawned
      * with fd1=tty (its relay REQUIRES fd1=tty -- see netconsole-redirect-fd-bug,
@@ -388,9 +404,33 @@ int main(int argc, char **argv)
 
     /* Listening socket stays BLOCKING: accept() blocks while idle (no busy
      * spin); only the accepted client socket is made non-blocking. */
+    int accept_fails = 0;
     for (;;) {
         int cfd = accept(lfd, (void *)0, (void *)0);
-        if (cfd < 0) { printf("[netcon] accept() failed\n"); continue; }
+        if (cfd < 0) {
+            /* lead #5 self-recovery: a BLOCKING accept fails only on a real listener/
+             * net-stack error (it blocks while idle, never returns <0 for "no client").
+             * Nap first (fixes the old busy-spin: the previous `continue` looped with no
+             * sleep, pinning core 0 at 100% on a persistent error). After N consecutive
+             * failures the listening socket is corrupted (churn wedge) -> rebuild it; if
+             * the rebuild also fails, exit so getty's supervisor respawns netconsole. */
+            struct timespec nap = { 0, NETCON_POLL_NS };
+            nanosleep(&nap, (void *)0);
+            if (++accept_fails >= NETCON_ACCEPT_FAIL_MAX) {
+                printf("[netcon] %d consecutive accept() failures -- rebuilding listener\n", accept_fails);
+                close(lfd);
+                struct timespec settle = { 0, NETCON_ACCEPT_PACE_NS };
+                nanosleep(&settle, (void *)0);     /* let the net-stack slot/cap free */
+                lfd = open_listener();
+                if (lfd < 0) {
+                    printf("[netcon] listener rebuild failed -- exiting (getty respawns)\n");
+                    return 1;
+                }
+                accept_fails = 0;
+            }
+            continue;
+        }
+        accept_fails = 0;                          /* a good accept clears the streak */
         serve_client(cfd);
         /* v0.4.264: pace consecutive connections (see NETCON_ACCEPT_PACE_NS) so a
          * rapid-reconnect storm cannot wedge the box. The serve above already
