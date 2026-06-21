@@ -14,6 +14,44 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   HW-VERIFIED + PUSHED (`9e543c6`, v0.4.252). NOTE: DHCP lease BOUNCES `.8`<->`.250`
   per boot -- ARP-sweep MAC `dc:a6:32:1c:2e:e1` if `.8` is dark.
 
+* **CURRENT STATE 2026-06-21 (session 7) -- THE ASID-GENERATION CURE IS BUILT + HW-TESTED, AND THE STALL IS
+  LOCALIZED: it is the IDLE->WAKE transition, NOT process teardown -- the multi-session "tlbi/teardown is
+  the cause" premise is OVERTURNED. Board = v0.4.282 build 2758 at 192.168.0.8 (ASID-gen ON + session-7
+  diagnostics). Commits on `main` (Bryan pushes): `d40d8e6` v0.4.277 (ASID-gen), `147ea34` v0.4.282 (stall
+  localized), `3e6d33a` v0.4.283 (coresched S1). The stall STAYS a MAJOR OPEN CONCERN -- never "solved"
+  ([[feedback_stall_open_concern]]). Detail: [[project_asid_generation]] + `docs/NEXT_20260621_asid_generation_IMPL.md`.**
+  - **ASID-generation TLB recycling SHIPPED (v0.4.277, gated `AIOS_ASID_GEN`, non-hyp/Pi only).** Decouples
+    the seL4 logical asid from the hw asid (TTBR0[63:48]); recycles by a 32-bit generation so teardown +
+    self-munmap issue NO per-asid `tlbi`. Host-validated (`scripts/asidgen_host_test.c` 4/4), adversarially
+    reviewed (5-agent, invariant SOUND, `docs/asidgen_review_session7.json`), QEMU-regression-clean. **KEY:
+    the QEMU build is HYP, the Pi build is non-HYP -> ASID-gen runs ONLY on the Pi; the QEMU gate is
+    regression-only; AIOS_HWASID() is identity on hyp.** TCR_EL1.AS=1 confirmed on silicon (`[ASIDGEN]` probe).
+  - **HW A/B: ASID-gen is NEUTRAL on the stall.** It removed the teardown `tlbi` (proven: `[TLBISTALL]` fires
+    with it OFF, vanishes ON) but the ~32.4s freeze persisted at the SAME rate (5-7/10 both ways). Then
+    skipping the teardown cache-clean (`dc cvau`) ALSO did nothing. Three cure hypotheses refuted by
+    elimination (tlbi, cache-clean, context-switch dsb).
+  - **STALL LOCALIZED via a checkpoint breadcrumb (`[STAGECP]`, errata.c `aios_checkpoint`).** EVERY freeze =
+    `prev=11 this=10 dur=~32400ms` = the 32.4s sits BETWEEN kernel-exit (`restore_user_context`) and the next
+    IRQ entry (`c_handle_interrupt`) -- the idle->wake window -- with NO teardown stage around it.
+    CLUSTER-WIDE (cores 2,3 idle heartbeat stale the full duration; they block on the BKL while core 0 wedges
+    on the first fabric op after idle). idle.S has no wedging instruction => the wedge is in
+    eret/IRQ-vector/c_entry_hook, BKL-held. **VERDICT: fabric-quiescence-FUNDAMENTAL at idle->wake (BCM2711
+    SCB quiesces during idle; first wake fabric op hangs ~32.4s, halts the cluster). NOT a removable seL4
+    instruction. ACCEPT + MITIGATE (MVD-1), now PROVEN by localization.** This explains why every prior lever
+    failed (all attacked the teardown, which is not the wedge).
+  - **Coresched safety S1 SHIPPED (v0.4.283): reserved-asid at generation wrap** (Linux PCID; host-proven) --
+    the prerequisite for unpinning user threads from core 0. S2 (peer-visibility on clear) DOCUMENTED +
+    DEFERRED at the `aios_hwasid_clear` site (needs a masked IPI, belongs with coresched enablement; moot
+    under core-0 pinning).
+  - **NEXT (Bryan's agreed direction): (1) vDSO-style in-process fast-path** (shared RO page: clock_gettime via
+    user-readable CNTPCT_EL0 + boot-offset, getpid/getuid cached -- collapse common service IPCs; control
+    plane=IPC, data plane=cap+shared-mem, the SHM-ring philosophy) -- task #10, INDEPENDENT, gentle on the
+    board. **(2) coresched S2 + unpin user threads** when ready (BKL-ceiling-bound; gives compute parallelism).
+    **Stall (optional, gentle -- board hammered s7):** instrument c_entry_hook/IRQ-vector for the exact wedged
+    instruction; zero-flash pingmon-only-idle test to confirm idle-alone freezes without teardown.
+  - Board left on v0.4.282 (ASID-gen + `[STAGECP]`/`[DSBSTALL]` diagnostics; teardown clean ON; the
+    `AIOS_TEARDOWN_NO_CLEAN` A/B knob default-off). seL4 changes in `deps/patches/seL4-kernel.patch` (1403 lines).
+
 * **CURRENT STATE 2026-06-21 (session 6) -- THE STALL CURE IS SCOPED: the seL4 ASID-GENERATION redesign
   (`docs/NEXT_20260621_asid_generation.md`) is the one architectural cure left, and the stall hit LIVE this
   session (3 freezes, repeatedly killing the keyboard) -- vindicating "never conclude it". Board = v0.4.276
