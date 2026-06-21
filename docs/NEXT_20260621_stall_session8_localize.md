@@ -237,6 +237,41 @@ busy-loop) heartbeat -- the one prevention lead the mode-3 result still leaves o
 core-0-specific; (4) full fine-grained locking [infeasible, 2+yr proof rewrite]. `fabwarm` mode 3 KEPT
 default-OFF as a documented A/B knob. STILL A MAJOR OPEN CONCERN.
 
+## KERNEL-REDESIGN CIRCUMVENTION -- design analysis (workflow `wf_8791f3fb-dc7`, 3-lens + synthesis)
+
+Prevention is dead -> the question becomes: can a kernel redesign stop a 1-core ~32.4s wedge from freezing
+the CLUSTER? The BKL is the coupling: core 0 holds it during the wedge (released only in
+restore_user_context c_traps.c:34), so cores 1-3 take the timer IRQ, hit NODE_LOCK_IRQ (c_traps.c:89), and
+spin in the FIFO CLH lock (lock.h:70) for the full 32.4s (PMU iovf=1 confirms). RANKED:
+
+- **#1 TRYLOCK-WITH-IRQ-BAILOUT (the one worth building).** Replace `NODE_LOCK_IRQ_IF` (c_traps.c:89) with
+  a bounded-spin `clh_lock_try_acquire` (new, in lock.h:59-87). On timeout for a TIMER IRQ: don't enter the
+  handler, leave it pending in the per-core `active_irq[]` cache (gic_v2.h), `eret` back, re-drive on the
+  next entry. Breaks the cascade: core 0 still wedges, but cores 1-3 no longer spin the BKL -> they stay
+  alive (idle.S keeps stamping). Proof cost: ONE new per-core "deferred IRQ" invariant (far less than
+  fine-grained locking). Risk: GIC active-state/EOI book-keeping (the IAR read at :89 moves the IRQ to
+  active before the lock). **A/B ORACLE (decisive): after the change, the sibling [STAGECP] lines should
+  flip from `idle_lag~=dur` / `iovf=1` (spun on the BKL) to `idle_lag~=0` (idle loop kept running) -- i.e.
+  cores 1-3 survived core 0's wedge.** Files: lock.h:59-87, c_traps.c:87-103, gic_v2.h:146-189.
+- **#2 PRE-LOCK FABRIC ABSORBER (cheap DIAGNOSTIC, expect it to FAIL as a fix).** A deliberate fabric op
+  (dsb / uncached read) in traps.S after `lsp_i` (:139/:228), BEFORE any NODE_LOCK. ~2h, zero proof impact.
+  Tests "is the wedge the first fabric op + can it be moved outside the lock?" Likely fails (the wedge
+  floats; core-1's 5.3GB/s didn't help core 0) but converts an open question into data. Read where the new
+  wedge lands with the stage-9/10/11 checkpoints.
+- **#3 micro-release the BKL around the op / #4 snapshot+parallelize -- NO-GO** (wedge is position-
+  independent across 4 sites; release/re-acquire mid-handler = silent-corruption window, no proof coverage).
+- **#5 full fine-grained locking -- NO-GO** (2+yr Isabelle rewrite). **#6 broadcast-tlbi / #7 no-clean --
+  already HW-refuted.**
+
+**HONEST VERDICT:** NO option makes the box RESPONSIVE TO USER WORK through the freeze, because all user
+threads are pinned to core 0 = the wedging core. Circumvention (#1) keeps cores 1-3 ALIVE (cluster
+survives) but cannot un-wedge core 0. Turning "cluster survives" into "system responsive" additionally
+needs coresched distributing user work to 1-3 -- which is independently blocked (enabling it wedges the Pi)
+and re-exposes those cores to the same freeze. **=> MVD-1 (survive + report + hwdog auto-reset) remains the
+practical CEILING for user responsiveness; the trylock-bailout (#1) is the one redesign that meaningfully
+raises the cluster-survivability FLOOR and is the right next experiment -- but go in expecting "cluster
+survives, user work still blocked," NOT "responsive through the freeze."**
+
 ## Status
 Built + HW-tested (v0.4.286 build 2784 localization; v0.4.287 build 2799 DMA-keep-warm REFUTED), QEMU gate
 green-equivalent, kernel diff in
