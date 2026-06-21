@@ -105,9 +105,17 @@ def get(host, remote, tries=5, settle=4):
             n = int(h.split()[2])
             got = b""
             dl = time.time() + max(60, n // 1000 + 30)
+            # Read EXACTLY n bytes -- never over-read past the declared length.
+            # After the n raw bytes, the netconsole serve loop sends the next 6-byte
+            # prompt "aios# "; a plain recv(65536) would swallow it into `got`,
+            # making len(got) == n+6 so the `len(got) == n` check below spuriously
+            # fails (a correct transfer reported as a sha/length mismatch).
             while len(got) < n and time.time() < dl:
                 try:
-                    got += s.recv(65536)
+                    chunk = s.recv(min(65536, n - len(got)))
+                    if not chunk:
+                        break                       # peer closed mid-stream
+                    got += chunk
                 except socket.timeout:
                     continue
             s.close()
