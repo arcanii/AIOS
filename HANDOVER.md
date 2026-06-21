@@ -58,9 +58,23 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
     compute parallelism; S2 = masked-IPI peer-visibility on `aios_hwasid_clear`, documented at the clear site).
     **Stall (optional, gentle -- board hammered s7):** instrument c_entry_hook/IRQ-vector for the exact wedged
     instruction; zero-flash pingmon-only-idle test to confirm idle-alone freezes without teardown.
-  - Board left on v0.4.284 build 2768 (ASID-gen + S1 + `[STAGECP]`/`[DSBSTALL]` diagnostics + watchdog
-    default-on; teardown clean ON; `AIOS_TEARDOWN_NO_CLEAN` knob default-off). seL4 changes in
-    `deps/patches/seL4-kernel.patch` (1403 lines); watchdog default-on is in `src/servers/watchdog.c`.
+  - **Coresched safety S2 SHIPPED (v0.4.285, `ab20ce5`):** `aios_asid_gen_invalidate` now does the
+    residency-masked `tlbi` (the original, HW-proven residency-shootdown path) for a PEER-resident vspace
+    instead of abandoning its hw asid -- so coresched (`/proc/coresched.1`, the existing `aios_assign_core`
+    round-robin) is ASID-gen-correct. Dormant under core-0 pinning. Verified: host 4/4, build-rpi4 clean,
+    QEMU smp 4/5 (W=6..18 distributed-correct). **The coresched MULTI-CORE HW test (the real S1/S2 run with
+    ASID-gen active on secondaries) is DEFERRED:** the netconsole wedged under connection churn (self-
+    inflicted -- I overlapped the v0.4.285 deploy with the test, and a 32.4s stall hit mid-deploy). The
+    board is ALIVE (ICMP) on v0.4.285 build 2774 but the netconsole shell is stuck; **it wants a
+    power-cycle to clear** (the kernel is fine -- not a total wedge, so the hwdog correctly did not fire).
+    On a clean board: `/proc/coresched.1` then distributed pipelines (`seq|grep|wc`), watch for ZERO
+    `[ASIDGEN-BUG]` + correct output. Coresched correctness is otherwise QEMU + host + review validated +
+    S2 reuses proven code. LESSON: never run an HW test while a deploy is still in flight; wait for the
+    pi_flash banner-PASS first (drive netconsole gently -- it wedges under churn).
+  - Board left on v0.4.285 build 2774 (ASID-gen + S1 + S2 + `[STAGECP]`/`[DSBSTALL]` diagnostics + watchdog
+    default-on; teardown clean ON; `AIOS_TEARDOWN_NO_CLEAN` knob default-off), ALIVE but netconsole-wedged
+    -> power-cycle for a clean board. seL4 changes in `deps/patches/seL4-kernel.patch` (1429 lines);
+    watchdog default-on in `src/servers/watchdog.c`.
 
 * **CURRENT STATE 2026-06-21 (session 6) -- THE STALL CURE IS SCOPED: the seL4 ASID-GENERATION redesign
   (`docs/NEXT_20260621_asid_generation.md`) is the one architectural cure left, and the stall hit LIVE this
