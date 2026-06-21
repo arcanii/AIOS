@@ -14,6 +14,39 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   HW-VERIFIED + PUSHED (`9e543c6`, v0.4.252). NOTE: DHCP lease BOUNCES `.8`<->`.250`
   per boot -- ARP-sweep MAC `dc:a6:32:1c:2e:e1` if `.8` is dark.
 
+* **CURRENT STATE 2026-06-21 (session 8) -- IDLE->WAKE WEDGE INSTRUMENTATION BUILT + QEMU-GATED; HW A/B
+  PENDING A PHYSICAL POWER-CYCLE. The stall stays a MAJOR OPEN CONCERN ([[feedback_stall_open_concern]]) --
+  this is a MEASUREMENT step toward the architectural fix, NOT a cure.** Built v0.4.286
+  (committed on `main`; Bryan pushes). The board is on v0.4.285 at 192.168.0.8, ALIVE on ICMP but
+  netconsole-wedged from the session-7 coresched test -> **MUST be physically power-cycled before the HW test**.
+  - **Re-read of the session-7 serial (`/tmp/sercap_idle.log`) corrected the one-line summary:** the
+    wedged core (core 0) is `prev=11 this=11` (kernel-EXIT -> ...32.4s... -> kernel-EXIT, NO IRQ entry --
+    it re-enters via syscall/fastpath/fault, not an interrupt). Only the IDLE cores are `11->10` (they take
+    the timer IRQ and block on the BKL core 0 holds, `hb_lag~=dur` -- derivative). Core 0's `hb_lag` was
+    garbage because **core 0 never runs `idle.S`** (saturated by prio-200 yield-spinning servers) so its
+    idle heartbeat is always 0. The `11->11` window was UNINSTRUMENTED (no entry checkpoint; fastpath
+    round-trips skip stage 11).
+  - **v0.4.286 instrumentation (all behind `AIOS_TEARDOWN_CHECKPOINTS`):** stage 9 = kernel ENTRY
+    (`arch_c_entry_hook`), stage 12 = fastpath EXIT (`fastpath_restore`), + per-interval PMU deltas
+    (INST_RETIRED/BUS_ACCESS/CPU_CYCLES) and a real core-0 heartbeat (`kent_lag` = ms since last kernel
+    entry) in `aios_checkpoint` (errata.c). New line:
+    `[STAGECP] core=C prev=P this=S dur=Dms idle_lag=Ims kent_lag=Kms pmu=[inst=N bus=B cyc=Y]`.
+  - **This bisects core 0's wedge + resolves "wedged-CPU vs IRQ-not-delivered":** `prev=9 this=11/12` (+
+    kent_lag~=dur) = wedge INSIDE the kernel handler; `prev=11/12 this=9` = wedge BEFORE entry (eret asm /
+    user EL0 / exception vector). `inst~=0` over 32.4s = CLOCKED but WEDGED on ONE instruction; `inst`
+    large = looping (a scheduling/IRQ-delivery freeze, not a CPU wedge). Idle cores spin on the BKL so they
+    should read `inst` large while core 0 reads `inst~=0` -- the PMU separates the PRIMARY wedge from the
+    derivative blocks. Full design + interpretation matrix + HW procedure: `docs/NEXT_20260621_stall_session8_localize.md`.
+  - **QEMU gate green-equivalent to baseline (no regression):** smp 4/5 (W=12 correct + host-load prompt
+    timeout), shmring 25/26 (1 timing shed), socket 8/8, netd 10/10. build-rpi4 (non-hyp) built clean with
+    stages 1-7,9,10,11,12 all present. The instrumentation touches no external bus (sysreg reads + per-core
+    cacheable stores) so it cannot warm the fabric / mask the stall. Adversarially reviewed (3-lens workflow).
+  - **>>> NEXT: power-cycle the Pi, then `sercap` -> `pi_flash.py --build` (banner v0.4.286) ->
+    `pingmon` + `netstall --idle 30 --trials 10` -> grep [STAGECP], read the matrix. Then Phase 2: if
+    `9->11/12` drill the handler barriers; if `11/12->9` add an ASM vector checkpoint in traps.S. <<<**
+  - Kernel diff in `deps/patches/seL4-kernel.patch` (1498 lines). KEPT: ASID-gen + coresched S1/S2 +
+    watchdog default-on + [TLBISTALL]/[DSBSTALL]/[STAGECP] profilers + MVD-1.
+
 * **CURRENT STATE 2026-06-21 (session 7) -- THE ASID-GENERATION CURE IS BUILT + HW-TESTED, AND THE STALL IS
   LOCALIZED: it is the IDLE->WAKE transition, NOT process teardown -- the multi-session "tlbi/teardown is
   the cause" premise is OVERTURNED. Board = v0.4.284 build 2768 at 192.168.0.8 (ASID-gen ON + coresched S1

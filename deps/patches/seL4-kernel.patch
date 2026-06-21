@@ -1,8 +1,8 @@
 diff --git a/include/arch/arm/arch/64/mode/fastpath/fastpath.h b/include/arch/arm/arch/64/mode/fastpath/fastpath.h
-index 12d55f3c9..96b7426d4 100644
+index 12d55f3c9..fd8330fe6 100644
 --- a/include/arch/arm/arch/64/mode/fastpath/fastpath.h
 +++ b/include/arch/arm/arch/64/mode/fastpath/fastpath.h
-@@ -14,6 +14,7 @@
+@@ -14,9 +14,16 @@
  #include <armv/context_switch.h>
  #include <mode/model/statedata.h>
  #include <arch/object/vcpu.h>
@@ -10,7 +10,16 @@ index 12d55f3c9..96b7426d4 100644
  #include <machine/fpu.h>
  #include <smp/lock.h>
  
-@@ -36,7 +37,23 @@ switchToThread_fp(tcb_t *thread, vspace_root_t *vroot, pde_t stored_hw_asid)
++#if AIOS_TEARDOWN_CHECKPOINTS
++/* AIOS session-8: explicit forward decl (also in mode/machine.h, reached transitively via smp/lock.h)
++ * so fastpath_restore's stage-12 call does not silently elide on an include-chain refactor. */
++void aios_checkpoint(word_t stage);
++#endif
++
+ /* When building the fastpath the assembler in traps.S makes these
+  * assumptions. Because compile_asserts are hard to do in assembler,
+  * we place them here */
+@@ -36,7 +43,23 @@ switchToThread_fp(tcb_t *thread, vspace_root_t *vroot, pde_t stored_hw_asid)
          vcpu_switch(thread->tcbArch.tcbVCPU);
      }
      asid = (asid_t)(stored_hw_asid.words[0] & 0xffff);
@@ -35,6 +44,20 @@ index 12d55f3c9..96b7426d4 100644
  
  #ifdef CONFIG_BENCHMARK_TRACK_UTILISATION
      benchmark_utilisation_switch(NODE_STATE(ksCurThread), thread);
+@@ -140,6 +163,13 @@ static inline int fastpath_reply_cap_check(cap_t cap)
+ static inline void NORETURN FORCE_INLINE fastpath_restore(word_t badge, word_t msgInfo, tcb_t *cur_thread)
+ {
+     c_exit_hook();
++#if AIOS_TEARDOWN_CHECKPOINTS
++    /* AIOS session-8 (stall hunt): fastpath kernel EXIT. Mirrors stage 11 (restore_user_context).
++     * A fastpath round-trip is otherwise invisible to the breadcrumb (it never reaches
++     * restore_user_context), so without this a fastpath-handler wedge would show only as a 9->9
++     * gap; with it, prev=9 this=12 localizes the wedge to the fastpath handler. */
++    aios_checkpoint(12);
++#endif
+ 
+ #ifdef ARM_CP14_SAVE_AND_RESTORE_NATIVE_THREADS
+     restore_user_debug_context(cur_thread);
 diff --git a/include/arch/arm/arch/64/mode/machine.h b/include/arch/arm/arch/64/mode/machine.h
 index d869e3926..233b8634e 100644
 --- a/include/arch/arm/arch/64/mode/machine.h
@@ -164,6 +187,34 @@ index d869e3926..233b8634e 100644
  }
  
  /* Invalidate all stage 1 and stage 2 translations used at
+diff --git a/include/arch/arm/arch/kernel/traps.h b/include/arch/arm/arch/kernel/traps.h
+index 90b37bf52..a5dcd351f 100644
+--- a/include/arch/arm/arch/kernel/traps.h
++++ b/include/arch/arm/arch/kernel/traps.h
+@@ -10,9 +10,23 @@
+ #include <machine.h>
+ #include <util.h>
+ 
++#if defined(CONFIG_ARCH_AARCH64) && defined(AIOS_TEARDOWN_CHECKPOINTS) && AIOS_TEARDOWN_CHECKPOINTS
++/* AIOS session-8: explicit forward decl (also in mode/machine.h, reached transitively via machine.h)
++ * so arch_c_entry_hook's stage-9 call does not silently elide if the include chain is refactored. */
++void aios_checkpoint(word_t stage);
++#endif
++
+ static inline void arch_c_entry_hook(void)
+ {
+     arm_save_thread_id(NODE_STATE(ksCurThread));
++#if defined(CONFIG_ARCH_AARCH64) && defined(AIOS_TEARDOWN_CHECKPOINTS) && AIOS_TEARDOWN_CHECKPOINTS
++    /* AIOS session-8 (stall hunt, lead #1/#2): mark EVERY kernel entry. Combined with the exit
++     * stages (11 slowpath / 12 fastpath) this bisects the ~32.4s idle->wake wedge: a big gap at
++     * prev=9 this=11/12 => the wedge is INSIDE the kernel handler; at prev=11/12 this=9 => the
++     * wedge is in the previous exit's eret asm / user EL0 / the exception vector. aios_checkpoint
++     * also records this as the core's kernel-entry liveness mark (kent_lag). See errata.c. */
++    aios_checkpoint(9);
++#endif
+ }
+ 
+ static inline void arch_c_exit_hook(void)
 diff --git a/include/arch/arm/arch/machine/tlb.h b/include/arch/arm/arch/machine/tlb.h
 index 7235672db..4ff77e535 100644
 --- a/include/arch/arm/arch/machine/tlb.h
@@ -934,10 +985,10 @@ index 93eb4d133..7c714d859 100644
      init_plat();
  
 diff --git a/src/arch/arm/machine/errata.c b/src/arch/arm/machine/errata.c
-index f8dac15c3..cc8b616bc 100644
+index f8dac15c3..e73fa52b9 100644
 --- a/src/arch/arm/machine/errata.c
 +++ b/src/arch/arm/machine/errata.c
-@@ -8,11 +8,429 @@
+@@ -8,11 +8,481 @@
  #include <api/types.h>
  #include <arch/machine.h>
  #include <arch/machine/hardware.h>
@@ -1247,6 +1298,23 @@ index f8dac15c3..cc8b616bc 100644
 + * printf fires only on the rare big gap, AFTER the wedge, so it never contaminates the measured op. */
 +volatile word_t aios_cp_last_stage[AIOS_TLBI_NCORES];
 +volatile word_t aios_cp_last_t[AIOS_TLBI_NCORES];
++/* AIOS session-8: per-core kernel-ENTRY timestamp. Stamped when aios_checkpoint is called with
++ * stage 9 (from arch_c_entry_hook, on EVERY kernel entry -- syscall/fastpath/fault/IRQ). Core 0
++ * NEVER runs idle.S (it is saturated by prio-200 yield-spinning servers), so its idle heartbeat
++ * (aios_core_heartbeat) is always 0 -- this gives core 0 a real liveness mark. At an EXIT stage
++ * (11 slowpath / 12 fastpath), kent_lag = now - this round-trip's entry = the IN-KERNEL duration:
++ *   kent_lag ~= dur  => core 0 wedged INSIDE the kernel handler (entry -> here).
++ *   kent_lag ~= small => the handler ran fast; the wedge was BEFORE entry (the previous exit's
++ *                        eret asm / user EL0 / the exception vector). */
++volatile word_t aios_cp_kentry_t[AIOS_TLBI_NCORES];
++/* AIOS session-8: per-core PMU snapshot at the previous checkpoint, for per-INTERVAL deltas. The
++ * idle->wake wedge (the stage 11->9/10/11 gap) has NO PMU data yet -- the tlbi profiler only fires
++ * on a teardown `tlbi`, which ASID-gen removed. The delta is dominated by the ~32.4s wedge, so it
++ * reads what the core did DURING the wedge: inst_retired ~= 0 over 32.4s => CLOCKED but WEDGED on
++ * ONE instruction (a barrier) -- NOT "IRQ-not-delivered while looping" (which would retire
++ * billions). bus_access ~= 0 => a clean wait on a PARKED fabric (vs large = a retry storm).
++ * cpu_cycles is 32-bit and wraps ~7x over 32s -> noise (kept for short intervals only). */
++volatile word_t aios_cp_pmu[AIOS_TLBI_NCORES][5];
 +void aios_checkpoint(word_t stage);
 +void aios_checkpoint(word_t stage)
 +{
@@ -1256,10 +1324,21 @@ index f8dac15c3..cc8b616bc 100644
 +    }
 +    word_t now;
 +    asm volatile("mrs %0, cntpct_el0" : "=r"(now));
++    /* Snapshot the stall-profiler PMU counters + the overflow-status flags (EL1-accessible; 0 if
++     * unarmed, e.g. QEMU a53). The A72 event counters are 32-bit and wrap every ~2.9s of solid
++     * execution, so a MASKED delta over a 32.4s interval CANNOT by itself separate "wedged" (retires
++     * ~0) from "looping" (retires billions -> wraps to an unpredictable, possibly-small remainder).
++     * The OVERFLOW flag (PMOVSCLR_EL0) is the reliable discriminator: a core wedged on one barrier
++     * never overflows INST_RETIRED; a looping core does (>=1 wrap). We clear the event-counter flags
++     * (bits 0..4, NOT bit 31 = the cycle counter seL4's cpuacct uses) at the end of every checkpoint,
++     * so the flag read here reflects overflows in EXACTLY the just-elapsed inter-checkpoint interval. */
++    word_t pm[5], ovf;
++    asm volatile("mrs %0, S3_3_C14_C8_0" : "=r"(pm[0]));   /* INST_RETIRED */
++    asm volatile("mrs %0, S3_3_C14_C8_1" : "=r"(pm[1]));   /* BUS_ACCESS   */
++    asm volatile("mrs %0, S3_3_C14_C8_4" : "=r"(pm[4]));   /* CPU_CYCLES   */
++    asm volatile("mrs %0, S3_3_C9_C12_3" : "=r"(ovf));     /* PMOVSCLR_EL0 (overflow status) */
 +    word_t prev_t = aios_cp_last_t[core];
 +    word_t prev_s = aios_cp_last_stage[core];
-+    aios_cp_last_t[core] = now;
-+    aios_cp_last_stage[core] = stage;
 +    if (prev_t) {
 +        word_t freq;
 +        asm volatile("mrs %0, cntfrq_el0" : "=r"(freq));
@@ -1268,16 +1347,40 @@ index f8dac15c3..cc8b616bc 100644
 +        }
 +        word_t dur_ms = (now - prev_t) * 1000ull / freq;
 +        if (dur_ms >= 5000ull) {
-+            /* hb_lag = how stale THIS core's idle-loop heartbeat is (idle.S stamps
-+             * aios_core_heartbeat[core*8] every iteration). hb_lag ~= dur => core 0 was WEDGED on
-+             * one instruction (idle loop did NOT run -> a single stuck op in eret/IRQ-vector).
-+             * hb_lag ~= small => core 0 was busy-idling fine and the TIMER IRQ simply did not fire
-+             * for 32.4s (a GIC/timer/fabric IRQ-DELIVERY freeze, not a wedged CPU instruction). */
-+            word_t hb = aios_core_heartbeat[core * 8];
-+            int hb_lag = hb ? (int)((now - hb) * 1000ull / freq) : -1;
-+            printf("[STAGECP] core=%d prev=%d this=%d dur=%dms hb_lag=%dms\n",
-+                   (int)core, (int)prev_s, (int)stage, (int)dur_ms, hb_lag);
++            /* idle_lag: staleness of THIS core's idle.S heartbeat (idle cores -- ~= dur if they
++             * blocked on the BKL through the freeze, ~= 0 if the idle loop kept running). Core 0
++             * never idles => -1. */
++            word_t ih = aios_core_heartbeat[core * 8];
++            int idle_lag = ih ? (int)((now - ih) * 1000ull / freq) : -1;
++            /* kent_lag: ms since this core's last kernel entry (see aios_cp_kentry_t above). */
++            word_t ke = aios_cp_kentry_t[core];
++            int kent_lag = ke ? (int)((now - ke) * 1000ull / freq) : -1;
++            /* PMU over the interval. The OVERFLOW flags are the reliable read; the masked deltas
++             * corroborate only when no wrap occurred:
++             *   iovf=0 AND inst small => WEDGED on ONE instruction (retired < 2^32, no wrap).
++             *   iovf=1 (or inst large) => the core was LOOPING/active (retired billions) -- e.g. an
++             *     idle/BKL-spinning sibling, NOT the primary wedge. bus ~=0 + bovf=0 => parked fabric. */
++            int d_inst = (int)((pm[0] - aios_cp_pmu[core][0]) & 0xffffffffu);
++            int d_bus  = (int)((pm[1] - aios_cp_pmu[core][1]) & 0xffffffffu);
++            int d_cyc  = (int)((pm[4] - aios_cp_pmu[core][4]) & 0xffffffffu);
++            int iovf = (int)(ovf & 1u);          /* INST_RETIRED (cnt0) overflowed this interval? */
++            int bovf = (int)((ovf >> 1) & 1u);   /* BUS_ACCESS   (cnt1) overflowed this interval?  */
++            printf("[STAGECP] core=%d prev=%d this=%d dur=%dms idle_lag=%dms kent_lag=%dms"
++                   " pmu=[inst=%d iovf=%d bus=%d bovf=%d cyc=%d]\n",
++                   (int)core, (int)prev_s, (int)stage, (int)dur_ms,
++                   idle_lag, kent_lag, d_inst, iovf, d_bus, bovf, d_cyc);
 +        }
++    }
++    aios_cp_last_t[core] = now;
++    aios_cp_last_stage[core] = stage;
++    aios_cp_pmu[core][0] = pm[0];
++    aios_cp_pmu[core][1] = pm[1];
++    aios_cp_pmu[core][4] = pm[4];
++    /* Clear the event-counter overflow flags (bits 0..4 only; bit 31 = the cycle counter that seL4's
++     * cpuacct reads is left untouched) so the next checkpoint's ovf read is per-interval. */
++    asm volatile("msr S3_3_C9_C12_3, %0" :: "r"((word_t)0x1f));
++    if (stage == 9) {
++        aios_cp_kentry_t[core] = now;   /* kernel-entry mark, read as kent_lag at the next exit */
 +    }
 +}
 +
