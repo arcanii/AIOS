@@ -344,10 +344,10 @@ index c47710bcb..5ebfba6fc 100644
      b 1b
  END_FUNC(idle_thread)
 diff --git a/src/arch/arm/64/kernel/vspace.c b/src/arch/arm/64/kernel/vspace.c
-index 08f7937ee..bec7b8160 100644
+index 08f7937ee..014aedea3 100644
 --- a/src/arch/arm/64/kernel/vspace.c
 +++ b/src/arch/arm/64/kernel/vspace.c
-@@ -765,6 +765,284 @@ bool_t CONST isValidVTableRoot(cap_t cap)
+@@ -765,6 +765,289 @@ bool_t CONST isValidVTableRoot(cap_t cap)
      return isValidNativeRoot(cap);
  }
  
@@ -606,21 +606,26 @@ index 08f7937ee..bec7b8160 100644
 +    return e->hw_asid;
 +}
 +
++/* The hw asid currently bound to a sel4 asid THIS generation, or 0 = not bound (no live TLB
++ * entries tagged for it). Used by the S2 peer-resident flush path to target the right hw tag. */
++static inline word_t aios_hwasid_current(word_t sel4_asid)
++{
++    if (likely(sel4_asid != 0 && sel4_asid < AIOS_HWASID_NASIDS)) {
++        aios_hwasid_ent_t *e = &armKSHwAsid[sel4_asid];
++        return (e->gen == g_hwasid_gen) ? e->hw_asid : 0;
++    }
++    return sel4_asid;
++}
++
 +/* Abandon a logical asid's hw binding: its (now stale) TLB entries are never consulted again
 + * under a live binding -- different asids get fresh hw values, and the abandoned value is wiped
 + * at the next gen wrap before it can be reissued. This is the replacement for a teardown/unmap
 + * `tlbi` (no DVM-Sync, no stall). The next aios_hwasid_for for this asid assigns a fresh hw.
 + *
-+ * COMPLETE under the default all-threads-on-core-0 config: a self-munmap clears+reloads on the
-+ * only core that runs the asid (aios_asid_gen_invalidate), so no stale entry survives. CORESCHED
-+ * S2 (DEFERRED, required before a user vspace runs on a secondary core): if `sel4_asid` is resident
-+ * on a PEER core (aios_asid_residency(sel4_asid) has a bit other than self), that peer keeps running
-+ * the OLD hw asid -- with the just-removed page still in its TLB -- until its next context switch
-+ * re-resolves (gen mismatch -> fresh hw). To close that window immediately, this must send a masked
-+ * remote IPI (the residency-shootdown infra) to force peers to re-resolve/flush before the unmap
-+ * returns. Not wired yet: under core-0 pinning residency is always {core0} so no peer ever runs the
-+ * asid (moot); host-test-tracked, and it re-introduces exactly the cross-core IPI the stall work
-+ * avoids, so it belongs with the coresched (/proc/coresched.1) enablement, not before. */
++ * The abandon (no tlbi) is used ONLY for a self-only / single-core asid; the peer-resident case is
++ * handled by CORESCHED S2 in aios_asid_gen_invalidate (which keeps the binding + does a residency-
++ * masked remote tlbi instead of abandoning), so this clear is never reached while a peer still runs
++ * the asid. Dormant under core-0 pinning (residency always {core0}). */
 +static inline void aios_hwasid_clear(word_t sel4_asid)
 +{
 +    if (likely(sel4_asid < AIOS_HWASID_NASIDS)) {
@@ -632,7 +637,7 @@ index 08f7937ee..bec7b8160 100644
  void setVMRoot(tcb_t *tcb)
  {
      cap_t threadRoot;
-@@ -787,7 +1065,13 @@ void setVMRoot(tcb_t *tcb)
+@@ -787,7 +1070,13 @@ void setVMRoot(tcb_t *tcb)
          return;
      }
  
@@ -647,7 +652,7 @@ index 08f7937ee..bec7b8160 100644
  }
  
  static bool_t setVMRootForFlush(vspace_root_t *vspace, asid_t asid)
-@@ -802,7 +1086,8 @@ static bool_t setVMRootForFlush(vspace_root_t *vspace, asid_t asid)
+@@ -802,7 +1091,8 @@ static bool_t setVMRootForFlush(vspace_root_t *vspace, asid_t asid)
          return false;
      }
  
@@ -657,7 +662,7 @@ index 08f7937ee..bec7b8160 100644
      return true;
  }
  
-@@ -958,8 +1243,30 @@ void decreaseASIDBindCB(asid_t asid)
+@@ -958,8 +1248,50 @@ void decreaseASIDBindCB(asid_t asid)
  }
  #endif
  
@@ -672,6 +677,26 @@ index 08f7937ee..bec7b8160 100644
 + * including the DOMINANT self-munmap vae1 (live-captured asid=1 va=0x117ce000 this session). */
 +static inline void aios_asid_gen_invalidate(asid_t asid)
 +{
++#ifdef ENABLE_SMP_SUPPORT
++    /* CORESCHED S2: if this asid is resident on a PEER core, that peer is actively running the
++     * vspace under its (shared) hw asid -- ABANDONING the hw (clear) would let the value be
++     * reissued to another vspace while the peer still uses it = a silent cross-process stale hit.
++     * So instead do the residency-masked `tlbi` for the hw asid on all resident cores (self's
++     * local tlbi + the masked remote IPI) and KEEP the binding, so self + peers stay coherent
++     * under the shared hw asid. This is the ORIGINAL residency-shootdown path, used ONLY for a
++     * genuinely peer-resident vspace -- i.e. only under coresched, where the fabric is WARM
++     * (active multi-core), so the tlbi does NOT hit the after-idle stall. DORMANT under the
++     * default all-threads-on-core-0 config: aios_asid_residency is always {core0} there, so the
++     * peer test is false and we fall through to the no-tlbi abandon path (the stall cure). */
++    word_t resid = aios_asid_residency(asid);
++    if (resid & ~(word_t)BIT(getCurrentCPUIndex())) {
++        word_t hw = aios_hwasid_current(asid);
++        if (hw != 0) {
++            invalidateTranslationASIDMask((hw_asid_t)hw, resid);
++        }
++        return;
++    }
++#endif
 +    aios_hwasid_clear(asid);
 +    if (asid != asidInvalid && asid == aios_current_user_asid()) {
 +        setVMRoot(NODE_STATE(ksCurThread));   /* re-resolves via AIOS_HWASID -> fresh hw + isb */
@@ -688,7 +713,7 @@ index 08f7937ee..bec7b8160 100644
  #ifdef CONFIG_ARM_SMMU
      word_t bind_cb = getASIDBindCB(asid);
      if (unlikely(bind_cb)) {
-@@ -975,12 +1282,20 @@ static inline void invalidateTLBByASID(asid_t asid)
+@@ -975,12 +1307,20 @@ static inline void invalidateTLBByASID(asid_t asid)
      }
      invalidateTranslationASID(asid_map_asid_map_vspace_get_stored_hw_vmid(asid_map));
  #else
@@ -710,16 +735,16 @@ index 08f7937ee..bec7b8160 100644
  #ifdef CONFIG_ARM_SMMU
      word_t bind_cb = getASIDBindCB(asid);
      if (unlikely(bind_cb)) {
-@@ -997,9 +1312,30 @@ static inline void invalidateTLBByASIDVA(asid_t asid, vptr_t vaddr)
+@@ -997,10 +1337,31 @@ static inline void invalidateTLBByASIDVA(asid_t asid, vptr_t vaddr)
      uint64_t hw_asid = asid_map_asid_map_vspace_get_stored_hw_vmid(asid_map);
      invalidateTranslationSingle((hw_asid << 48) | vaddr >> seL4_PageBits);
  #else
 -    invalidateTranslationSingle((asid << 48) | vaddr >> seL4_PageBits);
 +    invalidateTranslationSingleMask((asid << 48) | vaddr >> seL4_PageBits,
 +                                    SMP_TERNARY(aios_asid_residency(asid), 0));   /* AIOS: residency-masked */
-+#endif
-+}
-+
+ #endif
+ }
+ 
 +#if AIOS_LAZY_TLB_TEARDOWN
 +/* Consume a deferred teardown flush (lazy-TLB): if this ASID has per-page invalidations
 + * that unmapPage skipped, do the single covering `tlbi aside1` (residency-masked) NOW,
@@ -736,13 +761,14 @@ index 08f7937ee..bec7b8160 100644
 +        armKSASIDPendingFlush[asid] = 0;
 +        invalidateTLBByASID(asid);
 +    }
- #endif
- }
 +#endif
- 
++}
++#endif
++
  
  void unmapPageTable(asid_t asid, vptr_t vptr, pte_t *target_pt)
-@@ -1027,9 +1363,17 @@ void unmapPageTable(asid_t asid, vptr_t vptr, pte_t *target_pt)
+ {
+@@ -1027,9 +1388,17 @@ void unmapPageTable(asid_t asid, vptr_t vptr, pte_t *target_pt)
      }
      /* If we found a pt then ptSlot won't be null */
      assert(ptSlot != NULL);
@@ -761,7 +787,7 @@ index 08f7937ee..bec7b8160 100644
  }
  
  void unmapPage(vm_page_size_t page_size, asid_t asid, vptr_t vptr, pptr_t pptr)
-@@ -1060,10 +1404,55 @@ void unmapPage(vm_page_size_t page_size, asid_t asid, vptr_t vptr, pptr_t pptr)
+@@ -1060,10 +1429,55 @@ void unmapPage(vm_page_size_t page_size, asid_t asid, vptr_t vptr, pptr_t pptr)
          return;
      }
  
@@ -790,7 +816,7 @@ index 08f7937ee..bec7b8160 100644
 +     * asid) instead of any `tlbi`. Supersedes the lazy-TLB deferral below -- it kills BOTH the
 +     * self-munmap per-page vae1 (the DOMINANT stall, live-captured asid=1 va=0x117ce000 this
 +     * session) AND the non-current deferred aside1, with the same no-tlbi mechanism. */
-+    invalidateTLBByASIDVA(asid, vptr);
+     invalidateTLBByASIDVA(asid, vptr);
 +#elif AIOS_LAZY_TLB_TEARDOWN
 +    /* Lazy-TLB teardown: if this page belongs to an ASID OTHER than the one running on this
 +     * core right now, the owning process cannot translate the page before its next
@@ -810,7 +836,7 @@ index 08f7937ee..bec7b8160 100644
 +        }
 +    }
 +#else
-     invalidateTLBByASIDVA(asid, vptr);
++    invalidateTLBByASIDVA(asid, vptr);
 +#endif
 +#if AIOS_TEARDOWN_CHECKPOINTS
 +    aios_checkpoint(4);   /* unmapPage end (3->4 or 3->7->4 wedge = ASID-gen invalidate/reload) */
@@ -818,7 +844,7 @@ index 08f7937ee..bec7b8160 100644
  }
  
  void deleteASID(asid_t asid, vspace_root_t *vspace)
-@@ -1077,6 +1466,14 @@ void deleteASID(asid_t asid, vspace_root_t *vspace)
+@@ -1077,6 +1491,14 @@ void deleteASID(asid_t asid, vspace_root_t *vspace)
          if (asid_map_get_type(asid_map) == asid_map_asid_map_vspace &&
              (vspace_root_t *)asid_map_asid_map_vspace_get_vspace_root(asid_map) == vspace) {
              invalidateTLBByASID(asid);
