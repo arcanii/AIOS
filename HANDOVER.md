@@ -16,9 +16,11 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
 
 * **CURRENT STATE 2026-06-21 (session 7) -- THE ASID-GENERATION CURE IS BUILT + HW-TESTED, AND THE STALL IS
   LOCALIZED: it is the IDLE->WAKE transition, NOT process teardown -- the multi-session "tlbi/teardown is
-  the cause" premise is OVERTURNED. Board = v0.4.282 build 2758 at 192.168.0.8 (ASID-gen ON + session-7
-  diagnostics). Commits on `main` (Bryan pushes): `d40d8e6` v0.4.277 (ASID-gen), `147ea34` v0.4.282 (stall
-  localized), `3e6d33a` v0.4.283 (coresched S1). The stall STAYS a MAJOR OPEN CONCERN -- never "solved"
+  the cause" premise is OVERTURNED. Board = v0.4.284 build 2768 at 192.168.0.8 (ASID-gen ON + coresched S1
+  + session-7 diagnostics + MVD-1 watchdog DEFAULT-ON, HW-verified: enabled=1 hwdog=1, no false-trip).
+  Commits on `main` (Bryan pushes): `d40d8e6` v0.4.277 (ASID-gen), `147ea34` v0.4.282 (stall localized),
+  `3e6d33a` v0.4.283 (coresched S1), `811481d` (handover docs), `5d4c56d` v0.4.284 (watchdog default-on).
+  The stall STAYS a MAJOR OPEN CONCERN -- never "solved"
   ([[feedback_stall_open_concern]]). Detail: [[project_asid_generation]] + `docs/NEXT_20260621_asid_generation_IMPL.md`.**
   - **ASID-generation TLB recycling SHIPPED (v0.4.277, gated `AIOS_ASID_GEN`, non-hyp/Pi only).** Decouples
     the seL4 logical asid from the hw asid (TTBR0[63:48]); recycles by a 32-bit generation so teardown +
@@ -43,14 +45,22 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
     the prerequisite for unpinning user threads from core 0. S2 (peer-visibility on clear) DOCUMENTED +
     DEFERRED at the `aios_hwasid_clear` site (needs a masked IPI, belongs with coresched enablement; moot
     under core-0 pinning).
-  - **NEXT (Bryan's agreed direction): (1) vDSO-style in-process fast-path** (shared RO page: clock_gettime via
-    user-readable CNTPCT_EL0 + boot-offset, getpid/getuid cached -- collapse common service IPCs; control
-    plane=IPC, data plane=cap+shared-mem, the SHM-ring philosophy) -- task #10, INDEPENDENT, gentle on the
-    board. **(2) coresched S2 + unpin user threads** when ready (BKL-ceiling-bound; gives compute parallelism).
+  - **MVD-1 watchdog DEFAULT-ON SHIPPED + HW-VERIFIED (v0.4.284, `5d4c56d`):** the core-1 timer-masked
+    watchdog + core-0 heartbeat + PM HW-watchdog auto-reset now arm at boot (unattended-production posture --
+    justified now the stall is fabric-fundamental). HW: `/proc/watchdog enabled=1 hwdog=1 stalls=0`, no
+    false-trip; QEMU gate unchanged (device pokes null-guarded -> no-op on QEMU). Disable: `/proc/watchdog.0`,
+    `/proc/watchdog.hwdog.0`.
+  - **vDSO fast-path (task #10) DEPRIORITIZED:** investigation found the AIOS time path is ALREADY near-optimal
+    (`clock_gettime` reads `CNTPCT_EL0` directly in EL0; the wall offset is cached per-process with
+    re-query-while-0; SNTP runs once at boot) -- so the vDSO win is marginal and its impl touches the
+    high-blast-radius exec_server spawning path. Revisit only with a concrete shared-sysinfo-page consumer.
+  - **NEXT (Bryan's agreed direction): coresched S2 + unpin user threads** when ready (BKL-ceiling-bound; gives
+    compute parallelism; S2 = masked-IPI peer-visibility on `aios_hwasid_clear`, documented at the clear site).
     **Stall (optional, gentle -- board hammered s7):** instrument c_entry_hook/IRQ-vector for the exact wedged
     instruction; zero-flash pingmon-only-idle test to confirm idle-alone freezes without teardown.
-  - Board left on v0.4.282 (ASID-gen + `[STAGECP]`/`[DSBSTALL]` diagnostics; teardown clean ON; the
-    `AIOS_TEARDOWN_NO_CLEAN` A/B knob default-off). seL4 changes in `deps/patches/seL4-kernel.patch` (1403 lines).
+  - Board left on v0.4.284 build 2768 (ASID-gen + S1 + `[STAGECP]`/`[DSBSTALL]` diagnostics + watchdog
+    default-on; teardown clean ON; `AIOS_TEARDOWN_NO_CLEAN` knob default-off). seL4 changes in
+    `deps/patches/seL4-kernel.patch` (1403 lines); watchdog default-on is in `src/servers/watchdog.c`.
 
 * **CURRENT STATE 2026-06-21 (session 6) -- THE STALL CURE IS SCOPED: the seL4 ASID-GENERATION redesign
   (`docs/NEXT_20260621_asid_generation.md`) is the one architectural cure left, and the stall hit LIVE this
