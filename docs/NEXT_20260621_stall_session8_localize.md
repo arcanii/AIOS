@@ -105,7 +105,74 @@ power-cycle to recover. The [STAGECP] print fires only AFTER the wedge (fabric w
 not contaminate the measured op. The instrumentation touches no external bus (sysreg reads +
 per-core cacheable stores) so it cannot warm the fabric / mask the stall.
 
+## HW RESULT (v0.4.286 build 2784, flashed + tested 2026-06-21 -- DECISIVE)
+
+`netstall --idle 30 --trials 10` (keyboard out) = **6/10 STALLED** (worst residual 65.6s, 1 conn-death;
+trials 8-9 reconnect-failed = netconsole wedged by the churn) -- the historical ~5-7/10 rate.
+`pingmon` caught **10 real whole-system ICMP GAPs** (32.5s singles, 65s doubles, one **130.0s quad**) --
+these are TRUE whole-box freezes (ICMP stops), not netconsole-only deaths.
+
+**Core 0 (the wedged core) was caught at FOUR distinct code sites, every one `iovf=0`** (clocked but
+wedged on ONE instruction, retired far less than 2^32 over the whole 32.4s) with a tiny `bus` delta
+(`bovf=0` -- a clean wait on a PARKED fabric, not a retry storm). The inst-count is DETERMINISTIC per site:
+
+| site | prev->this | inst (exact) | bus | where the wedge fell |
+|---|---|---|---|---|
+| A | 9 -> 11 | 1786 | ~120-184 | inside a slowpath syscall handler (no vspace switch, no teardown) |
+| B | 11 -> 9 | 174 | ~13-21 | the syscall exit->entry transition (restore_user_context eret asm / vector) |
+| C | 10 -> 11 | 366 | ~17 | an IRQ handler (no switch) |
+| D | 10 -> 7 | 525 | ~5 | an IRQ handler that did a ctx switch -- wedge BEFORE setVMRoot's dsb (no `[DSBSTALL]`) |
+
+The **idle siblings (cores 2,3)** are always `prev=11 this=9 iovf=1` (counter OVERFLOWED = they retired
+billions = **spinning on the BKL** core 0 holds, `bus=1`) -- purely DERIVATIVE. The PMU overflow flag
+(the review-driven hardening) cleanly separates the ONE genuinely-wedged core (`iovf=0`) from the
+siblings spinning on its lock (`iovf=1`) -- without it the masked 32-bit deltas would have been ambiguous.
+
+**VERDICT (now proven at the instruction level, not by elimination):** the freeze is
+FABRIC-QUIESCENCE-FUNDAMENTAL. It is NOT one removable seL4 instruction at a fixed PC -- it is *whichever*
+fabric-dependent instruction core 0 issues FIRST after the BCM2711 SCB fabric parks, and it lands wherever
+core 0 happens to be (syscall handler / IRQ handler / ctx-switch path / eret-vector transition -- 4 sites
+observed). This is exactly why every prior single-instruction-removal lever failed (tlbi, cache-clean,
+ctx-switch dsb): removing one site's op just moves the wedge to the next fabric op core 0 reaches.
+- Resolves lead #2 definitively: **wedged CPU on one instruction, NOT "IRQ-not-delivered while looping"**
+  (`iovf=0`, inst 174-1786 over 32.4s). The timer DOES fire (siblings take it and block on the BKL);
+  core 0 is wedged with IRQs masked in the kernel.
+- Completes lead #1: the wedge is localized to "the first post-quiescence fabric op," position-independent.
+
+**LEADING MECHANISM HYPOTHESIS (Phase-2 design workflow, high confidence both lenses): the wedge is a
+COLD CACHEABLE DRAM LOAD, not a `dsb`.** After the ~30s idle the A72 working-set cache lines (the TCB
+register context read by `restore_user_context`'s `ldp` chain; the scheduler/`ksCurThread`/ready-queue
+lines read by `schedule()`/`activateThread()`; the kernel stack written by `kernel_enter`'s `stp`) go
+cold; the FIRST such access after quiescence needs a DRAM fill THROUGH the parked SCB fabric, which hangs
+to the fixed ~32.4s SCB/UBUS timeout. This UNIFIES the 4 sites (each touches a different cold line first)
+and fits the PMU signature better than a barrier: `inst=0` (the load can't retire), `bus` small-but-nonzero
+(ONE pending line-fill, not a DVM round-trip's ~0 and not a retry storm's large), fixed-timeout duration.
+Crucial subtlety from the source trace: `aios_checkpoint(11)` is recorded JUST BEFORE the restore asm, so
+a wedge on the TCB-restore `ldp` always presents as SITE B (`11->9`); SITE A (`9->11`) is the same
+mechanism one stage earlier (a cold `schedule()`/`activateThread()` read before stage 11). This is why
+EVERY prior lever failed: tlbi/cache-clean/ctx-switch-dsb removal cannot help a cold-DRAM-LOAD timeout.
+
+**This SHARPENS the cure direction:** if it is a memory-fill timeout (not a DVM-barrier timeout), the
+right keep-warm is a COHERENT external bus-master that periodically touches DRAM through the SCB during
+idle (a DMA engine), keeping the memory fabric out of the deep-quiesce state -- NOT a CPU-side op (all
+refuted) and NOT a dsb/tlbi change. The architectural cure (drop the BKL coupling so a wedged core 0 does
+not freeze the whole cluster) is the other path. STILL A MAJOR OPEN CONCERN.
+
+**Phase 2 (optional, ONE more shot -- CONFIRM load-vs-dsb):** bracket the restore-asm `ldp` chain with a
+register-SAFE checkpoint (a new stage emitted from inside `restore_user_context`'s asm AFTER the `ldp`s
+but BEFORE `eret`, saving/restoring the just-loaded GP regs around the call -- DELICATE, this path is
+sacred) + a checkpoint in `schedule()`/`activateThread()`. If the SITE-B gap becomes `11->newstage` and
+SITE-A becomes `9->schedstage`, the cold-LOAD hypothesis is CONFIRMED and the exact line is named. Adds
+L2D_CACHE_REFILL/MEM_ACCESS to the [STAGECP] print (counters already armed) as corroboration. Needs a
+power-cycle (netconsole wedged) + careful asm review. Does NOT change the mitigation posture -- it pins
+the mechanism (memory-fill vs DVM-barrier), which is what tells us whether a coherent-DMA keep-warm could
+work. Full per-site candidate analysis + checkpoint spec: workflow run `wf_5e364d17-60d`.
+
+Board left on v0.4.286 build 2784, ALIVE on ICMP but netconsole-wedged from the test churn (power-cycle
+to restore netconsole). Watchdog + hwdog default-on so it survives + auto-recovers the ongoing freezes.
+
 ## Status
-Built (v0.4.286), QEMU gate run, kernel diff in `deps/patches/seL4-kernel.patch`.
-KEPT: ASID-gen + coresched S1/S2 + watchdog default-on + the [TLBISTALL]/[DSBSTALL]/[STAGECP]
-profilers + MVD-1. The freeze is NOT cured -- this is a measurement step toward the architectural fix.
+Built + HW-tested (v0.4.286 build 2784), QEMU gate green-equivalent, kernel diff in
+`deps/patches/seL4-kernel.patch`. KEPT: ASID-gen + coresched S1/S2 + watchdog default-on + the
+[TLBISTALL]/[DSBSTALL]/[STAGECP] profilers (now with PMU overflow flags + kent_lag) + MVD-1. The freeze
+is NOT cured -- this measurement DECISIVELY localized it (fabric-fundamental, position-independent).

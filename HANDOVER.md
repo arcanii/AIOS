@@ -14,11 +14,35 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   HW-VERIFIED + PUSHED (`9e543c6`, v0.4.252). NOTE: DHCP lease BOUNCES `.8`<->`.250`
   per boot -- ARP-sweep MAC `dc:a6:32:1c:2e:e1` if `.8` is dark.
 
-* **CURRENT STATE 2026-06-21 (session 8) -- IDLE->WAKE WEDGE INSTRUMENTATION BUILT + QEMU-GATED; HW A/B
-  PENDING A PHYSICAL POWER-CYCLE. The stall stays a MAJOR OPEN CONCERN ([[feedback_stall_open_concern]]) --
-  this is a MEASUREMENT step toward the architectural fix, NOT a cure.** Built v0.4.286
-  (committed on `main`; Bryan pushes). The board is on v0.4.285 at 192.168.0.8, ALIVE on ICMP but
-  netconsole-wedged from the session-7 coresched test -> **MUST be physically power-cycled before the HW test**.
+* **CURRENT STATE 2026-06-21 (session 8) -- IDLE->WAKE WEDGE LOCALIZED AT THE INSTRUCTION LEVEL ON HW
+  (DECISIVE). The freeze is core 0 CLOCKED-BUT-WEDGED on a SINGLE fabric-dependent instruction,
+  POSITION-INDEPENDENT (4 code sites); leading hypothesis = a COLD CACHEABLE DRAM LOAD, not a dsb. Stall
+  stays a MAJOR OPEN CONCERN ([[feedback_stall_open_concern]]) -- a MEASUREMENT step toward the
+  architectural fix, NOT a cure.** Board = v0.4.286 build 2784 at 192.168.0.8 (flashed + HW-tested);
+  commit `06f7b37` on `main` (Bryan pushes). Board left ALIVE on ICMP but netconsole-wedged from the test
+  churn (power-cycle to restore netconsole; watchdog+hwdog default-on survive the ongoing freezes).
+  Full detail + interpretation matrix + HW result: `docs/NEXT_20260621_stall_session8_localize.md`.
+  - **HW RESULT (DECISIVE, 10+ stalls): core 0 ALWAYS `iovf=0`** (wedged on ONE instruction -- retired
+    <2^32 over the whole 32.4s) with a tiny `bus` delta (`bovf=0` = clean wait on a PARKED fabric). Caught
+    at 4 deterministic sites (exact inst-count each): A=`9->11` 1786 (slowpath syscall handler), B=`11->9`
+    174 (exit->entry: restore_user_context ldp / eret / vector), C=`10->11` 366 (IRQ handler), D=`10->7`
+    525 (IRQ + ctx-switch, wedge BEFORE setVMRoot's dsb -- `[DSBSTALL]` silent). Idle siblings always
+    `iovf=1` (overflowed = spinning BILLIONS on the BKL) = DERIVATIVE. netstall 6/10 STALLED; pingmon =
+    10 real whole-system ICMP GAPs (32.5/65/130s). **RESOLVES lead #2: wedged CPU on one instruction, NOT
+    IRQ-not-delivered (the timer DOES fire -- siblings take it + block on the BKL). COMPLETES lead #1: the
+    wedge is "the first fabric-dependent op after the SCB parks," position-independent -- NOT a removable
+    fixed-PC instruction (why every prior single-instruction lever failed).**
+  - **LEADING MECHANISM (Phase-2 design workflow `wf_5e364d17-60d`, high confidence): a COLD CACHEABLE DRAM
+    LOAD, not a dsb.** After ~30s idle the TCB-context (restore_user_context `ldp`), scheduler/`ksCurThread`,
+    and kernel-stack lines go cold; the first DRAM fill THROUGH the parked SCB hangs to the fixed ~32.4s
+    timeout. Unifies the 4 sites; fits `inst=0` + small-nonzero `bus` (one line-fill) + fixed-timeout. This
+    SHARPENS the cure: a memory-fill timeout (not a DVM-barrier) => the only viable keep-warm is a COHERENT
+    external bus-master (DMA) touching DRAM during idle -- CPU-side keep-warms all refuted. Note: `aios_
+    checkpoint(11)` is recorded just BEFORE the restore asm, so a wedge on the TCB-restore `ldp` presents as
+    SITE B; SITE A is the same mechanism one stage earlier (cold `schedule()`/`activateThread()` read).
+  - **The PMU OVERFLOW FLAG was the key hardening** (3-lens adversarial review caught that a 32-bit delta
+    masked over 32.4s wraps unpredictably -> false "wedged"): `iovf` cleanly separates the ONE wedged core
+    (`iovf=0`) from BKL-spinning siblings (`iovf=1`). Without it the result would have been ambiguous.
   - **Re-read of the session-7 serial (`/tmp/sercap_idle.log`) corrected the one-line summary:** the
     wedged core (core 0) is `prev=11 this=11` (kernel-EXIT -> ...32.4s... -> kernel-EXIT, NO IRQ entry --
     it re-enters via syscall/fastpath/fault, not an interrupt). Only the IDLE cores are `11->10` (they take
@@ -30,7 +54,8 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
     (`arch_c_entry_hook`), stage 12 = fastpath EXIT (`fastpath_restore`), + per-interval PMU deltas
     (INST_RETIRED/BUS_ACCESS/CPU_CYCLES) and a real core-0 heartbeat (`kent_lag` = ms since last kernel
     entry) in `aios_checkpoint` (errata.c). New line:
-    `[STAGECP] core=C prev=P this=S dur=Dms idle_lag=Ims kent_lag=Kms pmu=[inst=N bus=B cyc=Y]`.
+    `[STAGECP] core=C prev=P this=S dur=Dms idle_lag=Ims kent_lag=Kms pmu=[inst=N iovf=0/1 bus=B bovf=0/1 cyc=Y]`
+    (the `iovf`/`bovf` overflow flags were the key hardening -- see the HW-result bullets above).
   - **This bisects core 0's wedge + resolves "wedged-CPU vs IRQ-not-delivered":** `prev=9 this=11/12` (+
     kent_lag~=dur) = wedge INSIDE the kernel handler; `prev=11/12 this=9` = wedge BEFORE entry (eret asm /
     user EL0 / exception vector). `inst~=0` over 32.4s = CLOCKED but WEDGED on ONE instruction; `inst`
@@ -41,11 +66,19 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
     timeout), shmring 25/26 (1 timing shed), socket 8/8, netd 10/10. build-rpi4 (non-hyp) built clean with
     stages 1-7,9,10,11,12 all present. The instrumentation touches no external bus (sysreg reads + per-core
     cacheable stores) so it cannot warm the fabric / mask the stall. Adversarially reviewed (3-lens workflow).
-  - **>>> NEXT: power-cycle the Pi, then `sercap` -> `pi_flash.py --build` (banner v0.4.286) ->
-    `pingmon` + `netstall --idle 30 --trials 10` -> grep [STAGECP], read the matrix. Then Phase 2: if
-    `9->11/12` drill the handler barriers; if `11/12->9` add an ASM vector checkpoint in traps.S. <<<**
-  - Kernel diff in `deps/patches/seL4-kernel.patch` (1498 lines). KEPT: ASID-gen + coresched S1/S2 +
-    watchdog default-on + [TLBISTALL]/[DSBSTALL]/[STAGECP] profilers + MVD-1.
+  - **>>> NEXT (the localization is DONE; remaining work is OPTIONAL / fabric-level):** (1) Phase 2 --
+    ONE more shot to CONFIRM cold-load-vs-dsb: a register-SAFE asm checkpoint bracketing the
+    restore_user_context `ldp` chain + a `schedule()`/`activateThread()` checkpoint + add
+    L2D_CACHE_REFILL/MEM_ACCESS to the print (spec in workflow `wf_5e364d17-60d`; needs a power-cycle +
+    careful asm review; does NOT change the mitigation). (2) FABRIC-LEVEL cure (seed lead #4): if it IS a
+    cold-DRAM-LOAD timeout, try a COHERENT external bus-master (DMA engine) DRAM-touch heartbeat during
+    idle to keep the memory fabric out of deep-quiesce -- the one keep-warm class never tried (all
+    CPU-side ones refuted). (3) ARCHITECTURAL cure: drop the BKL coupling so a wedged core 0 does not
+    freeze the whole cluster. To re-run the HW A/B: power-cycle, `sercap /tmp/x.log`, board already on
+    v0.4.286 (or `pi_flash.py --build`), `pingmon` + `netstall --idle 30 --trials 10`, grep [STAGECP]. <<<**
+  - Kernel diff in `deps/patches/seL4-kernel.patch` (1532 lines). KEPT: ASID-gen + coresched S1/S2 +
+    watchdog default-on + [TLBISTALL]/[DSBSTALL]/[STAGECP] (now with PMU overflow flags + kent_lag)
+    profilers + MVD-1.
 
 * **CURRENT STATE 2026-06-21 (session 7) -- THE ASID-GENERATION CURE IS BUILT + HW-TESTED, AND THE STALL IS
   LOCALIZED: it is the IDLE->WAKE transition, NOT process teardown -- the multi-session "tlbi/teardown is
