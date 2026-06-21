@@ -36,7 +36,7 @@ index 12d55f3c9..96b7426d4 100644
  #ifdef CONFIG_BENCHMARK_TRACK_UTILISATION
      benchmark_utilisation_switch(NODE_STATE(ksCurThread), thread);
 diff --git a/include/arch/arm/arch/64/mode/machine.h b/include/arch/arm/arch/64/mode/machine.h
-index d869e3926..9ad64cc19 100644
+index d869e3926..233b8634e 100644
 --- a/include/arch/arm/arch/64/mode/machine.h
 +++ b/include/arch/arm/arch/64/mode/machine.h
 @@ -19,6 +19,25 @@
@@ -65,7 +65,48 @@ index d869e3926..9ad64cc19 100644
  #define CNTPCT   "cntpct_el0"
  #define CNTV_CTL "cntv_ctl_el0"
  
-@@ -248,12 +267,57 @@ static inline void invalidateLocalTLB_ASID(asid_t asid)
+@@ -176,8 +195,25 @@ static inline void setCurrentKernelVSpaceRoot(ttbr_t ttbr)
+     isb();
+ }
+ 
++/* AIOS session-7 DSB-stall profiler (the NON-tlbi DVM freeze). After ASID-gen removed the
++ * teardown `tlbi`, the ~32.4s freeze PERSISTED with ZERO [TLBISTALL] -> it is a `dsb` waiting
++ * on a DVM-Complete from a NON-tlbi op (suspect: cleanByVA_PoU `dc cvau` on the unmap path,
++ * whose DVM-Complete is awaited by the NEXT `dsb` -- the context-switch dsb here). Times the
++ * dsb in setCurrentUserVSpaceRoot (site 0); aios_dsb_profile (errata.c) prints [DSBSTALL] on a
++ * slow one. CNT_CT is defined above (line ~48). */
++#define AIOS_DSBSTALL_PROFILE 1
++void aios_dsb_profile(word_t t0, word_t t1, word_t site);
++/* AIOS session-7 teardown checkpoint breadcrumb (task #11; helper in errata.c). Stage 7 = the
++ * context-switch / self-munmap-reload dsb has completed. */
++#define AIOS_TEARDOWN_CHECKPOINTS 1
++void aios_checkpoint(word_t stage);
++
+ static inline void setCurrentUserVSpaceRoot(ttbr_t ttbr)
+ {
++#if AIOS_DSBSTALL_PROFILE
++    word_t _ds_t0;
++    asm volatile("mrs %0, " CNT_CT : "=r"(_ds_t0));
++#endif
+     dsb();
+     if (config_set(CONFIG_ARM_HYPERVISOR_SUPPORT)) {
+         MSR("vttbr_el2", ttbr.words[0]);
+@@ -185,6 +221,14 @@ static inline void setCurrentUserVSpaceRoot(ttbr_t ttbr)
+         MSR("ttbr0_el1", ttbr.words[0]);
+     }
+     isb();
++#if AIOS_DSBSTALL_PROFILE
++    word_t _ds_t1;
++    asm volatile("mrs %0, " CNT_CT : "=r"(_ds_t1));
++    aios_dsb_profile(_ds_t0, _ds_t1, 0);
++#endif
++#if AIOS_TEARDOWN_CHECKPOINTS
++    aios_checkpoint(7);
++#endif
+ }
+ 
+ static inline word_t getVTTBR(void)
+@@ -248,12 +292,57 @@ static inline void invalidateLocalTLB_ASID(asid_t asid)
      isb();
  }
  
@@ -124,10 +165,10 @@ index d869e3926..9ad64cc19 100644
  
  /* Invalidate all stage 1 and stage 2 translations used at
 diff --git a/include/arch/arm/arch/machine/tlb.h b/include/arch/arm/arch/machine/tlb.h
-index 7235672db..21d17e810 100644
+index 7235672db..4ff77e535 100644
 --- a/include/arch/arm/arch/machine/tlb.h
 +++ b/include/arch/arm/arch/machine/tlb.h
-@@ -47,6 +47,97 @@ static inline void invalidateTranslationASID(hw_asid_t hw_asid)
+@@ -47,6 +47,112 @@ static inline void invalidateTranslationASID(hw_asid_t hw_asid)
      SMP_COND_STATEMENT(doRemoteInvalidateTranslationASID(hw_asid, MASK(CONFIG_MAX_NUM_NODES)));
  }
  
@@ -222,9 +263,46 @@ index 7235672db..21d17e810 100644
 +#define AIOS_HWASID(a) (a)
 +#endif
 +
++/* AIOS session-7 EXPERIMENT (task #11): the ~32.4s freeze persists under ASID-gen with NO tlbi
++ * (zero [TLBISTALL]) -> a NON-tlbi op on the teardown path hangs a `dsb`. Prime suspect: the
++ * per-PTE `cleanByVA_PoU` (`dc cvau`) on the unmap path -- its clean-completion (to PoU/PoC,
++ * through the parked BCM2711 fabric) is awaited by the next `dsb`. When set, SKIP that teardown
++ * clean. CORRECT on this config: the A72 page-table walker is cacheable + inner-shareable
++ * COHERENT (elfloader TCR IRGN/ORGN_WBWA + ISH), so it snoops the (dirty) invalid-PTE write from
++ * the data cache without a clean; ASID-gen abandons the asid + reloads a fresh hw asid so no
++ * stale TLB entry survives. Only the UNMAP clean is skipped (map/boot cleans untouched). A/B knob:
++ * 1 = skip (the cure test), 0 = baseline clean. */
++/* REFUTED (session-7 HW A/B, build 2752): with ASID-gen ON (no tlbi), ALSO skipping the
++ * teardown clean did NOT reduce the ~32.4s freeze (5-6/10 still stalled, zero [TLBISTALL],
++ * zero [DSBSTALL]). So the stall is neither the tlbi NOR the cache-maintenance clean. Default
++ * 0 (keep the correctness-safe clean); 1 = the A/B knob (skip it). */
++#define AIOS_TEARDOWN_NO_CLEAN 0
++
  static inline void invalidateTranslationAll(void)
  {
      invalidateTranslationAllLocal();
+diff --git a/src/arch/arm/64/c_traps.c b/src/arch/arm/64/c_traps.c
+index 96a9ea30c..f0981a9ec 100644
+--- a/src/arch/arm/64/c_traps.c
++++ b/src/arch/arm/64/c_traps.c
+@@ -15,10 +15,17 @@
+ #include <benchmark/benchmark_track.h>
+ #include <benchmark/benchmark_utilisation.h>
+ 
++/* AIOS session-7 teardown checkpoint (task #11): stage 11 = kernel exit (about to eret to
++ * user/idle). With stage 10 (IRQ entry) this bisects the 32.4s context-switch-interval wedge:
++ * an 11->10 gap = userspace/idle run; 10->7 = IRQ/scheduler; 7->11 = kernel tail. Direct call
++ * (no macro guard) to avoid any include/-Wundef issue; helper defined in errata.c. */
++extern void aios_checkpoint(word_t stage);
++
+ /** DONT_TRANSLATE */
+ void VISIBLE NORETURN restore_user_context(void)
+ {
+     c_exit_hook();
++    aios_checkpoint(11);
+ 
+ #ifdef ARM_CP14_SAVE_AND_RESTORE_NATIVE_THREADS
+     restore_user_debug_context(NODE_STATE(ksCurThread));
 diff --git a/src/arch/arm/64/idle.S b/src/arch/arm/64/idle.S
 index c47710bcb..5ebfba6fc 100644
 --- a/src/arch/arm/64/idle.S
@@ -266,7 +344,7 @@ index c47710bcb..5ebfba6fc 100644
      b 1b
  END_FUNC(idle_thread)
 diff --git a/src/arch/arm/64/kernel/vspace.c b/src/arch/arm/64/kernel/vspace.c
-index 08f7937ee..451ded524 100644
+index 08f7937ee..54aa7a308 100644
 --- a/src/arch/arm/64/kernel/vspace.c
 +++ b/src/arch/arm/64/kernel/vspace.c
 @@ -765,6 +765,229 @@ bool_t CONST isValidVTableRoot(cap_t cap)
@@ -577,16 +655,16 @@ index 08f7937ee..451ded524 100644
  #ifdef CONFIG_ARM_SMMU
      word_t bind_cb = getASIDBindCB(asid);
      if (unlikely(bind_cb)) {
-@@ -997,9 +1257,30 @@ static inline void invalidateTLBByASIDVA(asid_t asid, vptr_t vaddr)
+@@ -997,10 +1257,31 @@ static inline void invalidateTLBByASIDVA(asid_t asid, vptr_t vaddr)
      uint64_t hw_asid = asid_map_asid_map_vspace_get_stored_hw_vmid(asid_map);
      invalidateTranslationSingle((hw_asid << 48) | vaddr >> seL4_PageBits);
  #else
 -    invalidateTranslationSingle((asid << 48) | vaddr >> seL4_PageBits);
 +    invalidateTranslationSingleMask((asid << 48) | vaddr >> seL4_PageBits,
 +                                    SMP_TERNARY(aios_asid_residency(asid), 0));   /* AIOS: residency-masked */
-+#endif
-+}
-+
+ #endif
+ }
+ 
 +#if AIOS_LAZY_TLB_TEARDOWN
 +/* Consume a deferred teardown flush (lazy-TLB): if this ASID has per-page invalidations
 + * that unmapPage skipped, do the single covering `tlbi aside1` (residency-masked) NOW,
@@ -603,15 +681,50 @@ index 08f7937ee..451ded524 100644
 +        armKSASIDPendingFlush[asid] = 0;
 +        invalidateTLBByASID(asid);
 +    }
- #endif
- }
 +#endif
- 
++}
++#endif
++
  
  void unmapPageTable(asid_t asid, vptr_t vptr, pte_t *target_pt)
-@@ -1063,7 +1344,38 @@ void unmapPage(vm_page_size_t page_size, asid_t asid, vptr_t vptr, pptr_t pptr)
+ {
+@@ -1027,9 +1308,17 @@ void unmapPageTable(asid_t asid, vptr_t vptr, pte_t *target_pt)
+     }
+     /* If we found a pt then ptSlot won't be null */
+     assert(ptSlot != NULL);
++#if AIOS_TEARDOWN_CHECKPOINTS
++    aios_checkpoint(5);   /* unmapPageTable: before PTE write + clean */
++#endif
+     *ptSlot = pte_pte_invalid_new();
+-    cleanByVA_PoU((vptr_t)ptSlot, pptr_to_paddr(ptSlot));
++#if !AIOS_TEARDOWN_NO_CLEAN
++    cleanByVA_PoU((vptr_t)ptSlot, pptr_to_paddr(ptSlot));   /* skipped under AIOS_TEARDOWN_NO_CLEAN (coherent PTW) */
++#endif
+     invalidateTLBByASID(asid);
++#if AIOS_TEARDOWN_CHECKPOINTS
++    aios_checkpoint(6);   /* unmapPageTable end (5->6 wedge = PT clean/invalidate) */
++#endif
+ }
+ 
+ void unmapPage(vm_page_size_t page_size, asid_t asid, vptr_t vptr, pptr_t pptr)
+@@ -1060,10 +1349,55 @@ void unmapPage(vm_page_size_t page_size, asid_t asid, vptr_t vptr, pptr_t pptr)
+         return;
+     }
+ 
++#if AIOS_TEARDOWN_CHECKPOINTS
++    aios_checkpoint(1);   /* unmapPage: committed to the unmap (after idle => prev->1 gap = idle) */
++#endif
      *(lu_ret.ptSlot) = pte_pte_invalid_new();
-     cleanByVA_PoU((vptr_t)lu_ret.ptSlot, pptr_to_paddr(lu_ret.ptSlot));
+-    cleanByVA_PoU((vptr_t)lu_ret.ptSlot, pptr_to_paddr(lu_ret.ptSlot));
++#if AIOS_TEARDOWN_CHECKPOINTS
++    aios_checkpoint(2);   /* after the PTE invalid write (1->2 wedge = the store) */
++#endif
++#if !AIOS_TEARDOWN_NO_CLEAN
++    cleanByVA_PoU((vptr_t)lu_ret.ptSlot, pptr_to_paddr(lu_ret.ptSlot));   /* skipped under AIOS_TEARDOWN_NO_CLEAN (coherent PTW) */
++#endif
++#if AIOS_TEARDOWN_CHECKPOINTS
++    aios_checkpoint(3);   /* after the clean block (2->3 wedge = cleanByVA_PoU dc cvau) */
++#endif
      assert(asid < BIT(16));
 +    /* AIOS diag: stash the unmapped page's physical addr + PTE so the TLBI-stall
 +     * profiler can report whether the stalling teardown tlbis hit a specific
@@ -645,10 +758,13 @@ index 08f7937ee..451ded524 100644
 +#else
 +    invalidateTLBByASIDVA(asid, vptr);
 +#endif
++#if AIOS_TEARDOWN_CHECKPOINTS
++    aios_checkpoint(4);   /* unmapPage end (3->4 or 3->7->4 wedge = ASID-gen invalidate/reload) */
++#endif
  }
  
  void deleteASID(asid_t asid, vspace_root_t *vspace)
-@@ -1077,6 +1389,14 @@ void deleteASID(asid_t asid, vspace_root_t *vspace)
+@@ -1077,6 +1411,14 @@ void deleteASID(asid_t asid, vspace_root_t *vspace)
          if (asid_map_get_type(asid_map) == asid_map_asid_map_vspace &&
              (vspace_root_t *)asid_map_asid_map_vspace_get_vspace_root(asid_map) == vspace) {
              invalidateTLBByASID(asid);
@@ -663,6 +779,20 @@ index 08f7937ee..451ded524 100644
  #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
              invalidateASIDEntry(asid);
  #endif
+diff --git a/src/arch/arm/c_traps.c b/src/arch/arm/c_traps.c
+index 8104d73df..f93d06d86 100644
+--- a/src/arch/arm/c_traps.c
++++ b/src/arch/arm/c_traps.c
+@@ -88,6 +88,9 @@ void VISIBLE NORETURN c_handle_interrupt(void)
+ {
+     NODE_LOCK_IRQ_IF(IRQT_TO_IRQ(getActiveIRQ()) != irq_remote_call_ipi);
+     c_entry_hook();
++#if AIOS_TEARDOWN_CHECKPOINTS
++    aios_checkpoint(10);   /* IRQ entry (11->10 gap = userspace/idle run before this IRQ) */
++#endif
+ 
+ #ifdef TRACK_KERNEL_ENTRIES
+     ksKernelEntry.path = Entry_Interrupt;
 diff --git a/src/arch/arm/kernel/boot.c b/src/arch/arm/kernel/boot.c
 index 93eb4d133..7c714d859 100644
 --- a/src/arch/arm/kernel/boot.c
@@ -724,10 +854,10 @@ index 93eb4d133..7c714d859 100644
      init_plat();
  
 diff --git a/src/arch/arm/machine/errata.c b/src/arch/arm/machine/errata.c
-index f8dac15c3..5315ae888 100644
+index f8dac15c3..cc8b616bc 100644
 --- a/src/arch/arm/machine/errata.c
 +++ b/src/arch/arm/machine/errata.c
-@@ -8,11 +8,357 @@
+@@ -8,11 +8,429 @@
  #include <api/types.h>
  #include <arch/machine.h>
  #include <arch/machine/hardware.h>
@@ -998,6 +1128,78 @@ index f8dac15c3..5315ae888 100644
 +extern word_t aios_resident_cores_mask;
 +word_t aios_asid_residency_raw(word_t asid);
 +#endif
++
++/* AIOS session-7: profiler for the NON-tlbi DVM freeze. ASID-gen removed the teardown `tlbi`
++ * (zero [TLBISTALL]) but the ~32.4s freeze persisted -> a `dsb` is waiting on a DVM-Complete
++ * from a non-tlbi op (suspect: cleanByVA_PoU `dc cvau`, awaited by the context-switch dsb).
++ * Called from setCurrentUserVSpaceRoot (machine.h). Persistent counters for /proc + a serial
++ * [DSBSTALL] print on a slow (>=1s) dsb so we can confirm WHICH barrier eats the freeze. */
++volatile word_t aios_dsbstall_count = 0;
++volatile word_t aios_dsbstall_worst_ms = 0;
++volatile word_t aios_dsb_cnt = 0;
++void aios_dsb_profile(word_t t0, word_t t1, word_t site);
++void aios_dsb_profile(word_t t0, word_t t1, word_t site)
++{
++    word_t freq;
++    asm volatile("mrs %0, cntfrq_el0" : "=r"(freq));
++    if (!freq) {
++        freq = 54000000;
++    }
++    aios_dsb_cnt++;
++    word_t dur_ms = (t1 - t0) * 1000ull / freq;
++    if (dur_ms >= 1000ull) {
++        aios_dsbstall_count++;
++        if (dur_ms > aios_dsbstall_worst_ms) {
++            aios_dsbstall_worst_ms = dur_ms;
++        }
++        printf("[DSBSTALL] site=%d dur=%dms count=%d (non-tlbi DVM freeze)\n",
++               (int)site, (int)dur_ms, (int)aios_dsbstall_count);
++    }
++}
++
++/* AIOS session-7 teardown CHECKPOINT BREADCRUMB (task #11): the ~32.4s wedge was refuted at the
++ * tlbi, the cache-clean, and the context-switch dsb -- all by ELIMINATION, never LOCALIZED. Each
++ * teardown stage records a per-core CNTPCT timestamp (a barrier-free sysreg read); if the gap since
++ * the previous checkpoint exceeds 5s, print which interval it was. A ~32.4s gap between two ADJACENT
++ * intra-teardown stages => the wedge is IN that interval (a surgical fix reopens). A ~30s gap at a
++ * teardown START (this=1/5) is the netstall idle (expected); a >40s START gap = idle + a wedge in the
++ * entry / scheduler / kernel-exit path (i.e. OUTSIDE the instrumented teardown -- fabric-fundamental).
++ * printf fires only on the rare big gap, AFTER the wedge, so it never contaminates the measured op. */
++volatile word_t aios_cp_last_stage[AIOS_TLBI_NCORES];
++volatile word_t aios_cp_last_t[AIOS_TLBI_NCORES];
++void aios_checkpoint(word_t stage);
++void aios_checkpoint(word_t stage)
++{
++    word_t core = CURRENT_CPU_INDEX();
++    if (core >= AIOS_TLBI_NCORES) {
++        core = 0;
++    }
++    word_t now;
++    asm volatile("mrs %0, cntpct_el0" : "=r"(now));
++    word_t prev_t = aios_cp_last_t[core];
++    word_t prev_s = aios_cp_last_stage[core];
++    aios_cp_last_t[core] = now;
++    aios_cp_last_stage[core] = stage;
++    if (prev_t) {
++        word_t freq;
++        asm volatile("mrs %0, cntfrq_el0" : "=r"(freq));
++        if (!freq) {
++            freq = 54000000;
++        }
++        word_t dur_ms = (now - prev_t) * 1000ull / freq;
++        if (dur_ms >= 5000ull) {
++            /* hb_lag = how stale THIS core's idle-loop heartbeat is (idle.S stamps
++             * aios_core_heartbeat[core*8] every iteration). hb_lag ~= dur => core 0 was WEDGED on
++             * one instruction (idle loop did NOT run -> a single stuck op in eret/IRQ-vector).
++             * hb_lag ~= small => core 0 was busy-idling fine and the TIMER IRQ simply did not fire
++             * for 32.4s (a GIC/timer/fabric IRQ-DELIVERY freeze, not a wedged CPU instruction). */
++            word_t hb = aios_core_heartbeat[core * 8];
++            int hb_lag = hb ? (int)((now - hb) * 1000ull / freq) : -1;
++            printf("[STAGECP] core=%d prev=%d this=%d dur=%dms hb_lag=%dms\n",
++                   (int)core, (int)prev_s, (int)stage, (int)dur_ms, hb_lag);
++        }
++    }
++}
 +
 +void aios_tlbi_profile(word_t t0, word_t t1, word_t mva_plus_asid, const word_t *pm0, const word_t *pm1);
 +void aios_tlbi_profile(word_t t0, word_t t1, word_t mva_plus_asid, const word_t *pm0, const word_t *pm1)
