@@ -1,5 +1,5 @@
 diff --git a/include/arch/arm/arch/64/mode/fastpath/fastpath.h b/include/arch/arm/arch/64/mode/fastpath/fastpath.h
-index 12d55f3c9..9f44f29ab 100644
+index 12d55f3c9..96b7426d4 100644
 --- a/include/arch/arm/arch/64/mode/fastpath/fastpath.h
 +++ b/include/arch/arm/arch/64/mode/fastpath/fastpath.h
 @@ -14,6 +14,7 @@
@@ -10,10 +10,15 @@ index 12d55f3c9..9f44f29ab 100644
  #include <machine/fpu.h>
  #include <smp/lock.h>
  
-@@ -37,6 +38,19 @@ switchToThread_fp(tcb_t *thread, vspace_root_t *vroot, pde_t stored_hw_asid)
+@@ -36,7 +37,23 @@ switchToThread_fp(tcb_t *thread, vspace_root_t *vroot, pde_t stored_hw_asid)
+         vcpu_switch(thread->tcbArch.tcbVCPU);
      }
      asid = (asid_t)(stored_hw_asid.words[0] & 0xffff);
-     armv_contextSwitch_HWASID(vroot, asid);
+-    armv_contextSwitch_HWASID(vroot, asid);
++    /* AIOS: the fastpath re-derives the LOGICAL asid every switch (it never caches a hw value),
++     * so resolving it through AIOS_HWASID here keeps the hw asid fresh across ASID-gen wraps /
++     * self-munmap swaps (review M3). Identity on the hyp build. */
++    armv_contextSwitch_HWASID(vroot, AIOS_HWASID(asid));
 +#if AIOS_LAZY_TLB_TEARDOWN
 +    /* The fastpath also switches vspace without setVMRoot, so it must consume any deferred
 +     * lazy-TLB flush for this ASID before the thread runs (same unity-build visibility as
@@ -119,10 +124,10 @@ index d869e3926..9ad64cc19 100644
  
  /* Invalidate all stage 1 and stage 2 translations used at
 diff --git a/include/arch/arm/arch/machine/tlb.h b/include/arch/arm/arch/machine/tlb.h
-index 7235672db..468751c1b 100644
+index 7235672db..21d17e810 100644
 --- a/include/arch/arm/arch/machine/tlb.h
 +++ b/include/arch/arm/arch/machine/tlb.h
-@@ -47,6 +47,71 @@ static inline void invalidateTranslationASID(hw_asid_t hw_asid)
+@@ -47,6 +47,97 @@ static inline void invalidateTranslationASID(hw_asid_t hw_asid)
      SMP_COND_STATEMENT(doRemoteInvalidateTranslationASID(hw_asid, MASK(CONFIG_MAX_NUM_NODES)));
  }
  
@@ -191,6 +196,32 @@ index 7235672db..468751c1b 100644
 +#define AIOS_LAZY_TLB_TEARDOWN 1
 +void aios_flush_pending_asid(word_t asid);
 +
++/* AIOS ASID-generation TLB recycling (project_stall_hunt; docs/NEXT_20260621_asid_generation*).
++ * THE architectural cure for the RPi4 ~32.4s idle-teardown freeze: a `tlbi;dsb` whose DVM-Sync
++ * hangs on the quiesced BCM2711 SCB fabric. Decouple the seL4 LOGICAL asid (the cap identity)
++ * from the HARDWARE asid written to TTBR0[63:48]; recycle hw asids via a generation counter so
++ * process teardown AND self-munmap issue NO per-asid `tlbi` at all -- entries of an abandoned hw
++ * asid are harmless (nothing live uses that value) and are wiped by ONE `tlbi vmalle1` at a rare
++ * generation WRAP, which happens during active context switching (warm fabric), not the
++ * after-idle cold path that hangs. The Linux/xv6 PCID model. Invariant: each hw asid is bound to
++ * <=1 live vspace and is never reissued without an intervening full flush
++ * (host-validated: scripts/asidgen_host_test.c). Correctness-critical (a bug = silent
++ * cross-process TLB corruption) + DIVERGES from seL4's Isabelle proof (ships tested-not-proven).
++ *
++ * Gated to the NON-HYP (Pi) build only: the QEMU/hyp build keeps seL4's own stage-2 VMID
++ * recycler (getHWASID), so AIOS_HWASID() is identity there and armv_contextSwitch is NOT
++ * double-translated. aios_hwasid_for is defined in arm/64 vspace.c; prototyped here so the
++ * fastpath vspace switch (switchToThread_fp, compiled before vspace.c in the unity build) can
++ * resolve the hw asid -- same extern pattern as aios_mark_asid_residency. */
++#if defined(CONFIG_ARCH_AARCH64) && !defined(CONFIG_ARM_HYPERVISOR_SUPPORT)
++#define AIOS_ASID_GEN 1
++word_t aios_hwasid_for(word_t asid);
++#define AIOS_HWASID(a) aios_hwasid_for(a)
++#else
++#define AIOS_ASID_GEN 0    /* always defined (the kernel builds with -Wundef -Werror) */
++#define AIOS_HWASID(a) (a)
++#endif
++
  static inline void invalidateTranslationAll(void)
  {
      invalidateTranslationAllLocal();
@@ -235,10 +266,10 @@ index c47710bcb..5ebfba6fc 100644
      b 1b
  END_FUNC(idle_thread)
 diff --git a/src/arch/arm/64/kernel/vspace.c b/src/arch/arm/64/kernel/vspace.c
-index 08f7937ee..ab153943c 100644
+index 08f7937ee..451ded524 100644
 --- a/src/arch/arm/64/kernel/vspace.c
 +++ b/src/arch/arm/64/kernel/vspace.c
-@@ -765,6 +765,128 @@ bool_t CONST isValidVTableRoot(cap_t cap)
+@@ -765,6 +765,229 @@ bool_t CONST isValidVTableRoot(cap_t cap)
      return isValidNativeRoot(cap);
  }
  
@@ -364,30 +395,167 @@ index 08f7937ee..ab153943c 100644
 +}
 +#endif
 +
++#if AIOS_ASID_GEN
++/* ===================== ASID-generation hw-asid recycler =====================
++ * See arch/machine/tlb.h for the rationale + invariant, and the design doc
++ * docs/NEXT_20260621_asid_generation_IMPL.md. The seL4 logical asid stays the cap
++ * identity everywhere (asid_map, findVSpaceForASID, residency); ONLY TTBR0[63:48]
++ * carries the HARDWARE asid resolved here. */
++#define AIOS_HWASID_NASIDS 2048            /* same low-asid bound as residency/lazy-TLB */
++#ifndef AIOS_HWASID_MAX
++#define AIOS_HWASID_MAX 0xFFFFu            /* TCR_EL1.AS=1 (elfloader TCR_ASID16); boot [ASIDGEN] probe confirms */
++#endif
++/* 32-bit generation so it never RECYCLES within a boot: a recycled gen value could let a stale
++ * armKSHwAsid[].gen masquerade as live and alias a hw asid (review M2). At 2^32 gens x 2^16
++ * assigns/gen that is ~2^48 assignments -- unreachable. */
++typedef struct { uint16_t hw_asid; uint32_t gen; } aios_hwasid_ent_t;
++static aios_hwasid_ent_t armKSHwAsid[AIOS_HWASID_NASIDS];   /* sel4 asid -> (hw asid, gen) */
++static uint32_t g_hwasid_gen  = 1;         /* current generation (0 = "never bound" sentinel) */
++static uint32_t g_hwasid_next = 1;         /* next free hw asid this gen (0 reserved = none) */
++/* validity-signature counters (serial [ASIDGEN] print + a future /proc/asidgen): prove the
++ * recycler is ACTIVE + climbing during the HW stall A/B, not merely compiled in. */
++word_t aios_hwasid_assigns = 0;
++word_t aios_hwasid_gen_now = 1;
++word_t aios_hwasid_wraps   = 0;
++
++/* The asid currently loaded in TTBR0 on THIS core = the running thread's vspace asid (matches
++ * the self-detection in unmapPage). asidInvalid (0) when on the global/kernel vspace. */
++static inline asid_t aios_current_user_asid(void)
++{
++    cap_t root = TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbVTable)->cap;
++    if (isValidNativeRoot(root)) {
++        return cap_vspace_cap_get_capVSMappedASID(root);
++    }
++    return asidInvalid;
++}
++
++/* Resolve (assign if needed) the HARDWARE asid for a seL4 logical asid. Called on the TTBR
++ * write path (setVMRoot / setVMRootForFlush / fastpath, via AIOS_HWASID). asid 0 (global
++ * vspace) and out-of-range asids are identity -- never generation-managed. */
++word_t aios_hwasid_for(word_t sel4_asid)
++{
++    if (unlikely(sel4_asid == 0 || sel4_asid >= AIOS_HWASID_NASIDS)) {
++        return sel4_asid;
++    }
++    aios_hwasid_ent_t *e = &armKSHwAsid[sel4_asid];
++    if (e->gen != g_hwasid_gen) {
++        if (unlikely(g_hwasid_next > AIOS_HWASID_MAX)) {
++            /* GENERATION WRAP: ONE full local flush (+ residency-masked remote). Rare, and it
++             * fires during ACTIVE context switching (warm fabric), NOT the after-idle cold path
++             * that hangs. NOTE coresched: a vspace running on a PEER core keeps its old hw asid
++             * across the wrap and could alias a reissued value -> needs per-core reserved-asid
++             * (Linux PCID model; host-test-proven necessary AND sufficient in
++             * scripts/asidgen_host_test.c). DEFERRED: provably moot under the default
++             * all-threads-pinned-to-core-0 config (the wrap fires in-kernel mid-switch; the only
++             * vspace that runs next is the freshly resolved one). MUST be added before coresched
++             * (/proc/coresched.1) is trusted. */
++            g_hwasid_gen++;
++            invalidateLocalTLB();
++#ifdef ENABLE_SMP_SUPPORT
++            doRemoteInvalidateTranslationAll(aios_resident_cores_mask);
++#endif
++            g_hwasid_next = 1;
++            aios_hwasid_wraps++;
++            aios_hwasid_gen_now = g_hwasid_gen;
++        }
++        e->hw_asid = (uint16_t)g_hwasid_next++;
++        e->gen     = g_hwasid_gen;
++        aios_hwasid_assigns++;
++#ifdef CONFIG_DEBUG_BUILD
++        /* on-HW tripwire (throttled): within a generation g_hwasid_next is monotonic, so two LIVE
++         * asids can never share a hw value unless the recycler regresses. Loud, non-fatal. */
++        if ((aios_hwasid_assigns & 0x3F) == 0) {
++            for (word_t a = 1; a < AIOS_HWASID_NASIDS; a++) {
++                if (a != sel4_asid && armKSHwAsid[a].gen == g_hwasid_gen &&
++                    armKSHwAsid[a].hw_asid == e->hw_asid) {
++                    printf("[ASIDGEN-BUG] hw=0x%x shared by sel4 asids 0x%x and 0x%x\n",
++                           (unsigned)e->hw_asid, (unsigned)a, (unsigned)sel4_asid);
++                    break;
++                }
++            }
++        }
++        if ((aios_hwasid_assigns & 0xFFF) == 0) {
++            printf("[ASIDGEN] assigns=0x%"SEL4_PRIx_word" gen=0x%"SEL4_PRIx_word
++                   " wraps=0x%"SEL4_PRIx_word"\n",
++                   aios_hwasid_assigns, (word_t)g_hwasid_gen, aios_hwasid_wraps);
++        }
++#endif
++    }
++    return e->hw_asid;
++}
++
++/* Abandon a logical asid's hw binding: its (now stale) TLB entries are never consulted again
++ * under a live binding -- different asids get fresh hw values, and the abandoned value is wiped
++ * at the next gen wrap before it can be reissued. This is the replacement for a teardown/unmap
++ * `tlbi` (no DVM-Sync, no stall). The next aios_hwasid_for for this asid assigns a fresh hw. */
++static inline void aios_hwasid_clear(word_t sel4_asid)
++{
++    if (likely(sel4_asid < AIOS_HWASID_NASIDS)) {
++        armKSHwAsid[sel4_asid].gen = 0;
++    }
++}
++#endif /* AIOS_ASID_GEN */
++
  void setVMRoot(tcb_t *tcb)
  {
      cap_t threadRoot;
-@@ -788,6 +910,11 @@ void setVMRoot(tcb_t *tcb)
+@@ -787,7 +1010,13 @@ void setVMRoot(tcb_t *tcb)
+         return;
      }
  
-     armv_contextSwitch(vspaceRoot, asid);
+-    armv_contextSwitch(vspaceRoot, asid);
++    armv_contextSwitch(vspaceRoot, AIOS_HWASID(asid));   /* AIOS: logical asid -> hw asid (ASID-gen) */
 +#if AIOS_LAZY_TLB_TEARDOWN
-+    /* Consume any deferred teardown flush before this ASID runs (lazy-TLB). */
++    /* Consume any deferred teardown flush before this ASID runs (lazy-TLB). Inert under
++     * AIOS_ASID_GEN (ASID-gen supersedes lazy-TLB; no deferred per-asid flush exists). */
 +    aios_flush_pending_asid(asid);
 +#endif
-+    SMP_COND_STATEMENT(aios_mark_asid_residency(asid));
++    SMP_COND_STATEMENT(aios_mark_asid_residency(asid));   /* keyed on the LOGICAL asid */
  }
  
  static bool_t setVMRootForFlush(vspace_root_t *vspace, asid_t asid)
-@@ -803,6 +930,7 @@ static bool_t setVMRootForFlush(vspace_root_t *vspace, asid_t asid)
+@@ -802,7 +1031,8 @@ static bool_t setVMRootForFlush(vspace_root_t *vspace, asid_t asid)
+         return false;
      }
  
-     armv_contextSwitch(vspace, asid);
+-    armv_contextSwitch(vspace, asid);
++    armv_contextSwitch(vspace, AIOS_HWASID(asid));   /* AIOS: logical asid -> hw asid (ASID-gen) */
 +    SMP_COND_STATEMENT(aios_mark_asid_residency(asid));
      return true;
  }
  
-@@ -975,7 +1103,7 @@ static inline void invalidateTLBByASID(asid_t asid)
+@@ -958,8 +1188,30 @@ void decreaseASIDBindCB(asid_t asid)
+ }
+ #endif
+ 
++#if AIOS_ASID_GEN
++/* ASID-generation replacement for a per-asid teardown/unmap `tlbi`: abandon the hw binding
++ * (NO tlbi -> NO DVM-Sync -> NO ~32.4s stall) and, if it is the asid running on THIS core,
++ * reload TTBR0 with a FRESH hw asid NOW -- in-kernel, BKL held, before returning to user --
++ * so the running thread does not keep translating under the abandoned hw value (review M5).
++ * A multi-page unmap clears repeatedly (cheap) and reloads idempotently. This covers EVERY
++ * caller of invalidateTLBByASID/VA: deleteASID, deleteASIDPool, unmapPageTable, unmapPage
++ * (self + non-current), and the remap-over-valid-PTE path -- the whole teardown surface,
++ * including the DOMINANT self-munmap vae1 (live-captured asid=1 va=0x117ce000 this session). */
++static inline void aios_asid_gen_invalidate(asid_t asid)
++{
++    aios_hwasid_clear(asid);
++    if (asid != asidInvalid && asid == aios_current_user_asid()) {
++        setVMRoot(NODE_STATE(ksCurThread));   /* re-resolves via AIOS_HWASID -> fresh hw + isb */
++    }
++}
++#endif
++
+ static inline void invalidateTLBByASID(asid_t asid)
+ {
++#if AIOS_ASID_GEN
++    aios_asid_gen_invalidate(asid);
++    return;
++#endif
+ #ifdef CONFIG_ARM_SMMU
+     word_t bind_cb = getASIDBindCB(asid);
+     if (unlikely(bind_cb)) {
+@@ -975,12 +1227,20 @@ static inline void invalidateTLBByASID(asid_t asid)
      }
      invalidateTranslationASID(asid_map_asid_map_vspace_get_stored_hw_vmid(asid_map));
  #else
@@ -396,16 +564,29 @@ index 08f7937ee..ab153943c 100644
  #endif
  }
  
-@@ -997,10 +1125,25 @@ static inline void invalidateTLBByASIDVA(asid_t asid, vptr_t vaddr)
+ static inline void invalidateTLBByASIDVA(asid_t asid, vptr_t vaddr)
+ {
++#if AIOS_ASID_GEN
++    /* Coarser under ASID-gen: there is no per-VA `tlbi`, so abandon the whole asid's hw binding
++     * (the running thread re-walks under a fresh hw). Acceptable cold-TLB cost on the teardown /
++     * remap paths; the cure for the stall the per-page vae1 caused. */
++    (void)vaddr;
++    aios_asid_gen_invalidate(asid);
++    return;
++#endif
+ #ifdef CONFIG_ARM_SMMU
+     word_t bind_cb = getASIDBindCB(asid);
+     if (unlikely(bind_cb)) {
+@@ -997,9 +1257,30 @@ static inline void invalidateTLBByASIDVA(asid_t asid, vptr_t vaddr)
      uint64_t hw_asid = asid_map_asid_map_vspace_get_stored_hw_vmid(asid_map);
      invalidateTranslationSingle((hw_asid << 48) | vaddr >> seL4_PageBits);
  #else
 -    invalidateTranslationSingle((asid << 48) | vaddr >> seL4_PageBits);
 +    invalidateTranslationSingleMask((asid << 48) | vaddr >> seL4_PageBits,
 +                                    SMP_TERNARY(aios_asid_residency(asid), 0));   /* AIOS: residency-masked */
- #endif
- }
- 
++#endif
++}
++
 +#if AIOS_LAZY_TLB_TEARDOWN
 +/* Consume a deferred teardown flush (lazy-TLB): if this ASID has per-page invalidations
 + * that unmapPage skipped, do the single covering `tlbi aside1` (residency-masked) NOW,
@@ -413,17 +594,22 @@ index 08f7937ee..ab153943c 100644
 + * in arch/machine/tlb.h). Cheap when nothing is pending: a bounds check + one byte load. */
 +void aios_flush_pending_asid(word_t asid)
 +{
++#if AIOS_ASID_GEN
++    /* ASID-gen supersedes lazy-TLB: unmapPage never sets a pending flush, so none exists. */
++    (void)asid;
++    return;
++#else
 +    if (asid < AIOS_LAZYTLB_NASIDS && armKSASIDPendingFlush[asid]) {
 +        armKSASIDPendingFlush[asid] = 0;
 +        invalidateTLBByASID(asid);
 +    }
-+}
+ #endif
+ }
 +#endif
-+
+ 
  
  void unmapPageTable(asid_t asid, vptr_t vptr, pte_t *target_pt)
- {
-@@ -1063,7 +1206,32 @@ void unmapPage(vm_page_size_t page_size, asid_t asid, vptr_t vptr, pptr_t pptr)
+@@ -1063,7 +1344,38 @@ void unmapPage(vm_page_size_t page_size, asid_t asid, vptr_t vptr, pptr_t pptr)
      *(lu_ret.ptSlot) = pte_pte_invalid_new();
      cleanByVA_PoU((vptr_t)lu_ret.ptSlot, pptr_to_paddr(lu_ret.ptSlot));
      assert(asid < BIT(16));
@@ -432,7 +618,13 @@ index 08f7937ee..ab153943c 100644
 +     * physical region (e.g. the pipe-server untyped backing anon-mmap pages). */
 +    aios_last_unmap_paddr = pptr_to_paddr((void *)pptr);
 +    aios_last_unmap_pte = pte.words[0];
-+#if AIOS_LAZY_TLB_TEARDOWN
++#if AIOS_ASID_GEN
++    /* ASID-gen: abandon the asid's hw binding (+ reload it with a fresh hw if it is the running
++     * asid) instead of any `tlbi`. Supersedes the lazy-TLB deferral below -- it kills BOTH the
++     * self-munmap per-page vae1 (the DOMINANT stall, live-captured asid=1 va=0x117ce000 this
++     * session) AND the non-current deferred aside1, with the same no-tlbi mechanism. */
+     invalidateTLBByASIDVA(asid, vptr);
++#elif AIOS_LAZY_TLB_TEARDOWN
 +    /* Lazy-TLB teardown: if this page belongs to an ASID OTHER than the one running on this
 +     * core right now, the owning process cannot translate the page before its next
 +     * context-switch-in (which flushes), so defer the per-page tlbi to a single aside1 then.
@@ -451,12 +643,12 @@ index 08f7937ee..ab153943c 100644
 +        }
 +    }
 +#else
-     invalidateTLBByASIDVA(asid, vptr);
++    invalidateTLBByASIDVA(asid, vptr);
 +#endif
  }
  
  void deleteASID(asid_t asid, vspace_root_t *vspace)
-@@ -1077,6 +1245,14 @@ void deleteASID(asid_t asid, vspace_root_t *vspace)
+@@ -1077,6 +1389,14 @@ void deleteASID(asid_t asid, vspace_root_t *vspace)
          if (asid_map_get_type(asid_map) == asid_map_asid_map_vspace &&
              (vspace_root_t *)asid_map_asid_map_vspace_get_vspace_root(asid_map) == vspace) {
              invalidateTLBByASID(asid);
@@ -532,10 +724,10 @@ index 93eb4d133..7c714d859 100644
      init_plat();
  
 diff --git a/src/arch/arm/machine/errata.c b/src/arch/arm/machine/errata.c
-index f8dac15c3..ecf11b2fa 100644
+index f8dac15c3..5315ae888 100644
 --- a/src/arch/arm/machine/errata.c
 +++ b/src/arch/arm/machine/errata.c
-@@ -8,11 +8,342 @@
+@@ -8,11 +8,357 @@
  #include <api/types.h>
  #include <arch/machine.h>
  #include <arch/machine/hardware.h>
@@ -645,6 +837,21 @@ index f8dac15c3..ecf11b2fa 100644
 +    word_t old_vbar;
 +    int t_ectlr, t_actlr, t_l2c, t_l2a;
 +    word_t midr = getProcessorID();
++
++    /* AIOS ASID-generation prep (project_stall_hunt / docs/NEXT_20260621_asid_generation):
++     * confirm the HARDWARE ASID width before recycling hw asids by generation. TCR_EL1.AS
++     * (bit 36): 0 => 8-bit ASIDs (only 255 hw asids => frequent generation wraps), 1 =>
++     * 16-bit (65535 hw asids => wraps ~never). The elfloader sets TCR_ASID16 (mmu.S), so we
++     * expect AS=1 -> AIOS_HWASID_MAX=0xFFFF. TCR_EL1 is architectural and readable at EL1
++     * (Pi non-hyp) and EL2 (QEMU hyp), so this prints on BOTH builds and is core-agnostic
++     * (printed before the A72-only guard below). */
++    {
++        word_t tcr_el1 = 0;
++        asm volatile("mrs %0, tcr_el1" : "=r"(tcr_el1));
++        int as = (int)((tcr_el1 >> 36) & 1);
++        printf("[ASIDGEN] TCR_EL1=%"SEL4_PRIx_word" AS=%d (%d-bit hw ASID)\n",
++               tcr_el1, as, as ? 16 : 8);
++    }
 +
 +    /* Only meaningful on the Cortex-A72 (part 0xD08); these IMP-DEF encodings
 +     * differ on other cores. Skip elsewhere so the probe is safe everywhere. */
