@@ -75,10 +75,16 @@
 /* Shared in the root vspace: core-0 liveness stamp (written by the core-0 heartbeat
  * thread, read by the core-1 watchdog). 64-bit aligned -> atomic read/write on A72. */
 volatile uint64_t g_core0_hb_tick;
-volatile int      g_wd_enabled = 0;     /* default-OFF: both threads park (no busy-loop). Enable
-                                         * via /proc/watchdog.1. Off-by-default keeps the QEMU gate
-                                         * + the shipped board's core-0/1 load unperturbed; the
-                                         * kernel timer-mask on core 1 is harmless while parked. */
+volatile int      g_wd_enabled = 1;     /* v0.4.284 default-ON (unattended production): the
+                                         * idle-teardown freeze is confirmed fabric-FUNDAMENTAL
+                                         * (idle->wake, not curable in software -- session-7
+                                         * localization), so the standing posture is SURVIVE +
+                                         * report out-of-band + auto-recover. Both threads run from
+                                         * boot; the core-1 watchdog is timer-masked + pure
+                                         * userspace so it stays alive through a core-0 stall.
+                                         * Disable via /proc/watchdog.0. (On QEMU this only adds a
+                                         * busy core-1 vCPU -> a host-load timing shed in the gate,
+                                         * not a real-board regression -- same artifact as fabwarm.) */
 volatile uint64_t g_wd_stalls;          /* count of detected core-0 stalls */
 volatile uint64_t g_wd_worst_ms;        /* worst detected stall duration */
 volatile uint64_t g_wd_last_ms;         /* most recent detected stall duration */
@@ -305,8 +311,19 @@ void watchdog_start(void)
     sel4utils_start_thread(&wd, wd_watchdog_fn, NULL, NULL, 1);
     aios_acct_register("core1_wd", wd.tcb.cptr);
 
-    printf("[watchdog] MVD-1 available (default-OFF): core-0 heartbeat + core-%d timer-masked watchdog; /proc/watchdog.1 to enable\n",
-           WD_CORE);
+    /* v0.4.284: default-ON PM HW-watchdog auto-recovery on real HW (the PM block is mapped only
+     * on the Pi; dev_pm_vaddr is NULL on QEMU -> stays disarmed there). A normal ~32s freeze keeps
+     * core 1 petting (no reset); a TOTAL cluster wedge stops the petting -> the SoC auto-resets in
+     * ~63s. The box no longer goes silently dark unattended. Disable via /proc/watchdog.hwdog.0. */
+    if (dev_pm_vaddr) {
+        wd_pm_arm();
+        g_hwdog_armed = 1;
+        arch_dsb();
+    }
+
+    printf("[watchdog] MVD-1 DEFAULT-ON (unattended production): core-0 heartbeat + core-%d "
+           "timer-masked watchdog%s; /proc/watchdog.0 to disable\n",
+           WD_CORE, g_hwdog_armed ? " + PM hwdog auto-reset ARMED" : " (hwdog n/a -- no PM block)");
 }
 
 /* #2: /proc/laststall -- serial-independent view of the most recent detected stall (the
