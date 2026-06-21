@@ -20,12 +20,14 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   stays a MAJOR OPEN CONCERN ([[feedback_stall_open_concern]]) -- a MEASUREMENT step toward the
   architectural fix, NOT a cure.** Board = v0.4.289 build 2811 at 192.168.0.8 (localization v0.4.286 +
   TWO keep-warm cure attempts v0.4.287/288 BOTH REFUTED + the v0.4.289 CIRCUMVENTION that WORKS). Commits
-  `06f7b37` + `c17f25e` + `5b4f05c` + `828eab0` (+ the v0.4.289 commit) on `main` (Bryan pushes).
-  **ALL traffic-based prevention exhausted (DMA/coherent/Device/cacheable). The cure PIVOTED to
-  KERNEL-REDESIGN CIRCUMVENTION -- and the first one WORKS: the sibling-timer-mask (v0.4.289) stops a
-  1-core wedge from cascading into a cluster freeze.** Board still stalls (core 0 still wedges; box still
-  net-unresponsive -- net is on core 0); watchdog+hwdog default-on survive; netconsole wedges under churn
-  (power-cycle to
+  `06f7b37` + `c17f25e` + `5b4f05c` + `828eab0` + `e899ac8` + `5a929d1` on `main` (Bryan pushes).
+  **ALL traffic-based prevention exhausted (DMA/coherent/Device/cacheable) AND the timeout-bound lead is
+  closed (no ARM register; silicon force-complete). The cure PIVOTED to KERNEL-REDESIGN CIRCUMVENTION --
+  the sibling-timer-mask (v0.4.289) stops a 1-core wedge cascading into a cluster freeze (cluster survives,
+  box still net-unresponsive -- all work on core 0).** Board freshly POWER-CYCLED (clean v0.4.289;
+  sibling-timer-mask ON, watchdog+hwdog ON; the netconsole listener-fix `5a929d1` is committed but NOT yet
+  live -- re-deploy it first, see the NEXT bullet + the session-9 seed). The stall still wedges core 0;
+  netconsole wedges under churn (the real mode is likely FORK-EXHAUSTION -- see NEXT) (power-cycle to
   recover).
   Full detail + interpretation matrix + HW result: `docs/NEXT_20260621_stall_session8_localize.md`.
   - **HW RESULT (DECISIVE, 10+ stalls): core 0 ALWAYS `iovf=0`** (wedged on ONE instruction -- retired
@@ -124,12 +126,24 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
     user-responsiveness blocked (coresched wedges the Pi) / infeasible (fine-grained-locking BKL removal =
     2+yr proof rewrite). WHAT STANDS: decisive LOCALIZATION + the SIBLING-TIMER-MASK circumvention (cluster
     survives a 1-core wedge) + MVD-1 (survive/report/auto-reset = the user-responsiveness ceiling). The one
-    remaining UNBLOCKED productive item is **MITIGATION POLISH (seed lead #5): watchdog-driven
-    netconsole/getty auto-recovery** so the box is truly unattended (netconsole wedges under churn today ->
-    power-cycle). Long-shots only: a VPU-firmware/config.txt fabric-timeout knob (undocumented). The stall
-    STAYS A MAJOR OPEN CONCERN ([[feedback_stall_open_concern]]) -- never "solved" -- but is now fully
-    characterized + thoroughly mapped. To re-run any HW A/B: power-cycle, `sercap /tmp/x.log`, board on
-    v0.4.289 (or `pi_flash.py --build`), `pingmon` + `netstall --idle 30 --trials 10`, grep [STAGECP]. <<<**
+    remaining UNBLOCKED productive item is **MITIGATION POLISH (seed lead #5)**, started this session:
+    - **netconsole listener self-recovery COMMITTED (`5a929d1`), NOT yet live on the board.** netconsole now
+      rebuilds its listening socket after N consecutive accept() failures (+ exits to a getty respawn if the
+      rebuild fails) + fixes a latent busy-spin. In `build-04/sbase/netconsole` (aios-cc). **Re-deploy it
+      first next session:** `pi_deploy.py build-04/sbase/netconsole /bin/netconsole --reboot` on a FRESH
+      board (the last deploy was incomplete -- see below).
+    - **KEY INSIGHT (re-frames lead #5): the real "netconsole wedges under churn" mode is likely
+      FORK-EXHAUSTION, not listener corruption.** Hammering netconsole (each cmd forks a `dash`) + a deploy
+      pushed the box past the graceful fork ceiling and it did NOT reap back -- every cmd returned
+      `[netcon: fork failed]` persistently, and a fork-exhausted box can't reboot itself (reboot needs fork)
+      -> physical power-cycle. So the listener fix addresses a DIFFERENT mode; the HIGH-VALUE mitigation
+      target is the FORK-REAPING path under churn (why forks don't reap after a connection storm).
+    Long-shots only: a VPU-firmware/config.txt fabric-timeout knob (undocumented). The stall STAYS A MAJOR
+    OPEN CONCERN ([[feedback_stall_open_concern]]) -- never "solved" -- but is now fully characterized +
+    thoroughly mapped. **>>> FULL session-9 seed (paste-ready) + ranked next leads:
+    `docs/NEXT_20260621_stall_session9_seed.md`. <<<** To re-run any HW A/B: power-cycle, `sercap /tmp/x.log`,
+    board on v0.4.289 (or `pi_flash.py --build`), `pingmon` + `netstall --idle 30 --trials 10`; do NOT
+    over-probe netconsole (it fork-exhausts -- use aios_nc.py held connections, pace probes).
   - Kernel diff in `deps/patches/seL4-kernel.patch` (1532 lines). KEPT: ASID-gen + coresched S1/S2 +
     watchdog default-on + [TLBISTALL]/[DSBSTALL]/[STAGECP] (now with PMU overflow flags + kent_lag)
     profilers + MVD-1.
