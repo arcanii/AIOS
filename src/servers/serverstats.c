@@ -70,11 +70,12 @@ static uint64_t now_us(void) {
     return cnt * 1000000ULL / freq;
 }
 
+/* session-11: BLOCK on the system-timer service instead of yield-spinning. The old
+ * yield loop kept core 0 busy for the whole period, churning the cache (per-yield
+ * kernel-scheduler footprint) and evicting blocked threads' resume lines -> the stall.
+ * aios_timer_sleep_us falls back to the yield-spin when the timer is not armed (QEMU). */
 static void probe_sleep(uint32_t sec) {
-    uint64_t target = now_us() + (uint64_t)sec * 1000000ULL;
-    while (now_us() < target) {
-        seL4_Yield();
-    }
+    aios_timer_sleep_us((uint64_t)sec * 1000000ULL);
 }
 
 static void ping_one(srv_t *s) {

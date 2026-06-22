@@ -548,6 +548,19 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
             && path[3] == 's' && path[4] == 'h' && path[5] == '\0') {
         /* v0.4.188: /proc/flush -- periodic write-back flusher stats */
         w = flush_server_format(buf, bufsize);
+    } else if (path[0] == 't' && path[1] == 'i' && path[2] == 'm'
+            && path[3] == 'e' && path[4] == 'r' && path[5] == 's'
+            && path[6] == 'l' && path[7] == 'e' && path[8] == 'e' && path[9] == 'p') {
+        /* session-11: /proc/timersleep[.0|.1] -- gate whether newly-spawned procs get the
+         * timer cap (Phase-2 userspace nanosleep BLOCK vs yield). Default 0; .1 to A/B. */
+        int tw = timersleep_cmd(path + 10, buf, bufsize);
+        if (tw < 0) return -1;
+        w = tw;
+    } else if (path[0] == 't' && path[1] == 'i' && path[2] == 'm'
+            && path[3] == 'e' && path[4] == 'r' && path[5] == '\0') {
+        /* session-11: /proc/timer -- system-timer blocking-sleep service stats (the HW
+         * canary: wakes climbing + active bounded => the IRQ fires and replies). */
+        w = timer_server_format(buf, bufsize);
     } else if (path[0] == 'c' && path[1] == 'o' && path[2] == 'w'
             && path[3] == '\0') {
         /* v0.4.122: /proc/cow -- COW per-frame refcount stats (Phase 2 Step 2) */

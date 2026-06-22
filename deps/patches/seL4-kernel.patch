@@ -381,29 +381,42 @@ index 96a9ea30c..275fdfc6d 100644
  #ifdef ARM_CP14_SAVE_AND_RESTORE_NATIVE_THREADS
      restore_user_debug_context(NODE_STATE(ksCurThread));
 diff --git a/src/arch/arm/64/idle.S b/src/arch/arm/64/idle.S
-index c47710bcb..5ebfba6fc 100644
+index c47710bcb..67cbe70f2 100644
 --- a/src/arch/arm/64/idle.S
 +++ b/src/arch/arm/64/idle.S
-@@ -9,6 +9,34 @@
+@@ -8,7 +8,47 @@
+ 
  .section .text, "ax"
  
++/* session-11 Part C: WFI is now a GATED option, DEFAULT OFF (busy-idle yield-hint).
++ *
++ * History: WFI was removed because, ON ITS OWN, it deepened the A72 ACE-snoop
++ * quiescence (ACINACTM, TRM 2.4) and made the BCM2711 idle->wake fabric stall WORSE:
++ * the first post-idle cold fetch reaches the parked SCB fabric and hangs ~32.4s.
++ * Every CPU-side keep-warm was REFUTED on HW (fabwarm/corewarm/beacon/dsb-less tlbi/
++ * tlbi+dsb ish all stalled identically) -- no CPU traffic holds the external snoop
++ * interface active.
++ *
++ * New (s11) understanding: the wedge is a COLD L1I/L2 refill of a BLOCKED thread's
++ * RESUME LINE after idle (localized register-exact, s10). The principled cure is the
++ * BLOCKING-SLEEP work (serverstats/flush/nanosleep/xhci stop yield-spinning) so core 0
++ * truly idles and STOPS EVICTING that resume line -> at wake the fetch HITS L2 and never
++ * touches the parked fabric. A cache hit is independent of HOW DEEPLY the fabric quiesced,
++ * so WITH the cure active WFI should be SAFE (and saves power). But this is a HYPOTHESIS:
++ * if deep WFI sleep were to lose L2 (A72 L2 should retain through WFI) the stall returns.
++ * So: test busy-idle FIRST (default), enable WFI (-DAIOS_IDLE_WFI=1, edit below) only
++ * AFTER the cure is HW-confirmed. AIOS_SIBLING_TIMER_MASK stays on (keeps secondaries here). */
++#ifndef AIOS_IDLE_WFI
++#define AIOS_IDLE_WFI 0
++#endif
  BEGIN_FUNC(idle_thread)
 -    1: wfi
-+    /* Busy idle (yield hint), NO WFI. The BCM2711 exec-teardown TLBI/DVM stall
-+     * -- a single tlbi+dsb hanging ~32.4s on a FIXED SoC fabric watchdog after
-+     * the A72 ACE snoop interface quiesces (ACINACTM, TRM 2.4) -- is NOT cured
-+     * here. The profiler (build 2638) proved busy-idle still stalls, and every
-+     * CPU-side keep-warm was REFUTED on HW: fabwarm (device read), corewarm +
-+     * beacon (cacheable cross-core RMW), dsb-less tlbi, and tlbi+dsb ish (the
-+     * Linux-exact pattern) ALL stalled identically. No CPU-generated traffic
-+     * holds the external snoop interface active -- cache snoops stay intra-
-+     * cluster (SCU) and never reach the ACE port; warming needs a coherent
-+     * external bus-master (DMA), which Pi4 peripherals do not provide. WFI is
-+     * kept OFF only because it deepened the quiescence (made the stall worse).
-+     * The real cure is the AIOS-vs-Linux coherency/retention-config diff; see
-+     * docs/NEXT_20260620_dvm_heartbeat.md. */
 +1:
-+    yield
++#if AIOS_IDLE_WFI
++    wfi                            /* low-power idle; wakes on IRQ (safe under the s11 cure) */
++#else
++    yield                          /* busy-idle hint (default; the cure-validated path) */
++#endif
 +    /* AIOS per-core liveness heartbeat (diagnostic): stamp CNTPCT into this core's padded
 +       64-byte slot (aios_core_heartbeat, errata.c) every idle iteration. The TLBI-stall
 +       profiler then reports, after a core-0 teardown stall, whether THIS core kept running

@@ -32,5 +32,6 @@ extern volatile uint32_t *dev_v3d_vaddr;     /* 0xFEC00000, 8 pages (V3D hub + c
 extern volatile uint32_t *dev_v3d_asb_vaddr; /* 0xFEC11000, 1 page (RPiVid ASB power bridges) */
 extern volatile uint32_t *dev_armlocal_vaddr; /* 0xFF800000, 1 page (ARM-local; AXI_QUIET_TIME @ +0x30). Best-effort: NULL if not a device untyped */
 extern volatile uint32_t *dev_dma_vaddr;     /* 0xFE007000, 1 page (BCM2711 legacy DMA controller; session-8 DRAM keep-warm). Best-effort: NULL if not a device untyped */
+extern volatile uint32_t *dev_systimer_vaddr; /* 0xFE003000, 1 page (BCM2711 system timer: 1MHz free-running CLO/CHI, compare C1/C3). session-11 blocking-sleep cure. RPi4-only; NULL on QEMU */
 
 #endif /* AIOS_DEVICE_MAP_H */

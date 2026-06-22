@@ -18,6 +18,7 @@ seL4_CPtr pipe_ep = 0;
 seL4_CPtr net_ep = 0;
 seL4_CPtr disp_ep = 0;
 seL4_CPtr crypto_ep = 0;
+seL4_CPtr timer_ep = 0;   /* session-11: set from the "t<slot>:" cwd token in __wrap_main */
 
 char aios_cwd[256] = "/";
 char aios_progpath[128];  /* v0.4.78: stored for /proc/self/exe */
@@ -834,6 +835,17 @@ int __wrap_main(int argc, char **argv) {
                 _ubuf[_ui++] = '0' + uid%10;
                 _ubuf[_ui] = 0;
                 env_add(_ubuf);
+            }
+            /* session-11: optional "t<slot>:" token = this process's timer-service cap slot
+             * (conveyed by the spawner when /proc/timersleep is on). Backward compatible:
+             * absent -> timer_ep stays 0 -> nanosleep yield-falls-back. Parsed BEFORE the
+             * numeric spipe:rpipe: token since 't' is non-numeric (no ambiguity). */
+            if (*s == 't') {
+                s++;
+                seL4_CPtr tslot = 0;
+                while (*s >= '0' && *s <= '9') { tslot = tslot * 10 + (seL4_CPtr)(*s - '0'); s++; }
+                if (*s == ':') s++;
+                timer_ep = tslot;
             }
             /* Check for optional spipe:rpipe: before /path */
             if (*s >= '0' && *s <= '9') {

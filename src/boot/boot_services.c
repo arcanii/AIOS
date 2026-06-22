@@ -288,6 +288,12 @@ void boot_start_services(vka_object_t *fault_ep) {
         AIOS_LOG_INFO("Crypto server started");
     }
 
+    /* session-11: system-timer blocking-sleep service. MUST init before serverstats/flush
+     * so timer_ep_cap is published before they (optionally) Call it. On QEMU the MMIO is
+     * absent -> stays in yield-fallback (aios_timer_ready=0); harmless. The stall cure: lets
+     * core 0 idle instead of yield-spinning, so blocked threads' resume lines stay warm. */
+    timer_server_init();
+
     /* v0.4.121: server health probe -- pings each in-process server every
      * few seconds and tracks last-ok / latency. Surfaced via /proc/serverstats. */
     serverstats_init();

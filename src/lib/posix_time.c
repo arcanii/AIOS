@@ -19,6 +19,23 @@ static long aios_wall_offset(void) {
     return aios_wall_offset_cache;
 }
 
+/* session-11 (the stall cure): BLOCK on the root system-timer service for one chunk of up
+ * to `us` microseconds, instead of yield-spinning. Returns 1 if it blocked via the timer,
+ * 0 if this process has no timer cap (caller yield-falls-back -- QEMU, or /proc/timersleep
+ * off at spawn). Why this matters: the old yield-spin kept core 0 busy for the whole sleep
+ * (each seL4_Yield a syscall, AND aios_sig_check is an IPC per iteration), churning the
+ * cache and evicting blocked threads' resume lines -> the ~32.4s stall. Blocking lets core 0
+ * idle so those lines stay warm. Chunked (1s) so a signal still interrupts within ~1s.
+ * TIMER_SLEEP opcode == 1 (root_shared.h); hardcoded like PIPE_GET_TIME above since the
+ * POSIX lib does not include the root header. */
+#define AIOS_TIMER_CHUNK_US 1000000ULL
+static int aios_timer_block_us(uint64_t us) {
+    if (!timer_ep) return 0;
+    seL4_SetMR(0, (seL4_Word)us);
+    seL4_Call(timer_ep, seL4_MessageInfo_new(1 /* TIMER_SLEEP */, 0, 0, 1));
+    return 1;
+}
+
 long aios_sys_clock_gettime(va_list ap) {
     int clk_id = va_arg(ap, int);
     struct timespec *tp = va_arg(ap, struct timespec *);
@@ -75,8 +92,13 @@ long aios_sys_nanosleep(va_list ap) {
     __asm__ volatile("mrs %0, cntpct_el0" : "=r"(target));
     target += (uint64_t)req->tv_sec * freq + (uint64_t)req->tv_nsec * freq / 1000000000ULL;
     uint64_t now;
-    do {
-        seL4_Yield();
+    for (;;) {
+        __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
+        if (now >= target) break;
+        /* session-11: BLOCK (chunked) on the timer service rather than yield-spin. */
+        uint64_t left_us = (target - now) * 1000000ULL / freq;
+        uint64_t chunk = left_us < AIOS_TIMER_CHUNK_US ? left_us : AIOS_TIMER_CHUNK_US;
+        if (!aios_timer_block_us(chunk)) seL4_Yield();
         /* Signal Phase 4: EINTR if signal delivered during sleep */
         if (aios_sig_check() > 0) {
             __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
@@ -89,8 +111,7 @@ long aios_sys_nanosleep(va_list ap) {
             }
             return -EINTR;
         }
-        __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
-    } while (now < target);
+    }
     if (rem) { rem->tv_sec = 0; rem->tv_nsec = 0; }
     return 0;
 }
@@ -136,8 +157,13 @@ long aios_sys_clock_nanosleep(va_list ap) {
     }
 
     uint64_t now;
-    do {
-        seL4_Yield();
+    for (;;) {
+        __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
+        if (now >= target) break;
+        /* session-11: BLOCK (chunked) on the timer service rather than yield-spin. */
+        uint64_t left_us = (target - now) * 1000000ULL / freq;
+        uint64_t chunk = left_us < AIOS_TIMER_CHUNK_US ? left_us : AIOS_TIMER_CHUNK_US;
+        if (!aios_timer_block_us(chunk)) seL4_Yield();
         if (aios_sig_check() > 0) {
             __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
             if (rem && now < target) {
@@ -149,8 +175,7 @@ long aios_sys_clock_nanosleep(va_list ap) {
             }
             return -EINTR;
         }
-        __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
-    } while (now < target);
+    }
     if (rem) { rem->tv_sec = 0; rem->tv_nsec = 0; }
     return 0;
 }
@@ -165,11 +190,16 @@ long __aios_nanosleep(const struct timespec *req, struct timespec *rem) {
     uint64_t start, now, freq;
     __asm__ volatile("mrs %0, cntpct_el0" : "=r"(start));
     __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+    if (freq == 0) freq = 62500000;
     uint64_t target = start + (freq * ms) / 1000;
-    do {
-        seL4_Yield();
+    for (;;) {
         __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
-    } while (now < target);
+        if (now >= target) break;
+        /* session-11: BLOCK (chunked) on the timer service rather than yield-spin. */
+        uint64_t left_us = (target - now) * 1000000ULL / freq;
+        uint64_t chunk = left_us < AIOS_TIMER_CHUNK_US ? left_us : AIOS_TIMER_CHUNK_US;
+        if (!aios_timer_block_us(chunk)) seL4_Yield();
+    }
     if (rem) { rem->tv_sec = 0; rem->tv_nsec = 0; }
     return 0;
 }

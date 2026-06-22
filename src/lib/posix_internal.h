@@ -225,6 +225,7 @@ extern seL4_CPtr pipe_ep;
 extern seL4_CPtr net_ep;
 extern seL4_CPtr disp_ep;
 extern seL4_CPtr crypto_ep;
+extern seL4_CPtr timer_ep;   /* session-11: root system-timer blocking-sleep service (0 = yield-fallback) */
 
 extern char aios_cwd[256];
 extern char aios_progpath[128];

@@ -47,11 +47,11 @@ static uint64_t flush_now_us(void) {
     return cnt * 1000000ULL / freq;
 }
 
+/* session-11: BLOCK on the system-timer service rather than yield-spin for 30s (the
+ * old loop churned the cache the whole period -> evicted resume lines -> the stall).
+ * aios_timer_sleep_us yield-falls-back when the timer is not armed (QEMU). */
 static void flush_sleep(uint32_t sec) {
-    uint64_t target = flush_now_us() + (uint64_t)sec * 1000000ULL;
-    while (flush_now_us() < target) {
-        seL4_Yield();
-    }
+    aios_timer_sleep_us((uint64_t)sec * 1000000ULL);
 }
 
 static void flush_thread_fn(void *a, void *b, void *c) {

@@ -424,4 +424,23 @@ int  serverstats_format(char *buf, int bufsize);
 void flush_server_init(void);
 int  flush_server_format(char *buf, int bufsize);
 
+/* session-11: BCM2711 system-timer service for BLOCKING timed waits (the stall cure).
+ * A dedicated core-0 server thread binds the timer compare-1 IRQ (GIC SPI INTID 97) to
+ * its TCB and parks sleepers' reply caps (seL4_CNode_SaveCaller) in a deadline queue,
+ * replying at the deadline -- so a "sleep" BLOCKS instead of seL4_Yield-spinning, letting
+ * core 0 idle and stop evicting blocked threads' resume lines. RPi4-only: arms only when
+ * the system-timer MMIO + IRQ bind succeed (NULL/absent on qemu-arm-virt), else clients
+ * fall back to the old yield-spin via aios_timer_sleep_us(). src/servers/timer_server.c. */
+#define TIMER_SLEEP   1            /* request label on timer_ep_cap; MR0 = relative delay (microseconds) */
+extern seL4_CPtr     timer_ep_cap; /* request endpoint (root threads Call directly; 0 until armed) */
+extern volatile int  aios_timer_ready; /* 1 once the system timer + IRQ are armed (else yield-fallback) */
+void timer_server_init(void);
+void aios_timer_sleep_us(uint64_t us); /* block (or yield-fallback) for us microseconds */
+int  timer_server_format(char *buf, int bufsize);
+/* /proc/timersleep[.0|.1] -- gate whether NEWLY-spawned user procs receive the timer cap
+ * (so their nanosleep BLOCKS vs yield-spins). DEFAULT 0: flash, validate the Phase-1 canary
+ * (/proc/timer ready=1), THEN .1 to activate Phase-2 + netstall-A/B it on the SAME image. */
+extern volatile int g_timer_userspace_enable;
+int timersleep_cmd(const char *args, char *buf, int bufsize);
+
 #endif /* AIOS_ROOT_SHARED_H */

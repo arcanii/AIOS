@@ -181,6 +181,7 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/servers/dma_warm.c
     ${AIOS_ROOT}/src/servers/watchdog.c
     ${AIOS_ROOT}/src/servers/flush_server.c
+    ${AIOS_ROOT}/src/servers/timer_server.c
     ${AIOS_ROOT}/src/boot/spawn_util.c
     ${AIOS_ROOT}/src/boot/boot_fs_init.c
     ${AIOS_ROOT}/src/lib/vka_audit.c

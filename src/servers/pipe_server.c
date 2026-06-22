@@ -2079,7 +2079,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
 
             char s_ser[16], s_fs[16], s_thr[16], s_auth[16], s_pip[16];
             char s_net[16], s_disp[16], s_crypto[16];
-            char cwd[64];
+            char cwd[160];   /* session-11: widened for the optional "t<slot>:" timer token */
             snprintf(s_ser, 16, "%lu", (unsigned long)cs);
             snprintf(s_fs, 16, "%lu", (unsigned long)cf);
             snprintf(s_thr, 16, "%lu", (unsigned long)ct);
@@ -2089,13 +2089,24 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             snprintf(s_disp, 16, "%lu", (unsigned long)cd);
             snprintf(s_crypto, 16, "%lu", (unsigned long)(crypto_ep_cap ? sel4utils_copy_cap_to_process(&active_procs[ci].proc, &vka, crypto_ep_cap) : 0));
 
+            /* session-11: convey the system-timer cap to the child as a "t<slot>:" token in the
+             * cwd string so its nanosleep BLOCKS instead of yield-spinning (the stall cure).
+             * Gated by /proc/timersleep AND the timer being armed; otherwise ttok stays empty
+             * and the cwd string is byte-identical to pre-s11 (child yield-falls-back). */
+            char ttok[24];
+            ttok[0] = 0;
+            if (g_timer_userspace_enable && aios_timer_ready && timer_ep_cap) {
+                seL4_CPtr c_timer = sel4utils_copy_cap_to_process(proc, &vka, timer_ep_cap);
+                if (c_timer) snprintf(ttok, sizeof ttok, "t%lu:", (unsigned long)c_timer);
+            }
+
             if (exec_stdout_pipe >= 0 || exec_stdin_pipe >= 0) {
                 int sp_id = exec_stdout_pipe < 0 ? 99 : exec_stdout_pipe;
                 int rp_id = exec_stdin_pipe < 0 ? 99 : exec_stdin_pipe;
-                snprintf(cwd, 64, "%u:%u:%d:%d:%s",
-                         old_uid, old_gid, sp_id, rp_id, child_cwd);
+                snprintf(cwd, sizeof cwd, "%u:%u:%s%d:%d:%s",
+                         old_uid, old_gid, ttok, sp_id, rp_id, child_cwd);
             } else {
-                snprintf(cwd, 64, "%u:%u:%s", old_uid, old_gid, child_cwd);
+                snprintf(cwd, sizeof cwd, "%u:%u:%s%s", old_uid, old_gid, ttok, child_cwd);
             }
 
             char *spawn_argv[12 + MAX_USER_ARGV];
