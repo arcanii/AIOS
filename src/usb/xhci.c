@@ -1114,6 +1114,12 @@ static void handle_port_changes(void) {
  * MSI controller. The seL4 IRQHandler + notification are bound in xhci_setup_irq during
  * single-threaded boot. */
 static volatile int xhci_irq_mode = 0;       /* 0 = poll (default), 1 = block on IRQ */
+/* session-11 Phase 3: poll interval (ms) for the TIMER-DRIVEN poll path. The RPi4 has no
+ * usable xHCI IRQ (MSI unavailable), so instead of a continuous yield-spin (which churns the
+ * cache + evicts blocked threads' resume lines -> the ~32.4s stall), the idle loop BLOCKS on
+ * the system timer between event-ring drains -> core 0 idles. Tunable live via
+ * /proc/xhci.poll.<hexMs> (e.g. .poll.14 = 20ms, .poll.64 = 100ms). */
+static volatile uint32_t g_xhci_poll_ms = 20;
 static int          xhci_irq_armed = 0;       /* controller INTE enabled yet */
 static seL4_CPtr    xhci_irq_ntfn = 0;        /* notification the IRQ signals (0 = unbound) */
 static seL4_CPtr    xhci_irq_handler = 0;     /* seL4 IRQHandler cap */
@@ -1251,7 +1257,13 @@ void xhci_kbd_driver_fn(void *a, void *b, void *c) {
                 xhci_irq_count++;
             }
         } else {
-            seL4_Yield();
+            /* session-11 Phase 3 (pragmatic): no usable xHCI IRQ on RPi4 -> BLOCK on the
+             * system timer between drains rather than yield-spin continuously (the spin
+             * churns the cache + evicts the blocked netconsole resume line -> the stall).
+             * Collapses the continuous spin to a ~g_xhci_poll_ms poll so core 0 idles.
+             * aios_timer_sleep_us yield-falls-back when the timer is not armed -- so this is
+             * behaviour-identical to the old seL4_Yield() on QEMU / before the timer arms. */
+            aios_timer_sleep_us((uint64_t)g_xhci_poll_ms * 1000);
         }
     }
 }
@@ -2375,6 +2387,12 @@ int xhci_diag_cmd(const char *args, char *buf, int bufsize) {
         if (p[0] == 'a' && p[1] == 'u' && p[2] == 't' && p[3] == 'o' && p[4] == '.') {
             g_msc_automount = (int)(xdiag_hex(p + 5) & 1);   /* gate runtime hotplug mount */
             return snprintf(buf, bufsize, "xHCI: USB-MSC automount = %d\n", g_msc_automount);
+        }
+        if (p[0] == 'p' && p[1] == 'o' && p[2] == 'l' && p[3] == 'l' && p[4] == '.') {
+            uint32_t ms = xdiag_hex(p + 5);                  /* session-11 Phase 3: timer-poll interval (hex ms) */
+            if (ms < 1) ms = 1;
+            g_xhci_poll_ms = ms;
+            return snprintf(buf, bufsize, "xHCI: timer-poll interval = %u ms (idle path; lower=responsive, higher=more idle)\n", g_xhci_poll_ms);
         }
         if (p[0] == 'h' && p[1] == 'u' && p[2] == 'b' && p[3] == '.') {
             g_hub_hotplug = (int)(xdiag_hex(p + 4) & 1);     /* Path B kill switch (default on) */

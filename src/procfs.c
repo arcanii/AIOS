@@ -556,6 +556,23 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         int tw = timersleep_cmd(path + 10, buf, bufsize);
         if (tw < 0) return -1;
         w = tw;
+    } else if (path[0] == 'r' && path[1] == 'o' && path[2] == 'o' && path[3] == 't'
+            && path[4] == 'p' && path[5] == 'o' && path[6] == 'l' && path[7] == 'l') {
+        /* session-11: /proc/rootpoll[.<hexMs>] -- RPi4 root mini-UART timer-poll interval.
+         * The root event loop is the dominant core-0 spinner; timer-blocking it lets core 0
+         * idle. Higher = more idle (fewer wakes), lower = more responsive serial console. */
+        if (path[8] == '.') {
+            uint32_t ms = 0; const char *q = path + 9;
+            while (*q) { char c = *q++; uint32_t d;
+                if (c >= '0' && c <= '9') d = c - '0';
+                else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+                else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+                else break; ms = ms * 16 + d; }
+            if (ms < 1) ms = 1;
+            g_root_poll_us = ms * 1000;
+        }
+        w = snprintf(buf, bufsize, "rootpoll: %u us (%u ms) -- RPi4 mini-UART timer-poll (core-0 idle path)\n",
+                     g_root_poll_us, g_root_poll_us / 1000);
     } else if (path[0] == 't' && path[1] == 'i' && path[2] == 'm'
             && path[3] == 'e' && path[4] == 'r' && path[5] == '\0') {
         /* session-11: /proc/timer -- system-timer blocking-sleep service stats (the HW

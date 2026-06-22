@@ -135,6 +135,7 @@ seL4_CPtr disp_wake_ntfn_cap = 0;
 seL4_CPtr crypto_ep_cap = 0;
 seL4_CPtr timer_ep_cap = 0;          /* session-11: system-timer blocking-sleep service (0 until armed) */
 volatile int aios_timer_ready = 0;   /* 1 once the BCM2711 system timer + IRQ 97 are armed */
+volatile uint32_t g_root_poll_us = 20000; /* session-11: RPi4 mini-UART poll interval (timer-blocked; /proc/rootpoll.<hexMs>) */
 static seL4_CPtr uart_irq_cap = 0;
 static seL4_CPtr main_ntfn_cap = 0;
 static int irq_uart_active = 0;
@@ -609,7 +610,21 @@ int main(int argc, char *argv[]) {
                 seL4_Wait(main_ntfn_cap, NULL);  /* FIFO empty -- sleep */
             }
         } else {
-            seL4_Yield();  /* fallback: busy-poll */
+#ifdef PLAT_RPI4
+            /* session-11 cure: the RPi4 mini-UART is polling-mode (no usable IRQ -- shared
+             * with AUX SPI), so irq_uart_active=0 and this fallback would yield-spin
+             * CONTINUOUSLY -- the DOMINANT core-0 churner that keeps idle_lag=-1 (core 0
+             * never reaches idle.S) and evicts blocked threads' resume lines (the ~32.4s
+             * stall). Instead poll the mini-UART but BLOCK on the system timer between polls
+             * so core 0 actually idles. aios_timer_sleep_us yield-falls-back when the timer is
+             * not armed -- identical to the old spin then. */
+            if (uart && (uart[MU_LSR / 4] & LSR_DATA_READY))
+                seL4_Yield();                          /* data ready -- drain next iter */
+            else
+                aios_timer_sleep_us(g_root_poll_us);   /* idle -- block on the timer */
+#else
+            seL4_Yield();  /* QEMU / non-RPi4: busy-poll (unchanged; the IRQ path is used) */
+#endif
         }
     }
 

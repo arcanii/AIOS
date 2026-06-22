@@ -442,5 +442,8 @@ int  timer_server_format(char *buf, int bufsize);
  * (/proc/timer ready=1), THEN .1 to activate Phase-2 + netstall-A/B it on the SAME image. */
 extern volatile int g_timer_userspace_enable;
 int timersleep_cmd(const char *args, char *buf, int bufsize);
+/* /proc/rootpoll[.<hexMs>] -- RPi4 root mini-UART poll interval (the dominant core-0 spinner
+ * is now timer-blocked between polls so core 0 idles). Read shows current; .<hexMs> sets it. */
+extern volatile uint32_t g_root_poll_us;
 
 #endif /* AIOS_ROOT_SHARED_H */
