@@ -140,4 +140,54 @@ wake the fabric for the I-fetch** (it still hung) -> D-traffic-right-before does
    I-specific PRFM/PLI or `IC`-by-VA of `bc.pc` is a different path worth one test).
 
 The stall STAYS a MAJOR OPEN CONCERN ([[feedback_stall_open_concern]]) -- this LOCALIZES it
-register-exact (the session goal), it does not cure it. Board left on v0.4.291 (splitter), healthy.
+register-exact (the session goal), it does not cure it.
+
+---
+
+# CURE ATTEMPTS (2026-06-22, all HW-tested) -- both viable classes REFUTED
+
+## TEST 1 -- bare-metal cold I-FETCH (silicon-vs-AIOS): INCONCLUSIVE (0ms)
+`experiments/e1_repro` extended to evict a line, idle 30s (busy-spin, 4-core EL2), then JUMP to it
+(cold I-fetch) vs LOAD it (D-load control). **Result: ALL 0ms -- no hang** (raw:
+`experiments/e1_repro/trial5_cold_ifetch.log`). So minimal bare-metal does not reproduce the wedge for
+ANY op incl. the I-fetch -- consistent with s9 (minimal bare-metal likely never reaches the quiesced
+fabric state the full AIOS/VC runtime hits; busy-spin may not park the SCB). Inconclusive on "pure
+silicon"; a genuine-WFI cold-I-fetch (e1+timer-wake, or e3 Linux -- needs an RPi-OS re-flash) would
+settle it. Does NOT block the cure: a warm resume line is a cache HIT regardless.
+
+## KEY REFRAME -- AIOS has NO blocking sleep
+Every "sleep" is a yield busy-wait (`nanosleep` -> yield; `serverstats`/`flush` `probe_sleep` ->
+yield-spin loops; `ssh_*` nanosleep). So core 0 is NEVER idle -- the constant `seL4_Yield` syscalls
+(-> kernel scheduler footprint cycling) + the heavy servers continuously EVICT blocked threads' resume
+lines from L2 during the 30s idle. THAT is the eviction source. => "let core 0 idle" needs building
+timer-notification blocking-sleep infra (a major project, and it would revert the no-WFI mitigation,
+which this session's data suggests was counterproductive -- it never prevented the stall, it just
+churns the cache).
+
+## CURE B -- L2 keep-warm (v0.4.292 + v0.4.293 diag): REFUTED, and it won't converge
+Idea: when a thread blocks, capture its resume-line PA (`AT S1E0R`, vspace current) into a ring; on
+every kernel entry, refresh those PAs in the unified L2 via the physmap (vspace-independent) so the
+resume FETCH hits L2 (no fabric). HW (v0.4.292): NO effect -- 0x44c574 still hung. The v0.4.293
+`[IWARM]` diagnostic showed WHY, decisively:
+- keep-warm RAN (touches 65M, faults=0, 475 captures of OTHER threads) but **`inring=0` for EVERY
+  wedge incl. all 0x44c574** -- the wedging thread's resume line was NEVER captured.
+- **ROOT CAUSE: netconsole blocks via the seL4 FASTPATH** (`fastpath_reply_recv` sets the blocked
+  state directly), which **bypasses `setThreadState`** where the capture hook lives. So the one thread
+  that wedges is never captured -> never kept warm.
+- **2nd wedge site** appeared: `prev=9 this=11` at 0x49d3b0 -- an IN-KERNEL cold access (inst~1900),
+  NOT a resume fetch. Keep-warm structurally can't address it.
+- => the eviction is BROAD (resume lines AND in-kernel handler lines go cold). Even adding a fastpath
+  capture hook (fixes 0x44c574 / site B) leaves site A + likely more -> **whack-a-mole, won't
+  converge.** Raw: `experiments/s10_capture/cure_B_keepwarm_REFUTED_v0.4.292.txt`.
+- Kept default-OFF (`AIOS_IWARM 0`, errata.c) as a documented A/B knob (like fabwarm/dma_warm), with
+  the `[IWARM]` diagnostic intact.
+
+## WHERE THE CURE STANDS -- both viable classes refuted
+1. **Prevent the fabric parking** (every keep-warm, s4-8) -- REFUTED.
+2. **Keep the at-risk lines warm** (s10) -- REFUTED (fastpath bypass + broad eviction -> whack-a-mole).
+The only PRINCIPLED cure left: **stop the broad eviction by letting core 0 actually idle** -- i.e.
+build timer-notification blocking-sleep so the servers wait instead of yield-spin, core 0 reaches a
+quiet idle, nothing gets evicted, the resume fetch hits cache. MAJOR multi-area project (next session).
+Until then: ACCEPT + the strong existing mitigation (sibling-timer-mask cluster-survival + MVD-1
+watchdog/auto-reset). The stall is genuinely fabric/eviction-fundamental in AIOS's no-blocking-sleep
+design. STAYS a MAJOR OPEN CONCERN. Board left on v0.4.294 (keep-warm OFF, all diagnostics kept).

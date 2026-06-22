@@ -17,11 +17,13 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
 * **CURRENT STATE 2026-06-22 (session 10) -- RE-LOCALIZED REGISTER-EXACT ON HW + DECISIVELY ANSWERED:
   the ~32.4s wedge is a COLD INSTRUCTION-CACHE REFILL of the user resume PC (line containing 0x44c574),
   on the `eret`->first-user-fetch path after idle -- an I-SIDE fetch, clocked-but-stalled, deterministic.
-  The TCB-restore `ldp` (D-side) is EXONERATED.** Board on v0.4.291 build 2822 (192.168.0.8, network-
-  deployed + HW-confirmed). The stall stays a MAJOR OPEN CONCERN ([[feedback_stall_open_concern]]) --
-  this LOCALIZES it (the session goal: GET THE ADDRESS, the datum 9 sessions never had), it does NOT
-  cure it. Full data + matrix + next leads: `docs/NEXT_20260622_stall_session10_relocalize.md`; raw
-  captures `experiments/s10_capture/`.
+  The TCB-restore `ldp` (D-side) is EXONERATED. Then BOTH viable cure classes were REFUTED on HW
+  (prevent-park [s4-8] + L2 keep-warm [this session]); the principled cure (blocking-sleep so core 0
+  idles -> no eviction) is a MAJOR next-session project.** Board on **v0.4.294 build 2833** (192.168.0.8;
+  keep-warm OFF, all diagnostics kept; network-deployed + HW-confirmed). The stall stays a MAJOR OPEN
+  CONCERN ([[feedback_stall_open_concern]]) -- this LOCALIZES it (the session goal: GET THE ADDRESS, the
+  datum 9 sessions never had), it does NOT cure it. Full data + matrix + cure attempts:
+  `docs/NEXT_20260622_stall_session10_relocalize.md`; raw captures `experiments/s10_capture/`.
   - **THE ANSWER (2 HW runs, gold A/B = netstall --idle 30 --trials 10 + ping oracle):** Run 1 (v0.4.290
     instrumentation): 3/3 stalls IDENTICAL -- `[STAGECP] core=0 prev=11 this=9` (SITE B, kernel-exit->
     re-entry), `cyovf=1` (CLOCKED, not gated -- the long-inferred "clocked-but-wedged" now MEASURED),
@@ -38,19 +40,36 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
     IMMEDIATELY before the I-fetch did NOT wake the fabric for it (still hung) -> D-traffic-right-before
     doesn't help the I-path (the I-fetch path has its own quiescence; consistent with the keep-warm
     refutations).
-  - **NEXT -- the cure axis, now TARGETED (pick with Bryan):** (1) silicon-vs-AIOS: sharpen
-    `experiments/e1_repro` to evict an I-line, idle (WFI), then JUMP to it (cold I-fetch) -- reproduces
-    ~32.4s bare-metal => silicon I-path property; else AIOS-specific. (2) EVICTION hypothesis (AIOS-
-    specific, testable): the prio-200 yield-spinning servers' cache footprint may evict the user resume
-    code during the 30s idle (Linux has no such idle churn) -> resume fetch cold -> hits parked fabric;
-    test by pinning/locking the resume page in L2 or reducing server cache pressure. (3) I-specific
-    prefetch/PLI/`IC`-by-VA of `bc.pc` before eret (lower odds -- a D-touch didn't help). Carried-over
-    MITIGATION still open: fork-exhaustion auto-recovery (reap_check reap.c:113 + getty circuit-breaker).
-  - **What's built/committed this session (uncommitted on `main`, Bryan pushes):** seL4 errata.c (PMU
-    expansion: mem/l2/l1i + cyovf + L1I_CACHE_REFILL cnt5; `aios_breadcrumb` bc=[regs/pc/ttbr]),
-    c_traps.c (breadcrumb + the stage-13 splitter), fastpath.h (breadcrumb); version v0.4.291; patch
-    regenerated (1651 lines). QEMU gate GREEN at baseline throughout (smp 4/5, socket 8/8, netd 10/10,
-    shmring 25/26). Deployed to the Pi flash-free (mkkernel8 v290) then over-network (pi_flash v291).
+  - **CURE ATTEMPTS (HW-tested) -- BOTH viable classes now REFUTED.** (1) **Test 1 (silicon-vs-AIOS):**
+    `e1_repro` extended to a cold INSTRUCTION fetch after 30s idle (4-core EL2) = **0ms, no hang** (incl.
+    the D-load control). Minimal bare-metal doesn't reproduce ANY op (likely never reaches the quiesced
+    state; busy-spin may not park the SCB) -- inconclusive on pure-silicon, doesn't block the cure
+    (`experiments/e1_repro/trial5_cold_ifetch.log`). (2) **KEY REFRAME: AIOS has NO blocking sleep** --
+    every "sleep" yield-spins, so core 0 never idles; the constant yields (kernel-footprint churn) +
+    heavy servers EVICT blocked threads' resume lines -- THE eviction source. (3) **Cure B = L2
+    keep-warm (v0.4.292/293): REFUTED.** Capture a blocking thread's resume PA (`AT`) + refresh it in L2
+    on every kernel entry (physmap). HW: no effect; the `[IWARM]` diagnostic showed `inring=0` for EVERY
+    wedge (incl. all 0x44c574) despite 65M touches -- **netconsole blocks via the FASTPATH
+    (fastpath_reply_recv), bypassing the setThreadState capture hook** -> the wedging thread is never
+    captured. Plus a 2nd wedge site (`prev=9 this=11` 0x49d3b0, in-kernel cold access, not a resume
+    fetch). => the eviction is BROAD -> targeted keep-warm is whack-a-mole, won't converge. Kept
+    default-OFF (`AIOS_IWARM 0`) as a documented A/B knob + the `[IWARM]` diag
+    (`experiments/s10_capture/cure_B_keepwarm_REFUTED_v0.4.292.txt`).
+  - **WHERE THE CURE STANDS:** prevent-fabric-park (s4-8) REFUTED + keep-warm (s10) REFUTED. The only
+    PRINCIPLED cure left = **stop the broad eviction by letting core 0 actually idle**: build timer-
+    notification blocking-sleep so servers wait instead of yield-spin -> quiet idle -> nothing evicted ->
+    resume fetch hits cache. MAJOR multi-area project (NEXT SESSION); it also reverts the no-WFI
+    mitigation (which this session's data shows was counterproductive). Until then ACCEPT + the strong
+    existing mitigation (sibling-timer-mask cluster-survival + MVD-1 watchdog/auto-reset). Also still
+    open: fork-exhaustion auto-recovery (reap.c:113 + getty circuit-breaker) -- the board fork-exhausted
+    again this session under heavy netstall hammering (power-cycle).
+  - **What's built this session (committed on `main`, Bryan pushes):** seL4 errata.c (PMU expansion
+    mem/l2/l1i + cyovf + L1I cnt5; `aios_breadcrumb`; the stage-13 splitter's `[STAGECP]`; the refuted
+    `AIOS_IWARM` keep-warm + `[IWARM]` diag, default-off), c_traps.c (breadcrumb + splitter), fastpath.h
+    (breadcrumb), thread.c (the keep-warm capture hook, no-op when AIOS_IWARM=0); `e1_repro` cold-I-fetch
+    test. Version **v0.4.294** (keep-warm OFF, diagnostics kept). QEMU gate GREEN at baseline throughout
+    (smp 4/5, socket 8/8, netd 10/10, shmring 25/26). Board left on **v0.4.294**. Commits: localization
+    (59ebc9e) + e1 test (baae1fe) + this wrap-up.
   - **First, a tempting lead CLOSED with evidence (don't re-chase): DVFS / clock transitions are NOT
     the trigger.** `cpu_gov.c:38-50` documents the 33s quantum is identical at arm_freq 600 vs 1000,
     and `docs/NEXT_20260621_stall_session8_localize.md:320` confirms it is identical at **core_freq

@@ -1029,11 +1029,14 @@ index 93eb4d133..d199bd853 100644
      init_plat();
  
 diff --git a/src/arch/arm/machine/errata.c b/src/arch/arm/machine/errata.c
-index f8dac15c3..163971c66 100644
+index f8dac15c3..57f4ec0ea 100644
 --- a/src/arch/arm/machine/errata.c
 +++ b/src/arch/arm/machine/errata.c
-@@ -8,11 +8,556 @@
+@@ -6,13 +6,637 @@
+ 
+ #include <config.h>
  #include <api/types.h>
++#include <machine.h>                  /* paddr_to_pptr (session-10 keep-warm physmap touch) */
  #include <arch/machine.h>
  #include <arch/machine/hardware.h>
 +#include <machine/io.h>
@@ -1389,6 +1392,66 @@ index f8dac15c3..163971c66 100644
 +    aios_bc_pc[core]   = pc;
 +    aios_bc_ttbr[core] = ttbr;
 +}
++
++/* AIOS session-10 CURE ATTEMPT (eviction keep-warm). The ~32.4s wedge is the cold L1I/L2
++ * refill of a BLOCKED thread's resume line after idle: the no-WFI yield-spinning servers churn
++ * the cache for ~30s and evict it, so the resume FETCH misses L2 -> goes to the parked fabric ->
++ * hangs. Fix without preventing the fabric park (which is unpreventable): keep the at-risk lines
++ * IN L2 so the resume fetch HITS L2 (no fabric access). When a thread blocks (setThreadState,
++ * its vspace current), aios_capture_resume() AT-translates its resume PC -> PA into a small ring;
++ * aios_iwarm_touch() (called on EVERY kernel entry, which is frequent under the spinners) reads
++ * those PAs via the kernel physmap -- vspace-independent, and a data read into the UNIFIED L2
++ * keeps the line resident for the later instruction fetch. Touch frequency (many/sec) >> the
++ * ~30s eviction timescale, so the lines never go cold -> the touches are hits (never hang). */
++/* REFUTED on HW (session-10, v0.4.292/293): default-OFF, kept as a documented A/B knob (like
++ * fabwarm/dma_warm). The [IWARM] diagnostic proved the wedging thread (netconsole, resume 0x44c574)
++ * blocks via the seL4 FASTPATH (fastpath_reply_recv), which bypasses setThreadState -> the capture
++ * NEVER fired for it (inring=0 across all wedges, despite 65M touches). And a 2nd wedge site is an
++ * in-kernel cold access (prev=9 this=11), not a resume fetch. So targeted keep-warm is whack-a-mole;
++ * the eviction is broad. Set to 1 only to re-run the A/B (also needs a fastpath capture hook). */
++#ifndef AIOS_IWARM
++#define AIOS_IWARM 0
++#endif
++#define AIOS_IWARM_N 16                /* ring of recent blocked-thread resume lines (power of 2) */
++volatile word_t aios_iwarm_pa[AIOS_IWARM_N];
++volatile word_t aios_iwarm_va[AIOS_IWARM_N];   /* the captured resume VA (diag: match vs the wedged bc.pc) */
++volatile word_t aios_iwarm_head;       /* total captures (mod N = ring slot) */
++volatile word_t aios_iwarm_touches;    /* diag: total keep-warm touch passes (proves it ran) */
++volatile word_t aios_iwarm_faults;     /* diag: AT translation faults (capture skipped) */
++void aios_capture_resume(word_t va);
++void aios_capture_resume(word_t va)
++{
++#if AIOS_IWARM
++    word_t par;
++    asm volatile("at s1e0r, %0; isb" :: "r"(va) : "memory");   /* stage-1 EL0-read xlate of the resume VA */
++    asm volatile("mrs %0, par_el1" : "=r"(par));
++    if (par & 1u) {
++        aios_iwarm_faults++;
++        return;                        /* translation fault -> skip (PA unknown) */
++    }
++    word_t pa = (par & 0x0000FFFFFFFFF000ull) | (va & 0xFFFull);
++    word_t h = aios_iwarm_head;
++    aios_iwarm_pa[h & (AIOS_IWARM_N - 1)] = pa;
++    aios_iwarm_va[h & (AIOS_IWARM_N - 1)] = va;
++    aios_iwarm_head = h + 1;
++#else
++    (void)va;
++#endif
++}
++void aios_iwarm_touch(void);
++void aios_iwarm_touch(void)
++{
++#if AIOS_IWARM
++    for (int i = 0; i < AIOS_IWARM_N; i++) {
++        word_t pa = aios_iwarm_pa[i];
++        if (pa) {
++            volatile unsigned char *p = (volatile unsigned char *)paddr_to_pptr(pa);
++            (void)*p;                  /* refresh this physical line in the unified L2 */
++        }
++    }
++    aios_iwarm_touches++;
++#endif
++}
 +void aios_checkpoint(word_t stage);
 +void aios_checkpoint(word_t stage)
 +{
@@ -1483,6 +1546,21 @@ index f8dac15c3..163971c66 100644
 +                   d_l1i, iiovf, d_cyc, cyovf,
 +                   (int)aios_bc_site[core], aios_bc_regs[core], aios_bc_pc[core], aios_bc_ttbr[core],
 +                   allidle[0], allidle[1], allidle[2], allidle[3]);
++#if AIOS_IWARM
++            /* Did the keep-warm RUN, and was the WEDGED resume line (bc_pc) actually in the warm-set?
++             * touches>0 = the touch loop ran; inring=1 = bc_pc was captured (so it SHOULD have stayed
++             * warm -> if it still wedged, the mechanism/rotation is at fault); inring=0 = capture MISSED
++             * it (broaden the block-state coverage). faults = AT translation skips. */
++            {
++                int inring = 0;
++                for (int i = 0; i < AIOS_IWARM_N; i++) {
++                    if (aios_iwarm_va[i] && aios_iwarm_va[i] == aios_bc_pc[core]) { inring = 1; break; }
++                }
++                printf("[IWARM] touches=%d captures=%d faults=%d wedged=0x%"SEL4_PRIx_word" inring=%d\n",
++                       (int)aios_iwarm_touches, (int)aios_iwarm_head, (int)aios_iwarm_faults,
++                       aios_bc_pc[core], inring);
++            }
++#endif
 +        }
 +    }
 +    aios_cp_last_t[core] = now;
@@ -1500,6 +1578,9 @@ index f8dac15c3..163971c66 100644
 +    asm volatile("msr S3_3_C9_C12_3, %0" :: "r"((word_t)0x3f));
 +    if (stage == 9) {
 +        aios_cp_kentry_t[core] = now;   /* kernel-entry mark, read as kent_lag at the next exit */
++#if AIOS_IWARM
++        aios_iwarm_touch();             /* session-10 cure (REFUTED, default-off): refresh resume lines in L2 */
++#endif
 +    }
 +}
 +
@@ -1589,6 +1670,35 @@ index f8dac15c3..163971c66 100644
  #ifdef CONFIG_ARM_ERRATA_773022
  /*
   * There is an errata for Cortex-A15 up to r0p4 where the loop buffer
+diff --git a/src/kernel/thread.c b/src/kernel/thread.c
+index 435f82309..a4cc9423a 100644
+--- a/src/kernel/thread.c
++++ b/src/kernel/thread.c
+@@ -575,9 +575,24 @@ void possibleSwitchTo(tcb_t *target)
+ 
+ }
+ 
++#if defined(CONFIG_ARCH_AARCH64)
++/* AIOS session-10 cure: capture a blocking thread's resume-line PA for the L2 keep-warm (errata.c). */
++extern void aios_capture_resume(word_t va);
++#endif
++
+ void setThreadState(tcb_t *tptr, _thread_state_t ts)
+ {
+     thread_state_ptr_set_tsType(&tptr->tcbState, ts);
++#if defined(CONFIG_ARCH_AARCH64)
++    /* When the CURRENT thread blocks waiting for work, its vspace is still current, so AT-translate
++     * its resume PC now; the kernel then keeps that line warm in L2 during the idle so the post-idle
++     * resume FETCH hits L2 instead of the parked fabric (the ~32.4s cold-I-fetch wedge). */
++    if (tptr == NODE_STATE(ksCurThread) &&
++        (ts == ThreadState_BlockedOnReceive || ts == ThreadState_BlockedOnNotification ||
++         ts == ThreadState_BlockedOnReply || ts == ThreadState_BlockedOnSend)) {
++        aios_capture_resume(tptr->tcbArch.tcbContext.registers[NextIP]);
++    }
++#endif
+     scheduleTCB(tptr);
+ }
+ 
 diff --git a/src/plat/bcm2711/overlay-rpi4-4gb.dts b/src/plat/bcm2711/overlay-rpi4-4gb.dts
 index b2376aece..ce67f35e3 100644
 --- a/src/plat/bcm2711/overlay-rpi4-4gb.dts

@@ -1,0 +1,8 @@
+# Session-10 CURE ATTEMPT B (L2 keep-warm, v0.4.292) -- REFUTED on HW (2026-06-22)
+# netstall --idle 30: still stalling (trial0 65.5s double-quantum, trials 1&3 conn-death); 131 ping timeouts.
+# 0x44c574 (netconsole resume line) STILL hung 3x -- the keep-warm did NOT keep it warm.
+# => the capture hook (BlockedOnReceive/Notification) almost certainly missed netconsole's actual block state.
+15:40:58.876 1782110458.876 [STAGECP] core=0 prev=9 this=11 dur=32387ms idle_lag=18446744073709551615ms kent_lag=32387ms pmu=[inst=1877 iovf=0 bus=131 bovf=0 mem=266 movf=0 l2=22 l2ovf=0 l1i=29 iiovf=0 cyc=1336263892 cyovf=1] bc=[s=11 regs=0xffffff80fb80dc00 pc=0x49d3b0 ttbr=0x727c0000fbe08000] allidle=[18446744073709551615,112430,0,0]
+15:42:01.394 1782110521.395 [STAGECP] core=0 prev=13 this=9 dur=32398ms idle_lag=18446744073709551615ms kent_lag=32398ms pmu=[inst=236 iovf=0 bus=13 bovf=0 mem=139 movf=0 l2=2 l2ovf=0 l1i=32 iiovf=0 cyc=18446744071748683348 cyovf=1] bc=[s=11 regs=0xffffff80fb959c00 pc=0x44c574 ttbr=0x79640000fbe08000] allidle=[18446744073709551615,174979,0,0]
+15:44:32.031 1782110672.032 [STAGECP] core=0 prev=13 this=9 dur=64798ms idle_lag=18446744073709551615ms kent_lag=64798ms pmu=[inst=232 iovf=0 bus=13 bovf=0 mem=135 movf=0 l2=1 l2ovf=0 l1i=29 iiovf=0 cyc=374268377 cyovf=1] bc=[s=11 regs=0xffffff80fb959c00 pc=0x44c574 ttbr=0xafe80000fbe08000] allidle=[18446744073709551615,325620,0,0]
+15:48:44.783 1782110924.783 [STAGECP] core=0 prev=13 this=9 dur=32398ms idle_lag=18446744073709551615ms kent_lag=32398ms pmu=[inst=216 iovf=0 bus=17 bovf=0 mem=128 movf=0 l2=2 l2ovf=0 l1i=28 iiovf=0 cyc=18446744071748577278 cyovf=1] bc=[s=11 regs=0xffffff80fb959c00 pc=0x44c574 ttbr=0x1b30000fbe08000] allidle=[18446744073709551615,578357,0,0]
