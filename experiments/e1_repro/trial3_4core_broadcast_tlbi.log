@@ -1,0 +1,74 @@
+[sercap] 09:20:53.215 1782087653.215 capture start dev=/dev/cu.usbserial-0001
+[sercap] 09:20:53.332 1782087653.333 port open
+09:21:54.314 1782087714.314   9.10 [sdcard] vl805.bin not found
+09:21:54.314 1782087714.314   9.10 [sdcard] pieeprom.upd not found
+09:21:54.314 1782087714.314   9.11 [sdcard] recover4.elf not found
+09:21:54.314 1782087714.314   9.11 [sdcard] recovery.elf not found
+09:21:54.527 1782087714.527   9.14 Read start4.elf bytes  2299008 hnd 0x6500
+09:21:54.527 1782087714.527   9.18 Read fixup4.dat bytes     5496 hnd 0x257
+09:21:54.527 1782087714.527   9.20 0x00c03111 0x00000000 0x00001fff
+09:21:54.527 1782087714.527   9.24 MEM GPU: 64 ARM: 960 TOTAL: 1024
+09:21:54.630 1782087714.631   9.30 Starting start4.elf @ 0xfec00200 partition 1
+09:21:54.685 1782087714.686   9.50 XHCI-STOP
+09:21:54.686 1782087714.686   9.50 xHC0 ver: 256 HCS: 05000420 fc000031 00e70004 HCC: 002841eb
+09:21:54.686 1782087714.686   9.50 USBSTS 18
+09:21:54.686 1782087714.686   9.51 PCI0 reset
+09:21:54.737 1782087714.738   9.56 +
+09:21:54.737 1782087714.738 
+09:21:54.845 1782087714.846 MESS:00:00:09.660584:0: arasan: arasan_emmc_open
+09:21:54.845 1782087714.846 MESS:00:00:09.662245:0: arasan: arasan_emmc_set_clock C0: 0x00800000 C1: 0x000e0047 emmc: 200000000 actual: 390625 div: 0x00000100 target: 400000 min: 400000 max: 400000 delay: 5
+09:21:55.005 1782087715.005 MESS:00:00:09.782484:0: arasan: arasan_emmc_set_clock C0: 0x00800000 C1: 0x000e0047 emmc: 200000000 actual: 390625 div: 0x00000100 target: 400000 min: 400000 max: 400000 delay: 5
+09:21:55.005 1782087715.006 MESS:00:00:09.795354:0: arasan: arasan_emmc_set_clock C0: 0x00800f00 C1: 0x000e0047 emmc: 200000000 actual: 390625 div: 0x00000100 target: 400000 min: 390000 max: 400000 delay: 5
+09:21:55.060 1782087715.061 MESS:00:00:09.840016:0: boot-part: 1 fs-type: 0
+09:21:55.060 1782087715.061 MESS:00:00:09.841428:0: boot-part: 1 fs-type: 3
+09:21:55.060 1782087715.061 MESS:00:00:09.845806:0: arasan: arasan_emmc_set_clock C0: 0x00800f06 C1: 0x000e0207 emmc: 200000000 actual: 50000000 div: 0x00000002 target: 50000000 min: 0 max: 50000000 delay: 1
+09:21:55.060 1782087715.061 MESS:00:00:09.872716:0: brfs: File read: /mfs/sd/config.txt
+09:21:55.060 1782087715.061 MESS:00:00:09.875458:0: brfs: File read: 119 bytes
+09:21:55.115 1782087715.116 MESS:00:00:09.903321:0: HDMI0:EDID error reading EDID block 0 attempt 0
+09:21:55.115 1782087715.116 MESS:00:00:09.907823:0: HDMI0:EDID giving up on reading EDID block 0
+09:21:55.222 1782087715.222 MESS:00:00:10.033707:0: brfs: File read: /mfs/sd/config.txt
+09:21:55.702 1782087715.702 MESS:00:00:10.485170:0: gpioman: gpioman_get_pin_num: pin DISPLAY_DSI_PORT not defined
+09:21:55.702 1782087715.703 MESS:00:00:10.490722:0: gpioman: gpioman_get_pin_num: pin DISPLAY_DSI_PORT not defined
+09:21:55.702 1782087715.703 MESS:00:00:10.499756:0: *** Restart logging
+09:21:55.702 1782087715.703 MESS:00:00:10.501528:0: brfs: File read: 119 bytes
+09:21:55.702 1782087715.703 MESS:00:00:10.518413:0: hdmi: HDMI0:EDID error reading EDID block 0 attempt 0
+09:21:55.702 1782087715.703 MESS:00:00:10.523443:0: hdmi: HDMI0:EDID giving up on reading EDID block 0
+09:21:55.757 1782087715.758 MESS:00:00:10.534066:0: hdmi: HDMI0:EDID error reading EDID block 0 attempt 0
+09:21:55.757 1782087715.758 MESS:00:00:10.539091:0: hdmi: HDMI0:EDID giving up on reading EDID block 0
+09:21:55.757 1782087715.758 MESS:00:00:10.544689:0: hdmi: HDMI:hdmi_get_state is deprecated, use hdmi_get_display_state instead
+09:21:55.867 1782087715.867 MESS:00:00:10.667511:0: HDMI0: hdmi_pixel_encoding: 300000000
+09:21:55.867 1782087715.868 MESS:00:00:10.670168:0: HDMI1: hdmi_pixel_encoding: 300000000
+09:21:55.867 1782087715.868 MESS:00:00:10.694247:0: dtb_file 'bcm2711-rpi-4-b.dtb'
+09:21:55.918 1782087715.918 MESS:00:00:10.706685:0: brfs: File read: /mfs/sd/bcm2711-rpi-4-b.dtb
+09:21:55.918 1782087715.919 MESS:00:00:10.709957:0: Loaded 'bcm2711-rpi-4-b.dtb' to 0x100 size 0xdbb9
+09:21:55.918 1782087715.919 MESS:00:00:10.743963:0: brfs: File read: 56249 bytes
+09:21:55.970 1782087715.970 MESS:00:00:10.767588:0: brfs: File read: /mfs/sd/overlays/overlay_map.dtb
+09:21:56.022 1782087716.022 MESS:00:00:10.820227:0: brfs: File read: 5971 bytes
+09:21:56.022 1782087716.023 MESS:00:00:10.829748:0: brfs: File read: /mfs/sd/config.txt
+09:21:56.077 1782087716.078 MESS:00:00:10.871679:0: brfs: File read: 119 bytes
+09:21:56.077 1782087716.078 MESS:00:00:10.879588:0: brfs: File read: /mfs/sd/cmdline.txt
+09:21:56.078 1782087716.078 MESS:00:00:10.882218:0: Read command line from file 'cmdline.txt':
+09:21:56.078 1782087716.078 MESS:00:00:10.888067:0: 'console=serial0,115200 console=tty1 root=PARTUUID=2efc7fbb-02 rootfstype=ext4 fsck.repair=yes rootwait quiet splash plymouth.ignore-serial-consoles cfg80211.ieee80211_regdom=JP'
+09:21:56.339 1782087716.340 MESS:00:00:11.143113:0: brfs: File read: 177 bytes
+09:21:56.339 1782087716.340 MESS:00:00:11.158056:0: brfs: File read: /mfs/sd/kernel8.img
+09:21:56.339 1782087716.340 MESS:00:00:11.160631:0: Loaded 'kernel8.img' to 0x200000 size 0x4000
+09:21:56.339 1782087716.340 MESS:00:00:11.166724:0: Device tree loaded to 0x2eff1f00 (size 0xe0a9)
+09:21:56.395 1782087716.395 MESS:00:00:11.175917:0: uart: Set PL011 baud rate to 103448.300000 Hz
+09:21:56.395 1782087716.395 MESS:00:00:11.182216:0: uart: Baud rate change done...
+09:21:56.604 1782087716.605 MESS:00:00:11.184259:0:
+09:21:56.605 1782087716.605 [E1-mc] booted EL2, MMU+caches ON, core0, A72. cntfrq=54000000 Hz
+09:21:56.605 1782087716.605 [E1-mc] secondaries up: 3/3  -> 4 cores in coherency domain
+09:21:56.605 1782087716.605 [E1-mc] quiesce=30s trials=3 -- watch for dur ~32400ms (STALL).
+09:22:26.626 1782087746.626 [E1-mc] op=coldload trial=0 dur=0ms
+09:22:56.642 1782087776.643 [E1-mc] op=coldload trial=1 dur=0ms
+09:23:26.610 1782087806.611 [E1-mc] op=coldload trial=2 dur=0ms
+09:23:56.644 1782087836.644 [E1-mc] op=alle2is+dsb trial=0 dur=0ms
+09:24:26.626 1782087866.627 [E1-mc] op=alle2is+dsb trial=1 dur=0ms
+09:24:56.619 1782087896.619 [E1-mc] op=alle2is+dsb trial=2 dur=0ms
+09:25:26.648 1782087926.649 [E1-mc] op=vae2is+dsb trial=0 dur=0ms
+09:25:56.609 1782087956.610 [E1-mc] op=vae2is+dsb trial=1 dur=0ms
+09:26:26.618 1782087986.618 [E1-mc] op=vae2is+dsb trial=2 dur=0ms
+09:26:56.652 1782088016.653 [E1-mc] op=dsb_sy trial=0 dur=0ms
+09:27:26.609 1782088046.609 [E1-mc] op=dsb_sy trial=1 dur=0ms
+09:27:56.621 1782088076.621 [E1-mc] op=dsb_sy trial=2 dur=0ms
+09:27:56.621 1782088076.621 [E1-mc] done.

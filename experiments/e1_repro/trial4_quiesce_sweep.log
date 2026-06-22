@@ -1,0 +1,66 @@
+[sercap] 09:35:55.437 1782088555.437 capture start dev=/dev/cu.usbserial-0001
+[sercap] 09:35:55.554 1782088555.554 port open
+09:37:06.217 1782088626.217   9.10 [sdcard] vl805.bin not found
+09:37:06.217 1782088626.218   9.10 [sdcard] pieeprom.upd not found
+09:37:06.217 1782088626.218   9.11 [sdcard] recover4.elf not found
+09:37:06.217 1782088626.218   9.11 [sdcard] recovery.elf not found
+09:37:06.428 1782088626.428   9.14 Read start4.elf bytes  2299008 hnd 0x6500
+09:37:06.428 1782088626.428   9.18 Read fixup4.dat bytes     5496 hnd 0x257
+09:37:06.428 1782088626.428   9.20 0x00c03111 0x00000000 0x00001fff
+09:37:06.428 1782088626.428   9.24 MEM GPU: 64 ARM: 960 TOTAL: 1024
+09:37:06.534 1782088626.535   9.30 Starting start4.elf @ 0xfec00200 partition 1
+09:37:06.643 1782088626.644   9.50 XHCI-STOP
+09:37:06.643 1782088626.644   9.50 xHC0 ver: 256 HCS: 05000420 fc000031 00e70004 HCC: 002841eb
+09:37:06.644 1782088626.644   9.50 USBSTS 18
+09:37:06.644 1782088626.644   9.51 PCI0 reset
+09:37:06.695 1782088626.696   9.56 +
+09:37:06.695 1782088626.696 
+09:37:06.800 1782088626.801 MESS:00:00:09.660553:0: arasan: arasan_emmc_open
+09:37:06.801 1782088626.801 MESS:00:00:09.662216:0: arasan: arasan_emmc_set_clock C0: 0x00800000 C1: 0x000e0047 emmc: 200000000 actual: 390625 div: 0x00000100 target: 400000 min: 400000 max: 400000 delay: 5
+09:37:06.908 1782088626.908 MESS:00:00:09.782452:0: arasan: arasan_emmc_set_clock C0: 0x00800000 C1: 0x000e0047 emmc: 200000000 actual: 390625 div: 0x00000100 target: 400000 min: 400000 max: 400000 delay: 5
+09:37:06.961 1782088626.961 MESS:00:00:09.795322:0: arasan: arasan_emmc_set_clock C0: 0x00800f00 C1: 0x000e0047 emmc: 200000000 actual: 390625 div: 0x00000100 target: 400000 min: 390000 max: 400000 delay: 5
+09:37:06.961 1782088626.962 MESS:00:00:09.839998:0: boot-part: 1 fs-type: 0
+09:37:06.961 1782088626.962 MESS:00:00:09.841411:0: boot-part: 1 fs-type: 3
+09:37:06.961 1782088626.962 MESS:00:00:09.845789:0: arasan: arasan_emmc_set_clock C0: 0x00800f06 C1: 0x000e0207 emmc: 200000000 actual: 50000000 div: 0x00000002 target: 50000000 min: 0 max: 50000000 delay: 1
+09:37:07.016 1782088627.017 MESS:00:00:09.872718:0: brfs: File read: /mfs/sd/config.txt
+09:37:07.017 1782088627.017 MESS:00:00:09.875472:0: brfs: File read: 119 bytes
+09:37:07.017 1782088627.017 MESS:00:00:09.903320:0: HDMI0:EDID error reading EDID block 0 attempt 0
+09:37:07.017 1782088627.017 MESS:00:00:09.907822:0: HDMI0:EDID giving up on reading EDID block 0
+09:37:07.178 1782088627.179 MESS:00:00:10.033735:0: brfs: File read: /mfs/sd/config.txt
+09:37:07.656 1782088627.657 MESS:00:00:10.518549:0: gpioman: gpioman_get_pin_num: pin DISPLAY_DSI_PORT not defined
+09:37:07.657 1782088627.657 MESS:00:00:10.524099:0: gpioman: gpioman_get_pin_num: pin DISPLAY_DSI_PORT not defined
+09:37:07.657 1782088627.657 MESS:00:00:10.533128:0: *** Restart logging
+09:37:07.657 1782088627.657 MESS:00:00:10.534906:0: brfs: File read: 119 bytes
+09:37:07.657 1782088627.657 MESS:00:00:10.551782:0: hdmi: HDMI0:EDID error reading EDID block 0 attempt 0
+09:37:07.710 1782088627.710 MESS:00:00:10.556812:0: hdmi: HDMI0:EDID giving up on reading EDID block 0
+09:37:07.710 1782088627.711 MESS:00:00:10.567435:0: hdmi: HDMI0:EDID error reading EDID block 0 attempt 0
+09:37:07.710 1782088627.711 MESS:00:00:10.572459:0: hdmi: HDMI0:EDID giving up on reading EDID block 0
+09:37:07.710 1782088627.711 MESS:00:00:10.578058:0: hdmi: HDMI:hdmi_get_state is deprecated, use hdmi_get_display_state instead
+09:37:07.819 1782088627.819 MESS:00:00:10.700868:0: HDMI0: hdmi_pixel_encoding: 300000000
+09:37:07.819 1782088627.819 MESS:00:00:10.703524:0: HDMI1: hdmi_pixel_encoding: 300000000
+09:37:07.874 1782088627.875 MESS:00:00:10.727599:0: dtb_file 'bcm2711-rpi-4-b.dtb'
+09:37:07.874 1782088627.875 MESS:00:00:10.740440:0: brfs: File read: /mfs/sd/bcm2711-rpi-4-b.dtb
+09:37:07.874 1782088627.875 MESS:00:00:10.743712:0: Loaded 'bcm2711-rpi-4-b.dtb' to 0x100 size 0xdbb9
+09:37:07.929 1782088627.930 MESS:00:00:10.777569:0: brfs: File read: 56249 bytes
+09:37:07.929 1782088627.930 MESS:00:00:10.801170:0: brfs: File read: /mfs/sd/overlays/overlay_map.dtb
+09:37:07.985 1782088627.985 MESS:00:00:10.853907:0: brfs: File read: 5971 bytes
+09:37:07.985 1782088627.985 MESS:00:00:10.863434:0: brfs: File read: /mfs/sd/config.txt
+09:37:08.040 1782088628.040 MESS:00:00:10.905368:0: brfs: File read: 119 bytes
+09:37:08.040 1782088628.040 MESS:00:00:10.913286:0: brfs: File read: /mfs/sd/cmdline.txt
+09:37:08.040 1782088628.040 MESS:00:00:10.915916:0: Read command line from file 'cmdline.txt':
+09:37:08.040 1782088628.040 MESS:00:00:10.921765:0: 'console=serial0,115200 console=tty1 root=PARTUUID=2efc7fbb-02 rootfstype=ext4 fsck.repair=yes rootwait quiet splash plymouth.ignore-serial-consoles cfg80211.ieee80211_regdom=JP'
+09:37:08.308 1782088628.308 MESS:00:00:11.178042:0: brfs: File read: 177 bytes
+09:37:08.308 1782088628.309 MESS:00:00:11.194908:0: brfs: File read: /mfs/sd/kernel8.img
+09:37:08.308 1782088628.309 MESS:00:00:11.197483:0: Loaded 'kernel8.img' to 0x200000 size 0x4000
+09:37:08.361 1782088628.361 MESS:00:00:11.203577:0: Device tree loaded to 0x2eff1f00 (size 0xe0a9)
+09:37:08.361 1782088628.362 MESS:00:00:11.212763:0: uart: Set PL011 baud rate to 103448.300000 Hz
+09:37:08.361 1782088628.362 MESS:00:00:11.219064:0: uart: Baud rate change done...
+09:37:08.574 1782088628.575 MESS:00:00:11.221105:0:
+09:37:08.574 1782088628.575 [E1-mc] booted EL2, MMU+caches ON, core0, A72. cntfrq=54000000 Hz
+09:37:08.575 1782088628.575 [E1-mc] secondaries up: 3/3  -> 4 cores in coherency domain
+09:37:08.575 1782088628.575 [E1-mc] quiesce SWEEP, op=alle2is+dsb (DVM-Sync) -- a fabric hang shows ~32400ms.
+09:37:38.601 1782088658.602 [E1-mc] idle=30s alle2is+dsb dur=0ms
+09:38:38.589 1782088718.589 [E1-mc] idle=60s alle2is+dsb dur=0ms
+09:40:38.610 1782088838.611 [E1-mc] idle=120s alle2is+dsb dur=0ms
+09:44:38.602 1782089078.602 [E1-mc] idle=240s alle2is+dsb dur=0ms
+09:44:38.602 1782089078.602 [E1-mc] sweep complete.
