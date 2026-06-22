@@ -1,8 +1,8 @@
 diff --git a/include/arch/arm/arch/64/mode/fastpath/fastpath.h b/include/arch/arm/arch/64/mode/fastpath/fastpath.h
-index 12d55f3c9..fd8330fe6 100644
+index 12d55f3c9..9344ac9e3 100644
 --- a/include/arch/arm/arch/64/mode/fastpath/fastpath.h
 +++ b/include/arch/arm/arch/64/mode/fastpath/fastpath.h
-@@ -14,9 +14,16 @@
+@@ -14,9 +14,17 @@
  #include <armv/context_switch.h>
  #include <mode/model/statedata.h>
  #include <arch/object/vcpu.h>
@@ -14,12 +14,13 @@ index 12d55f3c9..fd8330fe6 100644
 +/* AIOS session-8: explicit forward decl (also in mode/machine.h, reached transitively via smp/lock.h)
 + * so fastpath_restore's stage-12 call does not silently elide on an include-chain refactor. */
 +void aios_checkpoint(word_t stage);
++void aios_breadcrumb(word_t site, word_t regs, word_t pc);  /* AIOS session-10: see errata.c */
 +#endif
 +
  /* When building the fastpath the assembler in traps.S makes these
   * assumptions. Because compile_asserts are hard to do in assembler,
   * we place them here */
-@@ -36,7 +43,23 @@ switchToThread_fp(tcb_t *thread, vspace_root_t *vroot, pde_t stored_hw_asid)
+@@ -36,7 +44,23 @@ switchToThread_fp(tcb_t *thread, vspace_root_t *vroot, pde_t stored_hw_asid)
          vcpu_switch(thread->tcbArch.tcbVCPU);
      }
      asid = (asid_t)(stored_hw_asid.words[0] & 0xffff);
@@ -44,7 +45,7 @@ index 12d55f3c9..fd8330fe6 100644
  
  #ifdef CONFIG_BENCHMARK_TRACK_UTILISATION
      benchmark_utilisation_switch(NODE_STATE(ksCurThread), thread);
-@@ -140,6 +163,13 @@ static inline int fastpath_reply_cap_check(cap_t cap)
+@@ -140,6 +164,15 @@ static inline int fastpath_reply_cap_check(cap_t cap)
  static inline void NORETURN FORCE_INLINE fastpath_restore(word_t badge, word_t msgInfo, tcb_t *cur_thread)
  {
      c_exit_hook();
@@ -54,6 +55,8 @@ index 12d55f3c9..fd8330fe6 100644
 +     * restore_user_context), so without this a fastpath-handler wedge would show only as a 9->9
 +     * gap; with it, prev=9 this=12 localizes the wedge to the fastpath handler. */
 +    aios_checkpoint(12);
++    aios_breadcrumb(12, (word_t)cur_thread->tcbArch.tcbContext.registers,
++                    cur_thread->tcbArch.tcbContext.registers[NextIP]);
 +#endif
  
  #ifdef ARM_CP14_SAVE_AND_RESTORE_NATIVE_THREADS
@@ -333,10 +336,10 @@ index 7235672db..4ff77e535 100644
  {
      invalidateTranslationAllLocal();
 diff --git a/src/arch/arm/64/c_traps.c b/src/arch/arm/64/c_traps.c
-index 96a9ea30c..f0981a9ec 100644
+index 96a9ea30c..275fdfc6d 100644
 --- a/src/arch/arm/64/c_traps.c
 +++ b/src/arch/arm/64/c_traps.c
-@@ -15,10 +15,17 @@
+@@ -15,10 +15,40 @@
  #include <benchmark/benchmark_track.h>
  #include <benchmark/benchmark_utilisation.h>
  
@@ -345,12 +348,35 @@ index 96a9ea30c..f0981a9ec 100644
 + * an 11->10 gap = userspace/idle run; 10->7 = IRQ/scheduler; 7->11 = kernel tail. Direct call
 + * (no macro guard) to avoid any include/-Wundef issue; helper defined in errata.c. */
 +extern void aios_checkpoint(word_t stage);
++/* AIOS session-10 (re-localize): record the regs base + user PC (NextIP) about to be used by the
++ * eret below, so a wedge in this exit's ldp/eret/user-fetch path prints its candidate address at
++ * the next kernel entry. See aios_breadcrumb in errata.c. */
++extern void aios_breadcrumb(word_t site, word_t regs, word_t pc);
 +
  /** DONT_TRANSLATE */
  void VISIBLE NORETURN restore_user_context(void)
  {
      c_exit_hook();
 +    aios_checkpoint(11);
++    aios_breadcrumb(11, (word_t)NODE_STATE(ksCurThread)->tcbArch.tcbContext.registers,
++                    NODE_STATE(ksCurThread)->tcbArch.tcbContext.registers[NextIP]);
++    /* AIOS session-10 SPLITTER (D-side vs I-side): pre-warm the TCB context cache lines (kernel
++     * memory -> PAN-safe), then checkpoint stage 13. This splits the deterministic site-B wedge:
++     *   - if the cold-line wedge is the TCB-restore `ldp` (D-side), it now hangs HERE on the touch
++     *     -> the 32.4s falls in the 11->13 window -> [STAGECP] prev=11 this=13.
++     *   - if the TCB is fine and the wedge is the post-`eret` user instruction FETCH (I-side, at
++     *     registers[NextIP]), the touch is fast, stage 13 fires immediately, and the 32.4s falls in
++     *     the 13->9 window -> [STAGECP] prev=13 this=9.
++     * 5 cacheable reads at 64-byte strides cover the ~296-byte (5 line) context. The `ldp` below
++     * reloads the same lines, now warm, so a D-side wedge is not double-counted. */
++    {
++        volatile word_t *_tcb =
++            (volatile word_t *)NODE_STATE(ksCurThread)->tcbArch.tcbContext.registers;
++        volatile word_t _w = 0;
++        _w += _tcb[0]; _w += _tcb[8]; _w += _tcb[16]; _w += _tcb[24]; _w += _tcb[32];
++        (void)_w;
++    }
++    aios_checkpoint(13);
  
  #ifdef ARM_CP14_SAVE_AND_RESTORE_NATIVE_THREADS
      restore_user_debug_context(NODE_STATE(ksCurThread));
@@ -1003,10 +1029,10 @@ index 93eb4d133..d199bd853 100644
      init_plat();
  
 diff --git a/src/arch/arm/machine/errata.c b/src/arch/arm/machine/errata.c
-index f8dac15c3..1b1c101f3 100644
+index f8dac15c3..163971c66 100644
 --- a/src/arch/arm/machine/errata.c
 +++ b/src/arch/arm/machine/errata.c
-@@ -8,11 +8,493 @@
+@@ -8,11 +8,556 @@
  #include <api/types.h>
  #include <arch/machine.h>
  #include <arch/machine/hardware.h>
@@ -1084,7 +1110,7 @@ index f8dac15c3..1b1c101f3 100644
 +    return v;
 +}
 +
-+/* AIOS PMU init (diagnostic): program 5 A72 event counters so the TLBI-stall profiler
++/* AIOS PMU init (diagnostic): program 6 A72 event counters so the TLBI-stall profiler
 + * can dump what core 0 actually did across the ~32.4s freeze. EL1 PMU access is live (no
 + * EL2 -> no MDCR_EL2.TPM trap; seL4 already enables PMCR.E for cpuacct). We only ADD the
 + * event counters; PMCCNTR is left untouched (the profiler uses CNTPCT for wall-clock).
@@ -1106,7 +1132,8 @@ index f8dac15c3..1b1c101f3 100644
 +    asm volatile("msr S3_3_C14_C12_2, %0" :: "r"((word_t)0x13)); /* PMEVTYPER2 = MEM_ACCESS */
 +    asm volatile("msr S3_3_C14_C12_3, %0" :: "r"((word_t)0x17)); /* PMEVTYPER3 = L2D_CACHE_REFILL */
 +    asm volatile("msr S3_3_C14_C12_4, %0" :: "r"((word_t)0x11)); /* PMEVTYPER4 = CPU_CYCLES */
-+    asm volatile("msr S3_3_C9_C12_1, %0" :: "r"((word_t)0x1f));  /* PMCNTENSET_EL0: enable cnt 0..4 */
++    asm volatile("msr S3_3_C14_C12_5, %0" :: "r"((word_t)0x01)); /* PMEVTYPER5 = L1I_CACHE_REFILL (session-10: I-side fetch) */
++    asm volatile("msr S3_3_C9_C12_1, %0" :: "r"((word_t)0x3f));  /* PMCNTENSET_EL0: enable cnt 0..5 */
 +    asm volatile("isb");
 +}
 +
@@ -1332,7 +1359,36 @@ index f8dac15c3..1b1c101f3 100644
 + * ONE instruction (a barrier) -- NOT "IRQ-not-delivered while looping" (which would retire
 + * billions). bus_access ~= 0 => a clean wait on a PARKED fabric (vs large = a retry storm).
 + * cpu_cycles is 32-bit and wraps ~7x over 32s -> noise (kept for short intervals only). */
-+volatile word_t aios_cp_pmu[AIOS_TLBI_NCORES][5];
++volatile word_t aios_cp_pmu[AIOS_TLBI_NCORES][6];
++/* AIOS session-10 (re-localize, get the address): per-core "last breadcrumb" -- the candidate
++ * addresses recorded JUST BEFORE the kernel-exit asm (restore_user_context stage 11 /
++ * fastpath_restore stage 12), so that when the NEXT checkpoint (stage 9 kernel entry) detects a
++ * >5s gap it can print WHAT core 0 was about to touch when it wedged:
++ *   regs = the TCB context base the `ldp` block restores from = the D-side cold-load candidate;
++ *   pc   = registers[NextIP] = the user PC the `eret` returns into = the I-side cold-FETCH
++ *          candidate (never tested by the bare-metal/Linux repros, which only timed D-side loads);
++ *   ttbr = TTBR0_EL1 = the user vspace base + hw ASID in [63:48] at the wedge.
++ * The wedged core never overwrites these between stage 11/12 and the stage-9 read, so the stale
++ * value IS the pre-wedge state. Pair with the PMU mem/l2/l1i deltas (which say D-load vs I-fetch
++ * vs barrier) to turn "the first fabric op after idle" into an exact instruction + address. */
++volatile word_t aios_bc_site[AIOS_TLBI_NCORES];
++volatile word_t aios_bc_regs[AIOS_TLBI_NCORES];
++volatile word_t aios_bc_pc[AIOS_TLBI_NCORES];
++volatile word_t aios_bc_ttbr[AIOS_TLBI_NCORES];
++void aios_breadcrumb(word_t site, word_t regs, word_t pc);
++void aios_breadcrumb(word_t site, word_t regs, word_t pc)
++{
++    word_t core = CURRENT_CPU_INDEX();
++    if (core >= AIOS_TLBI_NCORES) {
++        core = 0;
++    }
++    word_t ttbr;
++    asm volatile("mrs %0, ttbr0_el1" : "=r"(ttbr));
++    aios_bc_site[core] = site;
++    aios_bc_regs[core] = regs;
++    aios_bc_pc[core]   = pc;
++    aios_bc_ttbr[core] = ttbr;
++}
 +void aios_checkpoint(word_t stage);
 +void aios_checkpoint(word_t stage)
 +{
@@ -1348,12 +1404,15 @@ index f8dac15c3..1b1c101f3 100644
 +     * ~0) from "looping" (retires billions -> wraps to an unpredictable, possibly-small remainder).
 +     * The OVERFLOW flag (PMOVSCLR_EL0) is the reliable discriminator: a core wedged on one barrier
 +     * never overflows INST_RETIRED; a looping core does (>=1 wrap). We clear the event-counter flags
-+     * (bits 0..4, NOT bit 31 = the cycle counter seL4's cpuacct uses) at the end of every checkpoint,
-+     * so the flag read here reflects overflows in EXACTLY the just-elapsed inter-checkpoint interval. */
-+    word_t pm[5], ovf;
++     * (bits 0..5, NOT bit 31 = the dedicated PMCCNTR seL4's cpuacct uses) at the end of every
++     * checkpoint, so the flag read here reflects overflows in EXACTLY the just-elapsed interval. */
++    word_t pm[6], ovf;
 +    asm volatile("mrs %0, S3_3_C14_C8_0" : "=r"(pm[0]));   /* INST_RETIRED */
 +    asm volatile("mrs %0, S3_3_C14_C8_1" : "=r"(pm[1]));   /* BUS_ACCESS   */
++    asm volatile("mrs %0, S3_3_C14_C8_2" : "=r"(pm[2]));   /* MEM_ACCESS   */
++    asm volatile("mrs %0, S3_3_C14_C8_3" : "=r"(pm[3]));   /* L2D_CACHE_REFILL */
 +    asm volatile("mrs %0, S3_3_C14_C8_4" : "=r"(pm[4]));   /* CPU_CYCLES   */
++    asm volatile("mrs %0, S3_3_C14_C8_5" : "=r"(pm[5]));   /* L1I_CACHE_REFILL */
 +    asm volatile("mrs %0, S3_3_C9_C12_3" : "=r"(ovf));     /* PMOVSCLR_EL0 (overflow status) */
 +    word_t prev_t = aios_cp_last_t[core];
 +    word_t prev_s = aios_cp_last_stage[core];
@@ -1380,9 +1439,28 @@ index f8dac15c3..1b1c101f3 100644
 +             *     idle/BKL-spinning sibling, NOT the primary wedge. bus ~=0 + bovf=0 => parked fabric. */
 +            int d_inst = (int)((pm[0] - aios_cp_pmu[core][0]) & 0xffffffffu);
 +            int d_bus  = (int)((pm[1] - aios_cp_pmu[core][1]) & 0xffffffffu);
++            int d_mem  = (int)((pm[2] - aios_cp_pmu[core][2]) & 0xffffffffu);
++            int d_l2   = (int)((pm[3] - aios_cp_pmu[core][3]) & 0xffffffffu);
 +            int d_cyc  = (int)((pm[4] - aios_cp_pmu[core][4]) & 0xffffffffu);
++            int d_l1i  = (int)((pm[5] - aios_cp_pmu[core][5]) & 0xffffffffu);
 +            int iovf = (int)(ovf & 1u);          /* INST_RETIRED (cnt0) overflowed this interval? */
 +            int bovf = (int)((ovf >> 1) & 1u);   /* BUS_ACCESS   (cnt1) overflowed this interval?  */
++            /* session-10 additions -- the nature of the wedged instruction, MEASURED not inferred:
++             *   mem/movf  (MEM_ACCESS, cnt2): data memory accesses retired. ~0 + movf=0 => the wedge
++             *     is NOT a data load/store (=> I-side fetch or a barrier).
++             *   l2/l2ovf  (L2D_CACHE_REFILL, cnt3): a D-side line-fill happened. ==1 => exactly one
++             *     fill in the whole interval = a cold D-LOAD that hung mid-fill (the s8 hypothesis).
++             *   l1i/iiovf (L1I_CACHE_REFILL, cnt5): an I-side line-fill happened. ==1 + mem=0 =>
++             *     the wedge is a cold INSTRUCTION FETCH (e.g. the user PC after eret) -- the
++             *     candidate the EL2-only / D-load-only repros structurally could not test.
++             *   cyovf (CPU_CYCLES, cnt4 bit4): did the cycle counter wrap? At >=600MHz a CLOCKED core
++             *     wraps ~5-8x over 32.4s => cyovf=1 = CLOCKED-but-pipeline-stalled (a true memory
++             *     wedge). cyovf=0 with tiny cyc => the core was CLOCK-GATED (retention), not stalled
++             *     on a bus op -- which would overturn the whole "wedged on a fabric op" reading. */
++            int movf  = (int)((ovf >> 2) & 1u);  /* MEM_ACCESS       (cnt2) overflowed? */
++            int l2ovf = (int)((ovf >> 3) & 1u);  /* L2D_CACHE_REFILL (cnt3) overflowed? */
++            int cyovf = (int)((ovf >> 4) & 1u);  /* CPU_CYCLES       (cnt4) overflowed? (CLOCKED vs gated) */
++            int iiovf = (int)((ovf >> 5) & 1u);  /* L1I_CACHE_REFILL (cnt5) overflowed? */
 +            /* session-8 cluster-survival A/B oracle: idle.S heartbeat lag of ALL cores. On a core-0
 +             * wedge, allidle[1..3]~=0 => siblings stayed alive in idle.S (the AIOS_SIBLING_TIMER_MASK
 +             * circumvention worked); ~=dur => they blocked on the BKL (the old cascade). */
@@ -1395,9 +1473,15 @@ index f8dac15c3..1b1c101f3 100644
 +                allidle[c] = h ? (now > h ? (int)((now - h) * 1000ull / freq) : 0) : -1;
 +            }
 +            printf("[STAGECP] core=%d prev=%d this=%d dur=%dms idle_lag=%dms kent_lag=%dms"
-+                   " pmu=[inst=%d iovf=%d bus=%d bovf=%d cyc=%d] allidle=[%d,%d,%d,%d]\n",
++                   " pmu=[inst=%d iovf=%d bus=%d bovf=%d mem=%d movf=%d l2=%d l2ovf=%d"
++                   " l1i=%d iiovf=%d cyc=%d cyovf=%d]"
++                   " bc=[s=%d regs=0x%"SEL4_PRIx_word" pc=0x%"SEL4_PRIx_word" ttbr=0x%"SEL4_PRIx_word"]"
++                   " allidle=[%d,%d,%d,%d]\n",
 +                   (int)core, (int)prev_s, (int)stage, (int)dur_ms,
-+                   idle_lag, kent_lag, d_inst, iovf, d_bus, bovf, d_cyc,
++                   idle_lag, kent_lag,
++                   d_inst, iovf, d_bus, bovf, d_mem, movf, d_l2, l2ovf,
++                   d_l1i, iiovf, d_cyc, cyovf,
++                   (int)aios_bc_site[core], aios_bc_regs[core], aios_bc_pc[core], aios_bc_ttbr[core],
 +                   allidle[0], allidle[1], allidle[2], allidle[3]);
 +        }
 +    }
@@ -1405,10 +1489,15 @@ index f8dac15c3..1b1c101f3 100644
 +    aios_cp_last_stage[core] = stage;
 +    aios_cp_pmu[core][0] = pm[0];
 +    aios_cp_pmu[core][1] = pm[1];
++    aios_cp_pmu[core][2] = pm[2];
++    aios_cp_pmu[core][3] = pm[3];
 +    aios_cp_pmu[core][4] = pm[4];
-+    /* Clear the event-counter overflow flags (bits 0..4 only; bit 31 = the cycle counter that seL4's
-+     * cpuacct reads is left untouched) so the next checkpoint's ovf read is per-interval. */
-+    asm volatile("msr S3_3_C9_C12_3, %0" :: "r"((word_t)0x1f));
++    aios_cp_pmu[core][5] = pm[5];
++    /* Clear the event-counter overflow flags (bits 0..5 only; bit 31 = the dedicated cycle counter
++     * PMCCNTR that seL4's cpuacct reads is left untouched) so the next checkpoint's ovf read is
++     * per-interval. NOTE: cnt4 (bit 4) is the EVENT-counter CPU_CYCLES, distinct from PMCCNTR/bit31
++     * -- clearing bit 4 is what makes cyovf a clean per-interval CLOCKED-vs-gated flag. */
++    asm volatile("msr S3_3_C9_C12_3, %0" :: "r"((word_t)0x3f));
 +    if (stage == 9) {
 +        aios_cp_kentry_t[core] = now;   /* kernel-entry mark, read as kent_lag at the next exit */
 +    }

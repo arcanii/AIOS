@@ -14,22 +14,105 @@ background. Older session arcs (v0.4.110 -> v0.4.168) live in
   HW-VERIFIED + PUSHED (`9e543c6`, v0.4.252). NOTE: DHCP lease BOUNCES `.8`<->`.250`
   per boot -- ARP-sweep MAC `dc:a6:32:1c:2e:e1` if `.8` is dark.
 
-* **CURRENT STATE 2026-06-21 (session 8) -- IDLE->WAKE WEDGE LOCALIZED AT THE INSTRUCTION LEVEL ON HW
-  (DECISIVE). The freeze is core 0 CLOCKED-BUT-WEDGED on a SINGLE fabric-dependent instruction,
-  POSITION-INDEPENDENT (4 code sites); leading hypothesis = a COLD CACHEABLE DRAM LOAD, not a dsb. Stall
-  stays a MAJOR OPEN CONCERN ([[feedback_stall_open_concern]]) -- a MEASUREMENT step toward the
-  architectural fix, NOT a cure.** Board = v0.4.289 build 2811 at 192.168.0.8 (localization v0.4.286 +
-  TWO keep-warm cure attempts v0.4.287/288 BOTH REFUTED + the v0.4.289 CIRCUMVENTION that WORKS). Commits
-  `06f7b37` + `c17f25e` + `5b4f05c` + `828eab0` + `e899ac8` + `5a929d1` on `main` (Bryan pushes).
-  **ALL traffic-based prevention exhausted (DMA/coherent/Device/cacheable) AND the timeout-bound lead is
-  closed (no ARM register; silicon force-complete). The cure PIVOTED to KERNEL-REDESIGN CIRCUMVENTION --
-  the sibling-timer-mask (v0.4.289) stops a 1-core wedge cascading into a cluster freeze (cluster survives,
-  box still net-unresponsive -- all work on core 0).** Board freshly POWER-CYCLED (clean v0.4.289;
-  sibling-timer-mask ON, watchdog+hwdog ON; the netconsole listener-fix `5a929d1` is committed but NOT yet
-  live -- re-deploy it first, see the NEXT bullet + the session-9 seed). The stall still wedges core 0;
-  netconsole wedges under churn (the real mode is likely FORK-EXHAUSTION -- see NEXT) (power-cycle to
-  recover).
-  Full detail + interpretation matrix + HW result: `docs/NEXT_20260621_stall_session8_localize.md`.
+* **CURRENT STATE 2026-06-22 (session 10) -- RE-LOCALIZED REGISTER-EXACT ON HW + DECISIVELY ANSWERED:
+  the ~32.4s wedge is a COLD INSTRUCTION-CACHE REFILL of the user resume PC (line containing 0x44c574),
+  on the `eret`->first-user-fetch path after idle -- an I-SIDE fetch, clocked-but-stalled, deterministic.
+  The TCB-restore `ldp` (D-side) is EXONERATED.** Board on v0.4.291 build 2822 (192.168.0.8, network-
+  deployed + HW-confirmed). The stall stays a MAJOR OPEN CONCERN ([[feedback_stall_open_concern]]) --
+  this LOCALIZES it (the session goal: GET THE ADDRESS, the datum 9 sessions never had), it does NOT
+  cure it. Full data + matrix + next leads: `docs/NEXT_20260622_stall_session10_relocalize.md`; raw
+  captures `experiments/s10_capture/`.
+  - **THE ANSWER (2 HW runs, gold A/B = netstall --idle 30 --trials 10 + ping oracle):** Run 1 (v0.4.290
+    instrumentation): 3/3 stalls IDENTICAL -- `[STAGECP] core=0 prev=11 this=9` (SITE B, kernel-exit->
+    re-entry), `cyovf=1` (CLOCKED, not gated -- the long-inferred "clocked-but-wedged" now MEASURED),
+    `iovf=0`+`bus~9-29` (one instruction, parked fabric), and DETERMINISTIC addresses `bc.regs=
+    0xffffff80fb959c00` (TCB) + `bc.pc=0x44c574` (user resume PC) in ALL stalls (only the hw ASID rotates),
+    with `l1i`(23-36) >> `l2`(1-4). Run 2 (v0.4.291 "stage-13 splitter" -- pre-warm the TCB lines then
+    checkpoint 13, in restore_user_context): **5/5 stalls `prev=13 this=9` (I-side), 0/5 `prev=11 this=13`
+    (D-side); `l2=0` once the TCB is pre-warmed** -> the wedge is AFTER the TCB restore, in the eret->
+    user-fetch path -> the cold I-fetch of 0x44c574, NOT the `ldp`. (Can be multi-quantum: one 64.8s sample,
+    3 conn-deaths ~105s.)
+  - **Completes the s9 overturn:** the bare-metal/Linux repros timed cold DATA loads + DVM ops after idle
+    (0ms) but NEVER a cold INSTRUCTION FETCH after idle -- the wedge is specifically the I-FETCH path
+    through the parked fabric, the one class never exercised. New datapoint: the splitter's D-touch issued
+    IMMEDIATELY before the I-fetch did NOT wake the fabric for it (still hung) -> D-traffic-right-before
+    doesn't help the I-path (the I-fetch path has its own quiescence; consistent with the keep-warm
+    refutations).
+  - **NEXT -- the cure axis, now TARGETED (pick with Bryan):** (1) silicon-vs-AIOS: sharpen
+    `experiments/e1_repro` to evict an I-line, idle (WFI), then JUMP to it (cold I-fetch) -- reproduces
+    ~32.4s bare-metal => silicon I-path property; else AIOS-specific. (2) EVICTION hypothesis (AIOS-
+    specific, testable): the prio-200 yield-spinning servers' cache footprint may evict the user resume
+    code during the 30s idle (Linux has no such idle churn) -> resume fetch cold -> hits parked fabric;
+    test by pinning/locking the resume page in L2 or reducing server cache pressure. (3) I-specific
+    prefetch/PLI/`IC`-by-VA of `bc.pc` before eret (lower odds -- a D-touch didn't help). Carried-over
+    MITIGATION still open: fork-exhaustion auto-recovery (reap_check reap.c:113 + getty circuit-breaker).
+  - **What's built/committed this session (uncommitted on `main`, Bryan pushes):** seL4 errata.c (PMU
+    expansion: mem/l2/l1i + cyovf + L1I_CACHE_REFILL cnt5; `aios_breadcrumb` bc=[regs/pc/ttbr]),
+    c_traps.c (breadcrumb + the stage-13 splitter), fastpath.h (breadcrumb); version v0.4.291; patch
+    regenerated (1651 lines). QEMU gate GREEN at baseline throughout (smp 4/5, socket 8/8, netd 10/10,
+    shmring 25/26). Deployed to the Pi flash-free (mkkernel8 v290) then over-network (pi_flash v291).
+  - **First, a tempting lead CLOSED with evidence (don't re-chase): DVFS / clock transitions are NOT
+    the trigger.** `cpu_gov.c:38-50` documents the 33s quantum is identical at arm_freq 600 vs 1000,
+    and `docs/NEXT_20260621_stall_session8_localize.md:320` confirms it is identical at **core_freq
+    250 vs 500** too. So BOTH the CPU clock and the fabric clock are ruled out => the ~32.4s is a
+    fixed WALL-TIME force-complete off the always-on reference (a VPU/fabric watchdog), not a counter
+    on any ARM/AXI clock. (Runtime A/B knob `/proc/cpufreq.gov.0` exists if ever wanted; low priority.)
+  - **The bottleneck, sharpened by the s9 overturn:** every remaining path (cure OR a defensible
+    "unfixable silicon" verdict) gates on WHAT instruction wedges + WHAT address it touches. Prior
+    sessions localized to checkpoint grain (the 11->9 / 9->11 windows) but never register-exact. Two
+    candidates were NEVER testable before and the old instrumentation couldn't see them: (a) I-side
+    cold instruction FETCH vs D-side load (the repros only timed D-loads); (b) CLOCKED-but-stalled vs
+    CLOCK-GATED (inferred, never measured).
+  - **BUILT (all behind AIOS_TEARDOWN_CHECKPOINTS, pure instrumentation -- no logic/lock/timing
+    change; only errata.c + c_traps.c + fastpath.h):** (1) **PMU expansion** -- the checkpoint now
+    surfaces MEM_ACCESS (cnt2) + L2D_CACHE_REFILL (cnt3, both already-armed-but-never-read) + a NEW
+    cnt5 L1I_CACHE_REFILL + the CPU_CYCLES event-counter OVERFLOW bit. New fields: `mem/movf l2/l2ovf
+    l1i/iiovf cyc/cyovf`. This settles D-load vs I-fetch vs barrier, and clocked (`cyovf=1`) vs gated
+    (`cyovf=0`), MEASURED. (2) **Address breadcrumb** (`aios_breadcrumb`) recorded at each kernel-EXIT
+    just before the `eret`: `bc=[s=11/12 regs=<TCB ldp base = D-load candidate> pc=<registers[NextIP]
+    = user PC after eret = I-FETCH candidate> ttbr=<TTBR0_EL1 = vspace+hwASID>]`. A wedge in the
+    exit->entry window (site B, `prev=11/12 this=9`) leaves bc = the exact pre-wedge state -> the next
+    entry prints the wedge ADDRESS. (NOTE: bc is the wedge address ONLY for site B; for in-kernel
+    wedges (site A `prev=9`, sites C/D) bc is stale -- use PMU nature there; in-handler breadcrumbs are
+    a v2 if site A dominates.)
+    (The "BUILT" detail above describes the instrumentation; the HW RESULT at the top of this block is
+    what it produced. QEMU gate stayed GREEN at baseline across every rebuild.)
+
+* **CURRENT STATE 2026-06-22 (session 9) -- THE STALL'S ATTRIBUTED MECHANISM IS OVERTURNED BY EXPERIMENT.
+  Built bare-metal + Linux reproduction harnesses and tested the long-held theory directly: a broadcast
+  inner-shareable TLBI DVM-Sync (`tlbi vmalle1is/alle2is/vae2is; dsb`) AND a cold cacheable DRAM load,
+  issued AFTER idle of 10-240s, complete in 0ms on this exact Pi4 -- under BOTH minimal bare-metal (EL2) AND
+  full Linux/RPi OS (EL1), busy-spin idle AND genuine WFI idle, the TLBI even in the timer hard-IRQ wake
+  context. NOTHING HANGS. => the ~32.4s freeze is NOT "the SCB quiesces during idle and the first fabric/DVM
+  op after idle hangs." Clincher (logic): AIOS has MORE ARM activity during idle (prio-200 yield-spinning
+  servers) than Linux's WFI idle, yet AIOS hangs and Linux does not -- backwards from the no-traffic->quiesce
+  model. The stall is AIOS/seL4-environment-specific, NOT context-free silicon; the [STAGECP] "first fabric
+  op after idle" is real but is NOT a generic fabric op. STILL a MAJOR OPEN CONCERN ([[feedback_stall_open_concern]])
+  -- the experiments FALSIFIED the dominant hypothesis (real progress), they did NOT cure it.** Full detail +
+  trial logs: `docs/NEXT_20260622_linux_uboot_stall_experiments.md`; memory [[project_stall_not_dvm_idle]];
+  paste-ready next-session seed: `docs/NEXT_20260622_stall_session10_seed.md`.
+  - **DUAL-BOOT Pi now:** same physical Pi4, two SDs -- the AIOS SD (v0.4.289, recovered, netconsole fix
+    live) and a SPARE SD with **Raspberry Pi OS** (kernel 6.18, 192.168.0.8). The Pi currently runs RPi OS
+    (left from E3); swap to the AIOS SD to resume AIOS work. RPi OS: serial console OFF (read via dmesg/ssh);
+    **keyless ssh works** (ed25519 key added, user bryan, passwordless sudo); E3 modules in `~/e3`; the
+    bcm2835 hw watchdog (RuntimeWatchdogSec=1min) was DISABLED via a system.conf.d drop-in (re-enable when
+    done). Reproduction infra KEPT: `experiments/e1_repro/` (bare-metal kernel8.img + build.sh + mkbootimg.py)
+    + `experiments/e3_linux/` (e3_dvm_test.c stop_machine, e3_wfi.c hrtimer-wake). All UNCOMMITTED (Bryan pushes).
+  - **Board RECOVERED + netconsole fix LIVE:** the Pi's `/bin/netconsole` was a corrupt 4095-byte truncated
+    binary (prior aborted deploy) -> getty flap + stall storm + undeployable over netconsole. Recovered via
+    **sshd:2222 SFTP direct-put** ([[project_board_recovery_sftp]]); deployed the committed listener fix
+    byte-exact (sha da907d2e). Also fixed + PUSHED `pi_deploy.py` `__get` over-read (commit `8311601`: it read
+    6 trailing prompt bytes past the declared length -> spurious sha mismatch; now reads exactly N).
+  - **NEXT (session 10, ranked):** (1) RE-LOCALIZE the wedge in AIOS register-exact (deferred s8 Phase-2),
+    with "a deliberate fabric op after idle does not hang" as a hard constraint -- bracket
+    restore_user_context's ldp/eret + schedule()/activateThread() + add L2D_CACHE_REFILL/MEM_ACCESS to the PMU
+    print, to find what the wedge ACTUALLY is. (2) FORK-EXHAUSTION auto-recovery (carried over, NOT done):
+    wire the dead reap_check() (reap.c:113) as sweep-on-shortage in do_fork + a getty crash-loop circuit-
+    breaker + a /proc slot/zombie/VKA counter. (3) E4 AIOS-vs-Linux register/clock/power-domain diff.
+  - **The session-8 sub-bullets below are SUPERSEDED on the MECHANISM** (the instruction-level localization
+    stands as DATA -- core 0 iovf=0, 4 sites, 32399ms -- but the "cold DRAM load / DVM-Sync on a quiesced SCB"
+    INTERPRETATION is overturned by session 9). v0.4.289 + the sibling-timer-mask + MVD-1 mitigations stand.
+  Session-8 detail: `docs/NEXT_20260621_stall_session8_localize.md`.
   - **HW RESULT (DECISIVE, 10+ stalls): core 0 ALWAYS `iovf=0`** (wedged on ONE instruction -- retired
     <2^32 over the whole 32.4s) with a tiny `bus` delta (`bovf=0` = clean wait on a PARKED fabric). Caught
     at 4 deterministic sites (exact inst-count each): A=`9->11` 1786 (slowpath syscall handler), B=`11->9`

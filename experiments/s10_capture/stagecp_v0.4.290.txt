@@ -1,0 +1,6 @@
+# Session-10 register-exact localization -- HW capture (v0.4.290, 2026-06-22)
+## netstall --idle 30 --trials 10: 3/10 STALLED (worst residual 33.2s); ping: 88 ICMP timeouts
+## All 3 [STAGECP] core=0 stalls (verbatim):
+12:49:50.423 1782100190.424 [STAGECP] core=0 prev=11 this=9 dur=32398ms idle_lag=18446744073709551615ms kent_lag=32398ms pmu=[inst=247 iovf=0 bus=29 bovf=0 mem=151 movf=0 l2=4 l2ovf=0 l1i=36 iiovf=0 cyc=18446744071748670023 cyovf=1] bc=[s=11 regs=0xffffff80fb959c00 pc=0x44c574 ttbr=0xcb2a0000fbe08000] allidle=[18446744073709551615,540709,0,0]
+12:50:53.626 1782100253.627 [STAGECP] core=0 prev=11 this=9 dur=32399ms idle_lag=18446744073709551615ms kent_lag=32399ms pmu=[inst=246 iovf=0 bus=21 bovf=0 mem=142 movf=0 l2=3 l2ovf=0 l1i=26 iiovf=0 cyc=18446744071749346795 cyovf=1] bc=[s=11 regs=0xffffff80fb959c00 pc=0x44c574 ttbr=0xe6650000fbe08000] allidle=[18446744073709551615,603911,0,0]
+12:53:59.706 1782100439.706 [STAGECP] core=0 prev=11 this=9 dur=32398ms idle_lag=18446744073709551615ms kent_lag=32398ms pmu=[inst=246 iovf=0 bus=9 bovf=0 mem=141 movf=0 l2=1 l2ovf=0 l1i=23 iiovf=0 cyc=18446744071748632392 cyovf=1] bc=[s=11 regs=0xffffff80fb959c00 pc=0x44c574 ttbr=0x6ebc0000fbe08000] allidle=[18446744073709551615,789951,0,0]
