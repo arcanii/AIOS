@@ -1,0 +1,12 @@
+# E1 test (2026-06-22, cold I-FETCH vs D-LOAD, v of repro.c with cold_target):
+# 4 cores in coherency domain, 30s busy-spin idle. Result: ALL 0ms -- NO HANG.
+14:33:26.427 1782106406.427 [E1-mc] booted EL2, MMU+caches ON, core0, A72. cntfrq=54000000 Hz
+14:33:26.427 1782106406.427 [E1-mc] secondaries up: 3/3  -> 4 cores in coherency domain
+14:33:26.427 1782106406.427 [E1-mc] COLD I-FETCH vs D-LOAD after 30s idle. I-fetch hang ~32400ms => silicon I-path (matches AIOS s10).
+14:33:56.432 1782106436.432 [E1-mc] trial 0 COLD-IFETCH dur=0ms
+14:34:26.428 1782106466.428 [E1-mc] trial 1 COLD-DLOAD  dur=0ms
+14:34:56.437 1782106496.438 [E1-mc] trial 2 COLD-IFETCH dur=0ms
+14:35:26.453 1782106526.453 [E1-mc] trial 3 COLD-DLOAD  dur=0ms
+14:35:56.422 1782106556.423 [E1-mc] trial 4 COLD-IFETCH dur=0ms
+14:36:26.426 1782106586.426 [E1-mc] trial 5 COLD-DLOAD  dur=0ms
+14:36:26.426 1782106586.426 [E1-mc] cold-fetch test complete.

@@ -74,28 +74,36 @@ void secondary_main(uint64_t core)
     core_up[core & 3] = 1;               /* signal core 0; then boot.S parks us in WFE */
 }
 
-/* ---- the experiment ---- */
+/* ---- the experiment: COLD INSTRUCTION FETCH vs COLD DATA LOAD after idle ----
+ * Session-10 (HW, v0.4.291) localized the AIOS ~32.4s wedge to a cold INSTRUCTION-cache
+ * refill of the user resume line after idle -- an I-SIDE fetch. e1 trials 1-4 + e3 NEVER
+ * tested this: they timed cold DATA loads + broadcast DVM-Sync (all 0ms). This variant
+ * evicts a target line, idles so the SCB fabric parks, then EITHER fetches that line
+ * (jump to it) OR loads it (data), timing the first post-idle access. Decision:
+ *   I-fetch hangs ~32400ms but D-load does not -> the cold-I-fetch-through-parked-fabric
+ *     is a SILICON property of this BCM2711 (matches AIOS) -> cure = keep the line warm.
+ *   both fast -> bare-metal does not reproduce it -> the AIOS EL1&0/eviction context matters. */
 #define QUIESCE_S 30
-#define TRIALS    3
+#define TRIALS    6                       /* alternating: even = I-fetch, odd = D-load control */
 static volatile uint64_t test_buf[8] __attribute__((aligned(64)));
-/* The freeze is the DVM/coherency-COMPLETION path (a *broadcast* TLBI's DVM-Sync
- * waiting on the quiesced SCB), NOT a data load. So the key ops are inner-shareable
- * BROADCAST TLBIs (alle2is / vae2is = the EL2 analog of AIOS's tlbi vae1is); a local
- * tlbi or a data load does not exercise it. */
-static const char opname[4][16] = { "coldload", "alle2is+dsb", "vae2is+dsb", "dsb_sy" };
+volatile uint64_t g_cold_entry;           /* cold_target stamps its post-fetch entry cntpct here */
 
-static uint64_t timed_op(int op)
+/* The cold-fetch target: line-aligned, never called before the timed test, so evicting its
+ * line(s) makes the ENTRY fetch a genuine cold refill from DRAM. Its first act reads cntpct
+ * (the post-fetch timestamp). noinline -> the call is a real `blr` (the I-fetch we time). */
+void cold_target(void);
+__attribute__((noinline, aligned(64)))
+void cold_target(void)
 {
-    uint64_t t0 = cntpct();
-    switch (op) {
-    case 0: { volatile uint64_t v = test_buf[0]; (void)v;                 /* cold data load (control) */
-              __asm__ volatile("dsb sy" ::: "memory"); break; }
-    case 1:   __asm__ volatile("tlbi alle2is; dsb sy; isb" ::: "memory"); break;  /* IS broadcast DVM-Sync */
-    case 2: { uint64_t va = ((uint64_t)&test_buf[0]) >> 12;               /* IS broadcast by VA (~vae1is) */
-              __asm__ volatile("tlbi vae2is, %0; dsb sy; isb" :: "r"(va) : "memory"); break; }
-    case 3:   __asm__ volatile("dsb sy; isb" ::: "memory"); break;        /* barrier alone (control) */
-    }
-    return cntpct() - t0;
+    uint64_t t; __asm__ volatile("isb; mrs %0, cntpct_el0" : "=r"(t));
+    g_cold_entry = t;
+    __asm__ volatile("nop;nop;nop;nop;nop;nop;nop;nop");
+}
+
+static void evict_iline(uint64_t a)        /* make an INSTRUCTION line cold: L1D/L2 -> DRAM, then drop L1I */
+{
+    __asm__ volatile("dc civac, %0" :: "r"(a) : "memory");   /* clean+invalidate unified L2/L1D to PoC(DRAM) */
+    __asm__ volatile("ic ivau, %0" :: "r"(a) : "memory");    /* invalidate L1I to PoU (IS-broadcast) */
 }
 
 void repro_main(void)
@@ -119,20 +127,42 @@ void repro_main(void)
     uputs("[E1-mc] secondaries up: "); udec(up); uputs("/3");
     uputs((up == NSEC) ? "  -> 4 cores in coherency domain\n"
                        : "  -> WARNING: not all cores joined (spin-table?)\n");
-    uputs("[E1-mc] quiesce SWEEP, op=alle2is+dsb (DVM-Sync) -- a fabric hang shows ~32400ms.\n");
+    uputs("[E1-mc] COLD I-FETCH vs D-LOAD after "); udec(QUIESCE_S);
+    uputs("s idle. I-fetch hang ~32400ms => silicon I-path (matches AIOS s10).\n");
 
-    /* Sweep the idle duration up to 8x AIOS's 30s threshold. If even 240s of idle
-     * (all 4 cores) does not make the broadcast DVM-Sync hang, the SCB is genuinely
-     * NOT quiescing in bare-metal -> not a threshold, the seL4 context is essential. */
-    static const int q_secs[] = { 30, 60, 120, 240 };
-    for (unsigned qi = 0; qi < sizeof(q_secs) / sizeof(q_secs[0]); qi++) {
+    for (int trial = 0; trial < TRIALS; trial++) {
+        int do_ifetch = ((trial & 1) == 0);            /* even = I-fetch, odd = D-load control */
+
+        /* Evict the target so the first post-idle access is a genuine cold refill from DRAM. */
+        if (do_ifetch) {
+            uint64_t base = (uint64_t)&cold_target;
+            evict_iline(base);                          /* entry line */
+            evict_iline(base + 64);                     /* + next line (in case it spills) */
+        } else {
+            __asm__ volatile("dc civac, %0" :: "r"((uint64_t)&test_buf[0]) : "memory");
+        }
+        __asm__ volatile("dsb ish; isb" ::: "memory");
+
+        /* Idle: busy-spin on CNTPCT only (no memory/MMIO) so the SCB fabric parks. Faithful to
+         * AIOS core 0 (no-WFI, but generates no external bus traffic -> the fabric quiesces). */
         uint64_t s = cntpct();
-        while (cntpct() - s < (uint64_t)q_secs[qi] * frq) { }     /* all 4 cores idle */
-        uint64_t ms = (timed_op(1) * 1000ull) / frq;             /* op 1 = tlbi alle2is; dsb sy */
-        uputs("[E1-mc] idle="); udec(q_secs[qi]);
-        uputs("s alle2is+dsb dur="); udec(ms); uputs("ms");
+        while (cntpct() - s < (uint64_t)QUIESCE_S * frq) { }
+
+        uint64_t ms;
+        if (do_ifetch) {
+            uint64_t t0 = cntpct();
+            cold_target();                              /* <-- THE COLD INSTRUCTION FETCH (blr to evicted line) */
+            ms = ((g_cold_entry - t0) * 1000ull) / frq;
+            uputs("[E1-mc] trial "); udec(trial); uputs(" COLD-IFETCH dur="); udec(ms); uputs("ms");
+        } else {
+            uint64_t t0 = cntpct();
+            volatile uint64_t v = test_buf[0]; (void)v; /* cold DATA load (control; e1 baseline = 0ms) */
+            __asm__ volatile("dsb sy" ::: "memory");
+            ms = ((cntpct() - t0) * 1000ull) / frq;
+            uputs("[E1-mc] trial "); udec(trial); uputs(" COLD-DLOAD  dur="); udec(ms); uputs("ms");
+        }
         if (ms > 5000) uputs("   <<<<< HANG");
         uputc('\n');
     }
-    uputs("[E1-mc] sweep complete.\n");
+    uputs("[E1-mc] cold-fetch test complete.\n");
 }
