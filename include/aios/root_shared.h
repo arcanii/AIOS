@@ -385,9 +385,16 @@ extern volatile int g_proc_distribute;
  * spawn (which also applies the current policy); /proc/distribute.1 spreads + re-pins the
  * live TCBs round-robin across cores 0..N-1, .0 pins them back to core 0. The survive
  * threads (core0_hb, core1_wd) and the shared system timer stay pinned by design. */
-void aios_server_pin(seL4_CPtr tcb);
+void aios_server_pin(const char *name, seL4_CPtr tcb);
 int  distribute_cmd(const char *args, char *buf, int bufsize);
-extern volatile int g_server_distribute;
+extern volatile int g_server_distribute;   /* 0 off / 1 full round-robin / 2 surgical */
+
+/* Phase A step 3 prerequisite -- per-core SESSION/PROC bind (src/boot/spawn_util.c). When
+ * g_pincore >= 0, every subsequent user spawn is pinned to that core (overrides coresched),
+ * so a victim session can be bound to core N and a survivor to core M for the HW confinement
+ * gate. /proc/pincore.N sets it, /proc/pincore.r resets. Default -1 (off). */
+extern volatile int g_pincore;
+int  pincore_cmd(const char *args, char *buf, int bufsize);
 
 /* v0.4.258 SHM-ring pipes: direct SPSC producer<->consumer ring so a pipeline can
  * span cores (the pipe_server is out of the per-chunk data path). Decided per-pipe at

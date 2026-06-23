@@ -46,8 +46,9 @@ static int start_server_thread(const char *name, sel4utils_thread_entry_fn fn,
     if (error) return error;
     seL4_TCB_SetPriority(thread.tcb.cptr, simple_get_tcb(&simple), 200);
     /* Phase A step 2: register + apply the server-distribution policy. Default == core 0
-     * (the old ROOT_CORE pin, byte-for-byte); /proc/distribute.1 spreads these. */
-    aios_server_pin(thread.tcb.cptr);
+     * (the old ROOT_CORE pin, byte-for-byte); /proc/distribute spreads these. The name keys
+     * the surgical (mode 2) placement, so pass the same name used for /proc/cpuacct. */
+    aios_server_pin(name, thread.tcb.cptr);
     int rc = sel4utils_start_thread(&thread, fn,
         (void *)(uintptr_t)ep_cap, NULL, 1);
     if (rc == 0) aios_acct_register(name, thread.tcb.cptr);
@@ -81,7 +82,7 @@ void boot_start_services(vka_object_t *fault_ep) {
      * it joins the server-distribution policy. As registration index 0 it maps to core 0
      * under the round-robin (it runs the boot flow then the core-0 keep-warm idle spin),
      * so default and distributed placement are both core 0 here. */
-    aios_server_pin(simple_get_tcb(&simple));
+    aios_server_pin("root", simple_get_tcb(&simple));
 
     /* Register the root task's own thread for /proc/cpuacct (index 0). It runs the
      * boot flow then the no-WFI idle spin (aios_root.c). */
@@ -200,7 +201,7 @@ void boot_start_services(vka_object_t *fault_ep) {
             if (!error) {
                 seL4_TCB_SetPriority(net_srv.tcb.cptr,
                     simple_get_tcb(&simple), 200);
-                aios_server_pin(net_srv.tcb.cptr);   /* Phase A step 2 */
+                aios_server_pin("net", net_srv.tcb.cptr);   /* Phase A step 2 */
                 int bind_err = seL4_TCB_BindNotification(
                     net_srv.tcb.cptr, net_drv_ntfn_cap);
                 AIOS_LOG_INFO_V("net srv ntfn bind err=", bind_err);
@@ -252,7 +253,7 @@ void boot_start_services(vka_object_t *fault_ep) {
             simple_get_cnode(&simple), seL4_NilData, &disp_srv);
         if (!derr) {
             seL4_TCB_SetPriority(disp_srv.tcb.cptr, simple_get_tcb(&simple), 200);
-            aios_server_pin(disp_srv.tcb.cptr);   /* Phase A step 2 */
+            aios_server_pin("display", disp_srv.tcb.cptr);   /* Phase A step 2 */
             if (disp_wake_base) {
                 int berr = seL4_TCB_BindNotification(disp_srv.tcb.cptr, disp_wake_base);
                 if (berr) {

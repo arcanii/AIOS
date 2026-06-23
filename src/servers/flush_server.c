@@ -78,7 +78,7 @@ void flush_server_init(void) {
      * almost all its time blocked in seL4_Call to the fs_thread, so it does not
      * steal CPU; running at server priority avoids starvation (see serverstats). */
     seL4_TCB_SetPriority(thread.tcb.cptr, simple_get_tcb(&simple), 200);
-    aios_server_pin(thread.tcb.cptr);   /* Phase A step 2: default core 0, /proc/distribute spreads */
+    aios_server_pin("flush", thread.tcb.cptr);   /* Phase A step 2: default core 0; stays home under surgical */
     err = sel4utils_start_thread(&thread, flush_thread_fn, NULL, NULL, 1);
     if (err) {
         AIOS_LOG_WARN_V("flush: thread start failed err=", (unsigned long)err);

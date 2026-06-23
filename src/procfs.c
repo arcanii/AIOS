@@ -874,6 +874,14 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         int ds = distribute_cmd(path + 10, buf, bufsize);
         if (ds < 0) return -1;
         w = ds;
+    } else if (path[0] == 'p' && path[1] == 'i' && path[2] == 'n' && path[3] == 'c'
+            && path[4] == 'o' && path[5] == 'r' && path[6] == 'e') {
+        /* /proc/pincore[.N|.r] -- Phase A step 3 per-core SESSION/PROC bind (spawn_util.c).
+         * .N pins every subsequent user spawn to core N (overrides coresched), .r resets.
+         * The deterministic placement the HW confinement gate needs. */
+        int pc = pincore_cmd(path + 7, buf, bufsize);
+        if (pc < 0) return -1;
+        w = pc;
     } else if (path[0] == 's' && path[1] == 'h' && path[2] == 'm' && path[3] == 'r'
             && path[4] == 'i' && path[5] == 'n' && path[6] == 'g') {
         /* /proc/shmring[.0|.1] -- v0.4.258 direct SPSC SHM-ring kill switch

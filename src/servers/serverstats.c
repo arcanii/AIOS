@@ -163,7 +163,7 @@ void serverstats_init(void) {
     /* v0.4.178 / Phase A step 2: register + apply the server-distribution policy
      * (default core 0, the old pin; /proc/distribute.1 spreads). Safe under the
      * allocator lock now that the global vka is serialized. */
-    aios_server_pin(thread.tcb.cptr);
+    aios_server_pin("serverstats", thread.tcb.cptr);
     err = sel4utils_start_thread(&thread, probe_thread_fn, NULL, NULL, 1);
     if (err) {
         AIOS_LOG_WARN_V("serverstats: thread start failed err=", (unsigned long)err);
