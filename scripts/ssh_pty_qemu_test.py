@@ -134,13 +134,19 @@ def main():
 
         # ---- 1. isatty + interactive shell over a forced PTY ----
         print("\n=== ssh -tt: isatty + interactive ===", flush=True)
-        marker = "PTY_MARK_7Q"
-        cmds = ("[ -t 0 ] && echo ISATTY_OK || echo ISATTY_NO\n"
+        # IMPORTANT: in raw -tt mode the PTY echoes the typed command, so a token
+        # that appears literally in the command matches the ECHO, not the command
+        # OUTPUT (a false positive that bit an earlier version). The printf '%s'
+        # concatenation makes the OUTPUT token (ISATTY_OK / PTYMARK_7Q) never
+        # appear in the echoed command text ('ISATTY_%s' + 'OK' separately) -- so
+        # a match proves real output. whoami->root / uname->aarch64 are likewise
+        # output-only strings.
+        cmds = ("[ -t 0 ] && printf 'ISATTY_%s\\n' OK || printf 'ISATTY_%s\\n' NO\n"
                 "whoami\n"
                 "uname -a\n"
-                "echo %s\n"
-                "exit\n") % marker
-        rc, sout, serr = attempt(cmds, [marker, "ISATTY_OK"], timeout=60)
+                "printf 'PTYMARK_%s\\n' 7Q\n"
+                "exit\n")
+        rc, sout, serr = attempt(cmds, ["PTYMARK_7Q", "aarch64"], timeout=60)
         # drain serial for sshd handshake logs
         con.read_until("___never___", 3)
         # isatty(0) is the authoritative terminal check (TCGETS succeeds on the
@@ -148,11 +154,12 @@ def main():
         # because AIOS has no /dev/pts device node -- a separate, cosmetic
         # limitation that does not affect line editing / signals / full-screen
         # apps, which all key off isatty().
-        check("isatty(0) TRUE over SSH (test -t 0)", "ISATTY_OK" in sout,
-              repr(sout[:120]))
-        check("shell echoed marker (interactive)", marker in sout, repr(sout[:120]))
-        check("whoami=root", "root" in sout, repr(sout[:120]))
-        check("uname shows AIOS", "AIOS" in sout, repr(sout[:120]))
+        check("isatty(0) TRUE over SSH (real output, not echo)", "ISATTY_OK" in sout,
+              repr(sout[:140]))
+        check("interactive command output (PTYMARK_7Q)", "PTYMARK_7Q" in sout,
+              repr(sout[:140]))
+        check("whoami=root (real output)", "root" in sout, repr(sout[:140]))
+        check("uname shows aarch64 (real output)", "aarch64" in sout, repr(sout[:140]))
 
         # ---- 2. Ctrl-C: partial line discarded, session survives ----
         print("\n=== ssh -tt: Ctrl-C (VINTR -> SIGINT) ===", flush=True)

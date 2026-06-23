@@ -36,6 +36,18 @@
  * bytes: client keystrokes -> TTY_PTY_INPUT, shell output -> TTY_PTY_MASTER_READ.
  * ---------------------------------------------------------------- */
 
+/* v0.4.297 robust teardown: the relay must keep relaying the shell's output
+ * until the SHELL exits, NOT stop when the client closes its INPUT side. A
+ * scripted client (`ssh -tt host <<EOF`) closes stdin right after sending the
+ * commands; on slow hardware (~800ms forks) the shell has not produced its
+ * output yet, so ending on the input-side EOF dropped all command output (the
+ * race QEMU is too fast to lose). After the client's input side closes we keep
+ * draining until the shell exits, bounded by a grace window so an abandoned
+ * shell still gets reaped. */
+#define RELAY_EOF_GRACE_TICKS  4000   /* ~40s of idle (10ms ticks) after input-EOF -> give up */
+#define RELAY_DRAIN_MAX        400    /* final-drain: up to ~4s ... */
+#define RELAY_DRAIN_QUIET      8      /* ... stopping after 80ms with no more output */
+
 /* Allocate a PTY instance. Returns instance id (1..) or <0 on failure. */
 static int pty_alloc(void)
 {
@@ -693,6 +705,8 @@ static int channel_relay_pty(ssh_session_t *s, pid_t child)
     fcntl(s->sockfd, F_SETFL, sfl | 0x800);   /* O_NONBLOCK socket */
 
     int done = 0, shell_exited = 0;
+    int client_in_closed = 0;   /* client's INPUT side closed (EOF/CHANNEL_EOF) */
+    int idle_ticks = 0;         /* idle 10ms ticks since the input side closed */
     uint8_t obuf[1024];
     uint8_t pkt[SSH_BUF_SIZE];
     int plen;
@@ -702,7 +716,8 @@ static int channel_relay_pty(ssh_session_t *s, pid_t child)
     while (!done) {
         int activity = 0;
 
-        /* 1. Shell output -> client (bounded by the client's receive window) */
+        /* 1. Shell output -> client (bounded by the client's receive window).
+         * A failed send means the client is fully gone -> stop. */
         int room = (int)s->client_window;
         if (room > (int)sizeof(obuf)) room = (int)sizeof(obuf);
         if (room > 0) {
@@ -710,59 +725,73 @@ static int channel_relay_pty(ssh_session_t *s, pid_t child)
             if (n > 0) {
                 activity = 1;
                 s->client_window -= (uint32_t)n;
-                if (send_chan_data(s, obuf, n) < 0) { done = 1; break; }
+                if (send_chan_data(s, obuf, n) < 0) {
+                    SSHLOG("[sshd] send failed -- client gone\n");
+                    done = 1;
+                    break;
+                }
             }
         }
 
-        /* 2. Client -> shell (non-blocking SSH read) */
-        plen = 0;
-        int rc = ssh_read_packet_nb(s, pkt, &plen);
-        if (rc == 0 && plen > 0) {
-            activity = 1;
-            uint8_t mtype = pkt[0];
-            if (mtype == SSH_MSG_CHANNEL_DATA) {
-                int doff = 1 + 4;
-                const uint8_t *data; uint32_t dlen;
-                if (ssh_get_string(pkt, plen, &doff, &data, &dlen) == 0) {
-                    pty_input(s->pty_inst, data, (int)dlen);
-                    s->server_window -= dlen;
-                    if (s->server_window < SSH_CHAN_WINDOW / 2) {
-                        uint32_t adj = SSH_CHAN_WINDOW - s->server_window;
-                        send_window_adjust(s, adj);
-                        s->server_window += adj;
+        /* 2. Client -> shell (non-blocking SSH read), only while the client's
+         * input side is open. Once it closes we stop reading the socket but
+         * KEEP draining the shell's output above until the shell itself exits. */
+        if (!client_in_closed) {
+            plen = 0;
+            int rc = ssh_read_packet_nb(s, pkt, &plen);
+            if (rc == 0 && plen > 0) {
+                activity = 1;
+                uint8_t mtype = pkt[0];
+                if (mtype == SSH_MSG_CHANNEL_DATA) {
+                    int doff = 1 + 4;
+                    const uint8_t *data; uint32_t dlen;
+                    if (ssh_get_string(pkt, plen, &doff, &data, &dlen) == 0) {
+                        pty_input(s->pty_inst, data, (int)dlen);
+                        s->server_window -= dlen;
+                        if (s->server_window < SSH_CHAN_WINDOW / 2) {
+                            uint32_t adj = SSH_CHAN_WINDOW - s->server_window;
+                            send_window_adjust(s, adj);
+                            s->server_window += adj;
+                        }
                     }
-                }
-            } else if (mtype == SSH_MSG_CHANNEL_WINDOW_ADJUST) {
-                int woff = 1 + 4;
-                if (woff + 4 <= plen) s->client_window += ssh_get_u32(pkt + woff);
-            } else if (mtype == SSH_MSG_CHANNEL_REQUEST) {
-                /* window-change (RFC 4254 6.7): u32 cols, rows, xpix, ypix */
-                int roff = 1 + 4;
-                const uint8_t *rtype; uint32_t rlen;
-                if (ssh_get_string(pkt, plen, &roff, &rtype, &rlen) == 0
-                    && rlen == 13 && memcmp(rtype, "window-change", 13) == 0) {
-                    if (roff < plen) roff++;  /* want_reply byte */
-                    if (roff + 8 <= plen) {
-                        uint32_t cols = ssh_get_u32(pkt + roff);
-                        uint32_t rows = ssh_get_u32(pkt + roff + 4);
-                        pty_winsz(s->pty_inst, (int)rows, (int)cols);
-                        /* SIGWINCH to the FOREGROUND process (kill(0,...) ->
-                         * pipe_server resolves to fg_pid), so a full-screen app
-                         * like vi -- not the parent shell -- redraws on resize. */
-                        kill(0, SIGWINCH);
+                } else if (mtype == SSH_MSG_CHANNEL_WINDOW_ADJUST) {
+                    int woff = 1 + 4;
+                    if (woff + 4 <= plen) s->client_window += ssh_get_u32(pkt + woff);
+                } else if (mtype == SSH_MSG_CHANNEL_REQUEST) {
+                    /* window-change (RFC 4254 6.7): u32 cols, rows, xpix, ypix */
+                    int roff = 1 + 4;
+                    const uint8_t *rtype; uint32_t rlen;
+                    if (ssh_get_string(pkt, plen, &roff, &rtype, &rlen) == 0
+                        && rlen == 13 && memcmp(rtype, "window-change", 13) == 0) {
+                        if (roff < plen) roff++;  /* want_reply byte */
+                        if (roff + 8 <= plen) {
+                            uint32_t cols = ssh_get_u32(pkt + roff);
+                            uint32_t rows = ssh_get_u32(pkt + roff + 4);
+                            pty_winsz(s->pty_inst, (int)rows, (int)cols);
+                            /* SIGWINCH to the FOREGROUND process (kill(0,...) ->
+                             * pipe_server resolves to fg_pid), so a full-screen
+                             * app like vi -- not the parent shell -- redraws. */
+                            kill(0, SIGWINCH);
+                        }
                     }
+                } else if (mtype == SSH_MSG_CHANNEL_EOF) {
+                    /* Client closed its input side (e.g. a heredoc ended). Do NOT
+                     * tear down -- the shell still has queued input (e.g. `exit`)
+                     * to run and output to flush. Keep draining until it exits. */
+                    SSHLOG("[sshd] client CHANNEL_EOF -- draining until shell exits\n");
+                    client_in_closed = 1;
+                } else if (mtype == SSH_MSG_CHANNEL_CLOSE
+                           || mtype == SSH_MSG_DISCONNECT) {
+                    SSHLOG("[sshd] client closed/disconnected\n");
+                    done = 1;
                 }
-            } else if (mtype == SSH_MSG_CHANNEL_EOF) {
-                SSHLOG("[sshd] client CHANNEL_EOF\n");
-                /* No separate stdin to close; the shell sees EOF via Ctrl-D. */
-            } else if (mtype == SSH_MSG_CHANNEL_CLOSE
-                       || mtype == SSH_MSG_DISCONNECT) {
-                SSHLOG("[sshd] client closed/disconnected\n");
-                done = 1;
+            } else if (rc < 0) {
+                /* Socket EOF/error: the client closed its WRITE side (it may
+                 * still be RECEIVING our output). Same as CHANNEL_EOF -- stop
+                 * reading, keep draining the shell's output until it exits. */
+                SSHLOG("[sshd] client input EOF -- draining until shell exits\n");
+                client_in_closed = 1;
             }
-        } else if (rc < 0) {
-            SSHLOG("[sshd] socket read error in PTY relay\n");
-            done = 1;
         }
 
         /* 3. Shell-exit detection (no pipe EOF): kill(child,0) returns ESRCH
@@ -773,21 +802,43 @@ static int channel_relay_pty(ssh_session_t *s, pid_t child)
             done = 1;
         }
 
+        /* 4. Bounded wait after the input side closed: keep going while the
+         * shell still produces output; give up if idle too long (an abandoned
+         * shell that will never exit -- the SIGKILL self-heal then reaps it). */
+        if (client_in_closed && !done) {
+            if (activity) idle_ticks = 0;
+            else if (++idle_ticks > RELAY_EOF_GRACE_TICKS) {
+                SSHLOG("[sshd] grace expired with shell alive -- reaping\n");
+                done = 1;
+            }
+        }
+
         if (!activity && !done) {
             struct timespec ts = { 0, RELAY_POLL_NS };
             nanosleep(&ts, NULL);
         }
     }
 
-    /* Drain any output the shell emitted just before exiting. */
-    for (int i = 0; i < 16; i++) {
-        int room = (int)s->client_window;
-        if (room > (int)sizeof(obuf)) room = (int)sizeof(obuf);
-        if (room <= 0) break;
-        int n = pty_master_read(s->pty_inst, obuf, room);
-        if (n <= 0) break;
-        s->client_window -= (uint32_t)n;
-        if (send_chan_data(s, obuf, n) < 0) break;
+    /* Robust final drain: flush ALL remaining shell output, tolerating slow-HW
+     * in-flight writes. Drain until the master ring is quiet for RELAY_DRAIN_QUIET
+     * consecutive polls (not break-on-first-empty, which dropped output the shell
+     * had not yet flushed), capped at RELAY_DRAIN_MAX. */
+    {
+        int quiet = 0;
+        for (int i = 0; i < RELAY_DRAIN_MAX && quiet < RELAY_DRAIN_QUIET; i++) {
+            int room = (int)s->client_window;
+            if (room > (int)sizeof(obuf)) room = (int)sizeof(obuf);
+            int n = (room > 0) ? pty_master_read(s->pty_inst, obuf, room) : 0;
+            if (n > 0) {
+                s->client_window -= (uint32_t)n;
+                if (send_chan_data(s, obuf, n) < 0) break;
+                quiet = 0;
+            } else {
+                quiet++;
+                struct timespec ts = { 0, RELAY_POLL_NS };
+                nanosleep(&ts, NULL);
+            }
+        }
     }
 
     send_chan_eof(s);
