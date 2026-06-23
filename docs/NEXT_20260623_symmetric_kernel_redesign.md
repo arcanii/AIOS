@@ -269,55 +269,61 @@ pending sessions to a healthy core (if state allows), and let the wedged core re
 
 ---
 
-## 11. SEED PROMPT (next session)
+## 11. SEED PROMPT (next session -- session 14)
 
 Paste the block below into a fresh session. Everything above is grounding. The stall is a MAJOR OPEN
-CONCERN -- this is blast-radius work (survive a per-core wedge), never frame it as a cure
-([[feedback_stall_open_concern]]).
+CONCERN ([[feedback_stall_open_concern]]) -- session 13 found a STRONG but UNCONFIRMED cure lead; the
+job now is to CONFIRM or REFUTE it rigorously, never to assume it.
 
 >>> SEED PROMPT <<<
 
-Continue the symmetric / core-agnostic kernel redesign -- Phase A step 2: un-pin the root servers and
-prove the allocator lock holds in-situ on QEMU, then (if the board is revived) the HW per-core-wedge
-confinement gate.
+CONFIRM (or refute) the session-13 PREWARM stall-cure lead: a pre-NODE_LOCK cold-fabric touch at each
+seL4 kernel entry gave ZERO ~32.4s core-0 wedges on HW vs ~6 without it. This may be the cure that
+eluded 12 sessions -- treat it as UNCONFIRMED and demand extraordinary proof.
 
-READ FIRST: docs/NEXT_20260623_symmetric_kernel_redesign.md (the plan + progress in section 9), then
-memory [[project_stall_session12]] + [[project_stall_hunt]] + docs/BACKLOG_core_agnostic_kernel.md.
+READ FIRST: docs/NEXT_20260623_symmetric_kernel_redesign.md (the prewarm section in S9 + the gate
+result), then memory [[project_stall_session12]] (the gate + prewarm detail) + [[project_stall_hunt]]
++ [[feedback_stall_open_concern]].
 
-SETTLED (session 12, do NOT re-derive): The blocking-sleep / "prevent the wedge" cure is HW-REFUTED --
-core 0 cannot be made to idle on this board (idle_lag=-1 at 20ms AND 500ms polls; timer-poll relocates
-churn), and blocking relays wedge permanently after a stall (their naps block on the timer service,
-which freezes WITH core 0) -> the board became un-driveable and died. So a cross-core BLOCKING
-dependency PROPAGATES a per-core wedge -- the load-bearing design constraint. The leverage is to
-SURVIVE a per-core wedge, not prevent it. The seL4 BKL is RELEASED before eret-to-user (proven), so a
-user-side wedge holds no lock; the cluster only freezes because all servers live on core 0. Phase A
-step 1 is DONE (commit 4fdbeee): src/boot/vka_lock.c is a spinlock trampoline layer over the global
-vka (installed at aios_root.c after allocman_make_vka), fixing the v0.4.178 lock-free CSpace-slot
-bitmap tear. Proven by scripts/allocman_lock_host_test.c (buggy RMW tears ~4000 handouts/run; locked
-= 0); QEMU gate unchanged at baseline. The lock is inert under the current core-0 pinning, load-bearing
-once servers distribute. The s12 blocking-relay code is reverted to the s11 base.
+SETTLED (session 13, do NOT re-derive):
+- The ~32.4s wedge SPLITS BY TYPE (HW confinement gate, /proc/confine worker on core 2): the IDLE->WAKE
+  wedge ([STAGECP] core=0 prev=9 this=11 = a cold load INSIDE the seL4 handler, AFTER NODE_LOCK) holds
+  the BKL -> CLUSTER-FREEZE (the syscall-doing worker froze, advanced=0). The TEARDOWN-reap wedge
+  (prev=13 this=9 = post-eret user fetch, pre-lock) is CONFINED (worker ran 683k syscalls through it).
+- THE PREWARM (commit 0a4d045): aios_fabric_prewarm() (deps/kernel errata.c: per-core cold-scratch read
+  + dsb sy) called via AIOS_PRELOCK_PREWARM() BEFORE NODE_LOCK in the 4 slowpath/IRQ entries of
+  c_traps.c (NOT the IPC fastpath). It relocates the one-time fabric wake out of the BKL-held window. HW
+  A/B (serial-independent /proc/laststall): build 2896 (prewarm) = 0 core-0 wedges over ~14 idle->teardown
+  cycles; build 2893 (no prewarm) = ~6. Only the prewarm differs; worker-confound ruled out (armed both);
+  teardowns confirmed (ASIDGEN climbed). APPEARS TO PREVENT the wedge -- coherent because it is CORE 0's
+  OWN per-entry ACE/snoop-master touch (every prior keep-warm was secondary/external -> couldn't). NOT
+  the refuted s10 IWARM (that held L2 lines; this relocates the wake). Board is on build 2896 (prewarm
+  ON), healthy, 192.168.0.8.
 
-DO:
-1. Make server un-pinning a default-safe KNOB (e.g. /proc/distribute or boot flag) so it is
-   A/B-testable; when on, drop the seL4_TCB_SetAffinity(..., ROOT_CORE) pins (boot_services.c:48,82,
-   203,257; timer_server.c:299; watchdog.c:304) and round-robin the servers across cores.
-2. On QEMU smp4, run the v0.4.178 repro: 2 concurrent connections / fork storms. WITH the lock + un-pin
-   the 2nd must NOT fail (the "second SSH connection fails / key exchange failed" bug); toggle the lock
-   off to confirm it tears without it. This is the in-situ proof the lock enables distribution.
-3. CAVEAT (found in s12): the allocator was the documented tear, but the shared ROOT vspace
-   (sel4utils bookkeeping) is also unlocked. fork/exec use per-child vspaces (safe with the locked
-   vka), but concurrent root-vspace ops (server-buffer allocs) may race. If the repro fails for a
-   vspace reason, add a vspace lock (same trampoline pattern as vka_lock.c) or move toward per-core
-   vspaces (Phase B).
-4. THEN Phase A step 3 (HW confinement gate -- the real payoff): REVIVE THE BOARD FIRST (it is DEAD;
-   build a driveable s11+lock SD image via mksdcard.py and balenaEtcher it -- build 2881 was the bad
-   un-driveable image, now removed). Force a teardown-after-idle wedge on one core and confirm a
-   session bound to another core stays responsive. This gate decides whether confinement is real
-   before investing in Phase B (per-core timer + per-core process-manager).
+DO (the confirmation, in order):
+1. REPRODUCIBILITY A/B (serial-independent, robust to the flaky FTDI): in deps/kernel errata.c set
+   AIOS_FABRIC_PREWARM 0, rebuild build-rpi4, pi_flash.py --build, then arm /proc/confine.2 and drive
+   ~10 idle->teardown cycles (connect+disconnect, ~33s idle each); read /proc/laststall -- wedges should
+   RETURN. Then set AIOS_FABRIC_PREWARM 1, re-flash, re-run -> wedges GONE again. That nails it.
+2. SOAK: longer idle windows (60-120s) + more cycles on the prewarm kernel; confirm /proc/laststall stays
+   "none detected". (More n on the 0-wedges side.)
+3. RUNTIME TOGGLE (cleanest, for a same-boot A/B): make the prewarm gated by a kernel global settable
+   from userspace -- needs a small kernel<->userspace channel (the flag is a kernel global; non-trivial).
+4. PERF: measure the cost of the dsb sy per slowpath entry (the pipeline ceiling / IPC throughput); try a
+   lighter barrier (dsb ish, or the cacheable touch with NO dsb) and re-confirm it still prevents the wedge.
+   If a cheaper variant works, prefer it.
+5. IF CONFIRMED: this changes everything -- the symmetric-kernel "survive the wedge" work (Phase B per-core
+   timer etc.) becomes OPTIONAL (you cured the wedge instead of surviving it). Re-scope. The Phase A
+   distribution knobs (/proc/distribute, /proc/placement, /proc/pincore) remain useful but no longer
+   load-bearing for stall survival.
 
-METHOD / STATE: Board is DEAD -- needs a power-cycle + a driveable reflash before any HW step (the
-symmetric design will NOT use the s12 blocking relays / timersleep-on). FULL QEMU gate before every
-flash (smp 4/5, socket 8/8, netd 10/10, shmring 25/26 -- the smp 4/5 abort is BASELINE, verified s12).
-Allocator lock = src/boot/vka_lock.c; host test = scripts/allocman_lock_host_test.c. seL4 changes ->
-regenerate deps/patches/seL4-kernel.patch. sercap BEFORE any stall/HW test; do not over-probe
-netconsole (polling triggers stalls + wedges it). Commit on main; Bryan pushes.
+METHOD / STATE: Board build 2896 (prewarm ON) at 192.168.0.8. The FTDI serial adapter is BUMP-SENSITIVE
+(dropped twice mid-run s13) -> use /proc/laststall over netconsole as the SERIAL-INDEPENDENT wedge
+counter (it reads the userspace watchdog's g_wd_stalls; "none detected" = 0 wedges). /proc/confine.2 arms
+the probe worker on core 2, .r disarms; /proc/confine ticks must be CLIMBING before a run (verify the
+worker is actually scheduled). pi_flash.py --build = flash-free kernel swap (push over net + fatswap +
+reboot + verify /proc/version) -- the board is alive so NO balenaEtcher needed. seL4 kernel edits live in
+deps/kernel (gitignored, own git) -> regenerate the tracked patch via `git -C deps/kernel diff >
+deps/patches/seL4-kernel.patch` and commit THAT. FULL QEMU gate before every flash (SMP 4/5 baseline,
+socket 8/8). Commit on main; Bryan pushes. Even if confirmed, validate broadly (multiple workloads,
+power cycles) before concluding -- the stall has burned every premature "cure".
