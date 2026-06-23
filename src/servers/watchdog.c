@@ -292,6 +292,8 @@ void watchdog_start(void)
     }
     seL4_TCB_SetPriority(hb.tcb.cptr, simple_get_tcb(&simple), 200);
 #if CONFIG_MAX_NUM_NODES > 1
+    /* SURVIVE infra: stays pinned to core 0 (the core-0 stall detector) -- NOT routed
+     * through aios_server_pin / /proc/distribute. See Phase A step 2 note. */
     seL4_TCB_SetAffinity(hb.tcb.cptr, 0);
 #endif
     sel4utils_start_thread(&hb, wd_core0_hb_fn, NULL, NULL, 1);
@@ -306,6 +308,8 @@ void watchdog_start(void)
     }
     seL4_TCB_SetPriority(wd.tcb.cptr, simple_get_tcb(&simple), 1);
 #if CONFIG_MAX_NUM_NODES > 1
+    /* SURVIVE infra: stays pinned to WD_CORE (kernel-timer-masked, so it keeps running
+     * through a core-0 wedge) -- NOT routed through aios_server_pin / /proc/distribute. */
     seL4_TCB_SetAffinity(wd.tcb.cptr, WD_CORE);
 #endif
     sel4utils_start_thread(&wd, wd_watchdog_fn, NULL, NULL, 1);

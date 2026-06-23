@@ -290,6 +290,11 @@ void timer_server_init(void) {
         return;
     }
     seL4_TCB_SetPriority(th.tcb.cptr, simple_get_tcb(&simple), 200);
+    /* Phase A step 2: the SHARED system timer stays PINNED to core 0 even under
+     * /proc/distribute -- a single shared timer on a wedged core would freeze every
+     * sleeper on every core (a cross-core blocking dep, the s12 failure mode). The
+     * per-core timer that removes this dep is Phase B (docs/NEXT_20260623_symmetric_
+     * kernel_redesign.md). NOT routed through aios_server_pin by design. */
     #if CONFIG_MAX_NUM_NODES > 1
     seL4_TCB_SetAffinity(th.tcb.cptr, 0);
     #endif

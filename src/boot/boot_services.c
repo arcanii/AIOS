@@ -35,8 +35,9 @@
  * smallest correct change. */
 #define ROOT_CORE 0
 
-/* Start an internal server thread at priority 200, pinned to ROOT_CORE. name is
- * registered for /proc/cpuacct (per-thread CPU accounting). */
+/* Start an internal server thread at priority 200. Its core placement goes through the
+ * server-distribution policy (aios_server_pin): default ROOT_CORE (core 0), or spread
+ * across cores under /proc/distribute. name is registered for /proc/cpuacct. */
 static int start_server_thread(const char *name, sel4utils_thread_entry_fn fn,
                                seL4_CPtr ep_cap) {
     sel4utils_thread_t thread;
@@ -44,9 +45,9 @@ static int start_server_thread(const char *name, sel4utils_thread_entry_fn fn,
         simple_get_cnode(&simple), seL4_NilData, &thread);
     if (error) return error;
     seL4_TCB_SetPriority(thread.tcb.cptr, simple_get_tcb(&simple), 200);
-    #if CONFIG_MAX_NUM_NODES > 1
-    seL4_TCB_SetAffinity(thread.tcb.cptr, ROOT_CORE);
-    #endif
+    /* Phase A step 2: register + apply the server-distribution policy. Default == core 0
+     * (the old ROOT_CORE pin, byte-for-byte); /proc/distribute.1 spreads these. */
+    aios_server_pin(thread.tcb.cptr);
     int rc = sel4utils_start_thread(&thread, fn,
         (void *)(uintptr_t)ep_cap, NULL, 1);
     if (rc == 0) aios_acct_register(name, thread.tcb.cptr);
@@ -76,11 +77,11 @@ static void start_net_cleanup_proxy(void) {
 void boot_start_services(vka_object_t *fault_ep) {
     int error;
 
-    /* v0.4.178: pin the root task's own init thread to core 0 too -- it shares
-     * the same global allocman/vka as the servers (see start_server_thread). */
-    #if CONFIG_MAX_NUM_NODES > 1
-    seL4_TCB_SetAffinity(simple_get_tcb(&simple), ROOT_CORE);
-    #endif
+    /* v0.4.178 / Phase A step 2: the root init thread shares the global allocman/vka, so
+     * it joins the server-distribution policy. As registration index 0 it maps to core 0
+     * under the round-robin (it runs the boot flow then the core-0 keep-warm idle spin),
+     * so default and distributed placement are both core 0 here. */
+    aios_server_pin(simple_get_tcb(&simple));
 
     /* Register the root task's own thread for /proc/cpuacct (index 0). It runs the
      * boot flow then the no-WFI idle spin (aios_root.c). */
@@ -199,9 +200,7 @@ void boot_start_services(vka_object_t *fault_ep) {
             if (!error) {
                 seL4_TCB_SetPriority(net_srv.tcb.cptr,
                     simple_get_tcb(&simple), 200);
-                #if CONFIG_MAX_NUM_NODES > 1
-                seL4_TCB_SetAffinity(net_srv.tcb.cptr, ROOT_CORE);
-                #endif
+                aios_server_pin(net_srv.tcb.cptr);   /* Phase A step 2 */
                 int bind_err = seL4_TCB_BindNotification(
                     net_srv.tcb.cptr, net_drv_ntfn_cap);
                 AIOS_LOG_INFO_V("net srv ntfn bind err=", bind_err);
@@ -253,9 +252,7 @@ void boot_start_services(vka_object_t *fault_ep) {
             simple_get_cnode(&simple), seL4_NilData, &disp_srv);
         if (!derr) {
             seL4_TCB_SetPriority(disp_srv.tcb.cptr, simple_get_tcb(&simple), 200);
-            #if CONFIG_MAX_NUM_NODES > 1
-            seL4_TCB_SetAffinity(disp_srv.tcb.cptr, ROOT_CORE);
-            #endif
+            aios_server_pin(disp_srv.tcb.cptr);   /* Phase A step 2 */
             if (disp_wake_base) {
                 int berr = seL4_TCB_BindNotification(disp_srv.tcb.cptr, disp_wake_base);
                 if (berr) {

@@ -258,6 +258,11 @@ extern allocman_t *allocman;
  * allocman_make_vka). Lets root servers be un-pinned from core 0 without tearing
  * the lock-free CSpace-slot bitmap (the v0.4.178 SMP bug). Impl: src/boot/vka_lock.c. */
 void aios_vka_install_lock(void);
+/* Phase A step 2: A/B the allocator lock at runtime -- the in-situ proof that the lock
+ * is what closes the v0.4.178 CSpace-tear once servers distribute. /proc/vkalock.0
+ * bypasses the lock, .1 re-enables (default ON). Impl: src/boot/vka_lock.c. */
+extern volatile int g_vka_lock_enabled;
+int  aios_vkalock_cmd(const char *args, char *buf, int bufsize);
 
 extern active_proc_t active_procs[MAX_ACTIVE_PROCS];
 extern seL4_CPtr thread_ep_cap;
@@ -370,6 +375,19 @@ int spawn_simple(const char *name, uint8_t prio,
 void aios_assign_core(seL4_CPtr tcb);
 int  coresched_cmd(const char *args, char *buf, int bufsize);
 extern volatile int g_proc_distribute;
+
+/* Symmetric-kernel Phase A step 2 (docs/NEXT_20260623_symmetric_kernel_redesign.md):
+ * un-pin the ROOT SERVER threads from core 0 so a per-core idle->wake wedge takes down
+ * only that core's servers, not the whole cluster. SAFE ONLY with the allocator lock
+ * (aios_vka_install_lock) -- concurrent allocs from servers on different cores otherwise
+ * tear the CSpace-slot bitmap (v0.4.178). DEFAULT OFF == every server on core 0, exactly
+ * today's behavior. Each un-pinnable server registers its TCB via aios_server_pin() at
+ * spawn (which also applies the current policy); /proc/distribute.1 spreads + re-pins the
+ * live TCBs round-robin across cores 0..N-1, .0 pins them back to core 0. The survive
+ * threads (core0_hb, core1_wd) and the shared system timer stay pinned by design. */
+void aios_server_pin(seL4_CPtr tcb);
+int  distribute_cmd(const char *args, char *buf, int bufsize);
+extern volatile int g_server_distribute;
 
 /* v0.4.258 SHM-ring pipes: direct SPSC producer<->consumer ring so a pipeline can
  * span cores (the pipe_server is out of the per-chunk data path). Decided per-pipe at

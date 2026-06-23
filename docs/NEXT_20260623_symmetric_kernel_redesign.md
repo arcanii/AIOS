@@ -212,18 +212,46 @@ pending sessions to a healthy core (if state allows), and let the wedged core re
   `scripts/allocman_lock_host_test.c` (buggy RMW tears ~4000 handouts/run; locked = 0). QEMU gate
   unchanged at baseline (socket 8/8, shmring 25/26, smp 4/5). Inert under core-0 pinning; load-bearing
   once servers distribute.
-- [ ] **Phase A step 2 — un-pin + in-situ proof (QEMU):** drop the `SetAffinity(…, ROOT_CORE)` pins
-  (boot_services.c:48,82,203,257; timer_server.c:299; watchdog.c:304) and prove the lock holds under
-  real contention via the v0.4.178 repro (2 concurrent SSH/netconsole connections; the 2nd must NOT
-  fail). CAVEAT discovered: the allocator was the documented tear, but the shared **root vspace**
-  (sel4utils bookkeeping) is also unlocked — fork/exec use *per-child* vspaces (safe with the locked
-  vka), but concurrent *root*-vspace ops (server-buffer allocs) may race. The 2nd-SSH-conn bug is the
-  allocator tear specifically, so it may pass with just the allocator lock; if it doesn't, add a
-  vspace lock (same trampoline pattern) or move to per-core vspaces (Phase B). Make un-pin a knob so
-  it is A/B-testable and default-safe.
-- [ ] **Phase A step 3 — per-core-wedge confinement measurement (HW):** force a teardown wedge on
-  core N (home-core-bound session) and confirm a session on core M stays responsive. This is the gate
-  that tells us whether confinement is real before investing in Phase B. Needs the board revived.
+- [x] **Phase A step 2 — un-pin + in-situ proof (QEMU) — DONE (build 2885, 2026-06-23):** two
+  default-safe runtime knobs added: **`/proc/distribute[.0|.1]`** (`spawn_util.c` `aios_server_pin` +
+  `distribute_cmd`) un-pins the root servers and round-robins them across cores 0..N-1, re-pinning the
+  *live* TCBs on toggle; **`/proc/vkalock[.0|.1]`** (`vka_lock.c` `g_vka_lock_enabled`) A/B-bypasses the
+  allocator lock. The 8 server pin-sites (`start_server_thread` ×7, root init, net_server, display,
+  flush, serverstats, netd_listener) now route through `aios_server_pin`; **deliberately KEPT pinned:**
+  `core0_hb` (core 0, stall detector), `core1_wd` (WD_CORE, kernel-timer-masked survive thread), and the
+  **shared system timer** (a single shared timer on a wedged core would freeze every sleeper on every
+  core — the s12 cross-core-blocking failure; per-core timer is Phase B). Default OFF == byte-for-byte
+  today's behavior; baseline QEMU gate unchanged (SMP 4/5, socket 8/8, shmring 25/26).
+  **RESULTS (`scripts/distribute_qemu_test.py`, per-config fresh boots, width-3 fork storm ×10):**
+  (1) pinned 10/10 clean; (2) **distribute+lock 10/10 clean + healthy — the proof: servers spread
+  across all 4 cores, concurrent cross-core forks still compute correctly, no corruption**; (3)
+  distribute+bypass ALSO 10/10 clean — i.e. **the rare CSpace-slot tear does NOT reproduce at in-situ
+  allocation rates** (~30 forks) even with the lock bypassed; it needs the sustained 4-thread hammering
+  of `scripts/allocman_lock_host_test.c` (4000 dups → 0) to manifest. **So the HOST test stays the
+  canonical lock proof; the in-situ test proves un-pinning is structurally sound + correct under the
+  lock.** **KEY NEW FINDING (confirms barrier B4 empirically):** full distribution makes IPC **~2.6×
+  slower** (worst round 44 s vs 17 s pinned) — the BKL serializes kernel entry, so un-pinning *contends*
+  rather than parallelizes. On QEMU this is amplified because `flush`/`serverstats` use the yield-spin
+  timer-fallback (no systimer MMIO) and busy-monopolize a timer-masked secondary core — a HW-vs-QEMU
+  artifact, but it flags the design rule: **distribution must be SURGICAL** (don't distribute the
+  console/timer/yield-spinning servers; only the ones whose isolation actually buys resilience). No
+  faults/panics in any config — the shared-root-vspace race (the s12 caveat) did NOT surface in fork/
+  exec (they use per-child vspaces); a root-vspace lock is still a latent Phase-B item if concurrent
+  *root*-buffer allocs are ever distributed.
+- [ ] **Phase A step 3 — per-core-wedge confinement measurement (HW):** force a teardown-after-idle
+  wedge on core N and confirm a session on core M stays responsive. **Board REVIVAL FIRST** (it is dead):
+  `ninja -C build-rpi4` (gives the s11+lock+step-2 kernel) → `python3 scripts/mksdcard.py` (→
+  `disk/sdcard-rpi4.img`) → balenaEtcher to the physical card → boot + verify `/proc/version` +
+  `cat /proc/distribute`. **Then the gate.** TWO refinements this measurement needs (note before HW):
+  (a) **distribution should be SURGICAL** for the HW test — the naive full-distribute is too contended
+  AND distributes the console/timer; better to distribute only a couple of allocator-heavy servers
+  (pipe/exec/fs) and keep the console+timer on a "home" core. (b) **a per-core SESSION/PROC bind is
+  missing** — `coresched` only round-robins user procs across 1..N-1; to pin a *victim* session to a
+  chosen core N and a *survivor* to core M deterministically, add a small bind knob (e.g.
+  `/proc/pincore.N` consumed by the next spawn, or a getty arg). Until then, use the watchdog +
+  `[STAGECP] allidle` per-core oracle to *observe* which core wedged and whether peers survived. This
+  gate decides whether confinement is real before investing in Phase B. **Run `sercap` BEFORE any HW
+  stall test; do not over-probe netconsole.**
 
 ---
 

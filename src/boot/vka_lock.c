@@ -27,6 +27,7 @@
 #include <vka/vka.h>
 #include <sel4/sel4.h>
 #include <stdbool.h>
+#include <stdio.h>
 
 /* One shared spinlock -- every allocator user is a root-task thread. Same
  * primitive AIOS already uses (src/gpu/v3d.c, src/lib/posix_thread.c): a GCC
@@ -37,9 +38,17 @@
  * runs in userspace (or contends the BKL fairly via the CLH queue for its retype
  * syscall), so there is no lock-vs-BKL deadlock. */
 static volatile unsigned char g_vka_lock = 0;
+
+/* Runtime A/B switch (default ON). Bypassing the lock reproduces the v0.4.178 tear once
+ * the servers are distributed across cores -- the in-situ proof that THIS lock is what
+ * closes it. Toggled via /proc/vkalock between A/B test runs (not mid-op). vka_unlock
+ * always clears unconditionally, so a toggle that races a held section can never strand
+ * the byte: worst case is a brief window with no mutual exclusion, which is the bypass we
+ * asked for. */
+volatile int g_vka_lock_enabled = 1;
 static inline void vka_lock(void)
 {
-    while (__atomic_test_and_set(&g_vka_lock, __ATOMIC_ACQUIRE)) {
+    while (g_vka_lock_enabled && __atomic_test_and_set(&g_vka_lock, __ATOMIC_ACQUIRE)) {
         seL4_Yield();
     }
 }
@@ -119,4 +128,15 @@ void aios_vka_install_lock(void)
     vka.utspace_free               = lk_utspace_free;
     vka.utspace_paddr              = lk_utspace_paddr;
     /* vka.data and vka.cspace_make_path unchanged */
+}
+
+/* /proc/vkalock[.0|.1] -- A/B the allocator lock at runtime. .0 bypasses it (to reproduce
+ * the v0.4.178 tear with servers distributed), .1 re-enables (default). Bare = status. */
+int aios_vkalock_cmd(const char *args, char *buf, int bufsize)
+{
+    if (args[0] == '.' && (args[1] == '0' || args[1] == '1'))
+        g_vka_lock_enabled = (args[1] == '1');
+    return snprintf(buf, bufsize,
+        "vkalock: enabled=%d (.0 bypass the allocator lock / .1 enable; default 1)\n",
+        g_vka_lock_enabled);
 }

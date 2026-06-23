@@ -507,6 +507,13 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
                 break;
             }
         }
+    } else if (path[0] == 'v' && path[1] == 'k' && path[2] == 'a' && path[3] == 'l') {
+        /* /proc/vkalock[.0|.1] -- A/B the allocator lock at runtime (src/boot/vka_lock.c).
+         * Proves the lock is what closes the v0.4.178 CSpace-tear once servers distribute:
+         * .0 bypass / .1 enable (default). Checked before /proc/vka (path[3]=='l'). */
+        int vl = aios_vkalock_cmd(path + 7, buf, bufsize);
+        if (vl < 0) return -1;
+        w = vl;
     } else if (path[0] == 'v' && path[1] == 'k' && path[2] == 'a') {
         /* /proc/vka -- VKA allocator audit */
         extern int vka_live_frames;
@@ -858,6 +865,15 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         int cs = coresched_cmd(path + 9, buf, bufsize);
         if (cs < 0) return -1;
         w = cs;
+    } else if (path[0] == 'd' && path[1] == 'i' && path[2] == 's' && path[3] == 't'
+            && path[4] == 'r' && path[5] == 'i' && path[6] == 'b') {
+        /* /proc/distribute[.0|.1] -- Phase A step 2: ROOT SERVER core distribution
+         * (src/boot/spawn_util.c). .1 un-pins the servers + re-pins them round-robin across
+         * cores 0..N-1; .0 pins them all back to core 0 (default). The survive threads and
+         * the shared timer stay pinned. Safe only with the allocator lock (/proc/vkalock). */
+        int ds = distribute_cmd(path + 10, buf, bufsize);
+        if (ds < 0) return -1;
+        w = ds;
     } else if (path[0] == 's' && path[1] == 'h' && path[2] == 'm' && path[3] == 'r'
             && path[4] == 'i' && path[5] == 'n' && path[6] == 'g') {
         /* /proc/shmring[.0|.1] -- v0.4.258 direct SPSC SHM-ring kill switch

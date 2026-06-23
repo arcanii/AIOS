@@ -74,9 +74,7 @@ static int netd_start_root_thread(sel4utils_thread_entry_fn fn, seL4_CPtr arg_ca
                   simple_get_cnode(&simple), seL4_NilData, &th);
     if (err) return err;
     seL4_TCB_SetPriority(th.tcb.cptr, simple_get_tcb(&simple), 200);
-    #if CONFIG_MAX_NUM_NODES > 1
-    seL4_TCB_SetAffinity(th.tcb.cptr, 0);   /* ROOT_CORE: shares the global vka */
-    #endif
+    aios_server_pin(th.tcb.cptr);   /* Phase A step 2: shares the global vka; default core 0 */
     int rc = sel4utils_start_thread(&th, fn, (void *)(uintptr_t)arg_cap, NULL, 1);
     if (rc == 0) aios_acct_register("netd_listener", th.tcb.cptr);   /* /proc/cpuacct */
     return rc;
