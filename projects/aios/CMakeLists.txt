@@ -186,6 +186,7 @@ add_executable(aios_root
     ${AIOS_ROOT}/src/boot/boot_fs_init.c
     ${AIOS_ROOT}/src/lib/vka_audit.c
     ${AIOS_ROOT}/src/boot/boot_services.c
+    ${AIOS_ROOT}/src/boot/vka_lock.c
     ${AIOS_ROOT}/src/boot/spawn_netd.c
     ${AIOS_ROOT}/src/boot/boot_net_init.c
     ${AIOS_ROOT}/src/boot/boot_display_init.c

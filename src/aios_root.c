@@ -232,6 +232,12 @@ int main(int argc, char *argv[]) {
         &simple, ALLOCATOR_STATIC_POOL_SIZE, allocator_mem_pool);
     if (!allocman) { printf("FATAL: allocman\n"); return -1; }
     allocman_make_vka(&vka, allocman);
+    /* Symmetric-kernel groundwork: serialize the lock-free allocman/vka so root
+     * servers can be un-pinned from core 0 without tearing the CSpace-slot bitmap
+     * (the v0.4.178 SMP bug). Must run before any other thread touches the vka.
+     * Inert under the current core-0 pinning (no contention); load-bearing once
+     * servers distribute. See docs/NEXT_20260623_symmetric_kernel_redesign.md. */
+    aios_vka_install_lock();
     error = sel4utils_bootstrap_vspace_with_bootinfo_leaky(
         &vspace, &vspace_data,
         simple_get_pd(&simple), &vka, info);

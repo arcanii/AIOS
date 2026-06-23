@@ -254,6 +254,10 @@ extern vka_t vka;
 extern vspace_t vspace;
 extern simple_t simple;
 extern allocman_t *allocman;
+/* Install the allocator spinlock over the global vka (call once, right after
+ * allocman_make_vka). Lets root servers be un-pinned from core 0 without tearing
+ * the lock-free CSpace-slot bitmap (the v0.4.178 SMP bug). Impl: src/boot/vka_lock.c. */
+void aios_vka_install_lock(void);
 
 extern active_proc_t active_procs[MAX_ACTIVE_PROCS];
 extern seL4_CPtr thread_ep_cap;
