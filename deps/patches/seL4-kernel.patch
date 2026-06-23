@@ -191,10 +191,10 @@ index d869e3926..233b8634e 100644
  
  /* Invalidate all stage 1 and stage 2 translations used at
 diff --git a/include/arch/arm/arch/kernel/traps.h b/include/arch/arm/arch/kernel/traps.h
-index 90b37bf52..a5dcd351f 100644
+index 90b37bf52..9a4e7efae 100644
 --- a/include/arch/arm/arch/kernel/traps.h
 +++ b/include/arch/arm/arch/kernel/traps.h
-@@ -10,9 +10,23 @@
+@@ -10,9 +10,29 @@
  #include <machine.h>
  #include <util.h>
  
@@ -202,6 +202,12 @@ index 90b37bf52..a5dcd351f 100644
 +/* AIOS session-8: explicit forward decl (also in mode/machine.h, reached transitively via machine.h)
 + * so arch_c_entry_hook's stage-9 call does not silently elide if the include chain is refactored. */
 +void aios_checkpoint(word_t stage);
++#endif
++#if defined(CONFIG_ARCH_AARCH64)
++/* AIOS session-13: cold-fabric prewarm -- a pre-NODE_LOCK cacheable touch at each kernel entry that
++ * RELOCATES the one-time idle->wake fabric-wake hang out of the BKL-held window (errata.c). Called
++ * before NODE_LOCK in the c_handle_* entry stubs so a cluster-freeze wedge becomes a confined one. */
++void aios_fabric_prewarm(void);
 +#endif
 +
  static inline void arch_c_entry_hook(void)
@@ -950,11 +956,48 @@ index 08f7937ee..014aedea3 100644
              invalidateASIDEntry(asid);
  #endif
 diff --git a/src/arch/arm/c_traps.c b/src/arch/arm/c_traps.c
-index 8104d73df..f93d06d86 100644
+index 8104d73df..1bdc7bcfb 100644
 --- a/src/arch/arm/c_traps.c
 +++ b/src/arch/arm/c_traps.c
-@@ -88,6 +88,9 @@ void VISIBLE NORETURN c_handle_interrupt(void)
+@@ -17,8 +17,25 @@
+ #include <benchmark/benchmark_utilisation.h>
+ #include <arch/machine.h>
+ 
++/* AIOS session-13: BEFORE acquiring the big kernel lock at a kernel entry, (optionally) mark a
++ * pre-lock checkpoint (stage 14) then do the cold-fabric prewarm. The prewarm relocates the
++ * one-time idle->wake fabric-wake hang to here -- where the BKL is NOT yet held -- so a wedge that
++ * would otherwise cluster-freeze (a cold load inside the handler, prev=9 this=11) instead confines
++ * (core 0 stalls, siblings keep running). Stage 14 makes the relocation visible: a 32s gap at
++ * prev=14 this=9 = the prewarm absorbed it (pre-lock); a residual prev=9 this=11 = the prewarm missed
++ * the wedging line (localizes the next iteration). Applied to the SLOWPATH + IRQ entries (where the
++ * gate observed the cluster-freeze); the dsb is kept off the IPC fastpath for latency. */
++#if defined(CONFIG_ARCH_AARCH64) && defined(AIOS_TEARDOWN_CHECKPOINTS) && AIOS_TEARDOWN_CHECKPOINTS
++#define AIOS_PRELOCK_PREWARM() do { aios_checkpoint(14); aios_fabric_prewarm(); } while (0)
++#elif defined(CONFIG_ARCH_AARCH64)
++#define AIOS_PRELOCK_PREWARM() do { aios_fabric_prewarm(); } while (0)
++#else
++#define AIOS_PRELOCK_PREWARM() do { } while (0)
++#endif
++
+ void VISIBLE NORETURN c_handle_undefined_instruction(void)
  {
++    AIOS_PRELOCK_PREWARM();
+     NODE_LOCK_SYS;
+     c_entry_hook();
+ 
+@@ -56,6 +73,7 @@ void NORETURN vm_fault_slowpath(vm_fault_type_t type)
+ 
+ static inline void NORETURN c_handle_vm_fault(vm_fault_type_t type)
+ {
++    AIOS_PRELOCK_PREWARM();
+     NODE_LOCK_SYS;
+     c_entry_hook();
+ 
+@@ -86,8 +104,12 @@ void VISIBLE NORETURN c_handle_instruction_fault(void)
+ 
+ void VISIBLE NORETURN c_handle_interrupt(void)
+ {
++    AIOS_PRELOCK_PREWARM();
      NODE_LOCK_IRQ_IF(IRQT_TO_IRQ(getActiveIRQ()) != irq_remote_call_ipi);
      c_entry_hook();
 +#if AIOS_TEARDOWN_CHECKPOINTS
@@ -963,6 +1006,14 @@ index 8104d73df..f93d06d86 100644
  
  #ifdef TRACK_KERNEL_ENTRIES
      ksKernelEntry.path = Entry_Interrupt;
+@@ -123,6 +145,7 @@ void NORETURN slowpath(syscall_t syscall)
+ 
+ void VISIBLE c_handle_syscall(word_t cptr, word_t msgInfo, syscall_t syscall)
+ {
++    AIOS_PRELOCK_PREWARM();
+     NODE_LOCK_SYS;
+ 
+     c_entry_hook();
 diff --git a/src/arch/arm/kernel/boot.c b/src/arch/arm/kernel/boot.c
 index 93eb4d133..d199bd853 100644
 --- a/src/arch/arm/kernel/boot.c
@@ -1042,10 +1093,10 @@ index 93eb4d133..d199bd853 100644
      init_plat();
  
 diff --git a/src/arch/arm/machine/errata.c b/src/arch/arm/machine/errata.c
-index f8dac15c3..57f4ec0ea 100644
+index f8dac15c3..025fd5160 100644
 --- a/src/arch/arm/machine/errata.c
 +++ b/src/arch/arm/machine/errata.c
-@@ -6,13 +6,637 @@
+@@ -6,13 +6,677 @@
  
  #include <config.h>
  #include <api/types.h>
@@ -1404,6 +1455,46 @@ index f8dac15c3..57f4ec0ea 100644
 +    aios_bc_regs[core] = regs;
 +    aios_bc_pc[core]   = pc;
 +    aios_bc_ttbr[core] = ttbr;
++}
++
++/* AIOS session-13 (HW confinement-gate result): the ~32.4s idle->wake wedge splits by WHERE the
++ * first cold fabric op lands. The CLUSTER-FREEZE variant ([STAGECP] prev=9 this=11) is a cold
++ * cacheable load INSIDE the seL4 handler, AFTER NODE_LOCK -> the fabric-wake hang holds the BKL ->
++ * every sibling's next kernel entry blocks ~32s (gate: the syscall-doing worker froze, advanced=0,
++ * core 2 co-wedged iovf=1). The CONFINED variant (prev=13 this=9) is the post-eret USER fetch, which
++ * is pre-lock -> siblings keep running (gate: the worker advanced 683k through the 32s wedge).
++ *
++ * FIX -- and it is NOT the REFUTED s10 IWARM keep-warm above (that tried to PREVENT the wedge by
++ * holding specific lines in L2; refuted -- broad eviction + fastpath bypass). This does NOT prevent
++ * it: it RELOCATES the one-time fabric wake to BEFORE NODE_LOCK. A cold per-core scratch touch at
++ * each kernel entry, pre-lock, takes the 32.4s hang where the BKL is NOT held -> the cluster-freeze
++ * variant CONFINES (core 0 still stalls, siblings keep serving). The s8 PMU signature (inst~=0 AND
++ * bus~=0 = a clean wait on the PARKED fabric = a ONE-TIME wake, not a per-line refill) predicts that
++ * one pre-lock touch absorbs it; the HW gate measures it. Default ON; the dsb makes the touch
++ * COMPLETE before the lock so the hang cannot leak past it into the BKL-held window. */
++#ifndef AIOS_FABRIC_PREWARM
++#define AIOS_FABRIC_PREWARM 1
++#endif
++volatile word_t aios_prewarm_scratch[AIOS_TLBI_NCORES][64];   /* 64 words = 512B = 8 lines per core */
++volatile word_t aios_prewarm_hits;                            /* diag: total prewarm passes */
++void aios_fabric_prewarm(void);
++void aios_fabric_prewarm(void)
++{
++#if AIOS_FABRIC_PREWARM
++    word_t core = CURRENT_CPU_INDEX();
++    if (core >= AIOS_TLBI_NCORES) {
++        core = 0;
++    }
++    volatile word_t *p = aios_prewarm_scratch[core];
++    word_t w = 0;
++    /* one load per 64-byte line (word_t = 8 bytes -> stride 8); cold after a ~30s idle, so the
++     * first of these wakes the parked fabric -- and we are pre-NODE_LOCK, so it confines. */
++    w += p[0];  w += p[8];  w += p[16]; w += p[24];
++    w += p[32]; w += p[40]; w += p[48]; w += p[56];
++    asm volatile("" :: "r"(w) : "memory");   /* consume w: the loads cannot be elided */
++    asm volatile("dsb sy" ::: "memory");     /* WAIT for them to complete BEFORE NODE_LOCK */
++    aios_prewarm_hits++;
++#endif
 +}
 +
 +/* AIOS session-10 CURE ATTEMPT (eviction keep-warm). The ~32.4s wedge is the cold L1I/L2
