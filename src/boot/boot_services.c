@@ -306,10 +306,13 @@ void boot_start_services(vka_object_t *fault_ep) {
      * a 2nd cap (argv[1]) so tty output mirrors to the HDMI fb_console -- the shell is
      * then visible on HDMI for standalone USB-keyboard use. Omitted if no display. */
     sel4utils_process_t serial_proc;
-    seL4_CPtr caps[2], slots[2];
+    seL4_CPtr caps[3], slots[3];
     caps[0] = serial_ep.cptr;
-    int tty_ncaps = 1;
-    if (disp_ep_cap && gpu_available) { caps[1] = disp_ep_cap; tty_ncaps = 2; }
+    /* v0.4.296: pipe_server EP at argv[1] (always) so a PTY's VINTR can raise
+     * SIGINT at the fg process; display EP (HDMI mirror) moves to argv[2]. */
+    caps[1] = pipe_ep_cap;
+    int tty_ncaps = 2;
+    if (disp_ep_cap && gpu_available) { caps[2] = disp_ep_cap; tty_ncaps = 3; }
     error = spawn_with_args("tty_server", 200, &serial_proc,
                             fault_ep, tty_ncaps, caps, slots);
     if (error) { AIOS_LOG_ERROR_V("tty_server spawn FAILED err=", error); return; }

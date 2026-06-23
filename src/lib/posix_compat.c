@@ -45,6 +45,19 @@
 #define __NR_futex 98
 #endif
 
+/* v0.4.296: instance-aware "input available?" probe. inst 0 = serial console
+ * (TTY_POLL); a PTY (inst>0) = TTY_PTY_SLAVE_POLL with the instance id in MR0. */
+static int tty_poll_avail(int inst) {
+    if (!ser_ep) return 0;
+    if (inst > 0) {
+        seL4_SetMR(0, (seL4_Word)inst);
+        seL4_Call(ser_ep, seL4_MessageInfo_new(87 /* TTY_PTY_SLAVE_POLL */, 0, 0, 1));
+    } else {
+        seL4_Call(ser_ep, seL4_MessageInfo_new(76 /* TTY_POLL */, 0, 0, 0));
+    }
+    return (int)seL4_GetMR(0);
+}
+
 /* ---- ppoll: real implementation for stdin + pipe fds (v0.4.99) ----
  * ZLE and other interactive programs use poll() to check stdin.
  * We query tty_server (TTY_POLL) for stdin and pipe_server for pipes.
@@ -65,16 +78,11 @@ long aios_sys_ppoll(va_list ap) {
 
         if (fd < 0) continue;
 
-        /* stdin (fd 0): ask tty_server via TTY_POLL */
+        /* stdin (fd 0): ask tty_server (serial TTY_POLL or PTY slave poll) */
         if (fd == 0 && (events & POLLIN)) {
-            if (ser_ep) {
-                seL4_MessageInfo_t reply = seL4_Call(ser_ep,
-                    seL4_MessageInfo_new(76 /* TTY_POLL */, 0, 0, 0));
-                int avail = (int)seL4_GetMR(0);
-                if (avail > 0) {
-                    fds[i].revents |= POLLIN;
-                    ready++;
-                }
+            if (tty_poll_avail(aios_tty_inst) > 0) {
+                fds[i].revents |= POLLIN;
+                ready++;
             }
             continue;
         }
@@ -94,12 +102,9 @@ long aios_sys_ppoll(va_list ap) {
                 ready++;
                 continue;
             }
-            /* v0.4.99: is_tty fd (zsh SHTTY): poll tty_server */
+            /* v0.4.99: is_tty fd (zsh SHTTY): poll tty_server (PTY-aware) */
             if (af->is_tty && (events & POLLIN) && ser_ep) {
-                seL4_MessageInfo_t reply = seL4_Call(ser_ep,
-                    seL4_MessageInfo_new(76 /* TTY_POLL */, 0, 0, 0));
-                int avail = (int)seL4_GetMR(0);
-                if (avail > 0) {
+                if (tty_poll_avail(af->tty_inst) > 0) {
                     fds[i].revents |= POLLIN;
                     ready++;
                 }
@@ -140,11 +145,8 @@ long aios_sys_ppoll(va_list ap) {
             __aios_nanosleep(&ts, (void *)0);
             /* Re-check stdin only */
             for (unsigned int i = 0; i < nfds; i++) {
-                if (fds[i].fd == 0 && (fds[i].events & POLLIN) && ser_ep) {
-                    seL4_MessageInfo_t reply = seL4_Call(ser_ep,
-                        seL4_MessageInfo_new(76 /* TTY_POLL */, 0, 0, 0));
-                    int avail = (int)seL4_GetMR(0);
-                    if (avail > 0) {
+                if (fds[i].fd == 0 && (fds[i].events & POLLIN)) {
+                    if (tty_poll_avail(aios_tty_inst) > 0) {
                         fds[i].revents |= POLLIN;
                         ready++;
                     }
@@ -177,17 +179,15 @@ long aios_sys_pselect6(va_list ap) {
             if (!(rfds[word] & bit)) continue;
 
             int is_tty = 0;
-            if (fd == 0) is_tty = 1;
+            int inst = 0;
+            if (fd == 0) { is_tty = 1; inst = aios_tty_inst; }
             else if (fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
                 aios_fd_t *af = &aios_fds[fd - AIOS_FD_BASE];
-                if (af->active && af->is_tty) is_tty = 1;
+                if (af->active && af->is_tty) { is_tty = 1; inst = af->tty_inst; }
             }
 
             if (is_tty && ser_ep) {
-                seL4_MessageInfo_t reply = seL4_Call(ser_ep,
-                    seL4_MessageInfo_new(76 /* TTY_POLL */, 0, 0, 0));
-                int avail = (int)seL4_GetMR(0);
-                if (avail > 0) {
+                if (tty_poll_avail(inst) > 0) {
                     ready++;
                 } else {
                     rfds[word] &= ~bit;

@@ -205,6 +205,7 @@ typedef struct {
     int is_append;
     int is_nonblock;          /* v0.4.79: O_NONBLOCK for pipes */
     int is_tty;               /* REDIR_FIX_V072: marks fd as terminal copy */
+    int tty_inst;             /* v0.4.296: controlling PTY instance (0 = serial console) */
     int is_socket;            /* M3: fd is a network socket */
     int socket_id;            /* M3: index in net_server socket table (0-7) */
     char *shm_vaddr;              /* v0.4.66: SHM xfer page in this VSpace */
@@ -233,6 +234,7 @@ extern uint32_t aios_uid;
 extern uint32_t aios_gid;
 extern int stdout_pipe_id;
 extern int stdin_pipe_id;
+extern int aios_tty_inst;   /* v0.4.296: this process's controlling PTY instance (0 = serial) */
 extern int stdout_redir_idx;
 extern int stderr_redir_idx;
 

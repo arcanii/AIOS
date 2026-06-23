@@ -26,29 +26,41 @@ static struct termios aios_termios = {
     },
 };
 
-/* v0.4.99: Send full termios to tty_server via TCSETS IPC */
-static void termios_send(void) {
-    seL4_SetMR(0, (seL4_Word)TTY_IOCTL_TCSETS);
-    seL4_SetMR(1, (seL4_Word)aios_termios.c_iflag);
-    seL4_SetMR(2, (seL4_Word)aios_termios.c_oflag);
-    seL4_SetMR(3, (seL4_Word)aios_termios.c_cflag);
-    seL4_SetMR(4, (seL4_Word)aios_termios.c_lflag);
+/* v0.4.99: Send full termios to tty_server. v0.4.296: instance-aware -- inst 0 uses
+ * the serial-console TTY_IOCTL (MR0=op); a PTY (inst>0) uses TTY_PTY_SLAVE_IOCTL with
+ * MR0=inst, MR1=op, so the termios words shift one MR right. */
+static void termios_send(int op, int inst) {
+    int base = (inst > 0) ? 2 : 1;
+    if (inst > 0) { seL4_SetMR(0, (seL4_Word)inst); seL4_SetMR(1, (seL4_Word)op); }
+    else          { seL4_SetMR(0, (seL4_Word)op); }
+    seL4_SetMR(base + 0, (seL4_Word)aios_termios.c_iflag);
+    seL4_SetMR(base + 1, (seL4_Word)aios_termios.c_oflag);
+    seL4_SetMR(base + 2, (seL4_Word)aios_termios.c_cflag);
+    seL4_SetMR(base + 3, (seL4_Word)aios_termios.c_lflag);
     /* Pack c_cc[0..19] into 3 MRs (8 bytes per MR) */
     for (int m = 0; m < 3; m++) {
         seL4_Word w = 0;
         for (int b = 0; b < 8 && (m * 8 + b) < 20; b++) {
             w |= ((seL4_Word)aios_termios.c_cc[m * 8 + b]) << (b * 8);
         }
-        seL4_SetMR(5 + m, w);
+        seL4_SetMR(base + 4 + m, w);
     }
-    seL4_Call(ser_ep, seL4_MessageInfo_new(TTY_IOCTL, 0, 0, 8));
+    int label = (inst > 0) ? TTY_PTY_SLAVE_IOCTL : TTY_IOCTL;
+    seL4_Call(ser_ep, seL4_MessageInfo_new(label, 0, 0, base + 7));
 }
 
-/* v0.4.99: Fetch full termios from tty_server via TCGETS IPC */
-static void termios_fetch(void) {
-    seL4_SetMR(0, (seL4_Word)TTY_IOCTL_TCGETS);
-    seL4_MessageInfo_t reply = seL4_Call(ser_ep,
-        seL4_MessageInfo_new(TTY_IOCTL, 0, 0, 1));
+/* v0.4.99: Fetch full termios from tty_server via TCGETS IPC (instance-aware).
+ * The reply layout (termios packed at MR0..6) is identical for both ops. */
+static void termios_fetch(int inst) {
+    seL4_MessageInfo_t reply;
+    if (inst > 0) {
+        seL4_SetMR(0, (seL4_Word)inst);
+        seL4_SetMR(1, (seL4_Word)TTY_IOCTL_TCGETS);
+        reply = seL4_Call(ser_ep, seL4_MessageInfo_new(TTY_PTY_SLAVE_IOCTL, 0, 0, 2));
+    } else {
+        seL4_SetMR(0, (seL4_Word)TTY_IOCTL_TCGETS);
+        reply = seL4_Call(ser_ep, seL4_MessageInfo_new(TTY_IOCTL, 0, 0, 1));
+    }
     int nlen = (int)seL4_MessageInfo_get_length(reply);
     if (nlen >= 7) {
         aios_termios.c_iflag = (tcflag_t)seL4_GetMR(0);
@@ -126,18 +138,32 @@ long aios_sys_ioctl(va_list ap) {
     int req = va_arg(ap, int);
     void *argp = va_arg(ap, void *);
 
-    /* v0.4.99: Check if this fd is a tty (fd 0-2 or duped tty fd) */
+    /* v0.4.99: Check if this fd is a tty (fd 0-2 or duped tty fd).
+     * v0.4.296: also resolve the controlling PTY instance -- fd 0/1/2 inherit the
+     * process global; a duped tty fd carries its own tty_inst. inst 0 = serial. */
     int is_tty_fd = (fd <= 2);
+    int inst = (fd <= 2) ? aios_tty_inst : 0;
     if (!is_tty_fd && fd >= AIOS_FD_BASE && fd < AIOS_FD_BASE + AIOS_MAX_FDS) {
         aios_fd_t *af = &aios_fds[fd - AIOS_FD_BASE];
-        if (af->active && af->is_tty) is_tty_fd = 1;
+        if (af->active && af->is_tty) { is_tty_fd = 1; inst = af->tty_inst; }
     }
 
     if (is_tty_fd) {
-        /* TIOCGWINSZ -- terminal size for isatty + dash */
+        /* TIOCGWINSZ -- terminal size for isatty + dash. A PTY returns the real
+         * window size set by the SSH client (so vi/less size correctly); serial
+         * keeps the fixed 24x80. */
         if (req == 0x5413 && argp) {
             unsigned short *ws = (unsigned short *)argp;
-            ws[0] = 24; ws[1] = 80; ws[2] = 0; ws[3] = 0;
+            if (inst > 0 && ser_ep) {
+                seL4_SetMR(0, (seL4_Word)inst);
+                seL4_SetMR(1, (seL4_Word)TTY_IOCTL_GET_WINSZ);
+                seL4_Call(ser_ep, seL4_MessageInfo_new(TTY_PTY_SLAVE_IOCTL, 0, 0, 2));
+                ws[0] = (unsigned short)seL4_GetMR(0);  /* rows */
+                ws[1] = (unsigned short)seL4_GetMR(1);  /* cols */
+            } else {
+                ws[0] = 24; ws[1] = 80;
+            }
+            ws[2] = 0; ws[3] = 0;
             return 0;
         }
         /* TIOCGPGRP -- foreground process group */
@@ -149,7 +175,7 @@ long aios_sys_ioctl(va_list ap) {
         if (req == 0x5410) return 0;
         /* TCGETS -- get terminal attributes from server */
         if (req == 0x5401 && argp) {
-            termios_fetch();
+            termios_fetch(inst);
             struct termios *t = (struct termios *)argp;
             *t = aios_termios;
             return 0;
@@ -161,19 +187,7 @@ long aios_sys_ioctl(va_list ap) {
             int op = TTY_IOCTL_TCSETS;
             if (req == 0x5403) op = TTY_IOCTL_TCSETSW;
             if (req == 0x5404) op = TTY_IOCTL_TCSETSF;
-            seL4_SetMR(0, (seL4_Word)op);
-            seL4_SetMR(1, (seL4_Word)aios_termios.c_iflag);
-            seL4_SetMR(2, (seL4_Word)aios_termios.c_oflag);
-            seL4_SetMR(3, (seL4_Word)aios_termios.c_cflag);
-            seL4_SetMR(4, (seL4_Word)aios_termios.c_lflag);
-            for (int m = 0; m < 3; m++) {
-                seL4_Word w = 0;
-                for (int b = 0; b < 8 && (m * 8 + b) < 20; b++) {
-                    w |= ((seL4_Word)aios_termios.c_cc[m * 8 + b]) << (b * 8);
-                }
-                seL4_SetMR(5 + m, w);
-            }
-            seL4_Call(ser_ep, seL4_MessageInfo_new(TTY_IOCTL, 0, 0, 8));
+            termios_send(op, inst);
             return 0;
         }
         return 0;
@@ -199,6 +213,7 @@ long aios_sys_fcntl(va_list ap) {
             aios_fds[idx].active = 1;
             aios_fds[idx].is_devnull = 0;
             aios_fds[idx].is_tty = 1;  /* REDIR_DUP_V072: mark as terminal copy */
+            aios_fds[idx].tty_inst = aios_tty_inst;  /* v0.4.296: inherit PTY instance */
             aios_fds[idx].size = 0;
             aios_fds[idx].pos = 0;
             return AIOS_FD_BASE + idx;
@@ -243,6 +258,7 @@ long aios_sys_dup(va_list ap) {
         if (idx < 0) return -EMFILE;
         aios_fds[idx].active = 1;
         aios_fds[idx].is_tty = 1;  /* v0.4.72: mark as terminal copy */
+        aios_fds[idx].tty_inst = aios_tty_inst;  /* v0.4.296: inherit PTY instance */
         aios_fds[idx].size = 0;
         aios_fds[idx].pos = 0;
         return AIOS_FD_BASE + idx;

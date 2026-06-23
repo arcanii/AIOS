@@ -40,8 +40,15 @@
 #define TTY_PTY_MASTER_READ 82
 #define TTY_PTY_WINSZ       83
 #define TTY_PTY_FREE        84
+#define TTY_PTY_SLAVE_READ  85  /* v0.4.296: slave-side PTY ops (instance id in MR0) */
+#define TTY_PTY_SLAVE_WRITE 86
+#define TTY_PTY_SLAVE_POLL  87
+#define TTY_PTY_SLAVE_IOCTL 88
 
 #define DISP_CONSOLE    116  /* mirror output to the HDMI fb_console (root_shared.h) */
+
+#define PIPE_SIGNAL     75   /* pipe_server: kill(pid,sig); kill(0,SIGINT) -> fg_pid */
+#define SIG_INT          2   /* SIGINT for the line-discipline VINTR (PTY ISIG) */
 
 #define TTY_IOCTL_SET_RAW       1
 #define TTY_IOCTL_SET_COOKED    2
@@ -52,6 +59,7 @@
 #define TTY_IOCTL_TCSETS        7   /* v0.4.99: set full termios */
 #define TTY_IOCTL_TCSETSW       8
 #define TTY_IOCTL_TCSETSF       9
+#define TTY_IOCTL_GET_WINSZ     10  /* v0.4.296: reply MR0=rows, MR1=cols */
 
 #define TTY_MODE_COOKED  0
 #define TTY_MODE_RAW     1
@@ -172,6 +180,18 @@ static void tty_inst_init(tty_inst_t *t) {
  * the shell visible on HDMI for standalone USB-keyboard use. Instance 0 (serial
  * console) only -- PTY instances route output to a master ring in a later step. -- */
 static seL4_CPtr disp_ep = 0;   /* display_server endpoint (DISP_CONSOLE), or 0 */
+static seL4_CPtr pipe_ep = 0;   /* v0.4.296: pipe_server endpoint -- PTY VINTR -> SIGINT */
+
+/* v0.4.296: deliver SIGINT to the foreground process (PTY VINTR in cooked+ISIG).
+ * pipe_server resolves kill(0,sig) -> its global fg_pid (the most-recently-exec'd
+ * interactive process), so the tty_server need not track the fg pid itself. The
+ * caller has already been Replied to, so the IPC MRs are free scratch here. */
+static void pty_send_sigint(void) {
+    if (!pipe_ep) return;
+    seL4_SetMR(0, 0);            /* pid 0 -> fg_pid */
+    seL4_SetMR(1, (seL4_Word)SIG_INT);
+    seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_SIGNAL, 0, 0, 2));
+}
 
 /* Send a run of chars to the HDMI console (chars packed 8-per-word from MR1).
  * NOTE: this clobbers the IPC message registers, so callers that still need the
@@ -223,10 +243,19 @@ static int mo_pop(tty_inst_t *t) {
 }
 
 /* Instance-aware output: a PTY routes to its master ring (the sshd drains it); the
- * serial console (instance 0) goes to the mini-UART + HDMI as before. */
+ * serial console (instance 0) goes to the mini-UART + HDMI as before. For a PTY we
+ * apply output post-processing (OPOST + ONLCR: \n -> \r\n) HERE, so a raw-mode
+ * full-screen app (vi/less clears OPOST) gets an unmangled byte stream while a
+ * cooked shell still gets CR+LF. This replaces the sshd relay's old blanket
+ * \n->\r\n (which would mangle raw output). */
 static void inst_out(tty_inst_t *t, const char *buf, int len) {
-    if (t->is_pty) { for (int i = 0; i < len; i++) mo_push(t, buf[i]); }
-    else tty_write_buf(buf, len);
+    if (t->is_pty) {
+        int onlcr = (t->oflag & T_OPOST) && (t->oflag & T_ONLCR);
+        for (int i = 0; i < len; i++) {
+            if (onlcr && buf[i] == '\n') mo_push(t, '\r');
+            mo_push(t, buf[i]);
+        }
+    } else tty_write_buf(buf, len);
 }
 static void inst_putc(tty_inst_t *t, char c) { inst_out(t, &c, 1); }
 static void inst_puts(tty_inst_t *t, const char *s) { int n = 0; while (s[n]) n++; inst_out(t, s, n); }
@@ -247,8 +276,17 @@ static void line_discipline(tty_inst_t *t, char c) {
         if (c == (char)t->cc[T_VINTR]) {
             if (t->echo) inst_puts(t, "^C\n");
             t->line_len = 0;
-            lq_push(t, '\n');
-            key_push(t, c);
+            if (t->is_pty) {
+                /* Real tty semantics: VINTR raises SIGINT at the fg process and
+                 * DISCARDS the partial line -- the blocked slave read() returns
+                 * EINTR (its libc yield-loop observes the pending signal), not an
+                 * empty line. Serial console (instance 0) keeps the legacy
+                 * empty-line behaviour below (no signal path wired there). */
+                pty_send_sigint();
+            } else {
+                lq_push(t, '\n');
+                key_push(t, c);
+            }
             return;
         }
     }
@@ -356,8 +394,11 @@ static long parse_num(const char *s) {
 /* -- Main -- */
 int main(int argc, char *argv[]) {
     seL4_CPtr ep = 0;
+    /* v0.4.296: cap argv layout = [0]=main EP, [1]=pipe_server EP (PTY SIGINT;
+     * always present), [2]=display_server EP (HDMI mirror; optional). */
     if (argc > 0) ep = (seL4_CPtr)parse_num(argv[0]);
-    if (argc > 1) disp_ep = (seL4_CPtr)parse_num(argv[1]);   /* HDMI fb_console mirror */
+    if (argc > 1) pipe_ep = (seL4_CPtr)parse_num(argv[1]);
+    if (argc > 2) disp_ep = (seL4_CPtr)parse_num(argv[2]);   /* HDMI fb_console mirror */
 
     /* Instance 0 = the serial/keyboard console (is_pty=0 -> output to UART+HDMI). */
     tty_inst_init(&tty_inst[0]);
@@ -612,6 +653,117 @@ int main(int argc, char *argv[]) {
             int id = (int)seL4_GetMR(0);
             if (id > 0 && id < MAX_TTY) { tty_inst[id].used = 0; tty_inst[id].is_pty = 0; }
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
+            break;
+        }
+
+        /* -- PTY slave-side ops (v0.4.296 step 2b); instance id in MR0. The shell's
+         * libc routes fd 0/1/2 here when its controlling PTY is instance>0. These
+         * mirror the serial-console TTY_READ/WRITE/POLL/IOCTL but on instance N. -- */
+        case TTY_PTY_SLAVE_READ: {
+            int id = (int)seL4_GetMR(0);
+            int max_len = (int)seL4_GetMR(1);
+            int max_mr_bytes = ((int)seL4_MsgMaxLength - 1) * 8;
+            if (max_len > max_mr_bytes) max_len = max_mr_bytes;
+            int rlen = 0, mr = 1;
+            if (id > 0 && id < MAX_TTY && tty_inst[id].used && tty_inst[id].is_pty) {
+                tty_inst_t *t = &tty_inst[id];
+                int raw = (t->mode == TTY_MODE_RAW);
+                int avail = raw ? key_count(t) : lq_avail(t);
+                rlen = avail < max_len ? avail : max_len;
+                seL4_Word w = 0;
+                for (int i = 0; i < rlen; i++) {
+                    int c = raw ? key_pop(t) : lq_pop(t);
+                    if (c < 0) { rlen = i; break; }
+                    w |= ((seL4_Word)(uint8_t)c) << ((i % 8) * 8);
+                    if (i % 8 == 7 || i == rlen - 1) { seL4_SetMR(mr++, w); w = 0; }
+                }
+            }
+            seL4_SetMR(0, (seL4_Word)rlen);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, mr));
+            break;
+        }
+
+        case TTY_PTY_SLAVE_WRITE: {
+            int id = (int)seL4_GetMR(0);
+            int wlen = (int)seL4_GetMR(1);
+            char wbuf[1024];
+            if (wlen > 1024) wlen = 1024;
+            for (int i = 0; i < wlen; i++)
+                wbuf[i] = (char)((seL4_GetMR(2 + i / 8) >> ((i % 8) * 8)) & 0xFF);
+            if (id > 0 && id < MAX_TTY && tty_inst[id].used && tty_inst[id].is_pty)
+                inst_out(&tty_inst[id], wbuf, wlen);
+            seL4_SetMR(0, (seL4_Word)wlen);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+
+        case TTY_PTY_SLAVE_POLL: {
+            int id = (int)seL4_GetMR(0);
+            int avail = 0;
+            if (id > 0 && id < MAX_TTY && tty_inst[id].used && tty_inst[id].is_pty) {
+                tty_inst_t *t = &tty_inst[id];
+                avail = (t->mode == TTY_MODE_RAW) ? key_count(t) : lq_avail(t);
+            }
+            seL4_SetMR(0, (seL4_Word)avail);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+
+        case TTY_PTY_SLAVE_IOCTL: {
+            int id = (int)seL4_GetMR(0);
+            int op = (int)seL4_GetMR(1);
+            if (!(id > 0 && id < MAX_TTY && tty_inst[id].used && tty_inst[id].is_pty)) {
+                seL4_SetMR(0, (seL4_Word)0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            tty_inst_t *t = &tty_inst[id];
+            int result = 0;
+            switch (op) {
+            case TTY_IOCTL_SET_RAW:
+                t->lflag &= ~T_ICANON; termios_sync(t);
+                t->lq_head = t->lq_tail = 0; t->key_head = t->key_tail = 0; t->line_len = 0;
+                break;
+            case TTY_IOCTL_SET_COOKED:
+                t->lflag |= T_ICANON; termios_sync(t);
+                t->key_head = t->key_tail = 0; t->line_len = 0;
+                break;
+            case TTY_IOCTL_ECHO_ON:  t->lflag |= T_ECHO;  termios_sync(t); break;
+            case TTY_IOCTL_ECHO_OFF: t->lflag &= ~T_ECHO; termios_sync(t); break;
+            case TTY_IOCTL_GET_MODE: result = t->mode; break;
+            case TTY_IOCTL_GET_WINSZ:
+                seL4_SetMR(0, (seL4_Word)t->ws_row);
+                seL4_SetMR(1, (seL4_Word)t->ws_col);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 2));
+                goto next_msg;
+            case TTY_IOCTL_TCGETS:
+                /* termios MRs start at MR0 (no instance shift on the reply) */
+                termios_pack_reply(t);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 7));
+                goto next_msg;
+            case TTY_IOCTL_TCSETS:
+            case TTY_IOCTL_TCSETSW:
+            case TTY_IOCTL_TCSETSF: {
+                /* args shifted by one MR vs TTY_IOCTL (MR0=inst, MR1=op),
+                 * so termios words are MR2..MR5 and cc packs at MR6..MR8. */
+                t->iflag = (uint32_t)seL4_GetMR(2);
+                t->oflag = (uint32_t)seL4_GetMR(3);
+                t->cflag = (uint32_t)seL4_GetMR(4);
+                t->lflag = (uint32_t)seL4_GetMR(5);
+                for (int m = 0; m < 3; m++) {
+                    seL4_Word w = seL4_GetMR(6 + m);
+                    for (int b = 0; b < 8 && (m * 8 + b) < 20; b++)
+                        t->cc[m * 8 + b] = (uint8_t)((w >> (b * 8)) & 0xFF);
+                }
+                termios_sync(t);
+                if (op == TTY_IOCTL_TCSETSF) {
+                    t->lq_head = t->lq_tail = 0; t->key_head = t->key_tail = 0; t->line_len = 0;
+                }
+                break;
+            }
+            }
+            seL4_SetMR(0, (seL4_Word)result);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }
 

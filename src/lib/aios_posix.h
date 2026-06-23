@@ -69,6 +69,11 @@ int aios_nb_getchar(void);  /* non-blocking, returns -1 if no input */
 void aios_set_pipe_redirect(int stdout_pipe, int stdin_pipe);
 int aios_get_pipe_id(int fd);
 
+/* v0.4.296: bind this process's stdio to PTY instance `inst` (0 = serial console).
+ * sshd's forked child calls this before execv so the shell's fd 0/1/2 route to the
+ * allocated PTY; the value is carried across exec in the spawn cwd token. */
+void aios_set_tty_inst(int inst);
+
 static inline long _aios_parse(const char *s) {
     if (!s) return 0;
     long v = 0;

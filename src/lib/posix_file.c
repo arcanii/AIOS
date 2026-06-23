@@ -552,6 +552,31 @@ long aios_sys_read(va_list ap) {
 
     /* stdin — check for pipe redirect */
     if (fd == 0) {
+        /* v0.4.296: PTY slave read (this process is on a PTY). Blocking yield-loop
+         * like the serial is_tty path: tty_server returns whatever cooked line /
+         * raw keys are available (0 if none), and a pending signal breaks out with
+         * EINTR (so VINTR-generated SIGINT interrupts a blocked prompt read). */
+        if (aios_tty_inst > 0 && ser_ep) {
+            char *cbuf = (char *)buf;
+            int want = (int)count; if (want > 900) want = 900;
+            while (1) {
+                seL4_SetMR(0, (seL4_Word)aios_tty_inst);
+                seL4_SetMR(1, (seL4_Word)want);
+                seL4_MessageInfo_t reply = seL4_Call(ser_ep,
+                    seL4_MessageInfo_new(85 /* TTY_PTY_SLAVE_READ */, 0, 0, 2));
+                int got = (int)(long)seL4_GetMR(0);
+                if (got > 0) {
+                    int mr = 1;
+                    for (int i = 0; i < got; i++) {
+                        if (i > 0 && i % 8 == 0) mr++;
+                        cbuf[i] = (char)((seL4_GetMR(mr) >> ((i % 8) * 8)) & 0xFF);
+                    }
+                    return (long)got;
+                }
+                if (aios_sig_check() > 0) return -EINTR;
+                seL4_Yield();
+            }
+        }
         if (stdin_pipe_id >= 0 && pipe_ep) {
             /* Read from pipe instead of serial */
             char *cbuf = (char *)buf;
@@ -689,11 +714,20 @@ long aios_sys_read(va_list ap) {
             if (!ser_ep) return -EIO;
             int want = (int)count;
             if (want > 200) want = 200;
+            int pty = (f->tty_inst > 0);   /* v0.4.296: duped tty fd on a PTY */
             /* Block until at least 1 byte available (like real tty) */
             while (1) {
-                seL4_SetMR(0, (seL4_Word)want);
-                seL4_MessageInfo_t reply = seL4_Call(ser_ep,
-                    seL4_MessageInfo_new(71 /* TTY_READ */, 0, 0, 1));
+                seL4_MessageInfo_t reply;
+                if (pty) {
+                    seL4_SetMR(0, (seL4_Word)f->tty_inst);
+                    seL4_SetMR(1, (seL4_Word)want);
+                    reply = seL4_Call(ser_ep,
+                        seL4_MessageInfo_new(85 /* TTY_PTY_SLAVE_READ */, 0, 0, 2));
+                } else {
+                    seL4_SetMR(0, (seL4_Word)want);
+                    reply = seL4_Call(ser_ep,
+                        seL4_MessageInfo_new(71 /* TTY_READ */, 0, 0, 1));
+                }
                 int got = (int)seL4_GetMR(0);
                 if (got > 0) {
                     char *dst = (char *)buf;
@@ -1163,6 +1197,29 @@ long aios_sys_readv(va_list ap) {
                 if (n < (int)iov[i].iov_len) break;
             }
         } else if (fd == 0) {
+            /* v0.4.296: PTY slave read (blocking yield-loop, like the read() path). */
+            if (aios_tty_inst > 0 && ser_ep) {
+                char *dst = (char *)iov[i].iov_base;
+                int want = (int)iov[i].iov_len; if (want > 900) want = 900;
+                int got = 0;
+                while (1) {
+                    seL4_SetMR(0, (seL4_Word)aios_tty_inst);
+                    seL4_SetMR(1, (seL4_Word)want);
+                    seL4_Call(ser_ep, seL4_MessageInfo_new(85 /* TTY_PTY_SLAVE_READ */, 0, 0, 2));
+                    got = (int)(long)seL4_GetMR(0);
+                    if (got > 0) break;
+                    if (aios_sig_check() > 0) return total > 0 ? total : -EINTR;
+                    seL4_Yield();
+                }
+                int mr = 1;
+                for (int k = 0; k < got; k++) {
+                    if (k % 8 == 0 && k > 0) mr++;
+                    dst[k] = (char)((seL4_GetMR(mr) >> ((k % 8) * 8)) & 0xFF);
+                }
+                total += got;
+                if (got < (int)iov[i].iov_len) break;
+                continue;
+            }
             /* stdin — check pipe redirect */
             if (stdin_pipe_id >= 0 && pipe_ep) {
                 char *dst = (char *)iov[i].iov_base;

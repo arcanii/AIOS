@@ -1808,6 +1808,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             seL4_Word pipe_meta_word = seL4_GetMR(0);
             int exec_stdout_pipe = (int)((pipe_meta_word >> 16) & 0xFFFF) - 1;
             int exec_stdin_pipe = (int)(pipe_meta_word & 0xFFFF) - 1;
+            int exec_tty_inst = (int)((pipe_meta_word >> 32) & 0xFF);  /* v0.4.296: PTY instance */
 
             char exec_buf[900];
             int ebi = 0;
@@ -2106,14 +2107,22 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 seL4_CPtr c_timer = sel4utils_copy_cap_to_process(proc, &vka, timer_ep_cap);
                 if (c_timer) snprintf(ttok, sizeof ttok, "t%lu:", (unsigned long)c_timer);
             }
+            /* v0.4.296: PTY-instance token "y<inst>:" -- carries the controlling
+             * PTY across exec into the shell (and its children). Empty when not on
+             * a PTY, so the serial-console cwd string is byte-identical to before.
+             * Appended after ttok; __wrap_main parses both before spipe:rpipe. */
+            char ytok[12];
+            ytok[0] = 0;
+            if (exec_tty_inst > 0)
+                snprintf(ytok, sizeof ytok, "y%d:", exec_tty_inst);
 
             if (exec_stdout_pipe >= 0 || exec_stdin_pipe >= 0) {
                 int sp_id = exec_stdout_pipe < 0 ? 99 : exec_stdout_pipe;
                 int rp_id = exec_stdin_pipe < 0 ? 99 : exec_stdin_pipe;
-                snprintf(cwd, sizeof cwd, "%u:%u:%s%d:%d:%s",
-                         old_uid, old_gid, ttok, sp_id, rp_id, child_cwd);
+                snprintf(cwd, sizeof cwd, "%u:%u:%s%s%d:%d:%s",
+                         old_uid, old_gid, ttok, ytok, sp_id, rp_id, child_cwd);
             } else {
-                snprintf(cwd, sizeof cwd, "%u:%u:%s%s", old_uid, old_gid, ttok, child_cwd);
+                snprintf(cwd, sizeof cwd, "%u:%u:%s%s%s", old_uid, old_gid, ttok, ytok, child_cwd);
             }
 
             char *spawn_argv[12 + MAX_USER_ARGV];

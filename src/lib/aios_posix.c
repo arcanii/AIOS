@@ -26,6 +26,7 @@ uint32_t aios_uid = 0;
 uint32_t aios_gid = 0;
 int stdout_pipe_id = -1;
 int stdin_pipe_id = -1;
+int aios_tty_inst = 0;   /* v0.4.296: controlling PTY instance (0 = serial console) */
 int stdout_redir_idx = -1;  /* REDIR_STDIO_V072 */
 int stderr_redir_idx = -1;
 aios_fd_t stdout_redir_copy;  /* REDIR_COPY_V072 */
@@ -238,6 +239,29 @@ size_t aios_stdio_write(void *data, size_t count) {
         return count;
     }
     if (!ser_ep) return count;
+    /* v0.4.296: PTY slave write -- the shell's stdout/stderr go to its controlling
+     * PTY's master ring (sshd drains it), batched 8 bytes/MR like TTY_WRITE. The
+     * tty_server applies OPOST/ONLCR. Only when this process is on a PTY (inst>0);
+     * the serial console (inst 0) keeps the per-char SER_PUTC path below. */
+    if (aios_tty_inst > 0) {
+        const char *src = (const char *)data;
+        size_t sent = 0;
+        while (sent < count) {
+            int chunk = (int)(count - sent);
+            if (chunk > 900) chunk = 900;
+            seL4_SetMR(0, (seL4_Word)aios_tty_inst);
+            seL4_SetMR(1, (seL4_Word)chunk);
+            int mr = 2;
+            seL4_Word w = 0;
+            for (int i = 0; i < chunk; i++) {
+                w |= ((seL4_Word)(uint8_t)src[sent + i]) << ((i % 8) * 8);
+                if (i % 8 == 7 || i == chunk - 1) { seL4_SetMR(mr++, w); w = 0; }
+            }
+            seL4_Call(ser_ep, seL4_MessageInfo_new(86 /* TTY_PTY_SLAVE_WRITE */, 0, 0, mr));
+            sent += chunk;
+        }
+        return count;
+    }
     char *buf = (char *)data;
     for (size_t i = 0; i < count; i++) {
         seL4_SetMR(0, (seL4_Word)(uint8_t)buf[i]);
@@ -406,6 +430,12 @@ void aios_set_cwd(const char *path) {
 void aios_set_pipe_redirect(int stdout_pipe, int stdin_pipe) {
     stdout_pipe_id = stdout_pipe;
     stdin_pipe_id = stdin_pipe;
+}
+/* v0.4.296: bind this process's stdio to PTY instance `inst`. posix_proc.c packs
+ * aios_tty_inst into PIPE_EXEC so the value survives exec into the shell + its
+ * descendants (parsed back from the "y<inst>:" cwd token in __wrap_main). */
+void aios_set_tty_inst(int inst) {
+    aios_tty_inst = inst;
 }
 /* Return the pipe_server pipe_id for an aios fd, or -1 */
 int aios_get_pipe_id(int fd) {
@@ -846,6 +876,17 @@ int __wrap_main(int argc, char **argv) {
                 while (*s >= '0' && *s <= '9') { tslot = tslot * 10 + (seL4_CPtr)(*s - '0'); s++; }
                 if (*s == ':') s++;
                 timer_ep = tslot;
+            }
+            /* v0.4.296: optional "y<inst>:" token = this process's controlling PTY
+             * instance (conveyed when the spawner is on a PTY). Absent -> stays 0
+             * (serial console). Parsed before the numeric spipe:rpipe: token since
+             * 'y' is non-numeric (no ambiguity), mirroring the 't' timer token. */
+            if (*s == 'y') {
+                s++;
+                int inst = 0;
+                while (*s >= '0' && *s <= '9') { inst = inst * 10 + (*s - '0'); s++; }
+                if (*s == ':') s++;
+                aios_tty_inst = inst;
             }
             /* Check for optional spipe:rpipe: before /path */
             if (*s >= '0' && *s <= '9') {

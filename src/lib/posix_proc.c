@@ -139,6 +139,11 @@ long aios_sys_execve(va_list ap) {
         pipe_meta |= ((seL4_Word)(stdout_pipe_id + 1)) << 16;
     if (stdin_pipe_id >= 0)
         pipe_meta |= ((seL4_Word)(stdin_pipe_id + 1)) & 0xFFFF;
+    /* v0.4.296: controlling PTY instance in bits [47:32] (0 = serial console).
+     * pipe_server conveys it to the child as a "y<inst>:" cwd token so the shell
+     * and its descendants keep the PTY across exec. */
+    if (aios_tty_inst > 0)
+        pipe_meta |= ((seL4_Word)(aios_tty_inst & 0xFF)) << 32;
     seL4_SetMR(0, pipe_meta);
 
     int nmrs = (pos + 7) / 8;

@@ -28,6 +28,14 @@
 #define TTY_PTY_MASTER_READ 82   /* MR0=inst, MR1=max -> reply MR0=len, MR1..=shell output + echo */
 #define TTY_PTY_WINSZ       83   /* MR0=inst, MR1=rows, MR2=cols */
 #define TTY_PTY_FREE        84   /* MR0=inst -> release the instance */
+/* v0.4.296 PTY step 2b -- SLAVE-side ops (instance id in MR0). The libc routes a
+ * fd whose controlling PTY is instance>0 here instead of the serial-console TTY_*
+ * ops. Instance 0 (serial) NEVER uses these -- it keeps the original ops, so the
+ * serial console path is byte-identical. */
+#define TTY_PTY_SLAVE_READ  85   /* MR0=inst, MR1=max -> reply MR0=len, MR1..=cooked line / raw keys */
+#define TTY_PTY_SLAVE_WRITE 86   /* MR0=inst, MR1=len, MR2..=data -> master ring (OPOST/ONLCR aware) */
+#define TTY_PTY_SLAVE_POLL  87   /* MR0=inst -> reply MR0=avail input bytes */
+#define TTY_PTY_SLAVE_IOCTL 88   /* MR0=inst, MR1=op, MR2..=args (parallels TTY_IOCTL, +1 MR offset) */
 
 /* IOCTL operations */
 #define TTY_IOCTL_SET_RAW       1
@@ -39,6 +47,7 @@
 #define TTY_IOCTL_TCSETS        7
 #define TTY_IOCTL_TCSETSW       8
 #define TTY_IOCTL_TCSETSF       9
+#define TTY_IOCTL_GET_WINSZ     10  /* v0.4.296: reply MR0=rows, MR1=cols (PTY winsize) */
 
 /* TTY modes */
 #define TTY_MODE_COOKED  0
