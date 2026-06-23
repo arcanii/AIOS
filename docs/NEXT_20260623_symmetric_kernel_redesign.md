@@ -269,6 +269,27 @@ pending sessions to a healthy core (if state allows), and let the wedged core re
 
 ---
 
+## 10. SESSION-14 RESULT -- PREWARM lead CONFIRMED (directional), default stays ON
+
+Ran a clean reflash-based matched A/B/A (single variable = `AIOS_FABRIC_PREWARM`, two oracles:
+`/proc/laststall` counter + sercap `[STAGECP] core=0` >=5s gaps). Full record: `docs/s14_results.md`,
+protocol `docs/s14_prewarm_protocol.md`, driver `scripts/s14_prewarm_ab.py`.
+
+- **ON (prewarm) aggregate: 0 wedges / 40 cycles** (A0 worker-off build 2896 + A1 worker-on build 2901).
+- **OFF (build 2899, `AIOS_FABRIC_PREWARM 0`, scratch+dsb compiled out, verified): 4 wedges / ~36 cycles**,
+  BOTH s13 wedge types reproduced -- `prev=9 this=11` cluster-freeze (worker frozen) AND `prev=13 this=14`
+  confined teardown (worker full-rate), each ~32.4-32.5s, `pc=0x4a1e70`/`0x450f48`.
+- **VERDICT: confirmed directionally + reproducibly + mechanistically** (flip one define -> wedge returns;
+  flip back -> gone; ON stays clean across 40 cycles incl. the worker-on burst-prone tail). **NOT yet
+  statistically DECISIVE**: today's OFF rate was ~10% and BURSTY (vs s13's 43%), so 0/40 ON is suggestive
+  (naive p~0.016, weakened by clustering) not airtight. The non-stationary/bursty rate is itself a finding.
+- **DEFAULT stays prewarm-ON** (already the committed default in 0a4d045; board on build 2901, healthy,
+  watchdog+hwdog on). Ship it as the mitigation; the stall stays a MAJOR OPEN CONCERN until a DECISIVE
+  high-rate A/B (reproducible high-rate OFF regime -- longer idle T or rapid-reconnect burst -- with ON=0).
+- Strategic note (Bryan): evaluating whether to leverage Linux driver infrastructure (driver-VM on seL4,
+  vs a Linux base) for x86-64 + firmware/driver breadth. The prewarm confirmation de-risks the seL4 path
+  but the bug's non-stationarity argues for keeping the Linux/driver-reuse option open.
+
 ## 11. SEED PROMPT (next session -- session 14)
 
 Paste the block below into a fresh session. Everything above is grounding. The stall is a MAJOR OPEN
