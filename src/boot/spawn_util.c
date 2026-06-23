@@ -11,6 +11,34 @@
 #include <stdio.h>
 #include <string.h>
 
+/* Mirror of the kernel AIOS_SIBLING_TIMER_MASK (deps/kernel src/arch/arm/kernel/boot.c). When 1 (the
+ * default) the timer PPI is masked on cores 1..N-1 so they get NO timer preemption -- the cluster-
+ * survival circumvention (a 1-core wedge no longer freezes the cluster). The consequence: placing
+ * RUNNABLE work on a secondary is safe ONLY for cooperative/yielding work; a CPU-bound thread there
+ * monopolizes the core (never preempted -> starvation). The distribution knobs below
+ * (coresched/placement/pincore/distribute) all target cores 1..N-1, so they make this constraint LOUD
+ * via append_mask_warn() instead of silently distributing onto non-preemptible cores. KEEP IN SYNC
+ * with the kernel define (there is no userspace-readable kernel global for it). */
+#ifndef AIOS_SIBLING_TIMER_MASK
+#define AIOS_SIBLING_TIMER_MASK 1
+#endif
+
+/* Append the timer-mask preemption warning to a /proc command's output when secondary placement is
+ * being enabled. No-op on a single-core build or when the mask is compiled off. */
+static int append_mask_warn(char *buf, int w, int bufsize) {
+#if (CONFIG_MAX_NUM_NODES > 1) && AIOS_SIBLING_TIMER_MASK
+    if (w >= 0 && w < bufsize - 1)
+        w += snprintf(buf + w, bufsize - w,
+            "  WARNING: cores 1..%d are TIMER-MASKED (non-preemptible survive config) -- place only "
+            "cooperative/yielding work there; CPU-bound work monopolizes the core (no timer preemption). "
+            "Rebuild kernel AIOS_SIBLING_TIMER_MASK=0 to preempt secondaries (drops 1-core wedge survival).\n",
+            CONFIG_MAX_NUM_NODES - 1);
+#else
+    (void)buf; (void)bufsize;
+#endif
+    return w;
+}
+
 int spawn_with_args(const char *name, uint8_t prio,
                     sel4utils_process_t *proc,
                     vka_object_t *fault_ep,
@@ -137,6 +165,7 @@ int placement_cmd(const char *args, char *buf, int bufsize) {
     for (unsigned c = 0; c < CONFIG_MAX_NUM_NODES && w < bufsize - 1; c++)
         w += snprintf(buf + w, bufsize - w, "  core %u load %u (servers %u)\n",
                       c, aios_core_load(c), g_server_load_n[c]);
+    if (g_place_auto) w = append_mask_warn(buf, w, bufsize);
     return w;
 }
 #else
@@ -156,9 +185,11 @@ int placement_cmd(const char *args, char *buf, int bufsize) {
 int coresched_cmd(const char *args, char *buf, int bufsize) {
     if (args[0] == '.' && (args[1] == '0' || args[1] == '1'))
         g_proc_distribute = (args[1] == '1');
-    return snprintf(buf, bufsize,
+    int w = snprintf(buf, bufsize,
         "coresched: distribute=%d (user procs round-robin cores 1..%d; .0 pin-core0 / .1 spread)\n",
         g_proc_distribute, CONFIG_MAX_NUM_NODES - 1);
+    if (g_proc_distribute) w = append_mask_warn(buf, w, bufsize);
+    return w;
 }
 
 /* /proc/pincore[.N|.r] -- bind every subsequent user spawn to core N (overrides coresched),
@@ -173,9 +204,11 @@ int pincore_cmd(const char *args, char *buf, int bufsize) {
             if (c < CONFIG_MAX_NUM_NODES) g_pincore = c;   /* ignore out-of-range */
         }
     }
-    return snprintf(buf, bufsize,
+    int w = snprintf(buf, bufsize,
         "pincore: target=%d (.N bind next user spawns to core N (0..%d) / .r reset to coresched/core0)\n",
         g_pincore, CONFIG_MAX_NUM_NODES - 1);
+    if (g_pincore >= 1) w = append_mask_warn(buf, w, bufsize);   /* core 0 is preemptible; 1..N-1 masked */
+    return w;
 #else
     (void)args;
     return snprintf(buf, bufsize, "pincore: single-core build (no-op)\n");
@@ -277,6 +310,7 @@ int distribute_cmd(const char *args, char *buf, int bufsize) {
     for (int i = 0; i < g_server_count && w < bufsize - 1; i++)
         w += snprintf(buf + w, bufsize - w, "  %-13s core %u\n",
                       g_servers[i].name ? g_servers[i].name : "?", server_target_core(i));
+    if (g_server_distribute) w = append_mask_warn(buf, w, bufsize);
     return w;
 }
 #else
