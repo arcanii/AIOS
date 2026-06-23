@@ -238,20 +238,34 @@ pending sessions to a healthy core (if state allows), and let the wedged core re
   faults/panics in any config — the shared-root-vspace race (the s12 caveat) did NOT surface in fork/
   exec (they use per-child vspaces); a root-vspace lock is still a latent Phase-B item if concurrent
   *root*-buffer allocs are ever distributed.
-- [ ] **Phase A step 3 — per-core-wedge confinement measurement (HW):** force a teardown-after-idle
-  wedge on core N and confirm a session on core M stays responsive. **Board REVIVAL FIRST** (it is dead):
-  `ninja -C build-rpi4` (gives the s11+lock+step-2 kernel) → `python3 scripts/mksdcard.py` (→
-  `disk/sdcard-rpi4.img`) → balenaEtcher to the physical card → boot + verify `/proc/version` +
-  `cat /proc/distribute`. **Then the gate.** TWO refinements this measurement needs (note before HW):
-  (a) **distribution should be SURGICAL** for the HW test — the naive full-distribute is too contended
-  AND distributes the console/timer; better to distribute only a couple of allocator-heavy servers
-  (pipe/exec/fs) and keep the console+timer on a "home" core. (b) **a per-core SESSION/PROC bind is
-  missing** — `coresched` only round-robins user procs across 1..N-1; to pin a *victim* session to a
-  chosen core N and a *survivor* to core M deterministically, add a small bind knob (e.g.
-  `/proc/pincore.N` consumed by the next spawn, or a getty arg). Until then, use the watchdog +
-  `[STAGECP] allidle` per-core oracle to *observe* which core wedged and whether peers survived. This
-  gate decides whether confinement is real before investing in Phase B. **Run `sercap` BEFORE any HW
-  stall test; do not over-probe netconsole.**
+- [x] **Phase A step 3 — confinement-gate MECHANISM built (commits 3cb91f4 + 57c88d6; QEMU 7/7 + 5/5):**
+  surgical distribution (`/proc/distribute.2`) + per-core bind (`/proc/pincore.N`) + the **wedge-survival
+  worker** (`/proc/confine.N`, src/servers/watchdog.c). The worker is a thread on core N that does a
+  SYSCALL (`seL4_Yield` → NODE_LOCK) every iteration; the survive-capable core-1 watchdog snapshots its
+  counter across a `[WDOG]` stall and reports "worker(core N) advanced=K during the wedge". This makes the
+  gate's observable OUT-OF-BAND (the console/pipe path can't be the observable — it depends on the single
+  pipe_server). Default disarmed.
+- [ ] **Phase A step 3 — RUN THE GATE (HW, the decisive experiment).** The board is REVIVED
+  (192.168.0.8). The gate resolves the **BKL-during-wedge** question that gates Phase B: the records
+  contradict — the timer-mask patch comments say the wedge HOLDS the BKL (a sibling's kernel entry blocks
+  ~32 s; that's why the mask exists), the redesign doc §6 says the BKL is released before `eret`. The
+  watchdog only survives because it's PURE-USERSPACE; this tests whether a secondary doing SYSCALLS
+  survives. **Procedure** (flash-free, board alive):
+  1. `ninja -C build-rpi4` → `python3 scripts/pi_flash.py --build` (builds kernel8 + swaps over net +
+     reboots; wait for the banner-PASS). sercap on `/dev/cu.usbserial-0001` FIRST.
+  2. Verify `cat /proc/version` (new build#), `cat /proc/confine` (armed=0), `cat /proc/watchdog` (enabled).
+  3. Let the board SETTLE ~1 min (calm; the stall is teardown-triggered — do NOT over-probe).
+  4. `cat /proc/confine.2` — arm the worker on core 2 (a secondary ≠ core 0 wedge-core, ≠ core 1 WD_CORE).
+  5. Force a core-0 teardown-after-idle wedge: let it idle ~30–40 s, then ONE netconsole connect+disconnect
+     (the disconnect's shell teardown-after-idle wedges core 0 — the s12 self-stall trigger).
+  6. Read sercap for: `[WDOG] core0 recovered after <ms>ms; confine worker(core 2) advanced=K during the wedge`.
+     **K > 0 ⇒ the core-2 syscalls completed DURING the wedge ⇒ work on a secondary SURVIVES a peer wedge
+     ⇒ the symmetric-kernel premise HOLDS, Phase B viable. K == 0 ⇒ the worker froze on a kernel entry ⇒
+     BKL-held wedge ⇒ the premise is broken (the wedge must be made BKL-free first).**
+  7. `cat /proc/confine.r` to disarm (the worker hammers the BKL; armed only for the run).
+  This gate decides whether confinement is real before investing in Phase B. **Run `sercap` BEFORE arming;
+  do not over-probe netconsole. The hwdog auto-resets a total wedge (~63 s) — sercap catches the timeline up
+  to any freeze.**
 
 ---
 
