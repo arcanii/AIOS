@@ -202,11 +202,25 @@ pending sessions to a healthy core (if state allows), and let the wedged core re
 
 ---
 
-## 9. IMMEDIATE NEXT STEPS
+## 9. NEXT STEPS / PROGRESS
 
-1. **Recover the board:** revert the s12 changes (aios_root.c, netconsole.c, timer_server.c,
-   watchdog.c, xhci.c) to the s11 driveable state and reflash — the symmetric design will NOT use the
-   blocking relays / timersleep-on. (Build 2881 is un-driveable; the board is currently dead.)
-2. **Phase A step 1 on QEMU:** build the allocator lock + the slot-bitmap-tear host repro; prove it.
-3. Then Phase A steps 2-3 (un-pin + distribute + the per-core-wedge measurement) — the gate that
-   tells us whether confinement is real before investing in Phase B.
+- [x] **Board revert:** s12 changes (aios_root.c, netconsole.c, timer_server.c, watchdog.c, xhci.c)
+  reverted to the s11 driveable base (working tree clean). Board still needs a power-cycle + a
+  driveable reflash to revive (build 2881 is dead); do that before any HW step below.
+- [x] **Phase A step 1 — allocator lock (commit 4fdbeee):** `src/boot/vka_lock.c` spinlock trampoline
+  layer over the global vka, installed at `aios_root.c` after `allocman_make_vka`. Proven by
+  `scripts/allocman_lock_host_test.c` (buggy RMW tears ~4000 handouts/run; locked = 0). QEMU gate
+  unchanged at baseline (socket 8/8, shmring 25/26, smp 4/5). Inert under core-0 pinning; load-bearing
+  once servers distribute.
+- [ ] **Phase A step 2 — un-pin + in-situ proof (QEMU):** drop the `SetAffinity(…, ROOT_CORE)` pins
+  (boot_services.c:48,82,203,257; timer_server.c:299; watchdog.c:304) and prove the lock holds under
+  real contention via the v0.4.178 repro (2 concurrent SSH/netconsole connections; the 2nd must NOT
+  fail). CAVEAT discovered: the allocator was the documented tear, but the shared **root vspace**
+  (sel4utils bookkeeping) is also unlocked — fork/exec use *per-child* vspaces (safe with the locked
+  vka), but concurrent *root*-vspace ops (server-buffer allocs) may race. The 2nd-SSH-conn bug is the
+  allocator tear specifically, so it may pass with just the allocator lock; if it doesn't, add a
+  vspace lock (same trampoline pattern) or move to per-core vspaces (Phase B). Make un-pin a knob so
+  it is A/B-testable and default-safe.
+- [ ] **Phase A step 3 — per-core-wedge confinement measurement (HW):** force a teardown wedge on
+  core N (home-core-bound session) and confirm a session on core M stays responsive. This is the gate
+  that tells us whether confinement is real before investing in Phase B. Needs the board revived.
