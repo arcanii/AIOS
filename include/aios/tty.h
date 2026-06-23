@@ -21,6 +21,13 @@
 #define TTY_SWITCH      79   /* MR0=vt_id */
 #define TTY_GETATTR     77
 #define TTY_SETFG       78   /* MR0=pid */
+/* v0.4.295 PTY step 2 -- master-side ops (instance id in MR0). The serial console is
+ * instance 0; PTYs are 1..MAX_TTY-1 (docs/DESIGN_PTY_SSH.md). */
+#define TTY_PTY_ALLOC       80   /* (no args) -> reply MR0 = instance id (1..), or <0 if full */
+#define TTY_PTY_INPUT       81   /* MR0=inst, MR1=len, MR2..=keystroke bytes -> line discipline */
+#define TTY_PTY_MASTER_READ 82   /* MR0=inst, MR1=max -> reply MR0=len, MR1..=shell output + echo */
+#define TTY_PTY_WINSZ       83   /* MR0=inst, MR1=rows, MR2=cols */
+#define TTY_PTY_FREE        84   /* MR0=inst -> release the instance */
 
 /* IOCTL operations */
 #define TTY_IOCTL_SET_RAW       1

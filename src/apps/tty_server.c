@@ -35,6 +35,11 @@
 #define TTY_IOCTL       72
 #define TTY_INPUT       75
 #define TTY_POLL        76   /* v0.4.99: check if input available */
+#define TTY_PTY_ALLOC       80  /* v0.4.295: master-side PTY ops (instance id in MR0) */
+#define TTY_PTY_INPUT       81
+#define TTY_PTY_MASTER_READ 82
+#define TTY_PTY_WINSZ       83
+#define TTY_PTY_FREE        84
 
 #define DISP_CONSOLE    116  /* mirror output to the HDMI fb_console (root_shared.h) */
 
@@ -77,16 +82,22 @@
 #define KEY_BUF_SZ   512
 #define LINE_BUF_SZ  256
 #define LINE_QUEUE_SZ 4096
-#define MAX_TTY      8     /* instance 0 = serial console; 1.. = PTYs (later step) */
+#define MASTER_OUT_SZ 8192   /* PTY: shell output + echo awaiting the master (sshd) */
+#define MAX_TTY      8     /* instance 0 = serial console; 1.. = PTYs */
 
-/* -- Per-instance TTY state (v0.4.295 PTY step 1) -- */
+/* -- Per-instance TTY state (v0.4.295 PTY step 1/2) -- */
 typedef struct {
+    int used;             /* slot in use (instance 0 = serial, always used) */
+    int is_pty;           /* 0 = serial console (output -> UART+HDMI); 1 = PTY (-> master_out) */
     /* raw input ring (keystrokes; raw mode + signal/cooked feed) */
     char key_buf[KEY_BUF_SZ]; int key_head, key_tail;
     /* cooked-mode line being assembled */
     char line_buf[LINE_BUF_SZ]; int line_len;
     /* completed lines awaiting TTY_READ */
     char line_queue[LINE_QUEUE_SZ]; int lq_head, lq_tail;
+    /* PTY master-output ring: shell stdout + echo, drained by TTY_PTY_MASTER_READ */
+    char master_out[MASTER_OUT_SZ]; int mo_head, mo_tail;
+    uint16_t ws_row, ws_col;
     /* server-side termios */
     uint32_t iflag, oflag, cflag, lflag; uint8_t cc[20];
     /* derived from termios */
@@ -196,6 +207,30 @@ static void tty_puts(const char *s) {
     tty_write_buf(s, n);
 }
 
+/* -- PTY master-output ring (is_pty instances only) -- */
+static void mo_push(tty_inst_t *t, char c) {
+    int next = (t->mo_head + 1) % MASTER_OUT_SZ;
+    if (next != t->mo_tail) { t->master_out[t->mo_head] = c; t->mo_head = next; }
+}
+static int mo_avail(tty_inst_t *t) {
+    return (t->mo_head - t->mo_tail + MASTER_OUT_SZ) % MASTER_OUT_SZ;
+}
+static int mo_pop(tty_inst_t *t) {
+    if (t->mo_head == t->mo_tail) return -1;
+    char c = t->master_out[t->mo_tail];
+    t->mo_tail = (t->mo_tail + 1) % MASTER_OUT_SZ;
+    return (int)(unsigned char)c;
+}
+
+/* Instance-aware output: a PTY routes to its master ring (the sshd drains it); the
+ * serial console (instance 0) goes to the mini-UART + HDMI as before. */
+static void inst_out(tty_inst_t *t, const char *buf, int len) {
+    if (t->is_pty) { for (int i = 0; i < len; i++) mo_push(t, buf[i]); }
+    else tty_write_buf(buf, len);
+}
+static void inst_putc(tty_inst_t *t, char c) { inst_out(t, &c, 1); }
+static void inst_puts(tty_inst_t *t, const char *s) { int n = 0; while (s[n]) n++; inst_out(t, s, n); }
+
 /* -- Line discipline: process one input character for instance t -- */
 static void line_discipline(tty_inst_t *t, char c) {
     /* CR -> NL conversion */
@@ -210,7 +245,7 @@ static void line_discipline(tty_inst_t *t, char c) {
     /* Signal generation (only when ISIG is set) */
     if (t->isig) {
         if (c == (char)t->cc[T_VINTR]) {
-            if (t->echo) tty_puts("^C\n");
+            if (t->echo) inst_puts(t, "^C\n");
             t->line_len = 0;
             lq_push(t, '\n');
             key_push(t, c);
@@ -232,7 +267,7 @@ static void line_discipline(tty_inst_t *t, char c) {
 
     case 0x15: /* Ctrl-U -- kill line */
         if (t->echo) {
-            for (int i = 0; i < t->line_len; i++) tty_puts("\b \b");
+            for (int i = 0; i < t->line_len; i++) inst_puts(t, "\b \b");
         }
         t->line_len = 0;
         break;
@@ -241,11 +276,11 @@ static void line_discipline(tty_inst_t *t, char c) {
         if (t->echo) {
             while (t->line_len > 0 && t->line_buf[t->line_len - 1] == ' ') {
                 t->line_len--;
-                tty_puts("\b \b");
+                inst_puts(t, "\b \b");
             }
             while (t->line_len > 0 && t->line_buf[t->line_len - 1] != ' ') {
                 t->line_len--;
-                tty_puts("\b \b");
+                inst_puts(t, "\b \b");
             }
         } else {
             while (t->line_len > 0 && t->line_buf[t->line_len - 1] == ' ') t->line_len--;
@@ -257,13 +292,13 @@ static void line_discipline(tty_inst_t *t, char c) {
     case '\b':  /* Backspace */
         if (t->line_len > 0) {
             t->line_len--;
-            if (t->echo) tty_puts("\b \b");
+            if (t->echo) inst_puts(t, "\b \b");
         }
         key_push(t, c);
         break;
 
     case '\n':  /* Enter -- complete line */
-        if (t->echo) tty_putc('\n');
+        if (t->echo) inst_putc(t, '\n');
         for (int i = 0; i < t->line_len; i++) lq_push(t, t->line_buf[i]);
         lq_push(t, '\n');
         t->line_len = 0;
@@ -273,7 +308,7 @@ static void line_discipline(tty_inst_t *t, char c) {
     default:
         if (c >= 0x20 && c < 0x7F && t->line_len < LINE_BUF_SZ - 1) {
             t->line_buf[t->line_len++] = c;
-            if (t->echo) tty_putc(c);
+            if (t->echo) inst_putc(t, c);
         }
         key_push(t, c);
         break;
@@ -324,8 +359,9 @@ int main(int argc, char *argv[]) {
     if (argc > 0) ep = (seL4_CPtr)parse_num(argv[0]);
     if (argc > 1) disp_ep = (seL4_CPtr)parse_num(argv[1]);   /* HDMI fb_console mirror */
 
-    /* Instance 0 = the serial/keyboard console. */
+    /* Instance 0 = the serial/keyboard console (is_pty=0 -> output to UART+HDMI). */
     tty_inst_init(&tty_inst[0]);
+    tty_inst[0].used = 1;
     tty_inst_t *con = &tty_inst[0];
 
     while (1) {
@@ -507,6 +543,75 @@ int main(int argc, char *argv[]) {
             }
             seL4_SetMR(0, (seL4_Word)result);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+
+        /* -- PTY master-side ops (v0.4.295 step 2); instance id in MR0 -- */
+        case TTY_PTY_ALLOC: {
+            int id = -1;
+            for (int i = 1; i < MAX_TTY; i++)
+                if (!tty_inst[i].used) { id = i; break; }
+            if (id >= 0) {
+                tty_inst_init(&tty_inst[id]);
+                tty_inst[id].used = 1;
+                tty_inst[id].is_pty = 1;
+                tty_inst[id].mo_head = tty_inst[id].mo_tail = 0;
+                tty_inst[id].ws_row = 24; tty_inst[id].ws_col = 80;
+            }
+            seL4_SetMR(0, (seL4_Word)id);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+
+        case TTY_PTY_INPUT: {
+            int id = (int)seL4_GetMR(0);
+            int ilen = (int)seL4_GetMR(1);
+            char ibuf[1024];
+            if (ilen > 1024) ilen = 1024;
+            for (int i = 0; i < ilen; i++)
+                ibuf[i] = (char)((seL4_GetMR(2 + i / 8) >> ((i % 8) * 8)) & 0xFF);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
+            if (id > 0 && id < MAX_TTY && tty_inst[id].used && tty_inst[id].is_pty)
+                for (int i = 0; i < ilen; i++) line_discipline(&tty_inst[id], ibuf[i]);
+            break;
+        }
+
+        case TTY_PTY_MASTER_READ: {
+            int id = (int)seL4_GetMR(0);
+            int max = (int)seL4_GetMR(1);
+            int max_mr_bytes = ((int)seL4_MsgMaxLength - 1) * 8;
+            if (max > max_mr_bytes) max = max_mr_bytes;
+            int rlen = 0, mr = 1;
+            if (id > 0 && id < MAX_TTY && tty_inst[id].used && tty_inst[id].is_pty) {
+                int avail = mo_avail(&tty_inst[id]);
+                rlen = avail < max ? avail : max;
+                seL4_Word w = 0;
+                for (int i = 0; i < rlen; i++) {
+                    int c = mo_pop(&tty_inst[id]);
+                    if (c < 0) { rlen = i; break; }
+                    w |= ((seL4_Word)(uint8_t)c) << ((i % 8) * 8);
+                    if (i % 8 == 7 || i == rlen - 1) { seL4_SetMR(mr++, w); w = 0; }
+                }
+            }
+            seL4_SetMR(0, (seL4_Word)rlen);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, mr));
+            break;
+        }
+
+        case TTY_PTY_WINSZ: {
+            int id = (int)seL4_GetMR(0);
+            if (id > 0 && id < MAX_TTY && tty_inst[id].used) {
+                tty_inst[id].ws_row = (uint16_t)seL4_GetMR(1);
+                tty_inst[id].ws_col = (uint16_t)seL4_GetMR(2);
+            }
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
+            break;
+        }
+
+        case TTY_PTY_FREE: {
+            int id = (int)seL4_GetMR(0);
+            if (id > 0 && id < MAX_TTY) { tty_inst[id].used = 0; tty_inst[id].is_pty = 0; }
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
             break;
         }
 
