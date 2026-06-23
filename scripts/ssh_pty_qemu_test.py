@@ -83,6 +83,10 @@ def ssh_pty_run(commands, timeout=60):
            "-o", "LogLevel=ERROR",
            "root@127.0.0.1"]
     try:
+        # Send CR (\r) line endings: a real terminal's Enter is CR, and zsh's
+        # raw-mode ZLE binds accept-line to CR (LF is not accept-line, so zsh
+        # would never run the lines). dash's cooked mode (ICRNL) accepts CR too.
+        commands = commands.replace("\n", "\r")
         r = subprocess.run(cmd, input=commands.encode(), capture_output=True,
                            env=env, timeout=timeout, start_new_session=True)
         return r.returncode, r.stdout.decode("utf-8", "replace"), \

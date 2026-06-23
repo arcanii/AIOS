@@ -134,7 +134,10 @@ void ssh_channel_pty_release(ssh_session_t *s)
     }
 }
 
-/* Shell to spawn */
+/* Shell to spawn. dash for both the PTY and non-PTY paths. zsh is on the disk
+ * (/bin/zsh) and its interactive ZLE works over the PTY, but zsh -i cannot run
+ * external commands on AIOS yet (job control / process groups -- DESIGN_ZSH
+ * Phase 3), so dash stays the default until that lands. */
 #define SSH_SHELL_PATH  "/bin/dash"
 #define SSH_SHELL_NAME  "dash"
 
@@ -679,6 +682,10 @@ static int spawn_shell_pty(ssh_session_t *s, pid_t *child_pid,
         ssh_drop_identity(uid, gid);
         aios_set_pipe_redirect(-1, -1);
         aios_set_tty_inst(s->pty_inst);
+        /* dash is the PTY shell. zsh is ON the disk and its interactive ZLE works
+         * over the PTY, but zsh -i does not run EXTERNAL commands on AIOS yet
+         * (needs job control / process groups -- DESIGN_ZSH Phase 3), so it is not
+         * the default. `exec zsh` works for builtins/ZLE experimentation. */
         char *argv[] = { (char *)SSH_SHELL_NAME, "-i", (void *)0 };
         execv(SSH_SHELL_PATH, argv);
         _exit(127);
