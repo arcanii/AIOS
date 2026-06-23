@@ -231,6 +231,11 @@ int main(int argc, char **argv)
             SSHLOG("[sshd] Channel session ended normally\n");
         }
 
+        /* v0.4.296: free a PTY allocated at pty-req on EVERY exit path (the
+         * shell-relay path already freed it; this catches sftp / early-return /
+         * client-drop). Idempotent. */
+        ssh_channel_pty_release(&sess);
+
         ssh_disconnect(&sess, SSH_DISCONNECT_BY_APPLICATION,
                       "session ended");
         close(cfd);

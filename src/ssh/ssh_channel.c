@@ -9,6 +9,8 @@
  */
 
 #include "ssh_session.h"
+#include "aios_posix.h"     /* aios_get_serial_ep, aios_set_tty_inst, aios_set_pipe_redirect */
+#include "aios/tty.h"       /* TTY_PTY_* labels */
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -17,6 +19,108 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <signal.h>
+
+/* SIGWINCH (aarch64/Linux): raised at the fg process on terminal resize. */
+#ifndef SIGWINCH
+#define SIGWINCH 28
+#endif
+
+/* ----------------------------------------------------------------
+ * PTY helpers (v0.4.296) -- the daily-driver console.
+ *
+ * sshd no longer relays a cooked pipe stream. On pty-req it allocates a
+ * tty_server PTY instance; the forked shell binds its fd 0/1/2 to that
+ * instance (aios_set_tty_inst), so the proven line discipline (raw/cooked,
+ * ISIG, ICANON, ECHO, termios, winsize) runs server-side -- making isatty()
+ * true and raw-mode editors (vi/less/zsh ZLE) work. The relay just shuttles
+ * bytes: client keystrokes -> TTY_PTY_INPUT, shell output -> TTY_PTY_MASTER_READ.
+ * ---------------------------------------------------------------- */
+
+/* Allocate a PTY instance. Returns instance id (1..) or <0 on failure. */
+static int pty_alloc(void)
+{
+    seL4_CPtr ep = aios_get_serial_ep();
+    if (!ep) return -1;
+    seL4_Call(ep, seL4_MessageInfo_new(TTY_PTY_ALLOC, 0, 0, 0));
+    return (int)(long)seL4_GetMR(0);
+}
+
+/* Feed client keystrokes into the PTY line discipline (raw bytes). */
+static void pty_input(int inst, const uint8_t *data, int len)
+{
+    seL4_CPtr ep = aios_get_serial_ep();
+    if (!ep || inst <= 0) return;
+    int off = 0;
+    while (off < len) {
+        int chunk = len - off;
+        if (chunk > 900) chunk = 900;
+        seL4_SetMR(0, (seL4_Word)inst);
+        seL4_SetMR(1, (seL4_Word)chunk);
+        int mr = 2;
+        seL4_Word w = 0;
+        for (int i = 0; i < chunk; i++) {
+            w |= ((seL4_Word)(uint8_t)data[off + i]) << ((i % 8) * 8);
+            if (i % 8 == 7 || i == chunk - 1) { seL4_SetMR(mr++, w); w = 0; }
+        }
+        seL4_Call(ep, seL4_MessageInfo_new(TTY_PTY_INPUT, 0, 0, mr));
+        off += chunk;
+    }
+}
+
+/* Drain shell output + echo from the PTY master ring into `out` (max `max`).
+ * Returns the byte count (0 if nothing pending). tty_server already applied
+ * OPOST/ONLCR, so the bytes go to the SSH client unmodified. */
+static int pty_master_read(int inst, uint8_t *out, int max)
+{
+    seL4_CPtr ep = aios_get_serial_ep();
+    if (!ep || inst <= 0) return 0;
+    int cap = (int)((seL4_MsgMaxLength - 1) * sizeof(seL4_Word));
+    if (max > cap) max = cap;
+    seL4_SetMR(0, (seL4_Word)inst);
+    seL4_SetMR(1, (seL4_Word)max);
+    seL4_Call(ep, seL4_MessageInfo_new(TTY_PTY_MASTER_READ, 0, 0, 2));
+    int got = (int)(long)seL4_GetMR(0);
+    if (got <= 0) return 0;
+    int mr = 1;
+    for (int i = 0; i < got; i++) {
+        if (i > 0 && i % 8 == 0) mr++;
+        out[i] = (uint8_t)((seL4_GetMR(mr) >> ((i % 8) * 8)) & 0xFF);
+    }
+    return got;
+}
+
+/* Update the PTY winsize (rows x cols). */
+static void pty_winsz(int inst, int rows, int cols)
+{
+    seL4_CPtr ep = aios_get_serial_ep();
+    if (!ep || inst <= 0) return;
+    seL4_SetMR(0, (seL4_Word)inst);
+    seL4_SetMR(1, (seL4_Word)rows);
+    seL4_SetMR(2, (seL4_Word)cols);
+    seL4_Call(ep, seL4_MessageInfo_new(TTY_PTY_WINSZ, 0, 0, 3));
+}
+
+/* Release the PTY instance on channel close. */
+static void pty_free(int inst)
+{
+    seL4_CPtr ep = aios_get_serial_ep();
+    if (!ep || inst <= 0) return;
+    seL4_SetMR(0, (seL4_Word)inst);
+    seL4_Call(ep, seL4_MessageInfo_new(TTY_PTY_FREE, 0, 0, 1));
+}
+
+/* Catch-all PTY release for the session -- idempotent. sshd_main calls this
+ * after ssh_do_channel returns so a PTY allocated at pty-req is freed on EVERY
+ * exit path (sftp subsystem, a protocol-error early return, client drop), not
+ * just the normal shell-relay path. tty_server has only MAX_TTY-1 PTY slots, so
+ * a leak here would brick SSH PTYs after a handful of such connections. */
+void ssh_channel_pty_release(ssh_session_t *s)
+{
+    if (s && s->pty_inst > 0) {
+        pty_free(s->pty_inst);
+        s->pty_inst = 0;
+    }
+}
 
 /* Shell to spawn */
 #define SSH_SHELL_PATH  "/bin/dash"
@@ -189,6 +293,20 @@ static int handle_pty_req(ssh_session_t *s,
            (unsigned)s->term_height);
 
     s->has_pty = 1;
+
+    /* v0.4.296: allocate a tty_server PTY instance for this session and seed its
+     * window size. The shell binds its stdio to this instance at spawn. If the
+     * alloc fails (all instances busy) we still report success and fall back to
+     * the cooked-pipe relay (pty_inst stays 0). */
+    int inst = pty_alloc();
+    if (inst > 0) {
+        s->pty_inst = inst;
+        pty_winsz(inst, (int)s->term_height, (int)s->term_width);
+        SSHLOG("[sshd] pty-req: allocated PTY instance %d\n", inst);
+    } else {
+        SSHLOG("[sshd] pty-req: PTY alloc failed (%d) -- cooked-pipe fallback\n", inst);
+    }
+
     if (want_reply) return send_chan_success(s);
     return 0;
 }
@@ -526,6 +644,168 @@ static int channel_relay(ssh_session_t *s,
 }
 
 /* ----------------------------------------------------------------
+ * PTY shell spawn (v0.4.296) -- bind fd 0/1/2 to the PTY instance.
+ *
+ * No pipes: the child clears any inherited pipe redirect and sets its
+ * controlling PTY (aios_set_tty_inst), so the libc routes fd 0/1/2 to the
+ * tty_server instance. The instance id survives exec via the "y<inst>:" cwd
+ * token, so the shell AND every program it runs share the one PTY.
+ * ---------------------------------------------------------------- */
+static int spawn_shell_pty(ssh_session_t *s, pid_t *child_pid,
+                           uint32_t uid, uint32_t gid)
+{
+    pid_t pid = fork();
+    if (pid < 0) {
+        SSHLOG("[sshd] fork failed\n");
+        return -1;
+    }
+    if (pid == 0) {
+        /* Child: drop to the authenticated identity (sshd stays root), bind
+         * stdio to the PTY, exec the shell. Clear any pipe redirect inherited
+         * from sshd first -- aios_stdio_write checks pipe redirect BEFORE the
+         * PTY route, so a stale stdout_pipe_id would steal the shell's output. */
+        ssh_drop_identity(uid, gid);
+        aios_set_pipe_redirect(-1, -1);
+        aios_set_tty_inst(s->pty_inst);
+        char *argv[] = { (char *)SSH_SHELL_NAME, "-i", (void *)0 };
+        execv(SSH_SHELL_PATH, argv);
+        _exit(127);
+    }
+    *child_pid = pid;
+    SSHLOG("[sshd] PTY shell spawned pid=%d inst=%d\n", (int)pid, s->pty_inst);
+    return 0;
+}
+
+/* ----------------------------------------------------------------
+ * PTY data relay (v0.4.296)
+ *
+ * Shuttles bytes between the SSH channel and the PTY. The line discipline
+ * lives in tty_server now, so there is NO server-side echo, no hand-rolled
+ * Ctrl-C, no LF->CRLF here: client keystrokes go straight into TTY_PTY_INPUT
+ * (cooked/echo/ISIG handled there), and TTY_PTY_MASTER_READ output (already
+ * OPOST/ONLCR-processed) goes straight to the client. window-change resizes
+ * the PTY and SIGWINCHes the fg process. Shell exit is detected with
+ * kill(child,0) (no pipe EOF in this model).
+ * ---------------------------------------------------------------- */
+static int channel_relay_pty(ssh_session_t *s, pid_t child)
+{
+    int sfl = fcntl(s->sockfd, F_GETFL, 0);
+    fcntl(s->sockfd, F_SETFL, sfl | 0x800);   /* O_NONBLOCK socket */
+
+    int done = 0, shell_exited = 0;
+    uint8_t obuf[1024];
+    uint8_t pkt[SSH_BUF_SIZE];
+    int plen;
+
+    SSHLOG("[sshd] PTY relay loop starting (inst=%d)\n", s->pty_inst);
+
+    while (!done) {
+        int activity = 0;
+
+        /* 1. Shell output -> client (bounded by the client's receive window) */
+        int room = (int)s->client_window;
+        if (room > (int)sizeof(obuf)) room = (int)sizeof(obuf);
+        if (room > 0) {
+            int n = pty_master_read(s->pty_inst, obuf, room);
+            if (n > 0) {
+                activity = 1;
+                s->client_window -= (uint32_t)n;
+                if (send_chan_data(s, obuf, n) < 0) { done = 1; break; }
+            }
+        }
+
+        /* 2. Client -> shell (non-blocking SSH read) */
+        plen = 0;
+        int rc = ssh_read_packet_nb(s, pkt, &plen);
+        if (rc == 0 && plen > 0) {
+            activity = 1;
+            uint8_t mtype = pkt[0];
+            if (mtype == SSH_MSG_CHANNEL_DATA) {
+                int doff = 1 + 4;
+                const uint8_t *data; uint32_t dlen;
+                if (ssh_get_string(pkt, plen, &doff, &data, &dlen) == 0) {
+                    pty_input(s->pty_inst, data, (int)dlen);
+                    s->server_window -= dlen;
+                    if (s->server_window < SSH_CHAN_WINDOW / 2) {
+                        uint32_t adj = SSH_CHAN_WINDOW - s->server_window;
+                        send_window_adjust(s, adj);
+                        s->server_window += adj;
+                    }
+                }
+            } else if (mtype == SSH_MSG_CHANNEL_WINDOW_ADJUST) {
+                int woff = 1 + 4;
+                if (woff + 4 <= plen) s->client_window += ssh_get_u32(pkt + woff);
+            } else if (mtype == SSH_MSG_CHANNEL_REQUEST) {
+                /* window-change (RFC 4254 6.7): u32 cols, rows, xpix, ypix */
+                int roff = 1 + 4;
+                const uint8_t *rtype; uint32_t rlen;
+                if (ssh_get_string(pkt, plen, &roff, &rtype, &rlen) == 0
+                    && rlen == 13 && memcmp(rtype, "window-change", 13) == 0) {
+                    if (roff < plen) roff++;  /* want_reply byte */
+                    if (roff + 8 <= plen) {
+                        uint32_t cols = ssh_get_u32(pkt + roff);
+                        uint32_t rows = ssh_get_u32(pkt + roff + 4);
+                        pty_winsz(s->pty_inst, (int)rows, (int)cols);
+                        /* SIGWINCH to the FOREGROUND process (kill(0,...) ->
+                         * pipe_server resolves to fg_pid), so a full-screen app
+                         * like vi -- not the parent shell -- redraws on resize. */
+                        kill(0, SIGWINCH);
+                    }
+                }
+            } else if (mtype == SSH_MSG_CHANNEL_EOF) {
+                SSHLOG("[sshd] client CHANNEL_EOF\n");
+                /* No separate stdin to close; the shell sees EOF via Ctrl-D. */
+            } else if (mtype == SSH_MSG_CHANNEL_CLOSE
+                       || mtype == SSH_MSG_DISCONNECT) {
+                SSHLOG("[sshd] client closed/disconnected\n");
+                done = 1;
+            }
+        } else if (rc < 0) {
+            SSHLOG("[sshd] socket read error in PTY relay\n");
+            done = 1;
+        }
+
+        /* 3. Shell-exit detection (no pipe EOF): kill(child,0) returns ESRCH
+         * once the shell leaves active_procs. */
+        if (!done && kill(child, 0) < 0) {
+            SSHLOG("[sshd] shell exited\n");
+            shell_exited = 1;
+            done = 1;
+        }
+
+        if (!activity && !done) {
+            struct timespec ts = { 0, RELAY_POLL_NS };
+            nanosleep(&ts, NULL);
+        }
+    }
+
+    /* Drain any output the shell emitted just before exiting. */
+    for (int i = 0; i < 16; i++) {
+        int room = (int)s->client_window;
+        if (room > (int)sizeof(obuf)) room = (int)sizeof(obuf);
+        if (room <= 0) break;
+        int n = pty_master_read(s->pty_inst, obuf, room);
+        if (n <= 0) break;
+        s->client_window -= (uint32_t)n;
+        if (send_chan_data(s, obuf, n) < 0) break;
+    }
+
+    send_chan_eof(s);
+    send_chan_close(s);
+
+    /* Reap. If the client vanished with the shell still alive (possibly hung),
+     * SIGKILL it first so it cannot wedge the one-connection-at-a-time server. */
+    if (!shell_exited) {
+        SSHLOG("[sshd] client gone, shell alive -- killing pid %d\n", (int)child);
+        kill(child, SIGKILL);
+    }
+    int status = 0;
+    waitpid(child, &status, 0);
+    SSHLOG("[sshd] PTY shell reaped (status=%d exited=%d)\n", status, shell_exited);
+    return 0;
+}
+
+/* ----------------------------------------------------------------
  * Main channel handler -- called after successful auth
  *
  * 1. Wait for CHANNEL_OPEN "session"
@@ -647,23 +927,45 @@ int ssh_do_channel(ssh_session_t *s)
     /* ---- SFTP subsystem: serve files directly over the channel (no shell,
      * no pipe relay -- so the A72 shell-pipe drain race does not apply). ---- */
     if (sftp_requested) {
+        /* SFTP does not use the PTY -- release it now if pty-req preceded the
+         * subsystem request, rather than holding a slot for the whole transfer. */
+        ssh_channel_pty_release(s);
         int rc = ssh_do_sftp(s);
         s->channel_open = 0;
         return rc;
     }
 
     /* ---- Spawn shell and enter relay ---- */
-    int stdin_wr = -1, stdout_rd = -1, stdout_wr_fd = -1;
     pid_t child_pid = -1;
+    int rc;
 
-    if (spawn_shell(&stdin_wr, &stdout_rd, &stdout_wr_fd, &child_pid,
-                    s->uid, s->gid) < 0) {
-        SSHLOG("[sshd] shell spawn failed\n");
-        send_chan_close(s);
-        return -1;
+    if (s->pty_inst > 0) {
+        /* v0.4.296: real PTY -- bind the shell's stdio to the tty_server
+         * instance and relay raw bytes. isatty() is true; line editing,
+         * signals, and full-screen apps (vi/less) work. */
+        if (spawn_shell_pty(s, &child_pid, s->uid, s->gid) < 0) {
+            SSHLOG("[sshd] PTY shell spawn failed\n");
+            pty_free(s->pty_inst);
+            s->pty_inst = 0;
+            send_chan_close(s);
+            return -1;
+        }
+        rc = channel_relay_pty(s, child_pid);
+        pty_free(s->pty_inst);
+        s->pty_inst = 0;
+    } else {
+        /* Fallback (no pty-req, or PTY alloc failed): the legacy cooked-pipe
+         * relay -- isatty() is false; raw-mode editors will not work here. */
+        int stdin_wr = -1, stdout_rd = -1, stdout_wr_fd = -1;
+        if (spawn_shell(&stdin_wr, &stdout_rd, &stdout_wr_fd, &child_pid,
+                        s->uid, s->gid) < 0) {
+            SSHLOG("[sshd] shell spawn failed\n");
+            send_chan_close(s);
+            return -1;
+        }
+        rc = channel_relay(s, stdin_wr, stdout_rd, stdout_wr_fd, child_pid);
     }
 
-    int rc = channel_relay(s, stdin_wr, stdout_rd, stdout_wr_fd, child_pid);
     s->channel_open = 0;
     return rc;
 }

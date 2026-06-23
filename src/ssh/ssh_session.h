@@ -160,6 +160,7 @@ typedef struct {
     uint32_t     term_width;
     uint32_t     term_height;
     int          has_pty;
+    int          pty_inst;   /* v0.4.296: allocated tty_server PTY instance (0 = none) */
 
     /* Peek byte for encrypted read (one-byte lookahead) */
     int          has_peek;
@@ -329,6 +330,7 @@ void ssh_auth_logout(uint32_t token);
 
 /* Run SSH session channel: open, pty-req, shell, data relay (RFC 4254) */
 int  ssh_do_channel(ssh_session_t *s);
+void ssh_channel_pty_release(ssh_session_t *s);  /* v0.4.296: free any allocated PTY */
 
 /* Run the SFTP (v3) subsystem server on the open channel (ssh_sftp.c) */
 int  ssh_do_sftp(ssh_session_t *s);
