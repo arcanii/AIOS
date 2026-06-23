@@ -1,8 +1,35 @@
 # HANDOVER -- session 15 (2026-06-24)
 
-PRIMARY TASK COMPLETE: the daily-driver console (PTY-backed SSH) is done end-to-end. All work
-committed on main (Bryan pushes). Board still on build 2901; this work is QEMU-validated, NOT
-yet flashed. Staying on seL4 (stall mitigated, not cured -- [[feedback_stall_open_concern]]).
+PRIMARY TASK COMPLETE + HW-VALIDATED: the daily-driver console (PTY-backed SSH) is done
+end-to-end and confirmed on the real board (.8). All work committed on main (Bryan pushes).
+Staying on seL4 (stall mitigated, not cured -- [[feedback_stall_open_concern]]).
+
+## HW VALIDATION (full SD reflash via balenaEtcher) -- 6/6
+Flashed `disk/sdcard-rpi4.img` (mksdcard.py: build-rpi4 kernel + the coherent new-libaios
+disk_ext2.img). `scripts/ssh_pty_hw_check.py` 6/6 on REAL output: isatty(0) true, interactive
+command output, whoami=root + uname=aarch64 (EXTERNAL cmds inherit the PTY via the y-token on
+silicon), Ctrl-C survives + discards the partial line. Passed despite a ~32.4s stall +
+watchdog-recovery during the run (the relay grace window makes a mid-session stall survivable).
+
+### HW-only teardown race -- FOUND + FIXED (commit 9e15440)
+QEMU was a clean 7/7 but HW dropped all command output. A scripted client (`ssh -tt host <<EOF`)
+closes stdin right after the commands -> ssh_read_packet_nb returns -1 -> the relay did done=1,
+tearing down BEFORE the slow-HW shell (~800ms forks) produced output (QEMU's fast path always won
+the race). FIX: the relay ends when the SHELL exits (kill(child,0)==ESRCH), NOT when the client
+closes its INPUT side; on socket-EOF/CHANNEL_EOF it keeps draining until the shell exits, bounded
+by RELAY_EOF_GRACE_TICKS; the final drain drains-until-quiescent (not break-on-first-empty). Also
+fixed false-positive tests (raw -tt echoes the typed command, so a literal marker matched the ECHO
+not the OUTPUT -> use printf '%s' concatenation; whoami->root / uname->aarch64 are output-only).
+DIAGNOSIS METHOD (reusable): a redirect side-effect read back over netconsole proved the
+input+exec path worked and isolated the loss to the output-on-teardown; holding stdin open
+(trailing sleep) made output appear -> confirmed the trigger. Deploy lesson: a coherent PTY change
+spans kernel + ALL userspace (every binary links libaios) -> full SD reflash is the clean path;
+pi_flash --build is kernel-only; a killed netconsole deploy WEDGES netconsole (power-cycle needed).
+vi/less are NOT in the board's sbase build (add them to demo a full-screen app).
+
+## What shipped (steps 2b + 3 of docs/DESIGN_PTY_SSH.md)
+sshd is a REAL TERMINAL: `isatty(0)` is TRUE over SSH, line editing / Ctrl-C / external-cmd
+inheritance all work on HW. Detail + design in memory [[project_pty_console]].
 
 ## What shipped (steps 2b + 3 of docs/DESIGN_PTY_SSH.md)
 sshd is now a REAL TERMINAL: `isatty(0)` is TRUE over SSH, line editing / Ctrl-C / vi / less
