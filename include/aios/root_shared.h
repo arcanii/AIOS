@@ -372,9 +372,22 @@ int spawn_simple(const char *name, uint8_t prio,
 
 /* v0.4.257 Stage S: assign a freshly-spawned USER process to a core (round-robin 1..N-1;
  * /proc/coresched toggles it). Root servers stay on core 0 -- do NOT call this for them. */
-void aios_assign_core(seL4_CPtr tcb);
+/* proc_idx = the active_procs[] slot of the proc being placed (-1 if none), so the load
+ * policy can record its core for the per-core load scan. */
+void aios_assign_core(int proc_idx, seL4_CPtr tcb);
 int  coresched_cmd(const char *args, char *buf, int bufsize);
 extern volatile int g_proc_distribute;
+
+/* General work assignment -- load-and-locality-aware placement for user procs
+ * (src/boot/spawn_util.c). HYBRID policy: least-loaded core among the currently-active
+ * ones, spilling to a cold core only when every active core is at/over the spill threshold.
+ * /proc/placement.1 enables, .0 legacy, .tN sets the threshold. Default OFF. NOT a stall
+ * cure (s12) -- locality + balance + fewer migrations + predictable blast-radius. */
+extern volatile int g_place_auto;
+extern volatile int g_spill_threshold;
+extern volatile int g_place_strategy;   /* selected strategy index (0=hybrid 1=spread 2=pack 3=rr) */
+int  placement_cmd(const char *args, char *buf, int bufsize);
+unsigned aios_core_load(unsigned core);
 
 /* Symmetric-kernel Phase A step 2 (docs/NEXT_20260623_symmetric_kernel_redesign.md):
  * un-pin the ROOT SERVER threads from core 0 so a per-core idle->wake wedge takes down

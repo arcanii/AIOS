@@ -882,6 +882,14 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         int pc = pincore_cmd(path + 7, buf, bufsize);
         if (pc < 0) return -1;
         w = pc;
+    } else if (path[0] == 'p' && path[1] == 'l' && path[2] == 'a' && path[3] == 'c'
+            && path[4] == 'e') {
+        /* /proc/placement[.0|.1|.tN] -- general work assignment: load-and-locality-aware
+         * user-proc placement (src/boot/spawn_util.c). .1 hybrid (least-loaded among active,
+         * spill past threshold) / .0 legacy / .tN threshold. Lists live per-core load. */
+        int pl = placement_cmd(path + 9, buf, bufsize);
+        if (pl < 0) return -1;
+        w = pl;
     } else if (path[0] == 's' && path[1] == 'h' && path[2] == 'm' && path[3] == 'r'
             && path[4] == 'i' && path[5] == 'n' && path[6] == 'g') {
         /* /proc/shmring[.0|.1] -- v0.4.258 direct SPSC SHM-ring kill switch

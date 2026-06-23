@@ -2142,7 +2142,7 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 break;
             }
 
-            aios_assign_core(proc->thread.tcb.cptr);   /* v0.4.257 Stage S: distribute to cores 1..N-1 */
+            aios_assign_core((int)(ap - active_procs), proc->thread.tcb.cptr);   /* v0.4.257 Stage S; idx -> load policy */
 
             ap->active = 1;
             ap->pid = old_pid;

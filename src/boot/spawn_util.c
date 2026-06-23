@@ -5,6 +5,7 @@
  * Configures and spawns seL4 processes with endpoint capabilities.
  */
 #include "aios/root_shared.h"
+#include "aios/sched_strategy.h"
 #include <sel4utils/process.h>
 #include <sel4utils/process_config.h>
 #include <stdio.h>
@@ -53,27 +54,102 @@ int spawn_with_args(const char *name, uint8_t prio,
 #if CONFIG_MAX_NUM_NODES > 1
 volatile int g_proc_distribute = 0;
 /* Phase A step 3 prerequisite: per-core SESSION/PROC bind. When >=0, every subsequently
- * spawned USER process is pinned to this core, OVERRIDING coresched round-robin -- so a
- * "victim" session can be bound to core N (sleep->exit there = a teardown-after-idle wedge
+ * spawned USER process is pinned to this core, OVERRIDING coresched + the load policy -- so
+ * a "victim" session can be bound to core N (sleep->exit there = a teardown-after-idle wedge
  * on core N) and a "survivor" session to core M, the deterministic placement the HW
- * confinement gate needs (coresched alone only round-robins). Sticky until reset; the
- * children of a bound shell follow the value live at THEIR spawn, so sequence the binds
- * (set N, connect victim; set M, connect survivor). Default -1 == off. */
+ * confinement gate needs. Sticky until reset; default -1 == off. */
 volatile int g_pincore = -1;
-static volatile unsigned g_core_rr;
-void aios_assign_core(seL4_CPtr tcb) {
-    if (g_pincore >= 0 && g_pincore < CONFIG_MAX_NUM_NODES) {
-        seL4_TCB_SetAffinity(tcb, (unsigned)g_pincore);
-        return;
-    }
-    if (!g_proc_distribute) { seL4_TCB_SetAffinity(tcb, 0); return; }
-    unsigned core = 1u + (g_core_rr++ % (unsigned)(CONFIG_MAX_NUM_NODES - 1));
+static unsigned g_core_rr;   /* round-robin counter (legacy coresched + strat_rr); hint only, races benign */
+
+/* ── Load-and-locality-aware placement (general work assignment) ─────────────────────────
+ * seL4 has NO kernel load-balancer and threads never migrate on their own, so this is a
+ * userspace policy applied ONCE at thread creation (assign-once == "stop core hopping").
+ * Load = live threads per core: immortal root servers in g_server_load_n[], user procs by
+ * SCANNING the live active_procs table keyed by a parallel g_proc_core[] (no ++/-- drift --
+ * a dead proc clears active_procs[].active and stops being counted; its g_proc_core slot is
+ * overwritten when reused). Policy = HYBRID (Bryan's choice): the least-loaded core AMONG
+ * the currently-ACTIVE ones, spilling onto a cold core only when every active core is at/over
+ * g_spill_threshold. NOT a stall cure (s12: a busy core still wedges on teardown) -- this is
+ * for locality + balance + fewer migrations + predictable blast-radius. */
+volatile int g_place_auto = 0;        /* 1 = hybrid load policy drives user-proc placement */
+volatile int g_spill_threshold = 4;   /* open a cold core only when every active core >= this */
+static int g_proc_core[MAX_ACTIVE_PROCS];          /* core recorded per proc slot (scan source) */
+static unsigned g_server_load_n[CONFIG_MAX_NUM_NODES];  /* server count per core (recomputed on every pin) */
+
+unsigned aios_core_load(unsigned c) {
+    unsigned n = (c < CONFIG_MAX_NUM_NODES) ? g_server_load_n[c] : 0;
+    for (int i = 0; i < MAX_ACTIVE_PROCS; i++)
+        if (active_procs[i].active && (unsigned)g_proc_core[i] == c) n++;
+    return n;
+}
+
+/* The placement strategies are EXTRACTED into include/aios/sched_strategy.h as pure
+ * functions of the per-core load, so they can be A/B'd (select via /proc/placement.sN) and
+ * host-tested (scripts/placement_strategy_host_test.c). We supply the live load here. */
+volatile int g_place_strategy = 0;   /* index into AIOS_PLACE_STRATEGIES (default hybrid) */
+
+static unsigned load_cb(unsigned core, void *cookie) { (void)cookie; return aios_core_load(core); }
+
+static unsigned pick_core(int hint_core) {
+    int s = g_place_strategy;
+    if (s < 0 || s >= AIOS_N_PLACE_STRATEGIES) s = 0;
+    aios_place_ctx_t ctx = {
+        .n_cores = CONFIG_MAX_NUM_NODES, .threshold = g_spill_threshold,
+        .hint_core = hint_core, .load = load_cb, .cookie = 0, .rr = &g_core_rr,
+    };
+    return AIOS_PLACE_STRATEGIES[s].fn(&ctx);
+}
+
+void aios_assign_core(int proc_idx, seL4_CPtr tcb) {
+    unsigned core;
+    if (g_pincore >= 0 && g_pincore < CONFIG_MAX_NUM_NODES)
+        core = (unsigned)g_pincore;                                    /* manual override (test) */
+    else if (g_place_auto)
+        core = pick_core(-1);                          /* selected strategy (locality hint TBD) */
+    else if (g_proc_distribute)
+        core = 1u + (g_core_rr++ % (unsigned)(CONFIG_MAX_NUM_NODES - 1));  /* legacy coresched RR */
+    else
+        core = 0;                                                     /* default: home core */
     seL4_TCB_SetAffinity(tcb, core);
+    if (proc_idx >= 0 && proc_idx < MAX_ACTIVE_PROCS) g_proc_core[proc_idx] = (int)core;
+}
+
+/* /proc/placement[.0|.1|.sN|.tN] -- load-and-locality policy for user-proc placement.
+ * .1 enable / .0 disable (legacy coresched/core-0) / .sN select strategy N / .tN spill
+ * threshold N. Lists the strategy menu + live per-core load so the policy is observable
+ * and A/B-able. */
+int placement_cmd(const char *args, char *buf, int bufsize) {
+    if (args[0] == '.') {
+        if (args[1] == '0' || args[1] == '1') g_place_auto = (args[1] == '1');
+        else if (args[1] == 't' && args[2] >= '1' && args[2] <= '9') g_spill_threshold = args[2] - '0';
+        else if (args[1] == 's' && args[2] >= '0' && args[2] <= '9') {
+            int s = args[2] - '0';
+            if (s < AIOS_N_PLACE_STRATEGIES) g_place_strategy = s;
+        }
+    }
+    int w = snprintf(buf, bufsize,
+        "placement: auto=%d strategy=%d(%s) spill_threshold=%d (.1/.0 on-off / .sN strategy / .tN threshold)\n",
+        g_place_auto, g_place_strategy, AIOS_PLACE_STRATEGIES[g_place_strategy].name, g_spill_threshold);
+    w += snprintf(buf + w, bufsize - w, "  strategies:");
+    for (int i = 0; i < AIOS_N_PLACE_STRATEGIES && w < bufsize - 1; i++)
+        w += snprintf(buf + w, bufsize - w, " %d=%s", i, AIOS_PLACE_STRATEGIES[i].name);
+    if (w < bufsize - 1) w += snprintf(buf + w, bufsize - w, "\n");
+    for (unsigned c = 0; c < CONFIG_MAX_NUM_NODES && w < bufsize - 1; c++)
+        w += snprintf(buf + w, bufsize - w, "  core %u load %u (servers %u)\n",
+                      c, aios_core_load(c), g_server_load_n[c]);
+    return w;
 }
 #else
 volatile int g_proc_distribute = 0;
 volatile int g_pincore = -1;
-void aios_assign_core(seL4_CPtr tcb) { (void)tcb; }
+volatile int g_place_auto = 0;
+volatile int g_spill_threshold = 4;
+volatile int g_place_strategy = 0;
+void aios_assign_core(int proc_idx, seL4_CPtr tcb) { (void)proc_idx; (void)tcb; }
+int placement_cmd(const char *args, char *buf, int bufsize) {
+    (void)args;
+    return snprintf(buf, bufsize, "placement: single-core build (no-op)\n");
+}
 #endif
 
 /* /proc/coresched[.0|.1] -- toggle user-process core distribution (the Stage S kill switch). */
@@ -163,6 +239,16 @@ static void server_apply_affinity(int idx) {
     seL4_TCB_SetAffinity(g_servers[idx].tcb, server_target_core(idx));
 }
 
+/* Recompute the per-core server load (immortal threads) from the registry, so the load
+ * policy's aios_core_load() sees servers. Called after any (re)pin. */
+static void recompute_server_load(void) {
+    for (unsigned c = 0; c < CONFIG_MAX_NUM_NODES; c++) g_server_load_n[c] = 0;
+    for (int i = 0; i < g_server_count; i++) {
+        unsigned c = server_target_core(i);
+        if (c < CONFIG_MAX_NUM_NODES) g_server_load_n[c]++;
+    }
+}
+
 void aios_server_pin(const char *name, seL4_CPtr tcb) {
     int idx = g_server_count;
     if (idx >= AIOS_MAX_SERVER_TCBS) {
@@ -173,6 +259,7 @@ void aios_server_pin(const char *name, seL4_CPtr tcb) {
     g_servers[idx].tcb = tcb;
     g_server_count = idx + 1;
     server_apply_affinity(idx);
+    recompute_server_load();
 }
 
 /* /proc/distribute[.0|.1|.2] -- server core-distribution mode; re-pins the live TCBs and
@@ -181,6 +268,7 @@ int distribute_cmd(const char *args, char *buf, int bufsize) {
     if (args[0] == '.' && args[1] >= '0' && args[1] <= '2') {
         g_server_distribute = args[1] - '0';
         for (int i = 0; i < g_server_count; i++) server_apply_affinity(i);
+        recompute_server_load();
     }
     int w = snprintf(buf, bufsize,
         "distribute: mode=%d servers=%d cores=0..%d (.0 off/core0 / .1 full round-robin /"

@@ -438,7 +438,7 @@ void exec_thread_fn(void *arg0, void *arg1, void *ipc_buf) {
             continue;
         }
 
-        aios_assign_core(proc->thread.tcb.cptr);   /* v0.4.257 Stage S: distribute to cores 1..N-1 */
+        aios_assign_core(ap_idx, proc->thread.tcb.cptr);   /* v0.4.257 Stage S; idx -> load policy */
 
         /* Register in active_procs + process table */
         cow_clear_proc(ap_idx);  /* v0.4.110: zero stale COW state */
