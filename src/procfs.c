@@ -36,6 +36,8 @@ int dma_warm_cmd(const char *args, char *buf, int bufsize);
 int watchdog_cmd(const char *args, char *buf, int bufsize);
 /* Serial-independent last-stall view at /proc/laststall (impl in src/servers/watchdog.c). */
 int watchdog_laststall_cmd(char *buf, int bufsize);
+/* Phase A step 3 wedge-survival gate at /proc/confine (impl in src/servers/watchdog.c). */
+int confine_cmd(const char *args, char *buf, int bufsize);
 /* ARM-local AXI_QUIET_TIME diagnostic at /proc/axiquiet (the fabric-quiesce detector). */
 extern volatile uint32_t *dev_armlocal_vaddr;
 /* System mouse state at /proc/mouse (impl in src/usb/xhci.c). */
@@ -837,6 +839,14 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         int wd = watchdog_cmd(path + 8, buf, bufsize);
         if (wd < 0) return -1;
         w = wd;
+    } else if (path[0] == 'c' && path[1] == 'o' && path[2] == 'n' && path[3] == 'f'
+            && path[4] == 'i' && path[5] == 'n' && path[6] == 'e') {
+        /* /proc/confine[.N|.r] -- Phase A step 3 wedge-survival gate (src/servers/watchdog.c).
+         * .N arms a syscall-doing worker on core N; watch the [WDOG] "worker advanced" delta
+         * across a stall to learn whether work on a secondary survives a peer wedge. */
+        int cf = confine_cmd(path + 7, buf, bufsize);
+        if (cf < 0) return -1;
+        w = cf;
     } else if (path[0] == 'l' && path[1] == 'a' && path[2] == 's' && path[3] == 't'
             && path[4] == 's' && path[5] == 't' && path[6] == 'a' && path[7] == 'l'
             && path[8] == 'l') {

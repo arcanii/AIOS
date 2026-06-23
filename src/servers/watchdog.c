@@ -94,6 +94,21 @@ volatile int      g_hwdog_armed;        /* #1a: PM HW-watchdog pet engaged (tota
 static seL4_CPtr  g_hb_ntfn;            /* parks the core-0 heartbeat when disabled (prio 200 -> wakes cleanly) */
 static seL4_CPtr  g_wd_ntfn;            /* parks the core-1 watchdog when disabled (woken cross-core via IPI) */
 
+/* ── Confinement gate (Phase A step 3, the HW wedge-survival experiment) ─────────────────
+ * The DECISIVE test for the symmetric-kernel premise: does work on a secondary SURVIVE a
+ * peer core's wedge? Unlike the pure-userspace watchdog, this worker does a SYSCALL
+ * (seL4_Yield -> NODE_LOCK) every iteration -- the same kernel entry any real work hits. If
+ * a peer wedge HOLDS the BKL, the worker's syscall blocks ~32s and its tick FREEZES; if the
+ * wedge is BKL-FREE, the tick keeps advancing. The core-1 watchdog (which survives) samples
+ * the delta across a [WDOG] stall and reports it out-of-band. Default DISARMED;
+ * /proc/confine.N arms it on core N (a secondary != WD_CORE and != the wedge core). */
+volatile int      g_confine_armed;       /* worker loops while set */
+volatile int      g_confine_core = -1;   /* core the worker is pinned to (-1 = unset) */
+volatile uint64_t g_confine_ticks;       /* worker iterations = syscalls completed (the observable) */
+static seL4_CPtr  g_confine_ntfn;        /* parks the worker when disarmed */
+static sel4utils_thread_t g_confine_thread;
+static int        g_confine_started;
+
 /* #1b: drive the ACT LED (no syscall; harmless if GPIO unmapped / not output). */
 static inline void wd_led(int on)
 {
@@ -222,6 +237,8 @@ static void wd_watchdog_fn(void *a, void *b, void *c)
     uint64_t pace = freq / 20;          /* re-check ~every 50ms (pure cntpct spin) */
     int signaled = 0;
     uint64_t stall_start_hb = 0;
+    uint64_t confine_at_start = 0;        /* g_confine_ticks captured at stall onset */
+    uint64_t confine_next_report = 0;     /* cntpct of the next mid-stall worker sample */
     for (;;) {
         if (!g_wd_enabled) {
             signaled = 0;
@@ -235,11 +252,27 @@ static void wd_watchdog_fn(void *a, void *b, void *c)
             if (!signaled) {
                 signaled = 1;
                 stall_start_hb = hb;
+                confine_at_start = g_confine_ticks;        /* gate: snapshot the worker */
+                confine_next_report = now + 2 * freq;      /* first mid-stall sample in ~2s */
                 g_wd_last_tick = now;     /* #2: record for /proc/laststall */
                 g_wd_stalls++;
                 wd_led(1);                /* #1b: ACT LED ON for the duration of the stall */
                 wd_uart_puts("\r\n[WDOG] core0 STALLED (core1 alive, no tick/BKL) -- stalls=");
                 wd_uart_put_u(g_wd_stalls);
+                if (g_confine_armed) {
+                    wd_uart_puts(" confine_core=");
+                    wd_uart_put_u((uint64_t)g_confine_core);
+                    wd_uart_puts(" worker_ticks=");
+                    wd_uart_put_u(confine_at_start);
+                }
+                wd_uart_puts("\r\n");
+            } else if (g_confine_armed && now >= confine_next_report) {
+                /* GATE: live worker sample DURING the stall. If this delta keeps growing,
+                 * the syscall-doing worker on the secondary is SURVIVING the wedge (kernel
+                 * entry is not BKL-blocked); if it stays flat, it froze. */
+                confine_next_report = now + 2 * freq;
+                wd_uart_puts("[WDOG] ...stalling, worker advanced=");
+                wd_uart_put_u(g_confine_ticks - confine_at_start);
                 wd_uart_puts("\r\n");
             }
         } else if (signaled) {
@@ -252,7 +285,18 @@ static void wd_watchdog_fn(void *a, void *b, void *c)
             wd_led(0);                    /* #1b: ACT LED OFF on recovery */
             wd_uart_puts("[WDOG] core0 recovered after ");
             wd_uart_put_u(dur_ms);
-            wd_uart_puts("ms\r\n");
+            if (g_confine_armed) {
+                /* THE DECISIVE METRIC: worker syscalls completed DURING the core-0 wedge.
+                 * >0 => work on the secondary SURVIVED (BKL-free wedge -> Phase B viable);
+                 * 0  => it froze on a kernel entry (BKL-held wedge -> premise broken). */
+                wd_uart_puts("ms; confine worker(core ");
+                wd_uart_put_u((uint64_t)g_confine_core);
+                wd_uart_puts(") advanced=");
+                wd_uart_put_u(g_confine_ticks - confine_at_start);
+                wd_uart_puts(" during the wedge\r\n");
+            } else {
+                wd_uart_puts("ms\r\n");
+            }
         }
         /* #1a: refresh the PM HW watchdog while armed (no syscall). Done every loop so a
          * normal core-0 freeze (core 1 still looping) never resets, but a TOTAL wedge
@@ -265,6 +309,25 @@ static void wd_watchdog_fn(void *a, void *b, void *c)
             if (!g_wd_enabled) {
                 break;       /* responsive disable */
             }
+        }
+    }
+}
+
+/* Confinement-gate worker: pinned to g_confine_core, does a SYSCALL (seL4_Yield) per
+ * iteration and bumps g_confine_ticks. The syscall is the kernel entry under test -- it
+ * blocks ~32s iff a peer wedge holds the BKL. A short userspace spin moderates the BKL
+ * hammering so the worker does not maximally starve core 0's servers. Parks when disarmed. */
+static void wd_confine_worker_fn(void *a, void *b, void *c)
+{
+    (void)a; (void)b; (void)c;
+    for (;;) {
+        while (!g_confine_armed) {
+            seL4_Wait(g_confine_ntfn, NULL);
+        }
+        while (g_confine_armed) {
+            seL4_Yield();                 /* SYSCALL: NODE_LOCK_SYS -- the entry under test */
+            g_confine_ticks++;
+            for (volatile int i = 0; i < 4000; i++) { /* moderate the rate */ }
         }
     }
 }
@@ -315,6 +378,26 @@ void watchdog_start(void)
     sel4utils_start_thread(&wd, wd_watchdog_fn, NULL, NULL, 1);
     aios_acct_register("core1_wd", wd.tcb.cptr);
 
+    /* Confinement-gate worker (Phase A step 3): created DISARMED -- armed onto a chosen
+     * secondary core via /proc/confine.N for the HW wedge-survival experiment. Prio 200 so
+     * it actually runs on its core; its default affinity is irrelevant while parked. */
+#if CONFIG_MAX_NUM_NODES > 1
+    {
+        vka_object_t n3;
+        if (!vka_alloc_notification(&vka, &n3)) {
+            g_confine_ntfn = n3.cptr;
+            if (!sel4utils_configure_thread(&vka, &vspace, &vspace, 0,
+                    simple_get_cnode(&simple), seL4_NilData, &g_confine_thread)) {
+                seL4_TCB_SetPriority(g_confine_thread.tcb.cptr, simple_get_tcb(&simple), 200);
+                if (!sel4utils_start_thread(&g_confine_thread, wd_confine_worker_fn, NULL, NULL, 1)) {
+                    aios_acct_register("confine_wkr", g_confine_thread.tcb.cptr);
+                    g_confine_started = 1;
+                }
+            }
+        }
+    }
+#endif
+
     /* v0.4.284: default-ON PM HW-watchdog auto-recovery on real HW (the PM block is mapped only
      * on the Pi; dev_pm_vaddr is NULL on QEMU -> stays disarmed there). A normal ~32s freeze keeps
      * core 1 petting (no reset); a TOTAL cluster wedge stops the petting -> the SoC auto-resets in
@@ -345,6 +428,46 @@ int watchdog_laststall_cmd(char *buf, int bufsize)
         (unsigned long long)ago_ms, (unsigned long long)g_wd_last_ms,
         (unsigned long long)g_wd_worst_ms, (unsigned long long)g_wd_stalls,
         g_wd_enabled ? "enabled" : "disabled");
+}
+
+/* /proc/confine[.N|.r] -- Phase A step 3 wedge-survival gate. .N arms the syscall-doing worker
+ * pinned to core N (the survivor under test; pick a secondary != WD_CORE and != the wedge core);
+ * .r disarms. Then force a teardown-after-idle wedge and watch sercap: the [WDOG] line reports
+ * "worker(core N) advanced=K during the wedge" -- K>0 means work on core N SURVIVED the wedge
+ * (kernel entry was NOT BKL-blocked -> the symmetric-kernel premise holds, Phase B viable);
+ * K==0 means it froze on a syscall (BKL-held wedge -> premise broken). */
+int confine_cmd(const char *args, char *buf, int bufsize)
+{
+#if CONFIG_MAX_NUM_NODES > 1
+    if (!g_confine_started) {
+        return snprintf(buf, bufsize, "confine: worker unavailable (thread start failed)\n");
+    }
+    if (args[0] == '.') {
+        if (args[1] == 'r') {
+            g_confine_armed = 0;
+            arch_dsb();
+        } else if (args[1] >= '0' && args[1] <= '9') {
+            int core = args[1] - '0';
+            if (core < CONFIG_MAX_NUM_NODES) {
+                g_confine_core = core;
+                seL4_TCB_SetAffinity(g_confine_thread.tcb.cptr, (seL4_Word)core);
+                g_confine_ticks = 0;
+                g_confine_armed = 1;
+                arch_dsb();
+                if (g_confine_ntfn) {
+                    seL4_Signal(g_confine_ntfn);   /* unpark the worker */
+                }
+            }
+        }
+    }
+    return snprintf(buf, bufsize,
+        "confine: armed=%d core=%d ticks=%llu (.N arm syscall-worker on core N / .r disarm); "
+        "watch the [WDOG] \"worker advanced\" delta across a stall\n",
+        g_confine_armed, g_confine_core, (unsigned long long)g_confine_ticks);
+#else
+    (void)args;
+    return snprintf(buf, bufsize, "confine: single-core build (no-op)\n");
+#endif
 }
 
 /* /proc/watchdog[.0|.1] -- status + enable/disable; .hwdog.[0|1] -- PM HW-watchdog auto-reset. */
