@@ -543,6 +543,33 @@ int main(int argc, char **argv)
         }
     }
 
+    {
+        /* v0.4.295: LARGE demand-paged anonymous mmap -- exercises the lazy path
+         * that replaced the old 4 MB eager cap (the tcc/musl large-heap case).
+         * 16 MB reserved; touch one int per page (sparse) so pages fault in lazily;
+         * verify each, then a contiguous fill across a 64-page span. */
+        size_t big = 16u * 1024 * 1024;            /* > old 4 MB cap */
+        unsigned char *q = mmap(NULL, big, PROT_READ | PROT_WRITE,
+                                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        test("mmap 16MB anon (was -ENOMEM under 4MB cap)", q != MAP_FAILED && q != NULL);
+        if (q != MAP_FAILED && q != NULL) {
+            int ok_zero = 1, ok_rw = 1;
+            size_t npg = big / 4096;
+            for (size_t i = 0; i < npg; i++) {
+                volatile unsigned int *w = (unsigned int *)(q + i * 4096);
+                if (*w != 0) ok_zero = 0;          /* fresh frames must be zero-filled */
+                *w = (unsigned int)(i * 2654435761u);
+            }
+            for (size_t i = 0; i < npg; i++) {
+                volatile unsigned int *w = (unsigned int *)(q + i * 4096);
+                if (*w != (unsigned int)(i * 2654435761u)) ok_rw = 0;
+            }
+            test("mmap 16MB anon zero-filled on fault", ok_zero);
+            test("mmap 16MB anon per-page write/read", ok_rw);
+            test("munmap 16MB anon", munmap(q, big) == 0);
+        }
+    }
+
 
     /* ============================================================
      * Section 16: Extended File I/O -- pread, pwrite

@@ -877,6 +877,13 @@ int handle_file_mmap_fault(int ci, seL4_Word fault_addr) {
     if (merr) return -1;
     vka_audit_frame(VKA_SUB_OTHER, 1);
     active_procs[ci].audit_pages_allocated++;
+    /* v0.4.295: ANONYMOUS demand-paged mmap (path[0]==0). A fresh seL4 frame is
+     * kernel-zeroed on retype, which IS the anonymous zero-fill -- no file read,
+     * and no I-cache unify (it is data, never fetched as code). This is the lazy
+     * MAP_ANONYMOUS path that lifts the old 4MB eager cap (tcc/musl large heaps). */
+    if (v->path[0] == 0) {
+        return 1;
+    }
     long foff = v->offset + (long)(page_va - v->va_start);
     file_bounce_t fb = file_bounce_map(ci, page_va);
     if (fb.ok) {
@@ -2778,6 +2785,55 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
                 file_vmas[slot].path[i] = fpath[i];
             file_vmas[slot].path[fi < 127 ? fi : 127] = 0;
             AIOS_LOG_DEBUG_V("MMAP_FILE(lazy): pages=", (unsigned long)pages);
+            seL4_SetMR(0, (seL4_Word)vout);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+            break;
+        }
+        case PIPE_MMAP_ANON_LAZY: {
+            /* v0.4.295: DEMAND-PAGED anonymous mmap. Reserve the VA range and
+             * register an anonymous descriptor (path[0]==0); allocate NO frames.
+             * The first touch of each page faults into handle_file_mmap_fault,
+             * which allocates ONE kernel-zeroed frame on demand (no file read).
+             * This replaces the old eager PIPE_MMAP_ANON for large/sparse maps:
+             * musl/tcc can reserve a big heap arena and only pay for touched
+             * pages -- no 4MB cap, no root-pool drain for untouched VA.
+             * MR0 = pages requested. Reply MR0 = vaddr (0 on failure). */
+            int ci = (int)badge - 1;
+            int pages = (int)seL4_GetMR(0);
+            if (ci < 0 || ci >= MAX_ACTIVE_PROCS || !active_procs[ci].active
+                || pages <= 0 || pages > 65536 /* 256 MB VA cap */) {
+                AIOS_LOG_WARN_V("MMAP_ANON_LAZY: invalid pages=", (unsigned long)pages);
+                seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            int slot = -1;
+            for (int i = 0; i < MAX_FILE_VMAS; i++)
+                if (!file_vmas[i].active) { slot = i; break; }
+            if (slot < 0) {
+                AIOS_LOG_ERROR("MMAP_ANON_LAZY: no free vma slot");
+                seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            void *vout = NULL;
+            reservation_t rsv = vspace_reserve_range(
+                &active_procs[ci].proc.vspace, (size_t)pages * PAGE_SIZE,
+                seL4_AllRights, 1, &vout);
+            if (rsv.res == NULL || vout == NULL) {
+                AIOS_LOG_ERROR("MMAP_ANON_LAZY: reserve_range failed");
+                seL4_SetMR(0, 0);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            file_vmas[slot].active = 1;
+            file_vmas[slot].ci = ci;
+            file_vmas[slot].va_start = (uintptr_t)vout;
+            file_vmas[slot].va_end = (uintptr_t)vout + (size_t)pages * PAGE_SIZE;
+            file_vmas[slot].offset = 0;
+            file_vmas[slot].reservation = rsv.res;
+            file_vmas[slot].path[0] = 0;   /* anonymous: zero-fill on fault */
+            AIOS_LOG_DEBUG_V("MMAP_ANON_LAZY: reserved pages=", (unsigned long)pages);
             seL4_SetMR(0, (seL4_Word)vout);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;

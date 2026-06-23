@@ -397,7 +397,7 @@ long aios_sys_pipe2(va_list ap) {
 #define PROT_WRITE  0x2
 #endif
 
-#define AIOS_MAX_FILE_MMAPS 16
+#define AIOS_MAX_FILE_MMAPS 32   /* v0.4.295: 16->32 -- anon demand-maps now share this registry */
 typedef struct {
     int       active;
     uintptr_t vaddr;     /* page-aligned base returned to caller */
@@ -538,10 +538,11 @@ long aios_sys_mmap(va_list ap) {
     /* Round length up to whole pages */
     size_t pages = (length + 4095) / 4096;
     if (pages == 0) pages = 1;
-    if (pages > 1024) {
-        /* Server caps at 1024 pages = 4 MB; caller must split */
-        return -ENOMEM;
-    }
+    /* v0.4.295: file-backed caps at 1024 pages (server PIPE_MMAP_FILE); anonymous
+     * is now DEMAND-PAGED up to 65536 pages = 256 MB (PIPE_MMAP_ANON_LAZY), so the
+     * old 4 MB eager cap no longer blocks tcc/musl large heaps. */
+    if (!(flags & MAP_ANONYMOUS) && pages > 1024) return -ENOMEM;
+    if (pages > 65536) return -ENOMEM;
 
     if (!(flags & MAP_ANONYMOUS)) {
         /* File-backed: validate the fd, grab anonymous pages, fill from disk. */
@@ -585,14 +586,31 @@ long aios_sys_mmap(va_list ap) {
         return (long)vaddr;
     }
 
-    /* MAP_ANONYMOUS path */
-    seL4_SetMR(0, (seL4_Word)pages);
-    seL4_MessageInfo_t reply = seL4_Call(pipe_ep,
-        seL4_MessageInfo_new(83 /* PIPE_MMAP_ANON */, 0, 0, 1));
-    (void)reply;
-    long vaddr = (long)seL4_GetMR(0);
-    if (vaddr == 0) return -ENOMEM;
-    return vaddr;
+    /* MAP_ANONYMOUS path -- v0.4.295: DEMAND-PAGED via PIPE_MMAP_ANON_LAZY.
+     * Reserve the VA range (no frames); each page faults in zero-filled on first
+     * touch (handle_file_mmap_fault, anon branch). Registered in the file_mmap
+     * registry so munmap routes to PIPE_MUNMAP_FILE (releases the reservation);
+     * writeback no-ops for anon (empty path). Lifts the old 4 MB eager cap. */
+    {
+        int slot = -1;
+        for (int i = 0; i < AIOS_MAX_FILE_MMAPS; i++)
+            if (!aios_file_mmaps[i].active) { slot = i; break; }
+        if (slot < 0) return -ENOMEM;
+        seL4_SetMR(0, (seL4_Word)pages);
+        seL4_Call(pipe_ep, seL4_MessageInfo_new(93 /* PIPE_MMAP_ANON_LAZY */, 0, 0, 1));
+        uintptr_t vaddr = (uintptr_t)seL4_GetMR(0);
+        if (vaddr == 0) return -ENOMEM;
+        aios_file_mmap_t *m = &aios_file_mmaps[slot];
+        m->active = 1;
+        m->vaddr  = vaddr;
+        m->length = length;
+        m->pages  = pages;
+        m->offset = 0;
+        m->flags  = flags;
+        m->prot   = prot;
+        m->path[0] = 0;
+        return (long)vaddr;
+    }
 }
 
 /* v0.4.144: msync -- write a MAP_SHARED + writable file mapping back to disk.

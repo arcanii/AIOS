@@ -87,7 +87,9 @@ def main():
             ("idtest.c", "idtest", []),    # v0.4.190 privesc regression probe
             ("test_threads.c", "test_threads", []),  # pthreads smoke (mutex)
             ("test_join.c", "test_join", []),        # v0.4.191 deferred-join test
-            ("nettest.c", "nettest", [])]            # v0.4.229 netd Stage 0 socket probe
+            ("nettest.c", "nettest", []),            # v0.4.229 netd Stage 0 socket probe
+            ("posix_verify.c", "posix_verify", []),  # POSIX compliance probe (incl. v0.4.295 large-anon-mmap)
+            ("mmaptest.c", "mmaptest", [])]          # v0.4.295 demand-paged anon mmap regression (1-line output)
     for src, out, aliases in apps:
         outp = os.path.join(BUILD, "sbase", out)
         cmd = [os.path.join(AIOS, "scripts", "aios-cc"),

@@ -77,6 +77,7 @@
  * NET_* labels (net_ep) harmlessly, exactly like PIPE_SET_TIME(90) == NET_SOCKET(90). */
 #define PIPE_MAP_RING    91 /* map the SPSC SHM-ring frame into the caller (MR1: dir 0=read, 1=write) */
 #define PIPE_RING_WAKE   92 /* writer asks the server to wake a reader parked on an empty ring */
+#define PIPE_MMAP_ANON_LAZY 93 /* v0.4.295: reserve a demand-paged anonymous range (zero-fill on fault) */
 
 /* ---- NET IPC labels (90-109) -- canonical defs in aios/net_proto.h.
  * v0.4.229 (netd Stage 0): factored out so the in-root net server and the
