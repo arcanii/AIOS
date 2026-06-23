@@ -7,6 +7,29 @@ they're up next.
 
 ---
 
+## Strategic: kernel-base direction (seL4 vs Linux) -- gated on "is seL4's isolation/verification the thesis?" [queued 2026-06-23]
+
+Context: s14 confirmed the prewarm stall mitigation (directional) and the driver-reuse review
+(`docs/DR_20260623_linux_driver_reuse_on_sel4.md`) showed practical Linux driver reuse on seL4 is
+essentially an x86 + driver-VM story (no shim shortcut on aarch64; no SMMU on RPi4 -> reuse buys no
+isolation there). Two backlogged items frame the fork:
+
+- **(BL-1) Spec/cost the x86-64 + driver-VM path** [size: LARGE, multi-month]. Ships: AIOS on x86-64 with
+  Linux **driver-VMs** under seL4 (VT-d for real containment) for broad firmware/driver coverage. Covers
+  seL4 VMM options (camkes-vm / Microkit libvmm), VT-d/IOMMU setup, a virtio<->SHM-ring bridge, PCI
+  enumeration, effort + risks. CHEAPEST VALIDATION first: the existing seL4 CAmkES `rumprun_ethernet`/e1000
+  app on x86-seL4 + VT-d (the one reuse path with a real pre-built seL4 integration; BSD-clean). Ref:
+  `docs/DR_20260623_linux_driver_reuse_on_sel4.md`. Only justified if seL4's isolation/verification IS the thesis.
+
+- **(BL-2) "AIOS userspace on Linux" de-risk prototype** [size: SMALL, hours-days]. Stand up AIOS's
+  userspace/server model on stock aarch64/x86-64 Linux (in a VM) over Linux syscalls; measure how much of
+  AIOS is seL4-coupled (IPC/caps/untyped) vs portable userspace logic. That number directly decides the
+  seL4-vs-Linux-base pivot for a few hours of work. Do BL-2 BEFORE BL-1 (cheaper, answers the thesis
+  question more directly). If AIOS's novelty lives above the kernel and the port is cheap, Linux-native
+  gets x86-64 + the whole driver/firmware tree for free.
+
+---
+
 ## RPi4 idle-teardown TLBI/DVM stall -- MAJOR OPEN CONCERN (NOT concluded; mitigated, not cured) [queued 2026-06-17]
 
 **Symptom**: ~8% (2/24 on `netstall.py --idle 8`) of idle-then-process-teardown sequences freeze the
