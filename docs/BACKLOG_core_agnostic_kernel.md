@@ -1,8 +1,15 @@
 # BACKLOG: core-agnostic / symmetric-core kernel (wedge blast-radius strategy)
 
-Status: **BACKLOGGED** (2026-06-22, session 11, Bryan's call). Pursue AFTER the
-blocking-sleep cure is HW-tested ("prevent the wedge first"). This doc preserves the
-session-11 research so the design can be picked up cold.
+> **UN-SHELVED + SUPERSEDED (2026-06-23, session 12).** The "prevent the wedge first"
+> precondition is satisfied: the blocking-sleep cure is HW-REFUTED (core 0 cannot be made
+> to idle; blocking relays wedge after a stall). The actionable plan now lives in
+> **`docs/NEXT_20260623_symmetric_kernel_redesign.md`** (sharpened by the s12 finding that
+> cross-core blocking dependencies propagate a wedge). Phase A step 1 (the allocman/vka lock)
+> is DONE (commit 4fdbeee). This doc is kept for the original session-11 research below.
+
+Status: ~~BACKLOGGED (2026-06-22, session 11)~~ → un-shelved; see the redesign doc above.
+The research below (the BKL-released finding, the allocman barrier, the resilience targets)
+remains valid and feeds the redesign.
 
 ## Motivation
 

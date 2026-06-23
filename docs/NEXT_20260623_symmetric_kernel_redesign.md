@@ -224,3 +224,58 @@ pending sessions to a healthy core (if state allows), and let the wedged core re
 - [ ] **Phase A step 3 — per-core-wedge confinement measurement (HW):** force a teardown wedge on
   core N (home-core-bound session) and confirm a session on core M stays responsive. This is the gate
   that tells us whether confinement is real before investing in Phase B. Needs the board revived.
+
+---
+
+## 11. SEED PROMPT (next session)
+
+Paste the block below into a fresh session. Everything above is grounding. The stall is a MAJOR OPEN
+CONCERN -- this is blast-radius work (survive a per-core wedge), never frame it as a cure
+([[feedback_stall_open_concern]]).
+
+>>> SEED PROMPT <<<
+
+Continue the symmetric / core-agnostic kernel redesign -- Phase A step 2: un-pin the root servers and
+prove the allocator lock holds in-situ on QEMU, then (if the board is revived) the HW per-core-wedge
+confinement gate.
+
+READ FIRST: docs/NEXT_20260623_symmetric_kernel_redesign.md (the plan + progress in section 9), then
+memory [[project_stall_session12]] + [[project_stall_hunt]] + docs/BACKLOG_core_agnostic_kernel.md.
+
+SETTLED (session 12, do NOT re-derive): The blocking-sleep / "prevent the wedge" cure is HW-REFUTED --
+core 0 cannot be made to idle on this board (idle_lag=-1 at 20ms AND 500ms polls; timer-poll relocates
+churn), and blocking relays wedge permanently after a stall (their naps block on the timer service,
+which freezes WITH core 0) -> the board became un-driveable and died. So a cross-core BLOCKING
+dependency PROPAGATES a per-core wedge -- the load-bearing design constraint. The leverage is to
+SURVIVE a per-core wedge, not prevent it. The seL4 BKL is RELEASED before eret-to-user (proven), so a
+user-side wedge holds no lock; the cluster only freezes because all servers live on core 0. Phase A
+step 1 is DONE (commit 4fdbeee): src/boot/vka_lock.c is a spinlock trampoline layer over the global
+vka (installed at aios_root.c after allocman_make_vka), fixing the v0.4.178 lock-free CSpace-slot
+bitmap tear. Proven by scripts/allocman_lock_host_test.c (buggy RMW tears ~4000 handouts/run; locked
+= 0); QEMU gate unchanged at baseline. The lock is inert under the current core-0 pinning, load-bearing
+once servers distribute. The s12 blocking-relay code is reverted to the s11 base.
+
+DO:
+1. Make server un-pinning a default-safe KNOB (e.g. /proc/distribute or boot flag) so it is
+   A/B-testable; when on, drop the seL4_TCB_SetAffinity(..., ROOT_CORE) pins (boot_services.c:48,82,
+   203,257; timer_server.c:299; watchdog.c:304) and round-robin the servers across cores.
+2. On QEMU smp4, run the v0.4.178 repro: 2 concurrent connections / fork storms. WITH the lock + un-pin
+   the 2nd must NOT fail (the "second SSH connection fails / key exchange failed" bug); toggle the lock
+   off to confirm it tears without it. This is the in-situ proof the lock enables distribution.
+3. CAVEAT (found in s12): the allocator was the documented tear, but the shared ROOT vspace
+   (sel4utils bookkeeping) is also unlocked. fork/exec use per-child vspaces (safe with the locked
+   vka), but concurrent root-vspace ops (server-buffer allocs) may race. If the repro fails for a
+   vspace reason, add a vspace lock (same trampoline pattern as vka_lock.c) or move toward per-core
+   vspaces (Phase B).
+4. THEN Phase A step 3 (HW confinement gate -- the real payoff): REVIVE THE BOARD FIRST (it is DEAD;
+   build a driveable s11+lock SD image via mksdcard.py and balenaEtcher it -- build 2881 was the bad
+   un-driveable image, now removed). Force a teardown-after-idle wedge on one core and confirm a
+   session bound to another core stays responsive. This gate decides whether confinement is real
+   before investing in Phase B (per-core timer + per-core process-manager).
+
+METHOD / STATE: Board is DEAD -- needs a power-cycle + a driveable reflash before any HW step (the
+symmetric design will NOT use the s12 blocking relays / timersleep-on). FULL QEMU gate before every
+flash (smp 4/5, socket 8/8, netd 10/10, shmring 25/26 -- the smp 4/5 abort is BASELINE, verified s12).
+Allocator lock = src/boot/vka_lock.c; host test = scripts/allocman_lock_host_test.c. seL4 changes ->
+regenerate deps/patches/seL4-kernel.patch. sercap BEFORE any stall/HW test; do not over-probe
+netconsole (polling triggers stalls + wedges it). Commit on main; Bryan pushes.
