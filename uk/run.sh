@@ -15,6 +15,10 @@ IMAGE=${IMAGE:-gcc:13}
 docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
     -v "$UK_DIR":/uk -w /uk "$IMAGE" \
     sh -c 'make --no-print-directory clean && make --no-print-directory all &&
-           echo "--- running aios-uk ./guest_hello ---" &&
-           ./aios-uk ./guest_hello; rc=$?;
-           echo "guest exit status: $rc"; test "$rc" = 42'
+           echo "=== M1: guest_hello (WRITE + EXIT) ===" &&
+           ./aios-uk ./guest_hello; echo "  [exit $?]";
+           echo "=== M2: guest_fileio (VFS: OPEN/WRITE/READ/CLOSE) ===" &&
+           ./aios-uk ./guest_fileio; rc=$?; echo "  [exit $rc]";
+           echo "=== host shell confirms the AIOS program wrote a REAL file: ===";
+           ls -l /tmp/aios_m2.txt && cat /tmp/aios_m2.txt;
+           test "$rc" = 7'

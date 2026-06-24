@@ -20,7 +20,7 @@ GUEST_CFLAGS = -O2 $(WARN) $(INCLUDE) -ffreestanding -nostdlib -static \
                -fno-stack-protector -fno-asynchronous-unwind-tables
 
 .PHONY: all run clean
-all: aios-uk guest_hello
+all: aios-uk guest_hello guest_fileio
 
 aios-uk: $(KERNEL_SRC) include/pal.h include/aios_abi.h
 	$(CC) $(KERNEL_CFLAGS) -o $@ $(KERNEL_SRC)
@@ -28,8 +28,11 @@ aios-uk: $(KERNEL_SRC) include/pal.h include/aios_abi.h
 guest_hello: guest/guest_hello.c include/aios_abi.h
 	$(CC) $(GUEST_CFLAGS) -o $@ guest/guest_hello.c
 
+guest_fileio: guest/guest_fileio.c include/aios_abi.h
+	$(CC) $(GUEST_CFLAGS) -o $@ guest/guest_fileio.c
+
 run: all
-	./aios-uk ./guest_hello
+	./aios-uk ./guest_fileio
 
 clean:
-	rm -f aios-uk guest_hello
+	rm -f aios-uk guest_hello guest_fileio

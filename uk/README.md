@@ -46,7 +46,16 @@ guest exit status: 42
 
 `aarch64` only for now (matches the RPi4 target and the colima VM). Needs `CAP_SYS_PTRACE`.
 
+## M2 — a VFS behind the ABI ✅
+
+The kernel now owns an fd namespace and services real file I/O. `OPEN`/`READ`/`CLOSE` join
+`WRITE`/`EXIT`; the kernel keeps a fd table (AIOS fd → opaque `pal_file_t` backing object) and
+reaches storage only through the PAL. `guest/guest_fileio.c` creates a file, writes it, reads it
+back, and echoes it — `uk/run.sh` then shows the **real host file** the AIOS program produced
+(`/tmp/aios_m2.txt`). Verified in colima and natively on the RPi4.
+
 ## Next (per the design doc)
 
-M2 a VFS server behind the ABI · M3 dash/sbase as AIOS programs (operational) · M4 enforce the
-boundary (seccomp/namespaces) · M5 `sched_ext` · M6 the seL4/x86-64 replant seam.
+M3 dash/sbase as AIOS programs (operational — the big ABI jump: argv/env/auxv loading, brk/mmap,
+stat, exec/fork/wait…) · M4 enforce the boundary (seccomp/namespaces so a program *cannot* bypass
+the kernel) · M5 `sched_ext` · M6 the seL4/x86-64 replant seam.

@@ -13,8 +13,10 @@
  */
 #define _GNU_SOURCE
 #include "pal.h"
+#include "aios_abi.h"           /* AIOS_O_* flag values to translate */
 
 #include <errno.h>
+#include <fcntl.h>              /* O_* + open() */
 #include <signal.h>
 #include <stdint.h>
 #include <string.h>
@@ -92,6 +94,33 @@ size_t pal_guest_read(uint64_t gaddr, void *dst, size_t len) {
     return n < 0 ? 0 : (size_t)n;
 }
 
-long pal_host_write(int fd, const void *buf, size_t len) {
-    return (long)write(fd, buf, len);
+size_t pal_guest_write(uint64_t gaddr, const void *src, size_t len) {
+    struct iovec local  = { (void *)src, len };
+    struct iovec remote = { (void *)(uintptr_t)gaddr, len };
+    ssize_t n = process_vm_writev(g_guest, &local, 1, &remote, 1, 0);
+    return n < 0 ? 0 : (size_t)n;
 }
+
+/* --- host-driver gateway (Linux: a backing object is a host fd) --- */
+
+pal_file_t pal_host_std(int which) { return (pal_file_t)which; }   /* host fds 0/1/2 */
+
+/* AIOS_O_* (host-agnostic) -> Linux O_*. Flag-value translation is host-specific, so it lives
+ * here in the PAL, not in the kernel. */
+static int xlate_open_flags(uint64_t f) {
+    int acc = (int)(f & AIOS_O_ACCMODE);
+    int o = (acc == AIOS_O_WRONLY) ? O_WRONLY : (acc == AIOS_O_RDWR) ? O_RDWR : O_RDONLY;
+    if (f & AIOS_O_CREAT)  o |= O_CREAT;
+    if (f & AIOS_O_TRUNC)  o |= O_TRUNC;
+    if (f & AIOS_O_APPEND) o |= O_APPEND;
+    return o;
+}
+
+pal_file_t pal_host_open(const char *path, uint64_t aios_flags, uint64_t mode) {
+    int fd = open(path, xlate_open_flags(aios_flags), (mode_t)mode);
+    return fd < 0 ? PAL_FILE_INVALID : (pal_file_t)fd;
+}
+
+long pal_host_read(pal_file_t f, void *buf, size_t len)        { return (long)read((int)f, buf, len); }
+long pal_host_write(pal_file_t f, const void *buf, size_t len) { return (long)write((int)f, buf, len); }
+int  pal_host_close(pal_file_t f)                              { return close((int)f); }
