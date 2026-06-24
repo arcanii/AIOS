@@ -1,10 +1,10 @@
 /*
  * libaios.h -- a minimal C runtime for AIOS-ABI programs.
  *
- * Programs written as ordinary C (main + printf + malloc + argv) link against libaios and run on
- * the AIOS userspace kernel. libaios implements the C surface entirely on the AIOS ABI
- * (aios_abi.h) -- it NEVER calls the host kernel. This is the seed of the full libc that
- * recompiling sbase/dash will need (the AIOS-ABI retarget of the seL4 libaios_posix).
+ * Programs written as ordinary C (main + printf + malloc + argv + the usual string/ctype helpers)
+ * link against libaios and run on the AIOS userspace kernel. libaios implements the C surface
+ * entirely on the AIOS ABI (aios_abi.h) -- it NEVER calls the host kernel. This is the seed of the
+ * full libc that recompiling sbase/dash will need (the AIOS-ABI retarget of the seL4 libaios_posix).
  *
  * Freestanding: no system headers except the compiler's own stddef/stdint/stdarg.
  */
@@ -13,6 +13,18 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "aios_abi.h"   /* underlying ABI values (open flags, std fd numbers) */
+
+/* POSIX-flavoured names so programs read like ordinary C (mapped onto the AIOS ABI). */
+#define O_RDONLY AIOS_O_RDONLY
+#define O_WRONLY AIOS_O_WRONLY
+#define O_RDWR   AIOS_O_RDWR
+#define O_CREAT  AIOS_O_CREAT
+#define O_TRUNC  AIOS_O_TRUNC
+#define O_APPEND AIOS_O_APPEND
+#define STDIN_FILENO  AIOS_FD_STDIN
+#define STDOUT_FILENO AIOS_FD_STDOUT
+#define STDERR_FILENO AIOS_FD_STDERR
 
 /* --- raw file I/O over the AIOS ABI (fd-based, like POSIX) --- */
 long  aios_open(const char *path, int flags, int mode);
@@ -21,14 +33,28 @@ long  aios_write(int fd, const void *buf, unsigned long len);
 int   aios_close(int fd);
 void  aios_exit(int code) __attribute__((noreturn));
 
-/* --- minimal libc --- */
+/* --- string / memory --- */
 size_t strlen(const char *s);
+int    strcmp(const char *a, const char *b);
+int    strncmp(const char *a, const char *b, size_t n);
+char  *strchr(const char *s, int c);
+char  *strcpy(char *d, const char *s);
 void  *memcpy(void *d, const void *s, size_t n);
+void  *memmove(void *d, const void *s, size_t n);
 void  *memset(void *d, int c, size_t n);
-void  *malloc(size_t n);
-void   free(void *p);                 /* bump allocator: free is a no-op for now */
+int    atoi(const char *s);
 
-int    puts(const char *s);           /* writes s + '\n' to stdout */
-int    printf(const char *fmt, ...);  /* supports %s %d %u %x %c %% */
+/* --- ctype --- */
+int    isspace(int c);
+int    isdigit(int c);
+
+/* --- allocation (bump allocator for now; free is a no-op) --- */
+void  *malloc(size_t n);
+void   free(void *p);
+
+/* --- output --- */
+int    puts(const char *s);                 /* s + '\n' to stdout                       */
+void   fdputs(int fd, const char *s);        /* s to an arbitrary fd                     */
+int    printf(const char *fmt, ...);         /* to stdout: %s %d %u %x %c %%             */
 
 #endif /* LIBAIOS_H */

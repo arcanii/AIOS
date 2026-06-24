@@ -27,9 +27,31 @@ void aios_exit(int code) { asys(AIOS_SYS_EXIT, code, 0, 0); for (;;) { } }
 
 /* --- string/memory --- */
 size_t strlen(const char *s) { size_t n = 0; while (s[n]) n++; return n; }
+int strcmp(const char *a, const char *b) {
+    while (*a && *a == *b) { a++; b++; }
+    return (int)(unsigned char)*a - (int)(unsigned char)*b;
+}
+int strncmp(const char *a, const char *b, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        if (a[i] != b[i]) return (int)(unsigned char)a[i] - (int)(unsigned char)b[i];
+        if (!a[i]) break;
+    }
+    return 0;
+}
+char *strchr(const char *s, int c) {
+    for (; *s; s++) if (*s == (char)c) return (char *)s;
+    return (c == 0) ? (char *)s : NULL;
+}
+char *strcpy(char *d, const char *s) { char *r = d; while ((*d++ = *s++)) ; return r; }
 void *memcpy(void *d, const void *s, size_t n) {
     unsigned char *dd = d; const unsigned char *ss = s;
     for (size_t i = 0; i < n; i++) dd[i] = ss[i];
+    return d;
+}
+void *memmove(void *d, const void *s, size_t n) {
+    unsigned char *dd = d; const unsigned char *ss = s;
+    if (dd < ss) for (size_t i = 0; i < n; i++) dd[i] = ss[i];
+    else         for (size_t i = n; i-- > 0; )  dd[i] = ss[i];
     return d;
 }
 void *memset(void *d, int c, size_t n) {
@@ -37,6 +59,17 @@ void *memset(void *d, int c, size_t n) {
     for (size_t i = 0; i < n; i++) dd[i] = (unsigned char)c;
     return d;
 }
+int atoi(const char *s) {
+    int sign = 1, v = 0;
+    while (*s == ' ' || *s == '\t') s++;
+    if (*s == '-') { sign = -1; s++; } else if (*s == '+') s++;
+    while (*s >= '0' && *s <= '9') v = v * 10 + (*s++ - '0');
+    return sign * v;
+}
+
+/* --- ctype --- */
+int isspace(int c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
+int isdigit(int c) { return c >= '0' && c <= '9'; }
 
 /* --- bump allocator over a static arena (no brk/mmap syscall yet; free is a no-op) --- */
 #define AIOS_HEAP_SIZE (256 * 1024)
@@ -53,6 +86,7 @@ void free(void *p) { (void)p; }
 
 /* --- output --- */
 int puts(const char *s) { aios_write(AIOS_FD_STDOUT, s, strlen(s)); aios_write(AIOS_FD_STDOUT, "\n", 1); return 0; }
+void fdputs(int fd, const char *s) { aios_write(fd, s, strlen(s)); }
 
 static void emit(const char *s, size_t n) { aios_write(AIOS_FD_STDOUT, s, n); }
 static void emit_uint(unsigned long v, int base) {

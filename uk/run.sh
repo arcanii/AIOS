@@ -24,5 +24,8 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            echo "=== M3a: guest_cat /etc/hostname (real cat, filename from argv) ===" &&
            ./aios-uk ./guest_cat /etc/hostname; echo "  [exit $?]";
            echo "=== M3b: prog_args (ordinary C: main/printf/malloc/argv via libaios) ===" &&
-           ./aios-uk ./prog_args first second; rc=$?; echo "  [exit $rc]";
+           ./aios-uk ./prog_args first second; echo "  [exit $?]";
+           echo "=== M3c: prog_wc -- a real wc on a file, then on host-piped stdin ===" &&
+           ./aios-uk ./prog_wc /etc/hostname; echo "  [file exit $?]";
+           printf "one two three\nfour five\n" | ./aios-uk ./prog_wc; rc=$?; echo "  [stdin exit $rc]";
            test "$rc" = 0'

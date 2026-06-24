@@ -4,4 +4,5 @@ guest_hello
 guest_fileio
 guest_cat
 prog_args
+prog_wc
 *.o
