@@ -44,6 +44,11 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            ./aios-uk ./prog_pipe; echo "  [exit $?]";
            echo "=== M3d.3: prog_pipeline -- prog_args | prog_wc (pipe + dup2 + exec) ===" &&
            ./aios-uk ./prog_pipeline; echo "  [exit $?]";
-           echo "=== M3d.3 gate: prog_pipebig -- 200KB through a pipe (writer + reader park) ===" &&
-           ./aios-uk ./prog_pipebig; rc=$?; echo "  [exit $rc]";
+           echo "=== M3d.3: prog_pipebig -- 200KB through a pipe (writer + reader park) ===" &&
+           ./aios-uk ./prog_pipebig; echo "  [exit $?]";
+           echo "=== M3d.4: prog_sh -- an AIOS shell running real pipelines (capstone) ===" &&
+           printf "./prog_args alpha beta | ./prog_wc\n./prog_args x | ./prog_wc | ./prog_wc\nexit\n" \
+             | ./aios-uk ./prog_sh 2>/dev/null; echo "  [shell stdout above: 2-stage then 3-stage wc]";
+           echo "=== M3d gate: prog_pipebig exit must be 0 ===" &&
+           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [exit $rc]";
            test "$rc" = 0'
