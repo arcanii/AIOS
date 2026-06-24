@@ -2456,6 +2456,21 @@ int xhci_diag_cmd(const char *args, char *buf, int bufsize) {
             plat_pcie_xhci_msi_clear();        /* lead #3: wipe the RC INTR2 latch + seen counter */
             return snprintf(buf, bufsize, "xHCI: MSI INTR2 latch cleared (type, then re-read /proc/xhci)\n");
         }
+        if (p[0] == 'm' && p[1] == 's' && p[2] == 'i' && p[3] == 'a' && p[4] == 'r' && p[5] == 'm') {
+            /* lead #3 SOURCE diagnostic: program the MSI source (RC MSI ctrl + VL805 cap + the
+             * controller's INTE/interrupter-0 IE) from THIS thread, WITHOUT entering driver IRQ
+             * mode (xhci_irq_mode stays 0). The driver keeps draining the event ring in poll mode
+             * so the keyboard stays alive, but the VL805 now ALSO emits an MSI on each event -- so
+             * a keypress latches RC INTR2 bit24 iff the GT_4GB target reaches the MSI controller.
+             * Decouples the source verdict from the driver's irq-mode arm (which hangs on a hub).
+             * Read /proc/xhci `msi-rc INTR2_STATUS bit24` after typing; .msiclr to re-arm; reboot
+             * to revert. Calling xhci_irq_enable here is safe: in poll mode the driver never touches
+             * INTE/config-space, so no cross-thread race. */
+            xhci_irq_enable();
+            return snprintf(buf, bufsize,
+                "xHCI: MSI source armed in POLL mode (INTE on, driver still polling). "
+                "Type, then read /proc/xhci msi-rc bit24 (.msiclr to re-arm the latch)\n");
+        }
         if (p[0] == 'a' && p[1] == 'u' && p[2] == 't' && p[3] == 'o' && p[4] == '.') {
             g_msc_automount = (int)(xdiag_hex(p + 5) & 1);   /* gate runtime hotplug mount */
             return snprintf(buf, bufsize, "xHCI: USB-MSC automount = %d\n", g_msc_automount);
