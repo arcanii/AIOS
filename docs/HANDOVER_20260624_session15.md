@@ -65,18 +65,39 @@ all work. Detail + design in memory [[project_pty_console]].
 - `ssh -T` (scripted short non-PTY session) flaky/times-out in QEMU SLIRP -- VERIFIED
   pre-existing (the pre-PTY sshd times out identically). The streaming PTY session is robust.
 
-## Not yet done / next
-- HW reflash the PTY set (`pi_flash.py --build`) -- gentle, stall mitigated not cured. Verify
-  isatty/Ctrl-C/vi over real SSH on the board.
-- zsh over the PTY: point SSH_SHELL_PATH at interactive zsh once zsh ZLE + select/poll work.
-- SIGWINCH live-resize + concurrent multi-session not yet exercised.
+## PART C -- post-console tracks (zsh / PTY hardening / SHM-ring): assessed, see below
 
-## Roadmap queue (Bryan's call -- not started)
-Tier-1 #2 SHM-ring large-file I/O (unblocks tcc linker; pairs with the s14 demand-paged mmap
-for self-hosting); Tier-2 seam-extraction refactor (msg_marshal.h / posix_ipc.c / split
-fork.c|cow.c); Tier-2 zsh (Phase 1 build flag, Phase 2 select/poll -- converges with the PTY);
-V3D texturing + graphical console; keyboard-LED close-out; ext3 journaling. Toolchain = musl +
-tcc (NOT glibc/gcc). Stall remains a MAJOR OPEN CONCERN.
+### zsh over the PTY -- BACKLOGGED on Phase-3 job control ([[project_zsh_pty]], commit d340200)
+zsh BUILDS (build_zsh.py -> /bin/zsh, 1.5MB, zsh 5.9) and interactive **ZLE works over the PTY**
+(a backspace line-edit produced the corrected command). `zsh -c` externals work. BUT **zsh -i
+does NOT run external commands** (`whoami` produces no output AND no file side-effect -- the
+command never executes; builtins like `print` do run). That is DESIGN_ZSH **Phase 3 (job
+control / process groups)**: zsh -i's interactive child-process setup needs real pgids +
+tcsetpgrp, which AIOS stubs. `unsetopt monitor` lead TRIED + FAILED (blocker is deeper than the
+MONITOR option). So **dash stays the SSH shell**; zsh is on the disk for `exec zsh` ZLE
+experimentation. Also: tests now send CR (\r), not LF -- real-terminal Enter is CR and zsh ZLE
+binds accept-line to CR (d340200). zsh is NOT in build_apps.py (needs the external zsh source).
+
+### PTY hardening -- DEFERRED (low value now)
+- **SIGWINCH live-resize**: plumbing is in + correct (window-change -> TTY_PTY_WINSZ; TIOCGWINSZ
+  reads it; kill(0,SIGWINCH) to fg). But NO CONSUMER -- no full-screen apps (vi/less not in
+  sbase) and no `stty`. Revisit when a full-screen app lands.
+- **Concurrent multi-session**: sshd is a serial accept loop (`listen(lfd,1)`). True concurrency
+  needs fork-per-connection + (security!) **DRBG reseed-after-fork** (g_drbg is seeded ONCE at
+  startup -> forked children would share RNG state -> identical ECDH keys) + WNOHANG reaping
+  (wait4 ignores options today) + concurrency testing + more process load vs the stall. Marginal
+  value for a single user; deferred.
+
+### SHM-ring large-file I/O -- DESIGNED, the NEXT focus (Tier-1 #2)
+Bottleneck: file writes pack data into MRs, capped ~800 bytes/FS_PWRITE (fetch_pwrite,
+aios_posix.c) -> a tcc-output binary is thousands of round-trips. Reuse the pipe SHM-ring model
+([[project_shm_ring]]) for FS I/O: PIPE_MSYNC in pipe_server ALREADY maps client pages + calls
+vfs_pwrite for mmap write-back, so add a sibling **PIPE_PWRITE_BULK** (client buffer vaddr +
+offset + len + path -> map + vfs_pwrite, 4KB+/call), client large-write fast path in
+posix_file.c, **default-OFF** like the pipe ring. CAUTION: this is a cache-coherency change --
+[[feedback_pipe_shm_cache]] QEMU CANNOT catch cacheable-mismatch bugs; needs an HW soak (the
+pipe ring took dedicated sessions). Plan: code + QEMU correctness (byte-exact large file) ->
+default-OFF commit -> flash + HW soak (cross-core coherency) -> tcc-linker speedup validation.
 
 ---
 
@@ -84,22 +105,25 @@ tcc (NOT glibc/gcc). Stall remains a MAJOR OPEN CONCERN.
 
 >>> SEED PROMPT <<<
 
-Continue enriching AIOS (STAYING ON seL4 for months -- prewarm calmed the ~32.4s stall; Linux
-is plan B, backlogged). READ FIRST: docs/HANDOVER_20260624_session15.md, then memory
-[[project_pty_console]] + [[feedback_console_ssh_vs_netconsole]] + [[feedback_stall_open_concern]].
+Continue enriching AIOS (STAYING ON seL4 -- prewarm calmed the ~32.4s stall; it STILL fires
+~1/boot, watchdog-recovered, MAJOR OPEN CONCERN). READ FIRST: docs/HANDOVER_20260624_session15.md,
+then memory [[project_pty_console]] + [[project_shm_ring]] + [[feedback_pipe_shm_cache]] +
+[[feedback_stall_open_concern]].
 
-The PTY-backed SSH console is DONE + committed (51f7a2b step 2b, 70584d0 step 3): isatty true
-over SSH, line editing, Ctrl-C, vi/less work; serial console (tty_server instance 0)
-byte-identical. QEMU-validated (ssh_pty 7/7, serial regression 5/5, smp 4/5), NOT yet flashed.
+DONE + HW-VALIDATED this session: the PTY-backed SSH daily-driver console (isatty true over SSH,
+line editing, Ctrl-C, external cmds inherit the PTY). 6/6 on the board via a full SD reflash
+(disk/sdcard-rpi4.img, balenaEtcher). A HW-only teardown race was found + fixed (9e15440). zsh
+BACKLOGGED (zsh -i can't run externals -- Phase-3 job control; [[project_zsh_pty]]). PTY
+hardening DEFERRED (no consumer / marginal). Commits 51f7a2b 70584d0 9e15440 d340200 + handovers.
 
-PICK ONE (Bryan's call):
-- HW-validate the PTY console: reflash (pi_flash.py --build, gentle), then drive a real SSH
-  session over LAN (.8) -- confirm isatty, Ctrl-C, vi/less render on the board.
-- zsh over the PTY: get interactive zsh (ZLE + select/poll) working, then point
-  SSH_SHELL_PATH at it -- the cherry on the daily-driver console.
-- Roadmap queue: Tier-1 #2 SHM-ring large-file I/O; Tier-2 seam-refactor; V3D texturing;
-  kbd-LED close-out; ext3 journaling. Toolchain target = musl+tcc.
+PRIMARY TASK -- Tier-1 #2 **SHM-ring large-file I/O** (unblocks tcc linker / on-device
+self-hosting; pairs with s14 demand-paged mmap). Design in this handover (PART C) +
+[[project_shm_ring]]. Add PIPE_PWRITE_BULK (reuse PIPE_MSYNC's client-page-map + vfs_pwrite) +
+the client large-write fast path in posix_file.c, **default-OFF**. GATE: serial regression 5/5,
+ssh_pty 7/7, smp 4/5, byte-exact large-file write in QEMU. Then flash + **HW soak the cache
+coherency** ([[feedback_pipe_shm_cache]] -- QEMU can't catch it). Then validate the tcc-linker
+speedup. Commit per step on main; Bryan pushes.
 
-GATE every PTY/tty/posix change with the serial-console regression (scripts/
-serial_console_qemu_test.py, 5/5) + ssh_pty_qemu_test.py (7/7) + smp 4/5. Commit per step on
-main; Bryan pushes. The stall stays a MAJOR OPEN CONCERN.
+ALTERNATIVES if Bryan prefers: zsh Phase-3 job control (real pgids in pipe_server + tcsetpgrp +
+SIGTSTP/SIGCONT + WNOHANG -- unblocks zsh as the daily-driver shell); seam-extraction refactor;
+V3D texturing; ext3 journaling. Toolchain target = musl + tcc.
