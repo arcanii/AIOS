@@ -38,6 +38,12 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            echo "=== M3d.2: prog_spawn -- the shell core (fork -> child exec -> parent waitpid) ===" &&
            ./aios-uk ./prog_spawn ./prog_args hello world; echo "  [spawn exit $?]";
            ./aios-uk ./prog_spawn ./prog_wc /etc/hostname; echo "  [spawn wc exit $?]";
-           echo "=== M3d.2 gate: prog_fork -- N children fork/exit/wait (exit 0 iff sum==6) ===" &&
-           ./aios-uk ./prog_fork; rc=$?; echo "  [exit $rc]";
+           echo "=== M3d.2: prog_fork -- N children fork/exit/wait (exit 0 iff sum==6) ===" &&
+           ./aios-uk ./prog_fork; echo "  [exit $?]";
+           echo "=== M3d.3: prog_pipe -- fork + pipe, reader parks then drains, EOF on close ===" &&
+           ./aios-uk ./prog_pipe; echo "  [exit $?]";
+           echo "=== M3d.3: prog_pipeline -- prog_args | prog_wc (pipe + dup2 + exec) ===" &&
+           ./aios-uk ./prog_pipeline; echo "  [exit $?]";
+           echo "=== M3d.3 gate: prog_pipebig -- 200KB through a pipe (writer + reader park) ===" &&
+           ./aios-uk ./prog_pipebig; rc=$?; echo "  [exit $rc]";
            test "$rc" = 0'

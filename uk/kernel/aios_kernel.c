@@ -37,8 +37,16 @@ static void kput_int(long v) {
  * -- the backing is released (pal_host_close) only when the last referencing fd closes. The three
  * std streams are seeded permanent (they back the kernel's own stdio and are never closed). */
 #define MAX_OFILES 256
-typedef struct { pal_file_t backing; int refcount; int permanent; } ofile_t;
+typedef struct {
+    pal_file_t backing;
+    int        refcount;
+    int        permanent;   /* std streams: never pal_host_close */
+    int        is_pipe;     /* this backing is a pipe end */
+    int        pipe_id;     /* which pipe (the read + write ends share it) */
+    int        pipe_write;  /* 1 = write end, 0 = read end */
+} ofile_t;
 static ofile_t g_ofile[MAX_OFILES];
+static int     g_next_pipe_id = 1;
 
 static void ofile_init_std(void) {
     for (int i = 0; i < 3; i++) {
@@ -50,7 +58,8 @@ static void ofile_init_std(void) {
 static int ofile_alloc(pal_file_t backing) {
     for (int i = 0; i < MAX_OFILES; i++)
         if (!g_ofile[i].permanent && g_ofile[i].refcount == 0) {
-            g_ofile[i].backing = backing; g_ofile[i].refcount = 1; return i;
+            g_ofile[i] = (ofile_t){ .backing = backing, .refcount = 1 };  /* clears pipe tags */
+            return i;
         }
     return -1;
 }
@@ -63,7 +72,7 @@ static void ofile_unref(int oi) {
 /* ---- the process table ---- */
 #define AIOS_MAX_FD 64
 #define MAX_PROCS   64
-enum { PS_FREE = 0, PS_RUNNING, PS_ZOMBIE, PS_BLOCKED_WAIT };
+enum { PS_FREE = 0, PS_RUNNING, PS_ZOMBIE, PS_BLOCKED_WAIT, PS_BLOCKED_READ, PS_BLOCKED_WRITE };
 typedef struct {
     int           state;
     pal_pid_t     pid;
@@ -71,6 +80,13 @@ typedef struct {
     int           exit_code;           /* valid in PS_ZOMBIE */
     unsigned long wait_for;            /* PS_BLOCKED_WAIT: AIOS_WAIT_ANY/0, or a specific pid */
     uint64_t      wait_status_gaddr;   /* PS_BLOCKED_WAIT: where to store the status (0 = none) */
+    /* PS_BLOCKED_READ/WRITE: a pipe I/O parked because the pipe was empty/full. The kernel resumes
+     * it from pipe_settle() when a peer makes the pipe ready (or closes its end -> EOF/EPIPE). */
+    int           blk_fd;              /* the AIOS fd being read/written */
+    uint64_t      blk_buf;             /* guest buffer */
+    uint64_t      blk_len;             /* total bytes requested */
+    uint64_t      blk_done;            /* bytes already transferred (writes) */
+    int           blk_pipe;            /* pipe_id this I/O is parked on */
     int           fd[AIOS_MAX_FD];     /* AIOS fd -> ofile index, or -1 */
 } proc_t;
 static proc_t g_proc[MAX_PROCS];
@@ -99,6 +115,22 @@ static int fd_alloc(proc_t *p) {
 static int        fd_valid(proc_t *p, uint64_t fd)   { return fd < AIOS_MAX_FD && p->fd[fd] >= 0; }
 static pal_file_t fd_backing(proc_t *p, uint64_t fd) { return g_ofile[p->fd[fd]].backing; }
 
+static void pipe_settle(int pipe_id);   /* defined below; wakes guests parked on a pipe */
+
+/* Drop one fd's reference to its open-file object; if that closed the last ref to a pipe end, wake
+ * the pipe's peers (a reader now sees EOF, a writer a broken pipe). Used by close, dup2, and -- so
+ * a pipe write end held by a dying writer actually closes -- by process exit. */
+static void fd_release(proc_t *p, int fd) {
+    int oi = p->fd[fd];
+    if (oi < 0) return;
+    int was_pipe = g_ofile[oi].is_pipe;
+    int pipe_id  = g_ofile[oi].pipe_id;
+    int last     = !g_ofile[oi].permanent && g_ofile[oi].refcount == 1;
+    ofile_unref(oi);
+    p->fd[fd] = -1;
+    if (was_pipe && last) pipe_settle(pipe_id);
+}
+
 /* ---- AIOS file syscalls (host-agnostic; reach the host only via the PAL) ---- */
 
 static long sys_open(proc_t *p, uint64_t gpath, uint64_t flags, uint64_t mode) {
@@ -116,45 +148,19 @@ static long sys_open(proc_t *p, uint64_t gpath, uint64_t flags, uint64_t mode) {
     return fd;
 }
 
-static long sys_read(proc_t *p, uint64_t fd, uint64_t gbuf, uint64_t len) {
-    if (!fd_valid(p, fd)) return -1;
-    char tmp[1024];
-    size_t total = 0;
-    while (total < len) {
-        size_t chunk = (size_t)len - total;
-        if (chunk > sizeof tmp) chunk = sizeof tmp;
-        long n = pal_host_read(fd_backing(p, fd), tmp, chunk);
-        if (n < 0)  return total ? (long)total : -1;
-        if (n == 0) break;                           /* EOF */
-        size_t put = pal_guest_write(p->pid, gbuf + total, tmp, (size_t)n);
-        total += put;
-        if (put < (size_t)n) break;                  /* guest buffer not fully writable */
-    }
-    return (long)total;
-}
-
-static long sys_write(proc_t *p, uint64_t fd, uint64_t gbuf, uint64_t len) {
-    if (!fd_valid(p, fd)) return -1;
-    char tmp[1024];
-    size_t total = 0;
-    while (total < len) {
-        size_t chunk = (size_t)len - total;
-        if (chunk > sizeof tmp) chunk = sizeof tmp;
-        size_t got = pal_guest_read(p->pid, gbuf + total, tmp, chunk);
-        if (got == 0) break;
-        long w = pal_host_write(fd_backing(p, fd), tmp, got);
-        if (w < 0) return total ? (long)total : -1;
-        total += (size_t)w;
-        if ((size_t)w < got) break;
-    }
-    return (long)total;
-}
-
 static long sys_close(proc_t *p, uint64_t fd) {
     if (!fd_valid(p, fd)) return -1;
-    ofile_unref(p->fd[fd]);                          /* releases the backing iff last ref */
-    p->fd[fd] = -1;
+    fd_release(p, (int)fd);                            /* unref + wake pipe peers if last ref */
     return 0;
+}
+
+static long sys_dup2(proc_t *p, uint64_t oldfd, uint64_t newfd) {
+    if (!fd_valid(p, oldfd) || newfd >= AIOS_MAX_FD) return -1;
+    if (oldfd == newfd) return (long)newfd;
+    if (p->fd[newfd] >= 0) fd_release(p, (int)newfd);  /* close whatever newfd referred to */
+    p->fd[newfd] = p->fd[oldfd];                       /* alias the same open-file object */
+    ofile_ref(p->fd[newfd]);
+    return (long)newfd;
 }
 
 static long sys_lseek(proc_t *p, uint64_t fd, uint64_t off, uint64_t whence) {
@@ -169,6 +175,167 @@ static long sys_fstat(proc_t *p, uint64_t fd, uint64_t gstat) {
     if (pal_host_fstat(fd_backing(p, fd), &s.size, &s.mode) != 0) return -1;
     if (pal_guest_write(p->pid, gstat, &s, sizeof s) != sizeof s) return -1;
     return 0;
+}
+
+/* ---- pipes ----
+ * A pipe is two backing ends (non-blocking at the host) sharing a pipe_id. read/write to a pipe
+ * never block the single-threaded kernel: an empty read / full write PARKS the calling guest and
+ * the kernel services others. pipe_settle() re-runs parked guests when a peer makes the pipe ready
+ * (or closes its end). The bulk of a transfer is driven by the peers' own guest-level read/write
+ * loops -- each loop iteration re-triggers settle -- so settle itself is a tiny non-recursive
+ * fixpoint. read returns 0 (EOF) once all write ends close; write to an all-readers-closed pipe
+ * returns short / -1 (the kernel ignores SIGPIPE so a host write yields PAL_EPIPE). */
+
+/* One non-blocking read of a pipe read-end into the guest. Returns bytes delivered (>0),
+ * 0 (EOF), or PAL_EWOULDBLOCK (empty but a write end is still open). */
+static long pipe_read_once(proc_t *p, pal_file_t backing, uint64_t gbuf, uint64_t len) {
+    char tmp[4096];
+    size_t chunk = len < sizeof tmp ? (size_t)len : sizeof tmp;
+    long n = pal_host_read(backing, tmp, chunk);
+    if (n == PAL_EWOULDBLOCK) return PAL_EWOULDBLOCK;
+    if (n <= 0) return 0;                            /* EOF (all write ends closed) or error */
+    return (long)pal_guest_write(p->pid, gbuf, tmp, (size_t)n);
+}
+
+/* Push gbuf[*done .. len) into a pipe write-end as far as it accepts without blocking, advancing
+ * *done. Returns 1 (all len written), PAL_EPIPE (no readers left), or 0 (pipe full, bytes pending). */
+static int pipe_write_some(proc_t *p, pal_file_t backing, uint64_t gbuf, uint64_t len, uint64_t *done) {
+    char tmp[4096];
+    while (*done < len) {
+        size_t chunk = (size_t)(len - *done);
+        if (chunk > sizeof tmp) chunk = sizeof tmp;
+        size_t got = pal_guest_read(p->pid, gbuf + *done, tmp, chunk);
+        if (got == 0) return 1;                      /* unreadable guest buffer -> treat as done */
+        long w = pal_host_write(backing, tmp, got);
+        if (w == PAL_EWOULDBLOCK) return 0;          /* full -> park */
+        if (w < 0) return PAL_EPIPE;                 /* broken pipe / error */
+        *done += (size_t)w;
+        if ((size_t)w < got) return 0;               /* partial (filled) -> park */
+    }
+    return 1;
+}
+
+/* Retry a parked reader/writer; returns 1 if it made progress (and is now resumed or refilled). */
+static int try_deliver_read(proc_t *p) {
+    long n = pipe_read_once(p, g_ofile[p->fd[p->blk_fd]].backing, p->blk_buf, p->blk_len);
+    if (n == PAL_EWOULDBLOCK) return 0;              /* still empty */
+    p->state = PS_RUNNING;
+    pal_guest_return(p->pid, (uint64_t)n);           /* data (>0) or EOF (0) */
+    return 1;
+}
+static int try_continue_write(proc_t *p) {
+    uint64_t before = p->blk_done;
+    int r = pipe_write_some(p, g_ofile[p->fd[p->blk_fd]].backing, p->blk_buf, p->blk_len, &p->blk_done);
+    if (r == 1)        { p->state = PS_RUNNING; pal_guest_return(p->pid, (uint64_t)p->blk_len); return 1; }
+    if (r == PAL_EPIPE){ p->state = PS_RUNNING;
+                         pal_guest_return(p->pid, p->blk_done ? p->blk_done : (uint64_t)-1); return 1; }
+    return p->blk_done > before;                     /* wrote some but still blocked (full) */
+}
+
+/* A pipe's readiness changed. Retry every guest parked on it until none can progress -- a small
+ * fixpoint (no recursion: peers drive the bulk transfer via their own guest-level loops). */
+static void pipe_settle(int pipe_id) {
+    int progress = 1;
+    while (progress) {
+        progress = 0;
+        for (int i = 0; i < MAX_PROCS; i++) {
+            proc_t *q = &g_proc[i];
+            if (q->blk_pipe != pipe_id) continue;
+            if      (q->state == PS_BLOCKED_READ)  { if (try_deliver_read(q))   progress = 1; }
+            else if (q->state == PS_BLOCKED_WRITE) { if (try_continue_write(q)) progress = 1; }
+        }
+    }
+}
+
+/* read: pipe read-ends are non-blocking (park on empty); everything else fills up to len. Owns its
+ * own pal_guest_return / parking, so it is dispatched specially. */
+static void do_read(proc_t *p, uint64_t fd, uint64_t gbuf, uint64_t len) {
+    p->state = PS_RUNNING;
+    if (!fd_valid(p, fd)) { pal_guest_return(p->pid, (uint64_t)-1); return; }
+    int oi = p->fd[fd];
+    if (g_ofile[oi].is_pipe && !g_ofile[oi].pipe_write) {
+        long n = pipe_read_once(p, g_ofile[oi].backing, gbuf, len);
+        if (n == PAL_EWOULDBLOCK) {                  /* empty + writer open -> park the reader */
+            p->state = PS_BLOCKED_READ;
+            p->blk_fd = (int)fd; p->blk_buf = gbuf; p->blk_len = len;
+            p->blk_done = 0; p->blk_pipe = g_ofile[oi].pipe_id;
+            return;
+        }
+        if (n > 0) pipe_settle(g_ofile[oi].pipe_id); /* freed buffer space -> wake writers */
+        pal_guest_return(p->pid, (uint64_t)n);
+        return;
+    }
+    char tmp[1024];
+    size_t total = 0;
+    while (total < len) {
+        size_t chunk = (size_t)len - total;
+        if (chunk > sizeof tmp) chunk = sizeof tmp;
+        long n = pal_host_read(g_ofile[oi].backing, tmp, chunk);
+        if (n < 0)  { if (!total) { pal_guest_return(p->pid, (uint64_t)-1); return; } break; }
+        if (n == 0) break;                           /* EOF */
+        size_t put = pal_guest_write(p->pid, gbuf + total, tmp, (size_t)n);
+        total += put;
+        if (put < (size_t)n) break;
+    }
+    pal_guest_return(p->pid, (uint64_t)total);
+}
+
+/* write: pipe write-ends are non-blocking (park on full); everything else writes up to len. */
+static void do_write(proc_t *p, uint64_t fd, uint64_t gbuf, uint64_t len) {
+    p->state = PS_RUNNING;
+    if (!fd_valid(p, fd)) { pal_guest_return(p->pid, (uint64_t)-1); return; }
+    int oi = p->fd[fd];
+    if (g_ofile[oi].is_pipe && g_ofile[oi].pipe_write) {
+        uint64_t done = 0;
+        int r = pipe_write_some(p, g_ofile[oi].backing, gbuf, len, &done);
+        pipe_settle(g_ofile[oi].pipe_id);            /* wrote bytes -> wake readers */
+        if (r == 1)         { pal_guest_return(p->pid, (uint64_t)len); return; }
+        if (r == PAL_EPIPE) { pal_guest_return(p->pid, done ? done : (uint64_t)-1); return; }
+        p->state = PS_BLOCKED_WRITE;                 /* pipe full, bytes pending -> park */
+        p->blk_fd = (int)fd; p->blk_buf = gbuf; p->blk_len = len;
+        p->blk_done = done; p->blk_pipe = g_ofile[oi].pipe_id;
+        return;
+    }
+    char tmp[1024];
+    size_t total = 0;
+    while (total < len) {
+        size_t chunk = (size_t)len - total;
+        if (chunk > sizeof tmp) chunk = sizeof tmp;
+        size_t got = pal_guest_read(p->pid, gbuf + total, tmp, chunk);
+        if (got == 0) break;
+        long w = pal_host_write(g_ofile[oi].backing, tmp, got);
+        if (w < 0) { if (!total) { pal_guest_return(p->pid, (uint64_t)-1); return; } break; }
+        total += (size_t)w;
+        if ((size_t)w < got) break;
+    }
+    pal_guest_return(p->pid, (uint64_t)total);
+}
+
+/* pipe: allocate two backing ends + two fds, tag them as a pipe, and store the fd pair in guest. */
+static void do_pipe(proc_t *p, uint64_t gfds) {
+    pal_file_t rd, wr;
+    if (pal_host_pipe(&rd, &wr) != 0) { pal_guest_return(p->pid, (uint64_t)-1); return; }
+    int ri = ofile_alloc(rd);
+    int wi = ofile_alloc(wr);
+    int afd0 = -1, afd1 = -1;
+    if (ri >= 0 && wi >= 0) {
+        afd0 = fd_alloc(p);
+        if (afd0 >= 0) { p->fd[afd0] = ri; afd1 = fd_alloc(p); }
+    }
+    if (ri < 0 || wi < 0 || afd0 < 0 || afd1 < 0) {  /* out of slots -> tear everything down */
+        if (afd0 >= 0) p->fd[afd0] = -1;
+        if (ri >= 0) ofile_unref(ri); else pal_host_close(rd);
+        if (wi >= 0) ofile_unref(wi); else pal_host_close(wr);
+        pal_guest_return(p->pid, (uint64_t)-1);
+        return;
+    }
+    p->fd[afd1] = wi;
+    int pipe_id = g_next_pipe_id++;
+    g_ofile[ri].is_pipe = 1; g_ofile[ri].pipe_id = pipe_id; g_ofile[ri].pipe_write = 0;
+    g_ofile[wi].is_pipe = 1; g_ofile[wi].pipe_id = pipe_id; g_ofile[wi].pipe_write = 1;
+    int fds[2] = { afd0, afd1 };                     /* fds[0] = read end, fds[1] = write end */
+    pal_guest_write(p->pid, gfds, fds, sizeof fds);
+    pal_guest_return(p->pid, 0);
 }
 
 /* ---- the process syscalls ---- */
@@ -230,6 +397,7 @@ static void do_wait(proc_t *p, unsigned long want, uint64_t gstatus) {
  * wake a parent parked in wait (delivering the status + reaping), or become a zombie for a running
  * parent to reap later, or -- no parent -- free outright. */
 static void on_exit(proc_t *p, int code) {
+    for (int i = 0; i < AIOS_MAX_FD; i++) fd_release(p, i);  /* close its fds (pipe ends -> EOF) */
     for (int i = 0; i < MAX_PROCS; i++) {
         proc_t *c = &g_proc[i];
         if (c != p && c->state != PS_FREE && c->parent_pid == p->pid) {
@@ -261,18 +429,21 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
     case AIOS_SYS_MMAP: pal_guest_mmap(p->pid, (size_t)sc->arg[0]); pal_guest_resume(p->pid); return;
     case AIOS_SYS_EXEC: pal_guest_exec(p->pid, sc->arg[0], sc->arg[1], sc->arg[2]);
                         pal_guest_resume(p->pid); return;
-    case AIOS_SYS_FORK: do_fork(p);                                       return;
+    case AIOS_SYS_FORK: do_fork(p);                                        return;
     case AIOS_SYS_WAIT: do_wait(p, (unsigned long)sc->arg[0], sc->arg[1]); return;
-    case AIOS_SYS_EXIT: pal_guest_exit(p->pid, (int)sc->arg[0]);          return;
+    case AIOS_SYS_EXIT: pal_guest_exit(p->pid, (int)sc->arg[0]);           return;
+    /* read/write/pipe own their own return/parking (pipes may block) -> dispatched specially */
+    case AIOS_SYS_READ:  do_read (p, sc->arg[0], sc->arg[1], sc->arg[2]); return;
+    case AIOS_SYS_WRITE: do_write(p, sc->arg[0], sc->arg[1], sc->arg[2]); return;
+    case AIOS_SYS_PIPE:  do_pipe (p, sc->arg[0]);                         return;
     }
     uint64_t ret;
     switch (sc->nr) {
-    case AIOS_SYS_WRITE: ret = (uint64_t)sys_write(p, sc->arg[0], sc->arg[1], sc->arg[2]); break;
-    case AIOS_SYS_READ:  ret = (uint64_t)sys_read (p, sc->arg[0], sc->arg[1], sc->arg[2]); break;
     case AIOS_SYS_OPEN:  ret = (uint64_t)sys_open (p, sc->arg[0], sc->arg[1], sc->arg[2]); break;
     case AIOS_SYS_CLOSE: ret = (uint64_t)sys_close(p, sc->arg[0]);                         break;
     case AIOS_SYS_LSEEK: ret = (uint64_t)sys_lseek(p, sc->arg[0], sc->arg[1], sc->arg[2]); break;
     case AIOS_SYS_FSTAT: ret = (uint64_t)sys_fstat(p, sc->arg[0], sc->arg[1]);             break;
+    case AIOS_SYS_DUP2:  ret = (uint64_t)sys_dup2 (p, sc->arg[0], sc->arg[1]);             break;
     default:             ret = (uint64_t)-1;       /* unknown AIOS syscall */              break;
     }
     pal_guest_return(p->pid, ret);
@@ -320,7 +491,7 @@ int main(int argc, char **argv) {
     /* The guest's argv is the kernel's argv shifted by one: guest argv[0] = the guest program. */
     char *const *guest_argv = (char *const *)&argv[1];
 
-    kputs("[aios-uk] AIOS userspace kernel -- M3d (process model: fork/exec/wait) (Linux/ptrace PAL)\n");
+    kputs("[aios-uk] AIOS userspace kernel -- M3d (process model: fork/exec/wait/pipe) (Linux/ptrace PAL)\n");
     kputs("[aios-uk] launching guest: ");
     kputs(guest);
     kputs("\n");

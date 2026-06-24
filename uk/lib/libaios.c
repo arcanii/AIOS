@@ -35,6 +35,8 @@ long aios_wait(int *status) { return asys(AIOS_SYS_WAIT, (long)AIOS_WAIT_ANY, (l
 long aios_waitpid(long pid, int *status, int flags) {
     return asys(AIOS_SYS_WAIT, pid, (long)status, flags);
 }
+int  aios_pipe(int fds[2]) { return (int)asys(AIOS_SYS_PIPE, (long)fds, 0, 0); }
+long aios_dup2(int oldfd, int newfd) { return asys(AIOS_SYS_DUP2, oldfd, newfd, 0); }
 
 /* --- string/memory --- */
 size_t strlen(const char *s) { size_t n = 0; while (s[n]) n++; return n; }

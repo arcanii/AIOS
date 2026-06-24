@@ -46,6 +46,10 @@ long  aios_wait(int *status);                /* wait for ANY child  -> reaped pi
 long  aios_waitpid(long pid, int *status, int flags);   /* wait for `pid` (or -1/0 = any)         */
 #define WEXITSTATUS(s) AIOS_WEXITSTATUS(s)   /* decode a wait status (normal-exit subset)         */
 
+/* --- pipe / dup2 (the shell pipeline: pipe, fork, dup2 a pipe end onto stdio, exec) --- */
+int   aios_pipe(int fds[2]);                 /* fds[0] = read end, fds[1] = write end; 0, or -1   */
+long  aios_dup2(int oldfd, int newfd);       /* make newfd refer to oldfd's file; -> newfd, or -1 */
+
 /* --- string / memory --- */
 size_t strlen(const char *s);
 int    strcmp(const char *a, const char *b);

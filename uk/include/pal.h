@@ -109,11 +109,21 @@ pal_file_t pal_host_std(int which);
  * route to real storage (Linux: open(2); seL4: an fs-server IPC). */
 pal_file_t pal_host_open(const char *path, uint64_t aios_flags, uint64_t mode);
 
-/* Read/write/close a backing object. write is also the kernel's diagnostic + stdout path.
- * Return bytes transferred (<0 on error) / 0 on close-OK. */
+/* Read/write/close a backing object. write is also the kernel's diagnostic + stdout path. Return
+ * bytes transferred / 0 on EOF (read) or close-OK, or a negative PAL error code below. The codes
+ * are host-agnostic: the kernel reasons in terms of "would block" / "broken pipe", never errno, so
+ * a future seL4 PAL reports the same conditions from its own pipe implementation. */
+#define PAL_EWOULDBLOCK (-11)   /* a non-blocking pipe end would block (empty for read / full write) */
+#define PAL_EPIPE       (-32)   /* write to a pipe whose read ends are all closed                   */
 long pal_host_read (pal_file_t f, void *buf, size_t len);
 long pal_host_write(pal_file_t f, const void *buf, size_t len);
 int  pal_host_close(pal_file_t f);
+
+/* Create a pipe: a unidirectional byte stream with a read end (*rd) and a write end (*wr), both
+ * NON-BLOCKING so the single-threaded kernel never wedges on one guest's I/O -- it parks that guest
+ * and services others. Returns 0, or -1. (Linux: pipe2(O_NONBLOCK); a future seL4 PAL builds an
+ * in-kernel ring or notification pair.) */
+int pal_host_pipe(pal_file_t *rd, pal_file_t *wr);
 
 /* Reposition (whence is AIOS_SEEK_*; returns the new absolute offset, or <0) and stat (fills size
  * + mode; returns 0 or -1). The PAL maps these onto the host (Linux: lseek/fstat). */

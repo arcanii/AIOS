@@ -76,6 +76,9 @@ static int at_syscall_entry(pal_pid_t pid) {
 }
 
 pal_pid_t pal_guest_spawn(const char *path, char *const argv[]) {
+    /* The kernel does pipe writes on the guests' behalf; a write to a pipe with no readers must
+     * surface as PAL_EPIPE, not a SIGPIPE that kills the kernel. */
+    signal(SIGPIPE, SIG_IGN);
     pid_t pid = fork();
     if (pid < 0) return PAL_PID_NONE;
     if (pid == 0) {
@@ -291,9 +294,30 @@ pal_file_t pal_host_open(const char *path, uint64_t aios_flags, uint64_t mode) {
     return fd < 0 ? PAL_FILE_INVALID : (pal_file_t)fd;
 }
 
-long pal_host_read(pal_file_t f, void *buf, size_t len)        { return (long)read((int)f, buf, len); }
-long pal_host_write(pal_file_t f, const void *buf, size_t len) { return (long)write((int)f, buf, len); }
+/* errno -> host-agnostic PAL code (the kernel never sees errno). Only the conditions the kernel
+ * reasons about (would-block on a non-blocking pipe, broken pipe) get distinct codes. */
+static long pal_errno(void) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK) return PAL_EWOULDBLOCK;
+    if (errno == EPIPE) return PAL_EPIPE;
+    return -1;
+}
+long pal_host_read(pal_file_t f, void *buf, size_t len) {
+    long n = (long)read((int)f, buf, len);
+    return n < 0 ? pal_errno() : n;
+}
+long pal_host_write(pal_file_t f, const void *buf, size_t len) {
+    long n = (long)write((int)f, buf, len);
+    return n < 0 ? pal_errno() : n;
+}
 int  pal_host_close(pal_file_t f)                              { return close((int)f); }
+
+int pal_host_pipe(pal_file_t *rd, pal_file_t *wr) {
+    int fds[2];
+    if (pipe2(fds, O_NONBLOCK) != 0) return -1;    /* non-blocking: the kernel parks, never wedges */
+    *rd = (pal_file_t)fds[0];
+    *wr = (pal_file_t)fds[1];
+    return 0;
+}
 
 long long pal_host_lseek(pal_file_t f, long long off, int whence) {
     return (long long)lseek((int)f, (off_t)off, whence);   /* AIOS_SEEK_* == SEEK_* */
