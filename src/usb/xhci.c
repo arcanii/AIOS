@@ -1188,6 +1188,7 @@ static volatile uint32_t xhci_irq_count = 0;  /* IRQ wakeups serviced (diag) */
  * Done lazily on entering IRQ mode so the poll path stays bit-identical to the proven
  * v0.4.185 behaviour (INTE off). */
 static void xhci_irq_enable(void) {
+    plat_pcie_xhci_msi_enable(1);              /* lead #3: program brcmstb RC MSI + the VL805 cap */
     ir0_w32(IR0_IMOD, 0);                      /* no moderation (lowest latency) */
     ir0_w32(IR0_IMAN, IMAN_IE | IMAN_IP);      /* enable + clear any pending */
     op_w32(XHCI_USBCMD, op_r32(XHCI_USBCMD) | USBCMD_INTE);
@@ -1308,6 +1309,7 @@ void xhci_kbd_driver_fn(void *a, void *b, void *c) {
         if (xhci_irq_mode && xhci_irq_ntfn) {
             if (!xhci_irq_armed) { xhci_irq_enable(); xhci_irq_armed = 1; }
             ir0_w32(IR0_IMAN, IMAN_IE | IMAN_IP);       /* clear interrupter pending */
+            plat_pcie_xhci_msi_ack();                   /* lead #3: clear the brcmstb RC MSI INTR2 bit */
             seL4_IRQHandler_Ack(xhci_irq_handler);      /* re-arm the GIC line */
             arch_dsb();
             if (evt_ring_empty()) {                     /* NAPI-style re-check before block */

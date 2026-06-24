@@ -154,6 +154,22 @@ int      pcie_xhci_present = 0;
 #define MISC_RCB_MPS_MODE       0x400       /* MISC_CTRL: RCB 128B / MPS mode */
 #define MSI_INTR2_CLR           0x4508
 #define MSI_INTR2_MASK_SET      0x4510
+/* v0.4.300+ lead #3: brcmstb LEGACY MSI for BCM2711 (docs/NEXT_20260624_xhci_msi.md). The MSIs
+ * live in the CPU INTR2 block (0x4300), bits [31:24]; the 0x4500 block above is the newer-chip
+ * MSI block (BCM2711 does not use it). Values from Linux rpi-5.10.y pcie-brcmstb.c. */
+#define PCIE_MISC_MSI_BAR_CONFIG_LO  0x4044
+#define PCIE_MISC_MSI_BAR_CONFIG_HI  0x4048
+#define PCIE_MISC_MSI_DATA_CONFIG    0x404c
+#define PCIE_INTR2_CPU_STATUS        0x4300
+#define PCIE_INTR2_CPU_CLR           0x4308
+#define PCIE_INTR2_CPU_MASK_SET      0x4310
+#define PCIE_INTR2_CPU_MASK_CLR      0x4314
+#define BRCM_MSI_TARGET_ADDR_LO      0xfffffffcU    /* BRCM_MSI_TARGET_ADDR_LT_4GB low 32 */
+#define BRCM_MSI_DATA_CONFIG_VAL8    0xfff86540U    /* legacy 8-MSI data config */
+#define BRCM_MSI_DATA_MATCH          0x6540U        /* low 16 of VAL8 = the data the device sends */
+#define BRCM_MSI_LEGACY_SHIFT        24             /* MSI vectors in INTR2 bits [31:24] */
+#define BRCM_XHCI_MSI_VECTOR         0              /* one vector for the single-function VL805 */
+#define BRCM_PCIE_MSI_GIC_SPI        148            /* DTB: GIC_SPI 148 = builtin MSI controller */
 #define RC_CFG_VENDOR_SPEC1     0x0188      /* inbound-BAR endian mode (0 = LE) */
 #define   VENDOR_ENDIAN_BAR2_MASK 0xc
 #define RC_CFG_PRIV1_LINK_CAP   0x04dc
@@ -602,18 +618,69 @@ int plat_pcie_init(void) {
 #endif
 }
 
-/* Route the VL805 xHCI interrupt to the GIC (Task 2). HW-PENDING: returns -1 so the
- * driver stays in the proven polling mode on real hardware. The VL805 raises MSI (AIOS
- * does not program its MSI capability), and the brcmstb root complex has an INTERNAL MSI
- * controller -- the MSI_INTR2 registers at 0x4500-0x4514 are currently MASKED in
- * pcie_bringup. Enabling IRQ delivery requires, on the Pi: (1) program the RC MSI target
- * address (PCIE_MISC_MSI_BAR_CONFIG_LO/HI) + data (PCIE_MISC_MSI_DATA_CONFIG); (2) program
- * the VL805 MSI capability to that target/data; (3) unmask the relevant MSI_INTR2 bit
- * (MSI_INTR2_MASK_CLR) instead of masking it; (4) find the GIC SPI the RC raises from the
- * pcie node msi-parent/interrupts in the DTB and bind it. Develop + verify on the Pi --
- * QEMU cannot model the brcmstb MSI controller. Until then, polling drives the keyboard. */
+/* Route the VL805 xHCI interrupt to the GIC (lead #3, docs/NEXT_20260624_xhci_msi.md). The VL805
+ * raises MSI; the brcmstb root complex has a builtin MSI controller (legacy: CPU INTR2 0x4300,
+ * bits[31:24]) that raises GIC_SPI 148. AIOS maps SPI N -> seL4 IRQ N+32, so this returns 180.
+ * Binding here is harmless in poll mode (xhci_setup_irq just binds the handler); the RC + VL805
+ * MSI are programmed only when the driver enters IRQ mode (plat_pcie_xhci_msi_enable). */
 int plat_pcie_xhci_irq(void) {
     if (!pcie_xhci_present) return -1;
-    AIOS_LOG_INFO("xHCI IRQ: brcmstb MSI not yet wired -- polling (HW bring-up pending)");
-    return -1;
+    return BRCM_PCIE_MSI_GIC_SPI + 32;   /* GIC_SPI 148 (builtin MSI controller) -> seL4 IRQ 180 */
+}
+
+/* Program (on=1) or tear down (on=0) brcmstb legacy MSI for the VL805. Sequence mirrors Linux
+ * brcm_msi_set_regs + the device MSI-capability programming. Only called from the driver thread
+ * when it enters IRQ mode, so default boot (polling) never touches these registers. */
+int plat_pcie_xhci_msi_enable(int on) {
+    if (!pcie_xhci_present) return -1;
+    uint32_t b = pcie_xhci_bus, d = pcie_xhci_dev, f = pcie_xhci_fn;
+    uint32_t legacy_mask = 0xFFu << BRCM_MSI_LEGACY_SHIFT;   /* the 8 MSI bits [31:24] */
+
+    /* Find the device MSI capability (PCI cap ID 0x05) by walking the cap list. */
+    uint32_t cap = cfg_rd(b, d, f, 0x34) & 0xFF;
+    int msi = -1;
+    for (int i = 0; i < 48 && cap >= 0x40; i++) {
+        uint32_t h = cfg_rd(b, d, f, cap);
+        if ((h & 0xFF) == 0x05) { msi = (int)cap; break; }
+        cap = (h >> 8) & 0xFF;
+    }
+    if (msi < 0) { AIOS_LOG_WARN("xHCI MSI: VL805 MSI capability not found"); return -1; }
+    uint32_t mc = cfg_rd(b, d, f, (uint32_t)msi);            /* [31:16] control, [15:0] id|next */
+    int is64 = (mc >> (16 + 7)) & 1;                         /* control bit 7 = 64-bit addr cap */
+    uint32_t ctrl = (mc >> 16) & 0xFFFF;
+
+    if (!on) {                                               /* disable device cap + re-mask RC */
+        cfg_wr(b, d, f, (uint32_t)msi, (mc & 0xFFFF) | ((ctrl & ~0x1u) << 16));
+        wr(PCIE_INTR2_CPU_MASK_SET, legacy_mask);
+        arch_dsb();
+        return 0;
+    }
+
+    /* RC side: unmask + clear the legacy MSI bits, set the target address + data config. */
+    wr(PCIE_INTR2_CPU_MASK_CLR, legacy_mask);
+    wr(PCIE_INTR2_CPU_CLR, legacy_mask);
+    wr(PCIE_MISC_MSI_BAR_CONFIG_LO, BRCM_MSI_TARGET_ADDR_LO | 1u);
+    wr(PCIE_MISC_MSI_BAR_CONFIG_HI, 0);
+    wr(PCIE_MISC_MSI_DATA_CONFIG, BRCM_MSI_DATA_CONFIG_VAL8);
+    arch_dsb();
+
+    /* Device side: Message Address = target, Message Data = match|vector, then enable. */
+    cfg_wr(b, d, f, (uint32_t)msi + 0x4, BRCM_MSI_TARGET_ADDR_LO);
+    uint32_t data_off = is64 ? ((uint32_t)msi + 0xC) : ((uint32_t)msi + 0x8);
+    if (is64) cfg_wr(b, d, f, (uint32_t)msi + 0x8, 0);      /* Message Address Hi */
+    cfg_wr(b, d, f, data_off, BRCM_MSI_DATA_MATCH | BRCM_XHCI_MSI_VECTOR);
+    ctrl = (ctrl & ~(0x7u << 4)) | 0x1u;                    /* MME=0 (1 vector), MSI Enable=1 */
+    cfg_wr(b, d, f, (uint32_t)msi, (mc & 0xFFFF) | (ctrl << 16));
+    arch_dsb();
+    printf("[pcie] xHCI MSI armed: cap@0x%x is64=%d target=0x%x data=0x%x -> GIC_SPI %d\n",
+           (unsigned)msi, is64, (unsigned)BRCM_MSI_TARGET_ADDR_LO,
+           (unsigned)(BRCM_MSI_DATA_MATCH | BRCM_XHCI_MSI_VECTOR), BRCM_PCIE_MSI_GIC_SPI);
+    return 0;
+}
+
+/* Per-interrupt ack: clear our MSI vector's bit in the RC CPU INTR2 (before the seL4 GIC Ack),
+ * else the RC keeps the SPI asserted. */
+void plat_pcie_xhci_msi_ack(void) {
+    if (!pcie_xhci_present) return;
+    wr(PCIE_INTR2_CPU_CLR, 1u << (BRCM_MSI_LEGACY_SHIFT + BRCM_XHCI_MSI_VECTOR));
 }

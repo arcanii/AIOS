@@ -185,3 +185,8 @@ int plat_pcie_xhci_irq(void) {
            pin, pcie_xhci_dev, irq, VIRT_PCIE_SPI_BASE + gsi);
     return irq;
 }
+
+/* QEMU xHCI uses legacy INTx through the gpex bridge (enabled in plat_pcie_xhci_irq above), not
+ * brcmstb MSI -- so MSI program/ack are no-ops here. (arm-virt has no xHCI in practice anyway.) */
+int  plat_pcie_xhci_msi_enable(int on) { (void)on; return 0; }
+void plat_pcie_xhci_msi_ack(void) { }
