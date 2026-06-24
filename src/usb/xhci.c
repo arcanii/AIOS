@@ -138,7 +138,15 @@ static inline void doorbell(uint32_t n, uint32_t target) {
  * [[feedback_hdmi_console_cacheable]]. DEFAULT OFF -> non-cacheable + both helpers are no-ops
  * -> byte-identical to before. seL4 cache ops cannot cross a 4KB page, so loop per page; DMA
  * structures are page-aligned (dma_page), so CPU-written and device-written data never share a
- * cache line. HW-ONLY validatable (QEMU models no write-back cache). */
+ * cache line. HW-ONLY validatable (QEMU models no write-back cache).
+ *
+ * HW RESULT 2026-06-24 (build 2947, real VL805): lead #1 FAILED -- flag-ON breaks the
+ * event/command handshake. /proc/xhci showed evt_deq STUCK at 0 (the CPU never sees the
+ * controller's DMA-written event TRBs) -> no Enable Slot completion -> NOTHING enumerates
+ * (kbd_ok=0). flag-OFF on the SAME board + keyboard: kbd_ok=1, evt_deq=42. So manual seL4
+ * invalidate is NOT sufficient for the brcmstb PCIe inbound path -- the non-cacheable mapping
+ * is DELIBERATE/correct. Kept default-OFF as a documented dead end; the stall fix is lead #3
+ * (MSI vs masked polling), not memory attributes. [[project_usb_kbd_dma_stall]] */
 #ifndef AIOS_XHCI_DMA_CACHEABLE
 #define AIOS_XHCI_DMA_CACHEABLE 0
 #endif
