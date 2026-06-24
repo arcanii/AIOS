@@ -105,16 +105,142 @@ void *malloc(size_t n) {
 }
 void free(void *p) { (void)p; }
 
+/* --- FILE* buffered stdio ---
+ * A FILE wraps an fd with one buffer. stdout is LINE-buffered (flushes at '\n' -- which also keeps
+ * it empty between lines, so fork doesn't duplicate pending output); stderr is unbuffered; opened
+ * files are fully buffered. Output is flushed on exit / main-return (see exit + __libaios_start).
+ * Minimal: a FILE is primarily a read OR a write stream (r+/w+ work but not finely interleaved). */
+#ifndef _IOFBF
+#define _IOFBF 0
+#define _IOLBF 1
+#define _IONBF 2
+#endif
+#ifndef EOF
+#define EOF (-1)
+#endif
+#define AIOS_BUFSIZ 1024
+
+struct _IO_FILE {
+    int    fd;
+    int    rd, wr;          /* opened for reading / writing */
+    int    eof, err;
+    int    bufmode;         /* _IOFBF / _IOLBF / _IONBF */
+    int    is_static;       /* stdin/stdout/stderr -- never freed */
+    unsigned char *buf;
+    size_t cap;             /* buffer capacity */
+    size_t pos;             /* read: cursor; write: pending byte count */
+    size_t end;             /* read: count of valid bytes in buf */
+};
+typedef struct _IO_FILE FILE;
+
+static unsigned char _sin_buf[AIOS_BUFSIZ], _sout_buf[AIOS_BUFSIZ];
+static FILE _stdin  = { .fd = 0, .rd = 1, .bufmode = _IOFBF, .is_static = 1, .buf = _sin_buf,  .cap = AIOS_BUFSIZ };
+static FILE _stdout = { .fd = 1, .wr = 1, .bufmode = _IOLBF, .is_static = 1, .buf = _sout_buf, .cap = AIOS_BUFSIZ };
+static FILE _stderr = { .fd = 2, .wr = 1, .bufmode = _IONBF, .is_static = 1 };
+FILE *stdin = &_stdin, *stdout = &_stdout, *stderr = &_stderr;
+
+int fflush(FILE *f) {
+    if (!f) return fflush(stdout);
+    if (f->wr && f->pos > 0) {
+        long w = aios_write(f->fd, f->buf, f->pos);
+        if (w < 0) { f->err = 1; return EOF; }
+        f->pos = 0;
+    }
+    return 0;
+}
+int fputc(int c, FILE *f) {
+    unsigned char b = (unsigned char)c;
+    if (!f->buf || f->bufmode == _IONBF) { aios_write(f->fd, &b, 1); return c; }
+    f->buf[f->pos++] = b;
+    if (f->pos >= f->cap || (f->bufmode == _IOLBF && b == '\n')) fflush(f);
+    return c;
+}
+size_t fwrite(const void *ptr, size_t sz, size_t nm, FILE *f) {
+    size_t total = sz * nm; const unsigned char *s = ptr;
+    if (!f->buf || f->bufmode == _IONBF) { if (total) aios_write(f->fd, s, total); return sz ? nm : 0; }
+    size_t done = 0; int nl = 0;
+    while (done < total) {
+        if (f->pos >= f->cap) fflush(f);
+        size_t space = f->cap - f->pos, chunk = total - done < space ? total - done : space;
+        memcpy(f->buf + f->pos, s + done, chunk);
+        if (f->bufmode == _IOLBF)
+            for (size_t i = 0; i < chunk; i++) if (s[done + i] == '\n') { nl = 1; break; }
+        f->pos += chunk; done += chunk;
+    }
+    if (nl) fflush(f);
+    return sz ? nm : 0;
+}
+static int _refill(FILE *f) {
+    if (!f->rd || !f->buf) return -1;
+    long n = aios_read(f->fd, f->buf, f->cap);
+    if (n < 0) { f->err = 1; return -1; }
+    if (n == 0) { f->eof = 1; return 0; }
+    f->pos = 0; f->end = (size_t)n; return (int)n;
+}
+int fgetc(FILE *f) {
+    if (f->pos >= f->end) { if (_refill(f) <= 0) return EOF; }
+    return f->buf[f->pos++];
+}
+size_t fread(void *ptr, size_t sz, size_t nm, FILE *f) {
+    size_t total = sz * nm, done = 0; unsigned char *d = ptr;
+    while (done < total) { int c = fgetc(f); if (c == EOF) break; d[done++] = (unsigned char)c; }
+    return sz ? done / sz : 0;
+}
+int fputs(const char *s, FILE *f) { fwrite(s, 1, strlen(s), f); return 0; }
+char *fgets(char *s, int n, FILE *f) {
+    int i = 0;
+    while (i < n - 1) { int c = fgetc(f); if (c == EOF) break; s[i++] = (char)c; if (c == '\n') break; }
+    if (i == 0) return 0;                            /* EOF with nothing read */
+    s[i] = '\0';
+    return s;
+}
+int  getchar(void)        { return fgetc(stdin); }
+int  feof(FILE *f)        { return f->eof; }
+int  ferror(FILE *f)      { return f->err; }
+void clearerr(FILE *f)    { f->eof = f->err = 0; }
+int  fileno(FILE *f)      { return f->fd; }
+
+FILE *fopen(const char *path, const char *mode) {
+    int flags, rd = 0, wr = 0;
+    if (mode[0] == 'r')      { flags = AIOS_O_RDONLY; rd = 1;
+                               if (mode[1]=='+'){ flags = AIOS_O_RDWR; wr = 1; } }
+    else if (mode[0] == 'w') { flags = AIOS_O_WRONLY|AIOS_O_CREAT|AIOS_O_TRUNC; wr = 1;
+                               if (mode[1]=='+'){ flags = AIOS_O_RDWR|AIOS_O_CREAT|AIOS_O_TRUNC; rd = 1; } }
+    else if (mode[0] == 'a') { flags = AIOS_O_WRONLY|AIOS_O_CREAT|AIOS_O_APPEND; wr = 1;
+                               if (mode[1]=='+'){ flags = AIOS_O_RDWR|AIOS_O_CREAT|AIOS_O_APPEND; rd = 1; } }
+    else return 0;
+    long fd = aios_open(path, flags, 0644);
+    if (fd < 0) return 0;
+    FILE *f = malloc(sizeof *f);
+    if (!f) { aios_close((int)fd); return 0; }
+    memset(f, 0, sizeof *f);
+    f->fd = (int)fd; f->rd = rd; f->wr = wr; f->bufmode = _IOFBF;
+    f->buf = malloc(AIOS_BUFSIZ); f->cap = f->buf ? AIOS_BUFSIZ : 0;
+    if (!f->buf) f->bufmode = _IONBF;
+    return f;
+}
+int fclose(FILE *f) {
+    if (!f) return EOF;
+    fflush(f);
+    int fd = f->fd;
+    if (!f->is_static) { free(f->buf); free(f); }   /* free is a no-op today; FILEs are not reclaimed */
+    return aios_close(fd);
+}
+void perror(const char *s) {
+    if (s && *s) { fputs(s, stderr); fputs(": ", stderr); }
+    fputs("error\n", stderr);
+}
+
 /* --- output --- */
-int puts(const char *s) { aios_write(AIOS_FD_STDOUT, s, strlen(s)); aios_write(AIOS_FD_STDOUT, "\n", 1); return 0; }
+int puts(const char *s) { fputs(s, stdout); fputc('\n', stdout); return 0; }
 void fdputs(int fd, const char *s) { aios_write(fd, s, strlen(s)); }
 
-/* The formatter writes to a "sink" -- either an fd (printf) or a bounded buffer (snprintf) -- so a
- * single core serves both. (FILE*-buffered stdio lands in the next step.) */
-struct sink { char *buf; size_t cap; size_t len; int fd; };
+/* The formatter writes to a "sink" -- either a FILE (printf/fprintf, buffered) or a bounded buffer
+ * (snprintf) -- so a single core serves both. */
+struct sink { char *buf; size_t cap; size_t len; FILE *fp; };
 static void sink_write(struct sink *s, const char *p, size_t n) {
     if (s->buf) { for (size_t i = 0; i < n; i++) if (s->len + i < s->cap) s->buf[s->len + i] = p[i]; }
-    else if (n) aios_write(s->fd, p, n);
+    else if (s->fp && n) fwrite(p, 1, n, s->fp);
     s->len += n;
 }
 static void sink_uint(struct sink *s, unsigned long v, int base, int upper) {
@@ -153,12 +279,21 @@ static void vformat(struct sink *s, const char *fmt, va_list ap) {
 }
 
 int printf(const char *fmt, ...) {
-    struct sink s = { 0, 0, 0, AIOS_FD_STDOUT };
+    struct sink s = { .fp = stdout };
     va_list ap; va_start(ap, fmt); vformat(&s, fmt, ap); va_end(ap);
     return (int)s.len;
 }
+int vfprintf(FILE *f, const char *fmt, va_list ap) {
+    struct sink s = { .fp = f };
+    vformat(&s, fmt, ap);
+    return (int)s.len;
+}
+int fprintf(FILE *f, const char *fmt, ...) {
+    va_list ap; va_start(ap, fmt); int r = vfprintf(f, fmt, ap); va_end(ap);
+    return r;
+}
 int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
-    struct sink s = { buf, size, 0, -1 };
+    struct sink s = { .buf = buf, .cap = size };
     vformat(&s, fmt, ap);
     if (size) buf[s.len < size ? s.len : size - 1] = '\0';
     return (int)s.len;
@@ -167,7 +302,7 @@ int snprintf(char *buf, size_t size, const char *fmt, ...) {
     va_list ap; va_start(ap, fmt); int r = vsnprintf(buf, size, fmt, ap); va_end(ap);
     return r;
 }
-int putchar(int c) { char b = (char)c; aios_write(AIOS_FD_STDOUT, &b, 1); return c; }
+int putchar(int c) { return fputc(c, stdout); }
 
 /* ===== POSIX libc surface =====
  * Standard-named entry points so real C sources compile UNMODIFIED against the shadow headers in
@@ -248,8 +383,8 @@ int toupper(int c)  { return islower(c) ? c - 32 : c; }
 int tolower(int c)  { return isupper(c) ? c + 32 : c; }
 
 /* stdlib extras */
-void  exit(int code)  { aios_exit(code); }
-void  abort(void)     { aios_exit(134); }              /* 128 + SIGABRT */
+void  exit(int code)  { fflush(stdout); aios_exit(code); }   /* flush buffered stdout like libc */
+void  abort(void)     { fflush(stdout); aios_exit(134); }    /* 128 + SIGABRT */
 void *calloc(size_t nmemb, size_t size) {
     size_t t = nmemb * size; void *p = malloc(t); if (p) memset(p, 0, t); return p;
 }
@@ -290,7 +425,9 @@ extern int main(int argc, char **argv);
 char **environ;                                   /* POSIX env; envp follows argv on the stack */
 void __libaios_start(long argc, char **argv) {
     environ = argv + argc + 1;                    /* [argc][argv..][NULL][envp..] -> envp slot */
-    aios_exit(main((int)argc, argv));
+    int rc = main((int)argc, argv);
+    fflush(stdout);                               /* flush buffered output on main-return, like libc */
+    aios_exit(rc);
 }
 
 __asm__(
