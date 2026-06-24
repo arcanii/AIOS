@@ -55,6 +55,35 @@ static int roundtrip(const char *path, const unsigned char *buf, int n) {
     return ok;
 }
 
+/* Write all of buf in ONE stdio fwrite (musl flushes it via writev when it exceeds
+ * the buffer -- the same path the tcc linker output takes), read it back with
+ * read(), return 1 if byte-exact. Exercises the writev bulk branch. */
+static int roundtrip_stdio(const char *path, const unsigned char *buf, int n) {
+    FILE *fp = fopen(path, "wb");
+    if (!fp) { printf("  fopen-w %s failed\n", path); return 0; }
+    size_t wn = fwrite(buf, 1, (size_t)n, fp);
+    if (fclose(fp) != 0 || wn != (size_t)n) {
+        printf("  fwrite %s wn=%lu/%d\n", path, (unsigned long)wn, n);
+        return 0;
+    }
+    unsigned char *rb = malloc((size_t)n);
+    if (!rb) { printf("  malloc rb failed\n"); return 0; }
+    memset(rb, 0xCD, (size_t)n);
+    int fd = open(path, O_RDONLY, 0);
+    if (fd < 0) { printf("  open-r %s failed\n", path); free(rb); return 0; }
+    int rd = 0;
+    while (rd < n) {
+        int r = (int)read(fd, rb + rd, (size_t)(n - rd));
+        if (r <= 0) break;
+        rd += r;
+    }
+    close(fd);
+    int ok = (rd == n) && (memcmp(buf, rb, (size_t)n) == 0);
+    if (!ok) printf("  %s STDIO MISMATCH rd=%d/%d\n", path, rd, n);
+    free(rb);
+    return ok;
+}
+
 int main(void) {
     unsigned char *buf = malloc(N + 16);
     if (!buf) { printf("BULKWRITE: FAIL malloc\n"); return 1; }
@@ -62,11 +91,12 @@ int main(void) {
     int a = roundtrip("/tmp/bw_aligned", buf, N);          /* page-aligned source */
     int b = roundtrip("/tmp/bw_unalign", buf + 1, N);      /* mid-page source start */
     int c = roundtrip("/tmp/bw_odd", buf, 100000);         /* odd length */
+    int d = roundtrip_stdio("/tmp/bw_stdio", buf, N);      /* fwrite -> writev path */
     free(buf);
-    if (a && b && c) {
-        printf("BULKWRITE: PASS aligned+unaligned+odd byte-exact (%d KB)\n", N / 1024);
+    if (a && b && c && d) {
+        printf("BULKWRITE: PASS write+writev byte-exact (%d KB)\n", N / 1024);
         return 0;
     }
-    printf("BULKWRITE: FAIL aligned=%d unaligned=%d odd=%d\n", a, b, c);
+    printf("BULKWRITE: FAIL aligned=%d unaligned=%d odd=%d stdio=%d\n", a, b, c, d);
     return 2;
 }

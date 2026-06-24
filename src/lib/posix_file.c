@@ -1186,6 +1186,19 @@ long aios_sys_writev(va_list ap) {
             for (int i = 0; i < iovcnt; i++) {
                 const char *src = (const char *)iov[i].iov_base;
                 size_t iov_sent = 0;
+                /* v0.4.298: bulk fast path -- musl flushes a large fwrite via
+                 * writev (iov[1] is the user buffer), so this is THE stdio big-write
+                 * path the tcc linker output rides. O_APPEND stays on the legacy loop. */
+                if (!f->is_append) {
+                    while (iov_sent < iov[i].iov_len) {
+                        long br = aios_bulk_pwrite(f->path, f->pos, src + iov_sent,
+                                                   iov[i].iov_len - iov_sent);
+                        if (br <= 0) break;
+                        iov_sent += (size_t)br;
+                        f->pos += (int)br;
+                        if (f->pos > f->size) f->size = f->pos;
+                    }
+                }
                 while (iov_sent < iov[i].iov_len) {
                     int chunk = (int)(iov[i].iov_len - iov_sent);
                     if (chunk > 800) chunk = 800;
