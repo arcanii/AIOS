@@ -34,7 +34,7 @@ LIBC_HDRS   = $(wildcard lib/include/*.h lib/include/sys/*.h)
 all: aios-uk guest_hello guest_fileio guest_cat prog_args prog_wc prog_bigalloc prog_tail prog_exec \
      prog_fork prog_spawn prog_pipe prog_pipeline prog_pipebig prog_sh prog_libc prog_stdio
 
-aios-uk: $(KERNEL_SRC) include/pal.h include/aios_abi.h
+aios-uk: $(KERNEL_SRC) include/pal.h include/aios_abi.h include/aios_version.h
 	$(CC) $(KERNEL_CFLAGS) -o $@ $(KERNEL_SRC)
 
 guest_hello: guest/guest_hello.c include/aios_abi.h

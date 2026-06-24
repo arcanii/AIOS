@@ -3,8 +3,9 @@
  * host. Narrow by design, because this seam is the future *verified boundary* -- the smaller it
  * is, the smaller the eventual proof obligation when AIOS replants onto seL4.
  *
- * The AIOS kernel (kernel/aios_kernel.c) includes ONLY this header and aios_abi.h -- never a host
- * header -- so the kernel is host-agnostic. Today the backend is pal/pal_linux.c (ptrace); a
+ * The AIOS kernel (kernel/aios_kernel.c) includes ONLY AIOS-owned headers (this one, aios_abi.h,
+ * aios_version.h) -- never a host header -- so the kernel is host-agnostic. Today the backend is
+ * pal/pal_linux.c (ptrace); a
  * future pal_sel4.c implements the SAME contract via seL4 IPC / a VMM. Swapping the backend does
  * not touch the kernel or any AIOS program.
  *

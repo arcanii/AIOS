@@ -14,6 +14,7 @@
  *     EXIT. This is what a shell needs.
  */
 #include "aios_abi.h"
+#include "aios_version.h"      /* host-agnostic version macros (the 0.5.x userspace-kernel line) */
 #include "pal.h"
 #include <stddef.h>
 #include <stdint.h>
@@ -491,7 +492,7 @@ int main(int argc, char **argv) {
     /* The guest's argv is the kernel's argv shifted by one: guest argv[0] = the guest program. */
     char *const *guest_argv = (char *const *)&argv[1];
 
-    kputs("[aios-uk] AIOS userspace kernel -- M3d (process model: fork/exec/wait/pipe) (Linux/ptrace PAL)\n");
+    kputs("[aios-uk] AIOS v" AIOS_VERSION_STR " -- " AIOS_VERSION_LINE " on Linux (ptrace PAL)\n");
     kputs("[aios-uk] launching guest: ");
     kputs(guest);
     kputs("\n");

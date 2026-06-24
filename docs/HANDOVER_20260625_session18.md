@@ -7,6 +7,10 @@ AIOS shell." Live state: memory [[project_pivot_linux_userspace_kernel]]. Design
 docs/DESIGN_20260624_aios_userspace_kernel_on_linux.md. Branch `userspace-kernel` (LOCAL -- Bryan
 pushes).
 
+**VERSIONING (Bryan, s18): the userspace kernel is its own line, `v0.5.x`** (`uk/include/aios_version.h`,
+printed in the kernel banner: `AIOS v0.5.0 -- userspace kernel on Linux (ptrace PAL)`) -- a deliberate
+break from the `0.4.x` seL4/RPi4 line (on `main`). 0.5.0 covers M0..M3e; patch advances per milestone.
+
 ## What shipped (4 commits, each validated on colima AND native RPi4 / Linux 6.12)
 
 - **M3d.1 -- exec (`4065dbf`).** `AIOS_SYS_EXEC` (0x1008) replaces a guest's image by rewriting its

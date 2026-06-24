@@ -1,4 +1,8 @@
-# AIOS userspace kernel (`uk/`)
+# AIOS userspace kernel (`uk/`) — v0.5.x
+
+**0.5.x is a new design line.** It departs from the 0.4.x seL4/RPi4 bare-metal line (preserved on
+`main` as the record/fallback) and gets its own major.minor; the running version lives in
+`include/aios_version.h` and is printed in the kernel banner. 0.5.0 covers M0..M3e.
 
 The pivot architecture (see `docs/DESIGN_20260624_aios_userspace_kernel_on_linux.md`): AIOS becomes
 a **gVisor-style userspace kernel** that runs on a commodity host kernel. AIOS programs compile for
