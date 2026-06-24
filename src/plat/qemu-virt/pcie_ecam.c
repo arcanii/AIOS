@@ -190,3 +190,7 @@ int plat_pcie_xhci_irq(void) {
  * brcmstb MSI -- so MSI program/ack are no-ops here. (arm-virt has no xHCI in practice anyway.) */
 int  plat_pcie_xhci_msi_enable(int on) { (void)on; return 0; }
 void plat_pcie_xhci_msi_ack(void) { }
+int  plat_pcie_xhci_msi_status(char *buf, int bufsize) {
+    return snprintf(buf, bufsize, "msi: n/a (QEMU INTx, no brcmstb MSI controller)\n");
+}
+void plat_pcie_xhci_msi_clear(void) { }

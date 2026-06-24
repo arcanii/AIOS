@@ -2452,6 +2452,10 @@ int xhci_diag_cmd(const char *args, char *buf, int bufsize) {
             return snprintf(buf, bufsize, "xHCI: IRQ mode = %u (irq=%d count=%u)\n",
                             on, xhci_irq_num, xhci_irq_count);
         }
+        if (p[0] == 'm' && p[1] == 's' && p[2] == 'i' && p[3] == 'c' && p[4] == 'l' && p[5] == 'r') {
+            plat_pcie_xhci_msi_clear();        /* lead #3: wipe the RC INTR2 latch + seen counter */
+            return snprintf(buf, bufsize, "xHCI: MSI INTR2 latch cleared (type, then re-read /proc/xhci)\n");
+        }
         if (p[0] == 'a' && p[1] == 'u' && p[2] == 't' && p[3] == 'o' && p[4] == '.') {
             g_msc_automount = (int)(xdiag_hex(p + 5) & 1);   /* gate runtime hotplug mount */
             return snprintf(buf, bufsize, "xHCI: USB-MSC automount = %d\n", g_msc_automount);
@@ -2484,6 +2488,7 @@ int xhci_diag_cmd(const char *args, char *buf, int bufsize) {
     w += snprintf(buf + w, bufsize - w,
         "irq: mode=%d bound=%d num=%d count=%u  (poll is the default; .irq.1 to block)\n",
         xhci_irq_mode, xhci_irq_ntfn ? 1 : 0, xhci_irq_num, xhci_irq_count);
+    w += plat_pcie_xhci_msi_status(buf + w, bufsize - w);   /* lead #3: RC INTR2 latch + VL805 cap */
     { struct usb_dev *md = g_msc_dev;   /* snapshot: teardown may clear it (same core, but clean) */
       w += snprintf(buf + w, bufsize - w,
         "msc: ok=%d automount=%d mount_pending=%d nsectors=%lu blksz=%u\n",

@@ -111,6 +111,36 @@ delivering. Localize NEXT (over netconsole -- no serial needed):
 3. Serial (CONFIG_PRINTING) shows the "[pcie] xHCI MSI armed: cap@.. target=.. data=.." line -- use
    it if the /proc probe is inconclusive.
 
+## OBSERVABILITY IMPLEMENTED (v0.4.301, build-rpi4 2957) -- the splitter is now in /proc/xhci
+Step 1 above is built (plat_pcie_xhci_msi_status / _clear in pcie_brcmstb.c; QEMU no-ops). `cat
+/proc/xhci` now appends, right under the `irq:` line:
+```
+msi-rc: INTR2_STATUS=0x........ bit24=N seen=N  MASK_STATUS=0x........ masked24=N
+        BAR_LO=0x........ BAR_HI=0x........ DATA_CFG=0x........ (want LO=0xfffffffd HI=0 DATA=0xfff86540)
+msi-dev: cap@0xNN ctrl=0x.... EN=N MME=N is64=N addr=0x................ data=0x....  (want addr=0xfffffffc data=0x6540)
+```
+`cat /proc/xhci.msiclr` write-clears the latched RC bit + zeroes `seen` so a fresh keypress can be
+observed re-latching (the driver is blocked, so it never acks the latch itself).
+
+TURNKEY HW RECIPE (Bryan AT the board -- a wedge needs a power-cycle):
+1. Flash kernel-only, reversible:  `python3 scripts/pi_flash.py --build`  (build-rpi4 2957).
+2. Baseline:  `cat /proc/xhci`  -> confirm kbd_ok=1 in POLL mode; note the `msi-rc`/`msi-dev` lines
+   (in poll mode MSI is NOT armed, so EN should be 0 and BAR_LO not yet 0xfffffffd -- that's expected).
+3. Arm + clear the latch:  `cat /proc/xhci.irq.1`  then  `cat /proc/xhci.msiclr`.
+4. Type a few keys on the USB keyboard (this is the wedge-risk step).
+5. `cat /proc/xhci` and read the splitter:
+   - First sanity-check `msi-dev`: EN=1, data=0x6540, addr=0xfffffffc, and `msi-rc` BAR_LO=0xfffffffd
+     DATA_CFG=0xfff86540 masked24=0. If any of these is wrong, the *arming* failed (cap walk / reg
+     offsets) -- fix that first; the device never had a chance to send a matching MSI.
+   - If arming looks right, read `irq: count` + `msi-rc INTR2_STATUS bit24`:
+     * bit24=1 (or seen>0) and count=0  => MSI reached the RC; **GIC_SPI 148 / seL4 IRQ 180 binding is
+       wrong** -> next: try IRQ 179 (GIC_SPI 147) -- edit BRCM_PCIE_MSI_GIC_SPI 148->147, rebuild, reflash.
+     * bit24=0 and count=0  => the VL805 never sent a matching MSI -> **Message Data / target / cap
+       enable wrong** -> recheck brcm_msi_compose_msg; the data value is the prime suspect.
+   - count>0 + key_events climbing + int_errs=0  => MSI WORKS. Then the verdict test: keyboard attached,
+     run the TLBI load test, watch `/proc/laststall total` -- do the ~10.8s quanta stop vs poll mode?
+6. Revert any time:  `cat /proc/xhci.irq.0`  (back to poll), or reboot.
+
 ## Risks / notes
 - HW-ONLY validatable (QEMU cannot model the brcmstb MSI controller). Iterate on the board (Bryan
   near it; a wrong setup just leaves count=0 / stays polling -- low wedge risk if default=poll).

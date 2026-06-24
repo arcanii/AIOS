@@ -162,6 +162,7 @@ int      pcie_xhci_present = 0;
 #define PCIE_MISC_MSI_DATA_CONFIG    0x404c
 #define PCIE_INTR2_CPU_STATUS        0x4300
 #define PCIE_INTR2_CPU_CLR           0x4308
+#define PCIE_INTR2_CPU_MASK_STATUS   0x430c       /* read-back: 1 = that vector is MASKED */
 #define PCIE_INTR2_CPU_MASK_SET      0x4310
 #define PCIE_INTR2_CPU_MASK_CLR      0x4314
 #define BRCM_MSI_TARGET_ADDR_LO      0xfffffffcU    /* BRCM_MSI_TARGET_ADDR_LT_4GB low 32 */
@@ -683,4 +684,73 @@ int plat_pcie_xhci_msi_enable(int on) {
 void plat_pcie_xhci_msi_ack(void) {
     if (!pcie_xhci_present) return;
     wr(PCIE_INTR2_CPU_CLR, 1u << (BRCM_MSI_LEGACY_SHIFT + BRCM_XHCI_MSI_VECTOR));
+}
+
+/* --- lead #3 debug (docs/NEXT_20260624_xhci_msi.md): split the "MSI armed but count=0" failure ---
+ * The RC INTR2 STATUS bit for our vector LATCHES when the VL805's MSI memory-write reaches the RC
+ * and matches DATA_CONFIG. While the driver is blocked in seL4_Wait it never acks, so after a
+ * keypress this latch tells us, over netconsole, exactly where delivery breaks:
+ *   bit SET   -> the VL805 issued the MSI + the RC matched it; nothing reached seL4 IRQ 180, so the
+ *                GIC_SPI 148 / IRQ-180 binding is the suspect (try the other SPI).
+ *   bit CLEAR -> the VL805 never issued a matching MSI: Message Data, cap-enable, or target addr is
+ *                wrong (recheck brcm_msi_compose_msg / the cap walk).
+ * Status read is pure + non-destructive (cannot race the driver's ack once MSI works); use
+ * plat_pcie_xhci_msi_clear() to wipe the latch between keypresses. */
+static volatile uint32_t g_msi_intr2_seen;   /* cumulative: status reads that observed our bit set */
+
+int plat_pcie_xhci_msi_status(char *buf, int bufsize) {
+    if (!pcie_xhci_present) return snprintf(buf, bufsize, "msi: xHCI not present\n");
+    uint32_t b = pcie_xhci_bus, d = pcie_xhci_dev, f = pcie_xhci_fn;
+    unsigned vec_bit = BRCM_MSI_LEGACY_SHIFT + BRCM_XHCI_MSI_VECTOR;   /* INTR2 bit for vector 0 = 24 */
+    uint32_t vmask = 1u << vec_bit;
+
+    /* RC side: pure MMIO reads (no config-space window) -- safe from any thread. */
+    uint32_t status   = rd(PCIE_INTR2_CPU_STATUS);
+    uint32_t maskstat = rd(PCIE_INTR2_CPU_MASK_STATUS);
+    uint32_t barlo    = rd(PCIE_MISC_MSI_BAR_CONFIG_LO);
+    uint32_t barhi    = rd(PCIE_MISC_MSI_BAR_CONFIG_HI);
+    uint32_t dcfg     = rd(PCIE_MISC_MSI_DATA_CONFIG);
+    if (status & vmask) g_msi_intr2_seen++;
+
+    int w = snprintf(buf, bufsize,
+        "msi-rc: INTR2_STATUS=0x%08x bit%u=%d seen=%u  MASK_STATUS=0x%08x masked%u=%d\n"
+        "        BAR_LO=0x%08x BAR_HI=0x%08x DATA_CFG=0x%08x (want LO=0x%08x HI=0 DATA=0x%08x)\n",
+        status, vec_bit, (status & vmask) ? 1 : 0, g_msi_intr2_seen,
+        maskstat, vec_bit, (maskstat & vmask) ? 1 : 0,
+        barlo, barhi, dcfg, (unsigned)(BRCM_MSI_TARGET_ADDR_LO | 1u), BRCM_MSI_DATA_CONFIG_VAL8);
+
+    /* Device side: walk the VL805 cap list for MSI (0x05) and read it back. Config-space access,
+     * but at this point only the (idle) enumeration/enable paths share EXT_CFG_INDEX. */
+    uint32_t cap = cfg_rd(b, d, f, 0x34) & 0xFF;
+    int msi = -1;
+    for (int i = 0; i < 48 && cap >= 0x40; i++) {
+        uint32_t h = cfg_rd(b, d, f, cap);
+        if ((h & 0xFF) == 0x05) { msi = (int)cap; break; }
+        cap = (h >> 8) & 0xFF;
+    }
+    if (msi < 0)
+        return w + snprintf(buf + w, bufsize - w, "msi-dev: VL805 MSI capability NOT FOUND\n");
+
+    uint32_t mc   = cfg_rd(b, d, f, (uint32_t)msi);
+    uint32_t ctrl = (mc >> 16) & 0xFFFF;
+    int is64 = (ctrl >> 7) & 1;
+    uint32_t addr_lo = cfg_rd(b, d, f, (uint32_t)msi + 0x4);
+    uint32_t addr_hi = is64 ? cfg_rd(b, d, f, (uint32_t)msi + 0x8) : 0;
+    uint32_t data    = cfg_rd(b, d, f, is64 ? (uint32_t)msi + 0xC : (uint32_t)msi + 0x8) & 0xFFFF;
+    w += snprintf(buf + w, bufsize - w,
+        "msi-dev: cap@0x%x ctrl=0x%04x EN=%d MME=%u is64=%d addr=0x%08x%08x data=0x%04x"
+        " (want addr=0x%08x data=0x%04x)\n",
+        (unsigned)msi, ctrl, ctrl & 1, (ctrl >> 4) & 0x7, is64,
+        addr_hi, addr_lo, data,
+        (unsigned)BRCM_MSI_TARGET_ADDR_LO, (unsigned)(BRCM_MSI_DATA_MATCH | BRCM_XHCI_MSI_VECTOR));
+    return w;
+}
+
+/* Wipe the latched RC INTR2 bit (and the seen counter) so a fresh keypress can be observed
+ * re-latching it -- the manual equivalent of the driver's ack, for use when the driver is blocked. */
+void plat_pcie_xhci_msi_clear(void) {
+    if (!pcie_xhci_present) return;
+    wr(PCIE_INTR2_CPU_CLR, 1u << (BRCM_MSI_LEGACY_SHIFT + BRCM_XHCI_MSI_VECTOR));
+    arch_dsb();
+    g_msi_intr2_seen = 0;
 }

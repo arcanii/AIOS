@@ -33,6 +33,14 @@ int plat_pcie_xhci_irq(void);
 int  plat_pcie_xhci_msi_enable(int on);
 void plat_pcie_xhci_msi_ack(void);
 
+/* v0.4.301+ lead #3 debug (docs/NEXT_20260624_xhci_msi.md): MSI "not firing" splitter, read over
+ * netconsole (no serial). plat_pcie_xhci_msi_status() formats a read-only snapshot of the brcmstb
+ * RC legacy-MSI controller (INTR2 status/mask + BAR/data config) and the read-back VL805 MSI
+ * capability into buf (returns bytes written). plat_pcie_xhci_msi_clear() write-clears the latched
+ * RC INTR2 bit so a keypress can be observed re-latching. Both no-op on QEMU. */
+int  plat_pcie_xhci_msi_status(char *buf, int bufsize);
+void plat_pcie_xhci_msi_clear(void);
+
 /* Discovered xHCI controller (valid after plat_pcie_init() returns 0). */
 extern uint64_t pcie_xhci_bar;   /* CPU-side MMIO base of the xHCI BAR0 */
 extern uint64_t pcie_xhci_bar_size;
