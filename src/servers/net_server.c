@@ -29,7 +29,15 @@ extern struct netd_stats *netd_stats_page;  /* set from argv in netd main; NULL 
 #define NET_REPLY_CNODE  seL4_CapInitThreadCNode
 #endif
 
-#define MAX_NET_SOCKETS  8
+/* v0.4.299: 8 -> 16. Eight slots were too tight once netconsole + sshd are both
+ * listening: each TCP close() is graceful (holds the slot up to TCP_CLOSE_MAX_MS
+ * while the FIN handshake drains), so under sustained sequential netconsole
+ * connections (one cmd per conn) the closing sockets churned against the 8-slot
+ * cap and the box wedged "under load" (drive-gently note). 16 gives headroom for
+ * the closing-socket tail; each socket is ~37KB BSS (32KB rxbuf + 4KB txbuf), so
+ * this adds ~296KB to net_server's BSS (root task in netd-OFF, netd process in
+ * netd-ON). NETD_REPLY_SLOTS tracks 3x this in lockstep (static assert below). */
+#define MAX_NET_SOCKETS  16
 
 #ifdef NETD_BUILD
 /* spawn_netd reserves NETD_REPLY_SLOTS past the netd cspace_next_free; net_server
@@ -42,7 +50,7 @@ _Static_assert(NETD_REPLY_SLOTS == 3 * MAX_NET_SOCKETS,
                                   * window-reopen round-trips on a large push */
 /* v0.4.253: per-socket sender retransmit buffer (unACKed data held for resend). 4KB
  * fully covers sshd (its unACKed data is always small); bulk senders that exceed it
- * degrade gracefully (tx_broken). 4KB * MAX_NET_SOCKETS(8) = 32KB. */
+ * degrade gracefully (tx_broken). 4KB * MAX_NET_SOCKETS(16) = 64KB. */
 #define TX_RTX_BUF       4096
 #define TCP_RTO_MS       1000     /* retransmit timeout (idle granularity bounded by
                                    * the ~5s serverstats kick -- see net_tcp_rto_check) */

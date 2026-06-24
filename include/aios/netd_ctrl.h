@@ -86,9 +86,9 @@ int aios_net_diag(int op, uint32_t a, uint32_t b, uint32_t c, uint32_t out[2]);
 
 /* SaveCaller reply slots netd carves out of its own cnode AFTER the cap
  * donations (DESIGN_NETD s3 row 6): 3 per socket (recv / accept / connect park)
- * for MAX_NET_SOCKETS=8 = 24. spawn_netd reserves this many past
- * cspace_next_free; net_server.c addresses them as base + {0,8,16} + sid. A
+ * for MAX_NET_SOCKETS=16 = 48. spawn_netd reserves this many past
+ * cspace_next_free; net_server.c addresses them as base + {0,16,32} + sid. A
  * _Static_assert in net_server.c pins this to 3*MAX_NET_SOCKETS. */
-#define NETD_REPLY_SLOTS  24
+#define NETD_REPLY_SLOTS  48
 
 #endif /* AIOS_NETD_CTRL_H */
