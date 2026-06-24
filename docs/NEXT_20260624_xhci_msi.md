@@ -89,6 +89,28 @@ the kernel's IRQ-control range (it is for SPIs; GENET=189-ish works the same way
    - If `count` stays 0: MSI not firing -> recheck the VL805 Message Data / target / INTR2 bit /
      the GIC SPI number (serial CONFIG_PRINTING helps here).
 
+## FIRST HW TEST 2026-06-24 (build 2953) -- IMPLEMENTED + BINDS, but MSI does NOT fire yet
+Implemented (commit e548719) + flashed build-rpi4. `/proc/xhci`: keyboard enumerates in poll mode
+(kbd_ok=1, evt_deq=42), and the seL4 IRQ binds: `irq: bound=1 num=180`. Armed `/proc/xhci.irq.1`
+(mode=1). On keypress: **count=0, key_events=0, evt_deq stuck at 42** -> the VL805's transfer events
+hit the ring but NO MSI reached the driver, so it stayed blocked in seL4_Wait (keyboard unresponsive
+until reboot; reboot -> poll -> kbd_ok=1, recovered). So: the seL4 side is fine; the MSI SOURCE is not
+delivering. Localize NEXT (over netconsole -- no serial needed):
+1. ADD OBSERVABILITY to /proc/xhci (read over netconsole): the brcmstb RC INTR2 STATUS (rd(0x4300)),
+   the MSI cap offset + is64 + the read-back Message Control/Address/Data, and a count of times INTR2
+   bit24 was seen set. This splits the failure cleanly:
+   - INTR2 status bit24 SETS on keypress but count stays 0 -> the RC got the MSI; the GIC SPI / seL4
+     IRQ-180 mapping is wrong (try the other SPI, or confirm 148 is the MSI SPI not 147).
+   - INTR2 status bit24 NEVER sets -> the VL805 is not sending the MSI the RC recognizes -> the
+     Message Data is wrong (my BRCM_MSI_DATA_MATCH=0x6540 guess) or the cap wasn't enabled / target
+     addr wrong. Recheck Linux brcm_msi_compose_msg for the EXACT msg.data, and confirm the cap walk
+     found + enabled MSI (Message Control bit0).
+2. Sanity: is the xHCI interrupter actually asserting MSI? (INTE set by xhci_irq_enable; ERDP EHB
+   cleared each event.) A controller-side miss would also give count=0 -- the INTR2-status probe
+   distinguishes it (no INTR2 = nothing left the controller/device).
+3. Serial (CONFIG_PRINTING) shows the "[pcie] xHCI MSI armed: cap@.. target=.. data=.." line -- use
+   it if the /proc probe is inconclusive.
+
 ## Risks / notes
 - HW-ONLY validatable (QEMU cannot model the brcmstb MSI controller). Iterate on the board (Bryan
   near it; a wrong setup just leaves count=0 / stays polling -- low wedge risk if default=poll).
