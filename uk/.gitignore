@@ -1,0 +1,4 @@
+# Build artifacts (aarch64 Linux ELFs, produced by run.sh in the container)
+aios-uk
+guest_hello
+*.o
