@@ -23,6 +23,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/ptrace.h>
+#include <sys/stat.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
 #include <linux/elf.h>          /* NT_PRSTATUS */
@@ -143,6 +144,17 @@ pal_file_t pal_host_open(const char *path, uint64_t aios_flags, uint64_t mode) {
 long pal_host_read(pal_file_t f, void *buf, size_t len)        { return (long)read((int)f, buf, len); }
 long pal_host_write(pal_file_t f, const void *buf, size_t len) { return (long)write((int)f, buf, len); }
 int  pal_host_close(pal_file_t f)                              { return close((int)f); }
+
+long long pal_host_lseek(pal_file_t f, long long off, int whence) {
+    return (long long)lseek((int)f, (off_t)off, whence);   /* AIOS_SEEK_* == SEEK_* */
+}
+int pal_host_fstat(pal_file_t f, unsigned long long *size, unsigned int *mode) {
+    struct stat st;
+    if (fstat((int)f, &st) != 0) return -1;
+    if (size) *size = (unsigned long long)st.st_size;
+    if (mode) *mode = (unsigned int)st.st_mode;            /* st_mode layout matches AIOS_S_IF* */
+    return 0;
+}
 
 /* Grow the guest's address space by rewriting the guest's AIOS_SYS_MMAP `svc` IN PLACE into a real
  * Linux mmap and letting it run -- so the guest's own syscall maps the memory and x0 receives the

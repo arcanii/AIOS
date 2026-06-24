@@ -100,6 +100,20 @@ static long sys_close(uint64_t fd) {
     return 0;
 }
 
+static long sys_lseek(uint64_t fd, uint64_t off, uint64_t whence) {
+    if (!fd_valid(fd)) return -1;
+    return (long)pal_host_lseek(g_back[fd], (long long)off, (int)whence);
+}
+
+static long sys_fstat(uint64_t fd, uint64_t gstat) {
+    if (!fd_valid(fd)) return -1;
+    struct aios_stat s;
+    s._pad = 0;
+    if (pal_host_fstat(g_back[fd], &s.size, &s.mode) != 0) return -1;
+    if (pal_guest_write(gstat, &s, sizeof s) != sizeof s) return -1;
+    return 0;
+}
+
 /* The kernel's per-program dispatch loop: trap a syscall, service it per the AIOS ABI, return. */
 int aios_kernel_run(const char *guest_path, char *const guest_argv[]) {
     fd_table_init();
@@ -121,6 +135,8 @@ int aios_kernel_run(const char *guest_path, char *const guest_argv[]) {
         case AIOS_SYS_READ:  ret = (uint64_t)sys_read (sc.arg[0], sc.arg[1], sc.arg[2]); break;
         case AIOS_SYS_OPEN:  ret = (uint64_t)sys_open (sc.arg[0], sc.arg[1], sc.arg[2]); break;
         case AIOS_SYS_CLOSE: ret = (uint64_t)sys_close(sc.arg[0]);                       break;
+        case AIOS_SYS_LSEEK: ret = (uint64_t)sys_lseek(sc.arg[0], sc.arg[1], sc.arg[2]); break;
+        case AIOS_SYS_FSTAT: ret = (uint64_t)sys_fstat(sc.arg[0], sc.arg[1]);            break;
         case AIOS_SYS_EXIT:  return (int)sc.arg[0];   /* clean AIOS-ABI exit */
         default:             ret = (uint64_t)-1;      /* unknown AIOS syscall */          break;
         }

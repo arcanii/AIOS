@@ -31,6 +31,8 @@ long  aios_open(const char *path, int flags, int mode);
 long  aios_read(int fd, void *buf, unsigned long len);
 long  aios_write(int fd, const void *buf, unsigned long len);
 int   aios_close(int fd);
+long  aios_lseek(int fd, long off, int whence);
+int   aios_fstat(int fd, struct aios_stat *st);
 void  aios_exit(int code) __attribute__((noreturn));
 
 /* --- string / memory --- */

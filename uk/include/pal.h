@@ -77,4 +77,9 @@ long pal_host_read (pal_file_t f, void *buf, size_t len);
 long pal_host_write(pal_file_t f, const void *buf, size_t len);
 int  pal_host_close(pal_file_t f);
 
+/* Reposition (whence is AIOS_SEEK_*; returns the new absolute offset, or <0) and stat (fills size
+ * + mode; returns 0 or -1). The PAL maps these onto the host (Linux: lseek/fstat). */
+long long pal_host_lseek(pal_file_t f, long long off, int whence);
+int       pal_host_fstat(pal_file_t f, unsigned long long *size, unsigned int *mode);
+
 #endif /* AIOS_PAL_H */

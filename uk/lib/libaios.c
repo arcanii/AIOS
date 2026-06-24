@@ -23,6 +23,8 @@ long aios_open(const char *p, int fl, int mode) { return asys(AIOS_SYS_OPEN, (lo
 long aios_read(int fd, void *b, unsigned long n)  { return asys(AIOS_SYS_READ,  fd, (long)b, n); }
 long aios_write(int fd, const void *b, unsigned long n){ return asys(AIOS_SYS_WRITE, fd, (long)b, n); }
 int  aios_close(int fd) { return (int)asys(AIOS_SYS_CLOSE, fd, 0, 0); }
+long aios_lseek(int fd, long off, int whence) { return asys(AIOS_SYS_LSEEK, fd, off, whence); }
+int  aios_fstat(int fd, struct aios_stat *st) { return (int)asys(AIOS_SYS_FSTAT, fd, (long)st, 0); }
 void aios_exit(int code) { asys(AIOS_SYS_EXIT, code, 0, 0); for (;;) { } }
 
 /* --- string/memory --- */

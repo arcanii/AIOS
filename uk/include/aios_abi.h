@@ -19,6 +19,24 @@
 #define AIOS_SYS_READ    0x1003   /* (fd, buf, len)        -> bytes read (0 = EOF)  */
 #define AIOS_SYS_CLOSE   0x1004   /* (fd)                  -> 0, or -1              */
 #define AIOS_SYS_MMAP    0x1005   /* (len)                 -> guest addr, or 0      */
+#define AIOS_SYS_FSTAT   0x1006   /* (fd, struct aios_stat*) -> 0, or -1           */
+#define AIOS_SYS_LSEEK   0x1007   /* (fd, offset, whence)  -> new offset, or -1    */
+
+/* lseek whence (AIOS-owned; the PAL maps to host SEEK_*). */
+#define AIOS_SEEK_SET    0
+#define AIOS_SEEK_CUR    1
+#define AIOS_SEEK_END    2
+
+/* File metadata returned by AIOS_SYS_FSTAT (the kernel fills it in the guest's memory). mode bits
+ * follow the conventional layout (matches host st_mode), so AIOS_S_IF* below decode the type. */
+struct aios_stat {
+    unsigned long long size;   /* file size in bytes */
+    unsigned int       mode;   /* type + permission bits */
+    unsigned int       _pad;
+};
+#define AIOS_S_IFMT      0xF000
+#define AIOS_S_IFREG     0x8000
+#define AIOS_S_IFDIR     0x4000
 
 /* AIOS open flags -- AIOS owns these values; the host PAL translates them to its native flags
  * (Linux O_*). The low 2 bits are the access mode. */

@@ -29,5 +29,7 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            ./aios-uk ./prog_wc /etc/hostname; echo "  [file exit $?]";
            printf "one two three\nfour five\n" | ./aios-uk ./prog_wc; echo "  [stdin exit $?]";
            echo "=== M3c.2: prog_bigalloc -- real mmap-backed malloc (kernel injects mmap) ===" &&
-           ./aios-uk ./prog_bigalloc; rc=$?; echo "  [exit $rc]";
+           ./aios-uk ./prog_bigalloc; echo "  [exit $?]";
+           echo "=== M3c.3: prog_tail -n 3 /etc/os-release (fstat + lseek) ===" &&
+           ./aios-uk ./prog_tail -n 3 /etc/os-release; rc=$?; echo "  [exit $rc]";
            test "$rc" = 0'
