@@ -21,6 +21,7 @@
 #define AIOS_SYS_MMAP    0x1005   /* (len)                 -> guest addr, or 0      */
 #define AIOS_SYS_FSTAT   0x1006   /* (fd, struct aios_stat*) -> 0, or -1           */
 #define AIOS_SYS_LSEEK   0x1007   /* (fd, offset, whence)  -> new offset, or -1    */
+#define AIOS_SYS_EXEC    0x1008   /* (path, argv, envp)    -> -1, or does not return (new image) */
 
 /* lseek whence (AIOS-owned; the PAL maps to host SEEK_*). */
 #define AIOS_SEEK_SET    0

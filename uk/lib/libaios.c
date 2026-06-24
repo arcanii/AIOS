@@ -26,6 +26,10 @@ int  aios_close(int fd) { return (int)asys(AIOS_SYS_CLOSE, fd, 0, 0); }
 long aios_lseek(int fd, long off, int whence) { return asys(AIOS_SYS_LSEEK, fd, off, whence); }
 int  aios_fstat(int fd, struct aios_stat *st) { return (int)asys(AIOS_SYS_FSTAT, fd, (long)st, 0); }
 void aios_exit(int code) { asys(AIOS_SYS_EXIT, code, 0, 0); for (;;) { } }
+long aios_execve(const char *path, char *const argv[], char *const envp[]) {
+    return asys(AIOS_SYS_EXEC, (long)path, (long)argv, (long)envp);
+}
+long aios_exec(const char *path, char *const argv[]) { return aios_execve(path, argv, environ); }
 
 /* --- string/memory --- */
 size_t strlen(const char *s) { size_t n = 0; while (s[n]) n++; return n; }
@@ -132,7 +136,11 @@ int printf(const char *fmt, ...) {
 
 /* --- runtime entry: _start lifts argc/argv off the stack, runs main, exits with its return --- */
 extern int main(int argc, char **argv);
-void __libaios_start(long argc, char **argv) { aios_exit(main((int)argc, argv)); }
+char **environ;                                   /* POSIX env; envp follows argv on the stack */
+void __libaios_start(long argc, char **argv) {
+    environ = argv + argc + 1;                    /* [argc][argv..][NULL][envp..] -> envp slot */
+    aios_exit(main((int)argc, argv));
+}
 
 __asm__(
     ".global _start\n"

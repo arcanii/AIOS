@@ -31,5 +31,10 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            echo "=== M3c.2: prog_bigalloc -- real mmap-backed malloc (kernel injects mmap) ===" &&
            ./aios-uk ./prog_bigalloc; echo "  [exit $?]";
            echo "=== M3c.3: prog_tail -n 3 /etc/os-release (fstat + lseek) ===" &&
-           ./aios-uk ./prog_tail -n 3 /etc/os-release; rc=$?; echo "  [exit $rc]";
+           ./aios-uk ./prog_tail -n 3 /etc/os-release; echo "  [exit $?]";
+           echo "=== M3d.1: prog_exec -- replace my image (AIOS_SYS_EXEC) ===" &&
+           ./aios-uk ./prog_exec ./prog_args one two; echo "  [exec->prog_args exit $?]";
+           ./aios-uk ./prog_exec /no/such/program; echo "  [exec-failure exit $?]";
+           echo "=== M3c.3 gate (prog_tail exit must be 0) ===" &&
+           ./aios-uk ./prog_tail -n 3 /etc/os-release >/dev/null; rc=$?; echo "  [exit $rc]";
            test "$rc" = 0'

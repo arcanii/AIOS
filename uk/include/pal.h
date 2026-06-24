@@ -55,6 +55,17 @@ size_t pal_guest_write(uint64_t gaddr, const void *src, size_t len);
  * while a guest syscall is being serviced (the guest is stopped). */
 uint64_t pal_guest_mmap(size_t len);
 
+/* Replace the current guest's program image with the AIOS program at guest pointer `gpath`, with
+ * argv/envp at guest pointers `gargv`/`genvp` (NULL-terminated arrays in the guest's own address
+ * space). Like pal_guest_mmap this is loader work and inherently a PAL concern (Linux injects a
+ * real execve; a future seL4 PAL parses the ELF and builds the address space). Returns 0 if the
+ * new image is now live (the kernel keeps dispatching -- the new image's first syscall traps as
+ * usual), or -1 on failure (the AIOS program sees -1 returned from its exec). Only valid while a
+ * guest syscall is being serviced (the guest is stopped); consumes that syscall's exit itself, so
+ * the kernel does NOT also call pal_guest_return. The kernel's fd table is untouched, so AIOS fds
+ * survive exec (POSIX semantics -- this is how a shell wires up redirections before exec). */
+int pal_guest_exec(uint64_t gpath, uint64_t gargv, uint64_t genvp);
+
 /* --- host-driver gateway --- */
 /* A backing object the host provides for a file/stream. Opaque to the AIOS kernel, which keeps
  * these in its own fd table and never assumes their representation (the Linux PAL uses a host

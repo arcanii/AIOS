@@ -35,6 +35,11 @@ long  aios_lseek(int fd, long off, int whence);
 int   aios_fstat(int fd, struct aios_stat *st);
 void  aios_exit(int code) __attribute__((noreturn));
 
+/* --- process: replace the current image (returns only on failure, like POSIX exec) --- */
+long  aios_execve(const char *path, char *const argv[], char *const envp[]);
+long  aios_exec(const char *path, char *const argv[]);   /* execve with the inherited environment */
+extern char **environ;                                    /* POSIX env, captured at _start */
+
 /* --- string / memory --- */
 size_t strlen(const char *s);
 int    strcmp(const char *a, const char *b);

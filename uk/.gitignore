@@ -1,10 +1,6 @@
-# Build artifacts (aarch64 Linux ELFs, produced by run.sh in the container)
-aios-uk
-guest_hello
-guest_fileio
-guest_cat
-prog_args
-prog_wc
-prog_bigalloc
-prog_tail
+# Build artifacts (aarch64 Linux ELFs, produced by run.sh in the container).
+# Anchored to uk/ root so the guest/*.c sources are never matched.
+/aios-uk
+/guest_*
+/prog_*
 *.o

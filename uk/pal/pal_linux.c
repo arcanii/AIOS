@@ -24,6 +24,7 @@
 #include <unistd.h>
 #include <sys/ptrace.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>        /* __NR_execve etc. for the host syscalls we inject */
 #include <sys/uio.h>
 #include <sys/wait.h>
 #include <linux/elf.h>          /* NT_PRSTATUS */
@@ -58,9 +59,11 @@ int pal_spawn_guest(const char *path, char *const argv[]) {
     if (waitpid(pid, &st, 0) < 0) return -1;     /* initial post-execv SIGTRAP stop */
     if (!WIFSTOPPED(st)) return -1;
     /* TRACESYSGOOD: syscall-stops arrive as SIGTRAP|0x80 (distinguishable from real SIGTRAPs).
-     * EXITKILL: if the AIOS kernel dies, the guest dies with it (no orphaned tracee). */
+     * EXITKILL: if the AIOS kernel dies, the guest dies with it (no orphaned tracee).
+     * TRACEEXEC: a successful injected execve reports a clean PTRACE_EVENT_EXEC stop (not an
+     * ambiguous bare SIGTRAP), so pal_guest_exec can tell success from failure. */
     ptrace(PTRACE_SETOPTIONS, pid, 0,
-           (void *)(PTRACE_O_TRACESYSGOOD | PTRACE_O_EXITKILL));
+           (void *)(PTRACE_O_TRACESYSGOOD | PTRACE_O_EXITKILL | PTRACE_O_TRACEEXEC));
     g_guest = pid;
     return 0;
 }
@@ -74,20 +77,40 @@ static int set_syscall_nr(int nr) {
     return ptrace(PTRACE_SETREGSET, g_guest, (void *)NT_ARM_SYSTEM_CALL, &io) == 0 ? 0 : -1;
 }
 
-/* Driver model: PTRACE_SYSCALL (not SYSEMU), strict entry/exit alternation. trap_next lands on a
- * syscall ENTRY; pal_guest_return / pal_guest_mmap consume the matching EXIT. AIOS syscall numbers
- * (>= 0x1000) are not real Linux syscalls, so if one runs it just returns -ENOSYS (harmless) and we
- * overwrite x0 with the real AIOS result at the exit. SYSCALL (vs SYSEMU) is what lets the kernel
- * INJECT a real syscall (mmap) by rewriting the number in place. */
+/* Is the guest stopped at a syscall ENTRY (vs an EXIT, or no syscall)? Linux >= 5.3 answers this
+ * directly via PTRACE_GET_SYSCALL_INFO, so the driver never has to ASSUME strict entry/exit
+ * alternation -- it just resumes past anything that is not an entry. That is what lets an injected
+ * syscall (mmap, execve) leave a stray exit/event stop behind without desynchronising dispatch:
+ * a successful execve, for instance, reports its own syscall-exit in the new image AFTER the
+ * exec-event stop; trap_next simply skips it and stops at the new program's first real entry. */
+#ifndef PTRACE_GET_SYSCALL_INFO
+#define PTRACE_GET_SYSCALL_INFO 0x420e
+#endif
+#ifndef PTRACE_SYSCALL_INFO_ENTRY
+#define PTRACE_SYSCALL_INFO_ENTRY 1
+#endif
+static int at_syscall_entry(void) {
+    unsigned char info[128];                          /* op is the first byte of the struct */
+    info[0] = 0;
+    ptrace(PTRACE_GET_SYSCALL_INFO, g_guest, (void *)sizeof info, info);
+    return info[0] == PTRACE_SYSCALL_INFO_ENTRY;
+}
+
+/* Driver model: PTRACE_SYSCALL (not SYSEMU). trap_next stops only at a genuine syscall ENTRY (it
+ * skips exits and event artifacts via at_syscall_entry); pal_guest_return / pal_guest_mmap consume
+ * the matching EXIT. AIOS syscall numbers (>= 0x1000) are not real Linux syscalls, so if one runs
+ * it just returns -ENOSYS (harmless) and we overwrite x0 with the real AIOS result at the exit.
+ * SYSCALL (vs SYSEMU) is what lets the kernel INJECT a real syscall (mmap/execve) in place. */
 int pal_guest_trap_next(pal_syscall_t *out, int *exit_code) {
     for (;;) {
-        if (ptrace(PTRACE_SYSCALL, g_guest, 0, 0) != 0) return -1;   /* -> next ENTRY */
+        if (ptrace(PTRACE_SYSCALL, g_guest, 0, 0) != 0) return -1;   /* -> next stop */
         int st;
         if (waitpid(g_guest, &st, 0) < 0) return -1;
         if (WIFEXITED(st))   { if (exit_code) *exit_code = WEXITSTATUS(st);     return 0; }
         if (WIFSIGNALED(st)) { if (exit_code) *exit_code = 128 + WTERMSIG(st);  return 0; }
         if (!WIFSTOPPED(st)) continue;
-        if (WSTOPSIG(st) != (SIGTRAP | 0x80)) continue;   /* signal-delivery stop -- ignore */
+        if (WSTOPSIG(st) != (SIGTRAP | 0x80)) continue;   /* signal-delivery / event stop -- ignore */
+        if (!at_syscall_entry()) continue;                /* skip syscall EXITs + injected artifacts */
         if (read_regs() != 0) return -1;
         out->nr = (uint64_t)g_regs.regs[8];
         for (int i = 0; i < 6; i++) out->arg[i] = (uint64_t)g_regs.regs[i];
@@ -188,4 +211,41 @@ uint64_t pal_guest_mmap(size_t len) {
     g_regs = saved;
     if (write_regs() != 0) return 0;
     return addr;
+}
+
+/* Replace the guest's image by rewriting the trapped AIOS_SYS_EXEC `svc` IN PLACE into a Linux
+ * execve. The guest already holds path/argv/envp as pointers into its own address space (the
+ * libaios wrapper put them in x0/x1/x2), so we just set them and dispatch __NR_execve. execve has
+ * no normal return on success: PTRACE_O_TRACEEXEC turns it into a PTRACE_EVENT_EXEC stop, after
+ * which the new image is live and its first svc traps like any other (the kernel loop keeps
+ * going). On failure execve returns -errno at a normal syscall exit; we restore the guest's regs
+ * with x0 = -1 so the AIOS caller sees the error. Called at the AIOS_SYS_EXEC ENTRY stop; consumes
+ * the matching exit/exec-event itself. */
+int pal_guest_exec(uint64_t gpath, uint64_t gargv, uint64_t genvp) {
+    struct user_pt_regs saved = g_regs;       /* needed only on the failure (returns) path */
+    g_regs.regs[0] = gpath;
+    g_regs.regs[1] = gargv;
+    g_regs.regs[2] = genvp;
+    if (write_regs() != 0) return -1;
+    if (set_syscall_nr(__NR_execve) != 0) return -1;
+
+    if (ptrace(PTRACE_SYSCALL, g_guest, 0, 0) != 0) return -1;   /* run execve */
+    int st;
+    if (waitpid(g_guest, &st, 0) < 0) return -1;
+
+    /* Success: the exec-event stop. The new image is loaded; leave the guest stopped here. The
+     * next pal_guest_trap_next resumes it, skips the execve's trailing exit stop, and lands on the
+     * new program's first real syscall entry. */
+    if (WIFSTOPPED(st) && (st >> 8) == (SIGTRAP | (PTRACE_EVENT_EXEC << 8)))
+        return 0;
+
+    /* Failure: a normal syscall-exit stop holding -errno. Restore the guest (the svc must look
+     * like it returned to the AIOS caller) and plant x0 = -1. */
+    if (WIFSTOPPED(st)) {
+        saved.regs[0] = (unsigned long long)-1;
+        g_regs = saved;
+        write_regs();
+        return -1;
+    }
+    return -1;                                /* guest died during execve */
 }

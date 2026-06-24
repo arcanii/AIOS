@@ -125,9 +125,11 @@ int aios_kernel_run(const char *guest_path, char *const guest_argv[]) {
         if (r == 0) return code;          /* guest exited (host-detected) */
         if (r < 0)  return -1;
 
-        /* mmap rewrites the guest's own syscall into a host mmap in place -- it consumes the
-         * syscall exit itself, so it does NOT go through pal_guest_return. */
+        /* mmap and exec rewrite the guest's own syscall in place (into a host mmap / execve) and
+         * consume the syscall exit themselves, so they do NOT go through pal_guest_return. exec
+         * either replaces the image (the loop keeps dispatching the new program) or plants -1. */
         if (sc.nr == AIOS_SYS_MMAP) { pal_guest_mmap((size_t)sc.arg[0]); continue; }
+        if (sc.nr == AIOS_SYS_EXEC) { pal_guest_exec(sc.arg[0], sc.arg[1], sc.arg[2]); continue; }
 
         uint64_t ret;
         switch (sc.nr) {
@@ -150,7 +152,7 @@ int main(int argc, char **argv) {
     /* The guest's argv is the kernel's argv shifted by one: guest argv[0] = the guest program. */
     char *const *guest_argv = (char *const *)&argv[1];
 
-    kputs("[aios-uk] AIOS userspace kernel -- M3 (loader+argv) (Linux/ptrace PAL)\n");
+    kputs("[aios-uk] AIOS userspace kernel -- M3d (process model: exec) (Linux/ptrace PAL)\n");
     kputs("[aios-uk] launching guest: ");
     kputs(guest);
     kputs("\n");
