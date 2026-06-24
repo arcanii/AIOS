@@ -127,6 +127,42 @@ static inline void doorbell(uint32_t n, uint32_t target) {
 #define TRB_SET_TYPE(t)   ((uint32_t)(t) << 10)
 #define TRB_CYCLE         (1u << 0)
 #define EVT_CC(trb2)      (((trb2) >> 24) & 0xFF)  /* completion code in status dword */
+
+/* v0.4.300 EXPERIMENT (docs/NEXT_20260612_vl805_dma_stall.md lead #1). The xHCI DMA pool is
+ * mapped NON-cacheable by default. Hypothesis: the VL805's periodic inbound DMA to a
+ * non-cacheable region collides with the A72 dsb;tlbi;dsb on the SCB fabric -> the ~10.8s
+ * stall quanta that wedge the USB keyboard. Build -DAIOS_XHCI_DMA_CACHEABLE=1 to map the pool
+ * CACHEABLE and do explicit NON-coherent maintenance instead (RPi4 PCIe does not snoop CPU
+ * caches): CLEAN every CPU-written structure the controller DMA-reads, INVALIDATE every
+ * controller-written structure the CPU reads -- the GENET/HDMI lesson
+ * [[feedback_hdmi_console_cacheable]]. DEFAULT OFF -> non-cacheable + both helpers are no-ops
+ * -> byte-identical to before. seL4 cache ops cannot cross a 4KB page, so loop per page; DMA
+ * structures are page-aligned (dma_page), so CPU-written and device-written data never share a
+ * cache line. HW-ONLY validatable (QEMU models no write-back cache). */
+#ifndef AIOS_XHCI_DMA_CACHEABLE
+#define AIOS_XHCI_DMA_CACHEABLE 0
+#endif
+#if AIOS_XHCI_DMA_CACHEABLE
+static inline void dma_clean(volatile void *va, uint32_t len) {   /* CPU -> device: push to PoC */
+    seL4_Word s = (seL4_Word)va, end = s + len;
+    while (s < end) {
+        seL4_Word pe = (s & ~(seL4_Word)0xFFF) + 0x1000, ce = pe < end ? pe : end;
+        seL4_ARM_VSpace_Clean_Data(seL4_CapInitThreadVSpace, s, ce);
+        s = ce;
+    }
+}
+static inline void dma_inval(volatile void *va, uint32_t len) {   /* device -> CPU: drop stale */
+    seL4_Word s = (seL4_Word)va, end = s + len;
+    while (s < end) {
+        seL4_Word pe = (s & ~(seL4_Word)0xFFF) + 0x1000, ce = pe < end ? pe : end;
+        seL4_ARM_VSpace_Invalidate_Data(seL4_CapInitThreadVSpace, s, ce);
+        s = ce;
+    }
+}
+#else
+static inline void dma_clean(volatile void *va, uint32_t len) { (void)va; (void)len; }
+static inline void dma_inval(volatile void *va, uint32_t len) { (void)va; (void)len; }
+#endif
 #define EVT_SLOT(trb3)    (((trb3) >> 24) & 0xFF)  /* slot id in control dword [31:24] */
 #define EVT_EPID(trb3)    (((trb3) >> 16) & 0x1F)  /* endpoint id (DCI) in transfer event [20:16] */
 #define CC_SUCCESS        1
@@ -198,6 +234,7 @@ static void handle_hub_changes(void);                                 /* Path B 
  * and advance ERDP. Returns 0 on an event, -1 if none pending. */
 static int evt_poll_once(uint32_t out[4]) {
     volatile uint32_t *trb = (volatile uint32_t *)(evt_ring + evt_deq * 16);
+    dma_inval(trb, 16);   /* the controller DMA-wrote this event TRB -- drop any stale cache line */
     uint32_t ctrl = trb[3];
     if ((ctrl & TRB_CYCLE) != evt_cycle) return -1;   /* not yet produced */
     out[0] = trb[0]; out[1] = trb[1]; out[2] = trb[2]; out[3] = ctrl;
@@ -271,6 +308,7 @@ static int cmd_submit(uint64_t param, uint32_t status, uint32_t type, uint32_t s
     trb[1] = (uint32_t)(param >> 32);
     trb[2] = status;
     trb[3] = TRB_SET_TYPE(type) | ((ep & 0x1F) << 16) | (slot << 24) | cmd_cycle;
+    dma_clean(trb, 16);   /* push the command TRB to PoC before the controller DMA-reads it */
     arch_dsb();
     if (++cmd_enq >= CMD_RING_TRBS - 1) cmd_enq = 0;  /* simple bound (no wrap in use) */
     doorbell(0, 0);
@@ -331,7 +369,8 @@ int xhci_dma_reserve(void) {
         dma_pool_pa = ga.error ? 0 : ga.paddr;
     }
     dma_pool_va = (uint8_t *)vspace_map_pages(&vspace, &fr.cptr, NULL, seL4_AllRights,
-                                1, seL4_LargePageBits, 0 /* non-cacheable */);
+                                1, seL4_LargePageBits,
+                                AIOS_XHCI_DMA_CACHEABLE /* 1=cacheable experiment, 0=non-cacheable */);
     if (!dma_pool_va) { AIOS_LOG_ERROR("xHCI DMA pool map failed"); return -1; }
     dma_pool_used = 0;
     int low = (dma_pool_pa + 0x200000ULL <= DMA_LIMIT);
@@ -544,12 +583,14 @@ static void ep0_enqueue(struct usb_dev *d, uint64_t param, uint32_t status, uint
     trb[1] = (uint32_t)(param >> 32);
     trb[2] = status;
     trb[3] = control | d->ep0_cycle;
+    dma_clean(trb, 16);   /* CPU -> device: EP0 TRB read by the controller */
     if (++d->ep0_enq == 255) {
         volatile uint32_t *link = (volatile uint32_t *)(d->ep0_ring + 255 * 16);
         link[0] = (uint32_t)d->ep0_ring_pa;
         link[1] = (uint32_t)(d->ep0_ring_pa >> 32);
         link[2] = 0;
         link[3] = TRB_SET_TYPE(TRB_LINK) | (1u << 1) /* Toggle Cycle */ | d->ep0_cycle;
+        dma_clean(link, 16);
         d->ep0_enq = 0;
         d->ep0_cycle ^= 1;
     }
@@ -568,6 +609,8 @@ static int control_transfer(struct usb_dev *d, uint8_t bmReqType, uint8_t bReq, 
         ep0_enqueue(d, data_pa, wLen, TRB_SET_TYPE(TRB_DATA) | (dir_in ? (1u << 16) : 0));
     int status_in = wLen ? !dir_in : 1;
     ep0_enqueue(d, 0, 0, TRB_SET_TYPE(TRB_STATUS) | (status_in ? (1u << 16) : 0) | (1u << 5) /* IOC */);
+    if (wLen && !dir_in)   /* CPU -> device: OUT data buffer the controller will DMA-read */
+        dma_clean(dma_pool_va + (data_pa - dma_pool_pa), wLen);
     arch_dsb();
     doorbell(d->slot, 1);   /* DCI 1 = EP0 */
     arch_dsb();
@@ -576,8 +619,11 @@ static int control_transfer(struct usb_dev *d, uint8_t bmReqType, uint8_t bReq, 
         /* Wait for THIS device's EP0 completion; the dispatcher delivers any other
          * device's interrupt-IN report that arrives meanwhile rather than confusing it
          * for ours. */
-        if (evt_dispatch(e, TRB_TRANSFER_EVT, d->slot, 1) == DISP_MATCH)
+        if (evt_dispatch(e, TRB_TRANSFER_EVT, d->slot, 1) == DISP_MATCH) {
+            if (wLen && dir_in)   /* device -> CPU: IN data (descriptor) the caller reads next */
+                dma_inval(dma_pool_va + (data_pa - dma_pool_pa), wLen);
             return (int)EVT_CC(e[2]);
+        }
     }
     return -1;
 }
@@ -707,6 +753,7 @@ static void arm_int_buf(struct usb_dev *d, uint32_t buf_idx) {
     trb[1] = (uint32_t)(pa >> 32);
     trb[2] = (uint32_t)d->rpt_len;                /* boot report length (8 kbd, 4 mouse) */
     trb[3] = TRB_SET_TYPE(TRB_NORMAL) | (1u << 5) /* IOC */ | d->int_cycle;
+    dma_clean(trb, 16);   /* CPU -> device: int-IN TRB (rpt buffer ptr) read by the controller */
     /* Wrap via a Link TRB at the last slot so the ring cycles indefinitely
      * (an input device runs forever -- without this it breaks after ~255 reports). */
     if (++d->int_enq == 255) {
@@ -715,6 +762,7 @@ static void arm_int_buf(struct usb_dev *d, uint32_t buf_idx) {
         link[1] = (uint32_t)(d->int_ring_pa >> 32);
         link[2] = 0;
         link[3] = TRB_SET_TYPE(TRB_LINK) | (1u << 1) /* Toggle Cycle */ | d->int_cycle;
+        dma_clean(link, 16);
         d->int_enq = 0;
         d->int_cycle ^= 1;
     }
@@ -899,6 +947,7 @@ static int kbd_try_deliver(uint32_t slot, uint32_t ep, uint32_t cc) {
                 return 1;
             }
             volatile uint8_t *src = d->rpt + bi * RPT_STRIDE;
+            dma_inval(src, RPT_STRIDE);   /* device -> CPU: the HID boot report just DMA'd in */
             uint8_t snap[8];
             for (int k = 0; k < 8; k++) snap[k] = src[k];
             d->int_proc++;
@@ -1001,6 +1050,7 @@ static int setup_hid(struct usb_dev *d) {
     ep_ctx[2] = (uint32_t)(d->int_ring_pa | 1);               /* TR dequeue | DCS */
     ep_ctx[3] = (uint32_t)(d->int_ring_pa >> 32);
     ep_ctx[4] = 8 | (d->int_mps << 16);                       /* avg TRB len | max ESIT */
+    dma_clean(d->in_ctx, 0x1000);   /* CPU -> device: input context read by Configure Endpoint */
     arch_dsb();
     uint32_t evt[4];
     cc = cmd_submit(d->in_ctx_pa, 0, TRB_CONFIG_EP, d->slot, 0, evt);
@@ -1299,6 +1349,7 @@ static int address_and_describe(struct usb_dev *d, uint32_t route, uint32_t root
     if (!d->dev_ctx || !d->in_ctx || !d->ep0_ring) return -1;
     d->ep0_enq = 0; d->ep0_cycle = 1;
     dcbaa[d->slot] = d->dev_ctx_pa;
+    dma_clean((void *)&dcbaa[d->slot], 8);   /* CPU -> device: DCBAA slot read by the controller */
 
     /* EP0 max packet: SS=512, HS=64 are fixed; LS=8; FS is unknown until we read the
      * descriptor, so start at 8 (the safe minimum) and correct it below. */
@@ -1315,6 +1366,7 @@ static int address_and_describe(struct usb_dev *d, uint32_t route, uint32_t root
     ep0_ctx[2] = (uint32_t)(d->ep0_ring_pa | 1);   /* TR dequeue ptr lo | DCS */
     ep0_ctx[3] = (uint32_t)(d->ep0_ring_pa >> 32);
     ep0_ctx[4] = 8;                                /* average TRB length */
+    dma_clean(d->in_ctx, 0x1000);   /* CPU -> device: input context read by Address Device */
     arch_dsb();
 
     cc = cmd_submit(d->in_ctx_pa, 0, TRB_ADDRESS_DEV, d->slot, 0, evt);
@@ -1331,6 +1383,7 @@ static int address_and_describe(struct usb_dev *d, uint32_t route, uint32_t root
     if (speed == 1 && real_mps && real_mps != mps) {  /* FS: fix EP0 MPS */
         icc[0] = 0; icc[1] = (1u << 1);               /* A1 = EP0 */
         ep0_ctx[1] = (4u << 3) | (3u << 1) | (real_mps << 16);
+        dma_clean(d->in_ctx, 0x1000);   /* CPU -> device: input context read by Evaluate Context */
         arch_dsb();
         cmd_submit(d->in_ctx_pa, 0, TRB_EVAL_CONTEXT, d->slot, 0, evt);
         mps = real_mps;
@@ -1430,6 +1483,7 @@ static int setup_hub_int(struct usb_dev *hub) {
     ep_ctx[2] = (uint32_t)(hub->int_ring_pa | 1);
     ep_ctx[3] = (uint32_t)(hub->int_ring_pa >> 32);
     ep_ctx[4] = 8 | (hub->int_mps << 16);
+    dma_clean(hub->in_ctx, 0x1000);   /* CPU -> device: input context read by Configure Endpoint */
     arch_dsb();
     uint32_t evt[4];
     cc = cmd_submit(hub->in_ctx_pa, 0, TRB_CONFIG_EP, hub->slot, 0, evt);
@@ -2162,10 +2216,12 @@ static void handle_hub_changes(void) {
          * end of this hub, so the HW cannot overwrite rpt mid-reconcile; a port that changes
          * during the reconcile is latched by the hub and reported by the next re-armed transfer. */
         uint32_t changed = 0;
+        dma_inval(hub->rpt, (uint32_t)hub->rpt_len);   /* device -> CPU: read the hub status bitmap */
         for (int b = 0; b < hub->rpt_len && b < 4; b++) {
             changed |= (uint32_t)hub->rpt[b] << (b * 8);
             hub->rpt[b] = 0;
         }
+        dma_clean(hub->rpt, (uint32_t)hub->rpt_len);   /* flush the cleared bytes so no dirty line clobbers the next DMA-in */
         arch_dsb();
         if (changed) {
             uint64_t buf_pa;
@@ -2276,6 +2332,7 @@ int xhci_init(void) {
                 arr[i] = bpa;
             }
             dcbaa[0] = arr_pa;
+            dma_clean((void *)arr, 0x1000);   /* CPU -> device: scratchpad array read by the controller */
         }
         AIOS_LOG_INFO_V("xHCI scratchpad buffers=", spb);
     }
@@ -2292,6 +2349,7 @@ int xhci_init(void) {
     ir0_w32(IR0_ERSTSZ, 1);
     ir0_w64(IR0_ERDP, evt_ring_pa);
     ir0_w64(IR0_ERSTBA, erst_pa);
+    dma_clean((void *)dcbaa, 0x1000);   /* CPU -> device: DCBAA + ERST share this page (erst=dcbaa+2048) */
     arch_dsb();
 
     /* Run. */

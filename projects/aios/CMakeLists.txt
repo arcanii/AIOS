@@ -117,6 +117,11 @@ option(AIOS_NETD "Spawn the isolated netd process (DESIGN_NETD)" ON)
 # DESIGN_NETD s8 degrade-and-continue path (a wedged netd init must not brick boot).
 # Default OFF; turn ON only in a throwaway build (e.g. build-netd-degrade).
 option(AIOS_NETD_TEST_DEGRADE "netd skips DEVD_READY (degrade-path gate)" OFF)
+# v0.4.300 EXPERIMENT: map the xHCI DMA pool cacheable + explicit clean/invalidate instead of
+# non-cacheable, to test whether the VL805 inbound-DMA-vs-TLBI collision (the ~10.8s keyboard
+# stall quanta, docs/NEXT_20260612_vl805_dma_stall.md) goes away. Default OFF (non-cacheable,
+# byte-identical). HW-ONLY validatable. Build a throwaway tree with -DAIOS_XHCI_DMA_CACHEABLE=ON.
+option(AIOS_XHCI_DMA_CACHEABLE "xHCI DMA pool cacheable + maintenance (VL805 stall experiment)" OFF)
 
 # Boot services only in CPIO (launched before filesystem)
 set(BOOT_APPS tty_server auth_server)
@@ -220,6 +225,10 @@ target_compile_definitions(aios_root PRIVATE ${AIOS_PLATFORM})
 if(AIOS_NETD)
     target_compile_definitions(aios_root PRIVATE AIOS_NETD)
     message(STATUS "AIOS_NETD=ON: bundling + spawning the isolated netd skeleton (DESIGN_NETD Stage 2)")
+endif()
+if(AIOS_XHCI_DMA_CACHEABLE)
+    target_compile_definitions(aios_root PRIVATE AIOS_XHCI_DMA_CACHEABLE=1)
+    message(STATUS "AIOS_XHCI_DMA_CACHEABLE=ON: xHCI DMA pool cacheable + clean/invalidate (VL805 stall experiment)")
 endif()
 target_link_options(aios_root PRIVATE -Wl,--no-copy-dt-needed-entries)
 
