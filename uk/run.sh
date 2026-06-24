@@ -21,6 +21,8 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            ./aios-uk ./guest_fileio; echo "  [exit $?]";
            echo "=== host shell confirms the AIOS program wrote a REAL file: ===";
            ls -l /tmp/aios_m2.txt && cat /tmp/aios_m2.txt;
-           echo "=== M3: guest_cat /etc/hostname (real cat, filename from argv) ===" &&
-           ./aios-uk ./guest_cat /etc/hostname; rc=$?; echo "  [exit $rc]";
+           echo "=== M3a: guest_cat /etc/hostname (real cat, filename from argv) ===" &&
+           ./aios-uk ./guest_cat /etc/hostname; echo "  [exit $?]";
+           echo "=== M3b: prog_args (ordinary C: main/printf/malloc/argv via libaios) ===" &&
+           ./aios-uk ./prog_args first second; rc=$?; echo "  [exit $rc]";
            test "$rc" = 0'
