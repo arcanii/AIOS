@@ -908,6 +908,16 @@ static int procfs_read(void *ctx, const char *path, char *buf, int bufsize) {
         int sr = shmring_cmd(path + 7, buf, bufsize);
         if (sr < 0) return -1;
         w = sr;
+    } else if (path[0] == 'p' && path[1] == 'w' && path[2] == 'r' && path[3] == 'i'
+            && path[4] == 't' && path[5] == 'e' && path[6] == 'b' && path[7] == 'u'
+            && path[8] == 'l' && path[9] == 'k') {
+        /* /proc/pwritebulk[.0|.1] -- v0.4.298 bulk file-write kill switch
+         * (src/servers/pipe_server.c). .1 routes large file writes through
+         * PIPE_PWRITE_BULK (page-bounce + vfs_pwrite), .0 the legacy FS_PWRITE
+         * loop (default). HW-soak gated like shmring. */
+        int pb = pwritebulk_cmd(path + 10, buf, bufsize);
+        if (pb < 0) return -1;
+        w = pb;
     } else if (path[0] == 'v' && path[1] == '3' && path[2] == 'd') {
         /* /proc/v3d -- V3D GPU bring-up probe (impl src/gpu/v3d.c). path[1]=='3'
          * disambiguates from /proc/version and /proc/vka. cat /proc/v3d[.power[.N]

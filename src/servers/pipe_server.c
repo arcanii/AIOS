@@ -165,6 +165,33 @@ int shmring_cmd(const char *args, char *buf, int bufsize) {
         g_ring_push, g_ring_pull, g_ring_wake, g_ring_park);
 }
 
+/* v0.4.298 bulk file write (PIPE_PWRITE_BULK + /proc/pwritebulk). Default OFF: the
+ * page-bounce shares a frame across vspaces (cacheable both ends via file_bounce_map,
+ * the SAME proven mapping as PIPE_MSYNC), coherent on the A72 by construction but
+ * soak-gated like the SHM ring -- QEMU cannot model a cacheable mismatch. */
+volatile int g_pwrite_bulk = 0;
+/* Observability (cat /proc/pwritebulk): calls served, total bytes written, pages the
+ * server could not bounce-map (caller page not resident -> client legacy fallback),
+ * and denials (a non-root write to /etc or /bin). */
+static unsigned long g_bulk_calls, g_bulk_bytes, g_bulk_mapfail, g_bulk_denied;
+
+int pwritebulk_cmd(const char *args, char *buf, int bufsize) {
+    if (args[0] == '.' && (args[1] == '0' || args[1] == '1'))
+        g_pwrite_bulk = (args[1] == '1');
+    return snprintf(buf, bufsize,
+        "pwritebulk: enabled=%d  calls=%lu bytes=%lu mapfail=%lu denied=%lu\n",
+        g_pwrite_bulk, g_bulk_calls, g_bulk_bytes, g_bulk_mapfail, g_bulk_denied);
+}
+
+/* Mirror fs_check_path_write's policy (fs_server.c) for the direct-vfs_pwrite bulk
+ * path, which bypasses the FS server's fs_badge check: a non-root caller may not
+ * write under /etc or /bin. Same authority the legacy FS_PWRITE path enforces. */
+static int bulk_path_protected(const char *p) {
+    if (p[0]=='/' && p[1]=='e' && p[2]=='t' && p[3]=='c' && (p[4]=='/'||p[4]==0)) return 1;
+    if (p[0]=='/' && p[1]=='b' && p[2]=='i' && p[3]=='n' && (p[4]=='/'||p[4]==0)) return 1;
+    return 0;
+}
+
 static inline int pipe_is_ring(int pi) {
     return pi >= 0 && pi < MAX_PIPES && pipe_ring[pi].armed && pipe_ring[pi].valid;
 }
@@ -2930,6 +2957,73 @@ void pipe_server_fn(void *arg0, void *arg1, void *ipc_buf) {
             seL4_SetMR(0, 0);
             seL4_SetMR(1, (seL4_Word)written);
             seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 2));
+            break;
+        }
+        case PIPE_PWRITE_BULK: {
+            /* v0.4.298: bulk file write. Map the caller's source buffer pages into
+             * the server (file_bounce_map -- the SAME cacheable bounce PIPE_MSYNC
+             * uses) and vfs_pwrite them, replacing the ~800B/FS_PWRITE MR-packed loop
+             * for large writes. MR0=buf vaddr, MR1=len, MR2=file offset, MR3=path_len,
+             * MR4+=path. Reply MR0 = bytes written (>=0), -38 (-ENOSYS) when disabled
+             * (client falls back + caches off), -22 (-EINVAL) on bad args, -1 (EPERM)
+             * on a denied protected-path write. Gated by g_pwrite_bulk, default OFF. */
+            if (!g_pwrite_bulk) {
+                seL4_SetMR(0, (seL4_Word)-38 /* -ENOSYS: feature off */);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            int ci = (int)badge - 1;
+            uintptr_t va = (uintptr_t)seL4_GetMR(0);
+            int len = (int)seL4_GetMR(1);
+            long foff = (long)seL4_GetMR(2);
+            int pl = (int)seL4_GetMR(3);
+            char fpath[128];
+            int fi = 0;
+            for (int m = 4; fi < pl && fi < 127; m++) {
+                seL4_Word w = seL4_GetMR(m);
+                for (int b = 0; b < 8 && fi < pl && fi < 127; b++)
+                    fpath[fi++] = (char)((w >> (b * 8)) & 0xFF);
+            }
+            fpath[fi] = 0;
+            if (ci < 0 || ci >= MAX_ACTIVE_PROCS || !active_procs[ci].active
+                || len <= 0 || fi == 0 || foff < 0) {
+                seL4_SetMR(0, (seL4_Word)-22 /* -EINVAL */);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            if (active_procs[ci].uid != 0 && bulk_path_protected(fpath)) {
+                g_bulk_denied++;
+                seL4_SetMR(0, (seL4_Word)-1 /* EPERM */);
+                seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
+                break;
+            }
+            /* Walk the source buffer page by page. The first page may start mid-page
+             * (buf is arbitrary, unlike PIPE_MSYNC's always-page-aligned mmap base);
+             * later pages start on their boundary. A page the caller has not faulted
+             * in cannot be bounce-mapped -- stop and report the prefix written so the
+             * client finishes the tail via its legacy FS_PWRITE loop. */
+            int written = 0;
+            uintptr_t cur = va;
+            uintptr_t bend = va + (uintptr_t)len;
+            while (cur < bend) {
+                uintptr_t page_va = cur & ~(uintptr_t)(PAGE_SIZE - 1);
+                int in_off = (int)(cur - page_va);
+                int pg_len = (int)PAGE_SIZE - in_off;
+                if ((uintptr_t)pg_len > bend - cur) pg_len = (int)(bend - cur);
+                file_bounce_t fb = file_bounce_map(ci, page_va);
+                if (!fb.ok) { g_bulk_mapfail++; break; }
+                int wr = vfs_pwrite(fpath, (int)(foff + (long)(cur - va)),
+                                    (char *)fb.rptr + in_off, pg_len);
+                file_bounce_unmap(&fb);
+                if (wr <= 0) break;
+                written += wr;
+                cur += (uintptr_t)wr;
+                if (wr < pg_len) break;   /* short disk write -> stop, report prefix */
+            }
+            g_bulk_calls++;
+            g_bulk_bytes += (unsigned long)written;
+            seL4_SetMR(0, (seL4_Word)written);
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 1));
             break;
         }
         case PIPE_DUP_REFS: {

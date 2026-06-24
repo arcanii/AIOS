@@ -78,6 +78,7 @@
 #define PIPE_MAP_RING    91 /* map the SPSC SHM-ring frame into the caller (MR1: dir 0=read, 1=write) */
 #define PIPE_RING_WAKE   92 /* writer asks the server to wake a reader parked on an empty ring */
 #define PIPE_MMAP_ANON_LAZY 93 /* v0.4.295: reserve a demand-paged anonymous range (zero-fill on fault) */
+#define PIPE_PWRITE_BULK 94 /* v0.4.298: map the caller's source pages + vfs_pwrite them (bulk file write) */
 
 /* ---- NET IPC labels (90-109) -- canonical defs in aios/net_proto.h.
  * v0.4.229 (netd Stage 0): factored out so the in-root net server and the
@@ -416,6 +417,14 @@ int  pincore_cmd(const char *args, char *buf, int bufsize);
  * /proc/shmring.1 arms it for pipes created afterwards, .0 disarms. */
 extern volatile int g_shm_ring;
 int  shmring_cmd(const char *args, char *buf, int bufsize);
+
+/* v0.4.298 bulk file write: PIPE_PWRITE_BULK maps the caller's source buffer pages
+ * into pipe_server and vfs_pwrites them directly, replacing the ~800B/FS_PWRITE
+ * MR-packed loop for large writes (tcc linker output, cp). Ships DEFAULT OFF -- it
+ * shares a frame across vspaces (cacheable both ends, like PIPE_MSYNC) and the A72
+ * coherency needs real-HW soak. /proc/pwritebulk.1 arms it, .0 disarms. */
+extern volatile int g_pwrite_bulk;
+int  pwritebulk_cmd(const char *args, char *buf, int bufsize);
 
 int do_fork(int parent_idx);
 void wait_init(void);

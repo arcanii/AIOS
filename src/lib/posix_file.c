@@ -32,6 +32,43 @@ static void stdout_request_wshm(void) {
     stdout_wshm_pid = v ? stdout_pipe_id : -1;
 }
 
+/* ===================== v0.4.298: bulk file write fast path =====================
+ * One PIPE_PWRITE_BULK Call has pipe_server page-bounce the caller's source buffer
+ * and vfs_pwrite it, replacing ceil(count/800) MR-packed FS_PWRITE round-trips for
+ * a large file write (tcc linker output, cp). Server-gated by /proc/pwritebulk
+ * (default OFF -> reply -ENOSYS -> fall back to the legacy loop, cached in
+ * bulk_pwrite_state so a disabled box probes at most ONCE per process image -> the
+ * default path is steady-state byte-identical). Returns bytes written (>0), or 0 to
+ * tell the caller to use its legacy loop (feature off, too small, or a soft failure
+ * like EPERM / an unmappable source page). Never negative. */
+#define PIPE_PWRITE_BULK_L 94
+#define BULK_PWRITE_MIN    4096    /* below this the legacy MR loop is already cheap */
+#define BULK_PWRITE_CHUNK  65536   /* cap per IPC so pipe_server is not held for a whole multi-MB write */
+static int bulk_pwrite_state = 0;  /* 0 unknown, 1 enabled, -1 disabled (don't re-probe) */
+
+static long aios_bulk_pwrite(const char *path, int offset, const char *src, size_t count) {
+    if (count < BULK_PWRITE_MIN || offset < 0 || !pipe_ep || bulk_pwrite_state < 0)
+        return 0;
+    if (count > BULK_PWRITE_CHUNK) count = BULK_PWRITE_CHUNK;  /* caller loops the rest */
+    int pl = str_len(path);
+    if (pl <= 0 || pl > 127) return 0;
+    seL4_SetMR(0, (seL4_Word)src);          /* server reads our pages by vaddr */
+    seL4_SetMR(1, (seL4_Word)count);
+    seL4_SetMR(2, (seL4_Word)offset);
+    seL4_SetMR(3, (seL4_Word)pl);
+    int mr = 4;
+    seL4_Word w = 0;
+    for (int i = 0; i < pl; i++) {
+        w |= ((seL4_Word)(uint8_t)path[i]) << ((i % 8) * 8);
+        if (i % 8 == 7 || i == pl - 1) { seL4_SetMR(mr++, w); w = 0; }
+    }
+    seL4_Call(pipe_ep, seL4_MessageInfo_new(PIPE_PWRITE_BULK_L, 0, 0, mr));
+    long r = (long)seL4_GetMR(0);
+    if (r == -ENOSYS) { bulk_pwrite_state = -1; return 0; }  /* off -> legacy, cached */
+    bulk_pwrite_state = 1;
+    return r > 0 ? r : 0;   /* EPERM / soft-fail (<=0) -> caller falls back to legacy */
+}
+
 /* ===================== v0.4.258: direct SPSC SHM-ring pipes =====================
  *
  * When a pipe was armed in ring mode (/proc/shmring) the writer and reader move
@@ -835,6 +872,16 @@ long aios_sys_write(va_list ap) {
             if (rf->path[0] && fs_ep_cap) {
                 const char *src = (const char *)buf;
                 size_t total = 0;
+                /* v0.4.298: bulk fast path for a large `cmd > file` redirect. */
+                if (!rf->is_append) {
+                    while (total < count) {
+                        long br = aios_bulk_pwrite(rf->path, rf->pos, src + total, count - total);
+                        if (br <= 0) break;
+                        total += (size_t)br;
+                        rf->pos += (int)br;
+                        if (rf->pos > rf->size) rf->size = rf->pos;
+                    }
+                }
                 while (total < count) {
                     int chunk = (int)(count - total);
                     if (chunk > 800) chunk = 800;
@@ -936,6 +983,18 @@ long aios_sys_write(va_list ap) {
             /* v0.4.70: Write directly to disk via FS_PWRITE */
             const char *src = (const char *)buf;
             size_t total = 0;
+            /* v0.4.298: bulk fast path -- page-bounce the source in pipe_server
+             * (one IPC per 64KB vs ceil(count/800) FS_PWRITE round-trips). O_APPEND
+             * stays on the legacy loop (its per-chunk f->size offset bookkeeping). */
+            if (!f->is_append) {
+                while (total < count) {
+                    long br = aios_bulk_pwrite(f->path, f->pos, src + total, count - total);
+                    if (br <= 0) break;
+                    total += (size_t)br;
+                    f->pos += (int)br;
+                    if (f->pos > f->size) f->size = f->pos;
+                }
+            }
             while (total < count) {
                 int chunk = (int)(count - total);
                 if (chunk > 800) chunk = 800;
@@ -1417,6 +1476,13 @@ long aios_sys_pwrite64(va_list ap) {
         if (!f->is_dir && f->path[0] && fs_ep_cap) {
             const char *s = (const char *)buf;
             size_t total = 0;
+            /* v0.4.298: bulk fast path -- explicit offset, no append ambiguity. */
+            while (total < count) {
+                long br = aios_bulk_pwrite(f->path, (int)(offset + (off_t)total),
+                                           s + total, count - total);
+                if (br <= 0) break;
+                total += (size_t)br;
+            }
             while (total < count) {
                 int chunk = (int)(count - total);
                 if (chunk > 800) chunk = 800;  /* keep MR count under the 127 cap */
