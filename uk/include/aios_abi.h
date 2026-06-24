@@ -22,6 +22,14 @@
 #define AIOS_SYS_FSTAT   0x1006   /* (fd, struct aios_stat*) -> 0, or -1           */
 #define AIOS_SYS_LSEEK   0x1007   /* (fd, offset, whence)  -> new offset, or -1    */
 #define AIOS_SYS_EXEC    0x1008   /* (path, argv, envp)    -> -1, or does not return (new image) */
+#define AIOS_SYS_FORK    0x1009   /* ()                    -> child pid (parent), 0 (child), -1   */
+#define AIOS_SYS_WAIT    0x100A   /* (pid, int *status, flags) -> reaped pid, or -1 (no children) */
+
+/* AIOS_SYS_WAIT: pid selector + the wait status it stores via *status. pid == -1 waits for ANY
+ * child; a positive pid waits for that child. The status encodes a normal exit as
+ * (exit_code & 0xff) << 8 -- AIOS_WEXITSTATUS decodes it (a POSIX-shaped subset; signals later). */
+#define AIOS_WAIT_ANY        ((unsigned long)-1)
+#define AIOS_WEXITSTATUS(s)  (((s) >> 8) & 0xff)
 
 /* lseek whence (AIOS-owned; the PAL maps to host SEEK_*). */
 #define AIOS_SEEK_SET    0

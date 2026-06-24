@@ -30,6 +30,11 @@ long aios_execve(const char *path, char *const argv[], char *const envp[]) {
     return asys(AIOS_SYS_EXEC, (long)path, (long)argv, (long)envp);
 }
 long aios_exec(const char *path, char *const argv[]) { return aios_execve(path, argv, environ); }
+long aios_fork(void) { return asys(AIOS_SYS_FORK, 0, 0, 0); }
+long aios_wait(int *status) { return asys(AIOS_SYS_WAIT, (long)AIOS_WAIT_ANY, (long)status, 0); }
+long aios_waitpid(long pid, int *status, int flags) {
+    return asys(AIOS_SYS_WAIT, pid, (long)status, flags);
+}
 
 /* --- string/memory --- */
 size_t strlen(const char *s) { size_t n = 0; while (s[n]) n++; return n; }

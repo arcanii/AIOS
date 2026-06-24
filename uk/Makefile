@@ -24,7 +24,8 @@ PROG_CFLAGS = $(GUEST_CFLAGS) -Ilib
 LIBAIOS = lib/libaios.c
 
 .PHONY: all run clean
-all: aios-uk guest_hello guest_fileio guest_cat prog_args prog_wc prog_bigalloc prog_tail prog_exec
+all: aios-uk guest_hello guest_fileio guest_cat prog_args prog_wc prog_bigalloc prog_tail prog_exec \
+     prog_fork prog_spawn
 
 aios-uk: $(KERNEL_SRC) include/pal.h include/aios_abi.h
 	$(CC) $(KERNEL_CFLAGS) -o $@ $(KERNEL_SRC)
@@ -53,8 +54,15 @@ prog_tail: guest/prog_tail.c $(LIBAIOS) lib/libaios.h include/aios_abi.h
 prog_exec: guest/prog_exec.c $(LIBAIOS) lib/libaios.h include/aios_abi.h
 	$(CC) $(PROG_CFLAGS) -o $@ guest/prog_exec.c $(LIBAIOS)
 
+prog_fork: guest/prog_fork.c $(LIBAIOS) lib/libaios.h include/aios_abi.h
+	$(CC) $(PROG_CFLAGS) -o $@ guest/prog_fork.c $(LIBAIOS)
+
+prog_spawn: guest/prog_spawn.c $(LIBAIOS) lib/libaios.h include/aios_abi.h
+	$(CC) $(PROG_CFLAGS) -o $@ guest/prog_spawn.c $(LIBAIOS)
+
 run: all
 	./aios-uk ./prog_tail -n 3 /etc/os-release
 
 clean:
-	rm -f aios-uk guest_hello guest_fileio guest_cat prog_args prog_wc prog_bigalloc prog_tail prog_exec
+	rm -f aios-uk guest_hello guest_fileio guest_cat prog_args prog_wc prog_bigalloc prog_tail \
+	      prog_exec prog_fork prog_spawn

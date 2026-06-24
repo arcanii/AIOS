@@ -23,48 +23,75 @@ typedef struct {
     uint64_t arg[6];    /* arguments                                                       */
 } pal_syscall_t;
 
-/* --- guest world lifecycle --- */
+/* A guest-process handle. Opaque to the AIOS kernel, which keys its process table by it and never
+ * assumes its representation (the Linux PAL uses the tracee pid; a future seL4 PAL a TCB cap).
+ * Positive when valid; PAL_PID_NONE otherwise. */
+typedef int pal_pid_t;
+#define PAL_PID_NONE ((pal_pid_t)-1)
 
-/* Load + start the AIOS program at `path` under the host trap mechanism, with `argv` as the
- * program's argument vector (argv[0] = the program, NULL-terminated). Returns 0 on success. */
-int pal_spawn_guest(const char *path, char *const argv[]);
+/* --- guest world lifecycle (multi-process) ---
+ *
+ * The kernel runs MANY guests. The PAL no longer holds a single global guest: every primitive is
+ * keyed by a pal_pid_t. The loop is "wait for the next event from ANY guest (pal_guest_next), then
+ * service + resume THAT guest". Resume is owned by pal_guest_return / pal_guest_resume; waiting is
+ * owned by pal_guest_next -- decoupled, the standard multi-tracee shape. A future seL4 PAL keeps
+ * the same contract over real process objects; the kernel above does not change. */
 
-/* Block until the guest's next syscall, or its exit. Returns:
- *   1  a syscall trapped  -> *out filled (the syscall is NOT executed by the host kernel)
- *   0  the guest exited   -> *exit_code set
- *  -1  error                                                                                */
-int pal_guest_trap_next(pal_syscall_t *out, int *exit_code);
+/* Load + start the AIOS program at `path` (argv NULL-terminated, argv[0] = the program). Returns
+ * the new guest's handle, or PAL_PID_NONE. The guest is stopped at its entry: the kernel registers
+ * it, then pal_guest_resume()s it to set it running toward its first syscall. */
+pal_pid_t pal_guest_spawn(const char *path, char *const argv[]);
 
-/* Set the value the guest sees returned from the syscall just trapped, and resume it. */
-int pal_guest_return(uint64_t retval);
+/* Wait for the next event from ANY live guest. Skips internal artifacts (syscall exits, the stray
+ * stops injection leaves behind) and re-injects real signals so a crashing guest dies. Returns:
+ *   1  a syscall trapped on *who   -> *sc filled (NOT executed by the host); *who is at its entry
+ *   0  *who exited                 -> *exit_code set (8-bit, POSIX-shaped)
+ *  -1  no live guests / error                                                                   */
+int pal_guest_next(pal_pid_t *who, pal_syscall_t *sc, int *exit_code);
+
+/* Set the value `who` sees returned from the syscall it is stopped at, and resume it toward its
+ * next syscall. Valid only when `who` is stopped at a syscall ENTRY (a normal trapped syscall, or
+ * a parent parked in wait that the kernel is now waking). */
+int pal_guest_return(pal_pid_t who, uint64_t retval);
+
+/* Resume `who` without setting a return value -- for the inject primitives below (mmap/exec/fork),
+ * which place the guest's result themselves, and to start a freshly spawned guest. */
+int pal_guest_resume(pal_pid_t who);
 
 /* --- guest memory --- */
 
-/* Copy `len` bytes from the guest address space at `gaddr` into `dst`. Returns bytes copied
- * (0 on failure). The AIOS kernel uses this to bounce syscall buffers out of the guest. */
-size_t pal_guest_read(uint64_t gaddr, void *dst, size_t len);
+/* Copy `len` bytes out of / into guest `who`'s address space at `gaddr`. Returns bytes copied (0
+ * on failure). The kernel bounces syscall buffers out, and writes results (read data, stat, wait
+ * status) back -- including into a DIFFERENT guest than the one currently trapped (e.g. delivering
+ * a wait status into a parked parent), which is why these are pid-keyed. */
+size_t pal_guest_read (pal_pid_t who, uint64_t gaddr, void *dst, size_t len);
+size_t pal_guest_write(pal_pid_t who, uint64_t gaddr, const void *src, size_t len);
 
-/* Copy `len` bytes from `src` INTO the guest address space at `gaddr`. Returns bytes copied
- * (0 on failure). Used to return syscall results (e.g. read data) back into the guest. */
-size_t pal_guest_write(uint64_t gaddr, const void *src, size_t len);
+/* Grow guest `who`'s address space by `len` bytes of fresh anonymous memory; returns the guest
+ * address, or 0. The Linux PAL injects a real mmap into the (stopped) guest; a future seL4 PAL
+ * maps frames via caps. Places the result in the guest itself; the kernel then pal_guest_resume()s.
+ * Only valid while `who` is stopped servicing its mmap syscall. */
+uint64_t pal_guest_mmap(pal_pid_t who, size_t len);
 
-/* Grow the guest's address space by `len` bytes of fresh anonymous memory; returns the guest
- * address of the new region, or 0 on failure. The host mechanism is its own business: the Linux
- * PAL injects a real mmap into the (stopped) guest; a future seL4 PAL maps frames via caps. The
- * AIOS kernel calls this to back the guest's allocator -- it stays host-agnostic. Only valid
- * while a guest syscall is being serviced (the guest is stopped). */
-uint64_t pal_guest_mmap(size_t len);
+/* Replace guest `who`'s program image with the AIOS program at guest pointer `gpath` (argv/envp at
+ * guest pointers, NULL-terminated arrays in `who`'s own address space). Loader work, inherently a
+ * PAL concern (Linux injects execve; a future seL4 PAL parses the ELF + builds the address space).
+ * Returns 0 if the new image is live (the kernel pal_guest_resume()s it -- its first syscall traps
+ * as usual), or -1 on failure (the guest's result is set to -1). The kernel's fd table for `who`
+ * is untouched, so AIOS fds survive exec (POSIX -- how a shell wires up redirections before exec). */
+int pal_guest_exec(pal_pid_t who, uint64_t gpath, uint64_t gargv, uint64_t genvp);
 
-/* Replace the current guest's program image with the AIOS program at guest pointer `gpath`, with
- * argv/envp at guest pointers `gargv`/`genvp` (NULL-terminated arrays in the guest's own address
- * space). Like pal_guest_mmap this is loader work and inherently a PAL concern (Linux injects a
- * real execve; a future seL4 PAL parses the ELF and builds the address space). Returns 0 if the
- * new image is now live (the kernel keeps dispatching -- the new image's first syscall traps as
- * usual), or -1 on failure (the AIOS program sees -1 returned from its exec). Only valid while a
- * guest syscall is being serviced (the guest is stopped); consumes that syscall's exit itself, so
- * the kernel does NOT also call pal_guest_return. The kernel's fd table is untouched, so AIOS fds
- * survive exec (POSIX semantics -- this is how a shell wires up redirections before exec). */
-int pal_guest_exec(uint64_t gpath, uint64_t gargv, uint64_t genvp);
+/* Fork guest `parent` (stopped at its fork syscall): create a child guest that is a copy of the
+ * parent's address space, now also traced. The Linux PAL injects a real clone; a future seL4 PAL
+ * copies the VSpace. Places the fork result in each guest (child pid in the parent, 0 in the
+ * child); the kernel registers the child + pal_guest_resume()s BOTH. Returns the child handle, or
+ * PAL_PID_NONE on failure (the parent's result is set to -1; the kernel resumes it). */
+pal_pid_t pal_guest_fork(pal_pid_t parent);
+
+/* Terminate guest `who` with exit status `code` (the Linux PAL injects exit_group; a future seL4
+ * PAL destroys the process). `who`'s subsequent exit surfaces through pal_guest_next as event 0,
+ * which drives the kernel's reap / wake-the-parent bookkeeping. */
+int pal_guest_exit(pal_pid_t who, int code);
 
 /* --- host-driver gateway --- */
 /* A backing object the host provides for a file/stream. Opaque to the AIOS kernel, which keeps

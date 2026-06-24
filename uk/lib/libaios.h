@@ -40,6 +40,12 @@ long  aios_execve(const char *path, char *const argv[], char *const envp[]);
 long  aios_exec(const char *path, char *const argv[]);   /* execve with the inherited environment */
 extern char **environ;                                    /* POSIX env, captured at _start */
 
+/* --- process: fork / wait (the shell core: fork, child exec, parent wait) --- */
+long  aios_fork(void);                       /* -> child pid (parent), 0 (child), -1 (error)      */
+long  aios_wait(int *status);                /* wait for ANY child  -> reaped pid, or -1          */
+long  aios_waitpid(long pid, int *status, int flags);   /* wait for `pid` (or -1/0 = any)         */
+#define WEXITSTATUS(s) AIOS_WEXITSTATUS(s)   /* decode a wait status (normal-exit subset)         */
+
 /* --- string / memory --- */
 size_t strlen(const char *s);
 int    strcmp(const char *a, const char *b);
