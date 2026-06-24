@@ -111,34 +111,61 @@ delivering. Localize NEXT (over netconsole -- no serial needed):
 3. Serial (CONFIG_PRINTING) shows the "[pcie] xHCI MSI armed: cap@.. target=.. data=.." line -- use
    it if the /proc probe is inconclusive.
 
-## OBSERVABILITY IMPLEMENTED (v0.4.301, build-rpi4 2957) -- the splitter is now in /proc/xhci
+## ROOT CAUSE FOUND + FIXED (v0.4.301): MSI target overlapped the inbound DMA window
+Static analysis (no HW) + Linux-source verification nailed the most likely "INTR2 never sets" cause.
+pcie_bringup maps **RC_BAR2 (the inbound DMA window) = [0, 4GB) identity** (pcie_brcmstb.c ~L412:
+`wr(RC_BAR2_CONFIG_LO, 0 | RC_BAR2_SIZE_3GB_ENC)`, size enc 17 = 4GB). The first MSI impl used the
+**LT_4GB** target `0xfffffffc` -- which is INSIDE that window -- so the VL805's MSI memory-write is
+captured as a normal inbound DMA (translated to RAM) and NEVER reaches the RC MSI controller.
+
+Linux `brcm_pcie_setup` selects the target exactly to avoid this (verified against torvalds/linux
+v6.6 pcie-brcmstb.c):
+```
+if (rc_bar2_offset >= SZ_4G || (rc_bar2_size + rc_bar2_offset) < SZ_4G)
+    msi_target_addr = BRCM_MSI_TARGET_ADDR_LT_4GB;   // 0x0fffffffc
+else
+    msi_target_addr = BRCM_MSI_TARGET_ADDR_GT_4GB;   // 0xffffffffc  (hi=0xf, above 4GB)
+```
+AIOS: offset=0, size=4GB -> `0>=4G` false, `(4G+0)<4G` false -> **GT_4GB**. FIX (commit below): set the
+MSI BAR_CONFIG_HI + the VL805 Message Address Hi to `0xf` (target `0xf_fffffffc`, just above the
+window); the low 32 (`0xfffffffc`) is unchanged. Needs 64-bit MSI on the device (VL805 is64 -- the
+probe confirms). Web-verified ALSO-CORRECT in the first impl (do NOT change): data `0x6540`
+(`(0xffff & VAL_32)|hwirq`), DATA_CONFIG `0xfff86540` (legacy VAL_8), legacy_shift 24, and **GIC_SPI
+148 = "msi"** (bcm2711.dtsi interrupt-names "pcie","msi" = SPI 147,148) -> seL4 IRQ 180. So GT_4GB
+was the ONLY defect; expect INTR2 bit24 to set + count to climb now.
+
+## OBSERVABILITY IMPLEMENTED (v0.4.301, build-rpi4 2959) -- the splitter is now in /proc/xhci
 Step 1 above is built (plat_pcie_xhci_msi_status / _clear in pcie_brcmstb.c; QEMU no-ops). `cat
 /proc/xhci` now appends, right under the `irq:` line:
 ```
 msi-rc: INTR2_STATUS=0x........ bit24=N seen=N  MASK_STATUS=0x........ masked24=N
-        BAR_LO=0x........ BAR_HI=0x........ DATA_CFG=0x........ (want LO=0xfffffffd HI=0 DATA=0xfff86540)
-msi-dev: cap@0xNN ctrl=0x.... EN=N MME=N is64=N addr=0x................ data=0x....  (want addr=0xfffffffc data=0x6540)
+        BAR_LO=0x........ BAR_HI=0x........ DATA_CFG=0x........ (want LO=0xfffffffd HI=0xf DATA=0xfff86540)
+msi-dev: cap@0xNN ctrl=0x.... EN=N MME=N is64=N addr=0x................ data=0x....  (want addr=0xffffffffc data=0x6540)
 ```
 `cat /proc/xhci.msiclr` write-clears the latched RC bit + zeroes `seen` so a fresh keypress can be
 observed re-latching (the driver is blocked, so it never acks the latch itself).
 
 TURNKEY HW RECIPE (Bryan AT the board -- a wedge needs a power-cycle):
-1. Flash kernel-only, reversible:  `python3 scripts/pi_flash.py --build`  (build-rpi4 2957).
+1. Flash kernel-only, reversible:  `python3 scripts/pi_flash.py --build`  (build-rpi4 2959, has the
+   GT_4GB fix). Run the board KEYBOARD-PLUGGED for this test (the only test that needs it).
 2. Baseline:  `cat /proc/xhci`  -> confirm kbd_ok=1 in POLL mode; note the `msi-rc`/`msi-dev` lines
-   (in poll mode MSI is NOT armed, so EN should be 0 and BAR_LO not yet 0xfffffffd -- that's expected).
+   (in poll mode MSI is NOT armed yet, so EN=0 and BAR_HI not yet 0xf -- that's expected pre-arm).
 3. Arm + clear the latch:  `cat /proc/xhci.irq.1`  then  `cat /proc/xhci.msiclr`.
 4. Type a few keys on the USB keyboard (this is the wedge-risk step).
 5. `cat /proc/xhci` and read the splitter:
-   - First sanity-check `msi-dev`: EN=1, data=0x6540, addr=0xfffffffc, and `msi-rc` BAR_LO=0xfffffffd
-     DATA_CFG=0xfff86540 masked24=0. If any of these is wrong, the *arming* failed (cap walk / reg
-     offsets) -- fix that first; the device never had a chance to send a matching MSI.
+   - First sanity-check `msi-dev`: EN=1, is64=1, data=0x6540, addr=0xf`fffffffc`, and `msi-rc`
+     BAR_LO=0xfffffffd BAR_HI=0xf DATA_CFG=0xfff86540 masked24=0. If is64=0, the VL805 can't reach
+     GT_4GB and we'd need to shrink RC_BAR2 instead. If any `want` mismatches, the *arming* failed
+     (cap walk / reg offsets) -- fix that first.
    - If arming looks right, read `irq: count` + `msi-rc INTR2_STATUS bit24`:
      * bit24=1 (or seen>0) and count=0  => MSI reached the RC; **GIC_SPI 148 / seL4 IRQ 180 binding is
        wrong** -> next: try IRQ 179 (GIC_SPI 147) -- edit BRCM_PCIE_MSI_GIC_SPI 148->147, rebuild, reflash.
-     * bit24=0 and count=0  => the VL805 never sent a matching MSI -> **Message Data / target / cap
-       enable wrong** -> recheck brcm_msi_compose_msg; the data value is the prime suspect.
-   - count>0 + key_events climbing + int_errs=0  => MSI WORKS. Then the verdict test: keyboard attached,
-     run the TLBI load test, watch `/proc/laststall total` -- do the ~10.8s quanta stop vs poll mode?
+       (DTB-verified 148="msi" so this is unlikely, but the probe distinguishes it cleanly.)
+     * bit24=0 and count=0  => the VL805 still never sent a matching MSI -> re-examine target/window
+       (did BAR_HI take? is the device addr_hi=0xf?) or the cap enable.
+   - count>0 + key_events climbing + int_errs=0  => MSI WORKS (the GT_4GB fix landed it). Then the
+     verdict test: keyboard attached, run the TLBI load test, watch `/proc/laststall total` -- do the
+     ~10.8s quanta stop vs poll mode?
 6. Revert any time:  `cat /proc/xhci.irq.0`  (back to poll), or reboot.
 
 ## Risks / notes

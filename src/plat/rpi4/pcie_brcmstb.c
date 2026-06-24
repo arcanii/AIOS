@@ -165,7 +165,14 @@ int      pcie_xhci_present = 0;
 #define PCIE_INTR2_CPU_MASK_STATUS   0x430c       /* read-back: 1 = that vector is MASKED */
 #define PCIE_INTR2_CPU_MASK_SET      0x4310
 #define PCIE_INTR2_CPU_MASK_CLR      0x4314
-#define BRCM_MSI_TARGET_ADDR_LO      0xfffffffcU    /* BRCM_MSI_TARGET_ADDR_LT_4GB low 32 */
+#define BRCM_MSI_TARGET_ADDR_LO      0xfffffffcU    /* low 32 of the MSI target (same for LT/GT_4GB) */
+/* v0.4.301: the MSI target MUST lie OUTSIDE the RC_BAR2 inbound DMA window or the VL805's MSI
+ * memory-write is captured as a normal inbound DMA (translated to RAM) instead of reaching the RC
+ * MSI controller -> INTR2 never sets. pcie_bringup maps RC_BAR2 = [0, 4GB) identity, so 0xfffffffc
+ * (LT_4GB) is INSIDE it. Linux brcm_pcie_setup picks GT_4GB (0xf_fffffffc, just above the window)
+ * whenever rc_bar2_offset+size > 0xfffffffc -- which is our case. GT_4GB needs 64-bit MSI on the
+ * device (the VL805 is64 cap, confirmed at arm time). Low 32 is unchanged; only the high 32 = 0xf. */
+#define BRCM_MSI_TARGET_HI           0xfU           /* high 32 of GT_4GB target 0xf_fffffffc */
 #define BRCM_MSI_DATA_CONFIG_VAL8    0xfff86540U    /* legacy 8-MSI data config */
 #define BRCM_MSI_DATA_MATCH          0x6540U        /* low 16 of VAL8 = the data the device sends */
 #define BRCM_MSI_LEGACY_SHIFT        24             /* MSI vectors in INTR2 bits [31:24] */
@@ -657,24 +664,31 @@ int plat_pcie_xhci_msi_enable(int on) {
         return 0;
     }
 
+    /* GT_4GB target lives above the 4GB inbound window; it needs 64-bit MSI on the device. If the
+     * VL805 is somehow 32-bit-only we cannot reach 0xf_fffffffc -- warn (the probe shows hi will be
+     * forced 0, which overlaps the window and won't deliver; the cure would be shrinking RC_BAR2). */
+    uint32_t target_hi = is64 ? BRCM_MSI_TARGET_HI : 0u;
+    if (!is64)
+        AIOS_LOG_WARN("xHCI MSI: VL805 is 32-bit MSI only -- GT_4GB target unreachable (will overlap RC_BAR2)");
+
     /* RC side: unmask + clear the legacy MSI bits, set the target address + data config. */
     wr(PCIE_INTR2_CPU_MASK_CLR, legacy_mask);
     wr(PCIE_INTR2_CPU_CLR, legacy_mask);
     wr(PCIE_MISC_MSI_BAR_CONFIG_LO, BRCM_MSI_TARGET_ADDR_LO | 1u);
-    wr(PCIE_MISC_MSI_BAR_CONFIG_HI, 0);
+    wr(PCIE_MISC_MSI_BAR_CONFIG_HI, target_hi);            /* 0xf: target ABOVE the 4GB DMA window */
     wr(PCIE_MISC_MSI_DATA_CONFIG, BRCM_MSI_DATA_CONFIG_VAL8);
     arch_dsb();
 
     /* Device side: Message Address = target, Message Data = match|vector, then enable. */
     cfg_wr(b, d, f, (uint32_t)msi + 0x4, BRCM_MSI_TARGET_ADDR_LO);
     uint32_t data_off = is64 ? ((uint32_t)msi + 0xC) : ((uint32_t)msi + 0x8);
-    if (is64) cfg_wr(b, d, f, (uint32_t)msi + 0x8, 0);      /* Message Address Hi */
+    if (is64) cfg_wr(b, d, f, (uint32_t)msi + 0x8, target_hi);   /* Message Address Hi = 0xf */
     cfg_wr(b, d, f, data_off, BRCM_MSI_DATA_MATCH | BRCM_XHCI_MSI_VECTOR);
     ctrl = (ctrl & ~(0x7u << 4)) | 0x1u;                    /* MME=0 (1 vector), MSI Enable=1 */
     cfg_wr(b, d, f, (uint32_t)msi, (mc & 0xFFFF) | (ctrl << 16));
     arch_dsb();
-    printf("[pcie] xHCI MSI armed: cap@0x%x is64=%d target=0x%x data=0x%x -> GIC_SPI %d\n",
-           (unsigned)msi, is64, (unsigned)BRCM_MSI_TARGET_ADDR_LO,
+    printf("[pcie] xHCI MSI armed: cap@0x%x is64=%d target=0x%x%08x data=0x%x -> GIC_SPI %d\n",
+           (unsigned)msi, is64, (unsigned)target_hi, (unsigned)BRCM_MSI_TARGET_ADDR_LO,
            (unsigned)(BRCM_MSI_DATA_MATCH | BRCM_XHCI_MSI_VECTOR), BRCM_PCIE_MSI_GIC_SPI);
     return 0;
 }
@@ -714,10 +728,11 @@ int plat_pcie_xhci_msi_status(char *buf, int bufsize) {
 
     int w = snprintf(buf, bufsize,
         "msi-rc: INTR2_STATUS=0x%08x bit%u=%d seen=%u  MASK_STATUS=0x%08x masked%u=%d\n"
-        "        BAR_LO=0x%08x BAR_HI=0x%08x DATA_CFG=0x%08x (want LO=0x%08x HI=0 DATA=0x%08x)\n",
+        "        BAR_LO=0x%08x BAR_HI=0x%08x DATA_CFG=0x%08x (want LO=0x%08x HI=0x%x DATA=0x%08x)\n",
         status, vec_bit, (status & vmask) ? 1 : 0, g_msi_intr2_seen,
         maskstat, vec_bit, (maskstat & vmask) ? 1 : 0,
-        barlo, barhi, dcfg, (unsigned)(BRCM_MSI_TARGET_ADDR_LO | 1u), BRCM_MSI_DATA_CONFIG_VAL8);
+        barlo, barhi, dcfg, (unsigned)(BRCM_MSI_TARGET_ADDR_LO | 1u),
+        (unsigned)BRCM_MSI_TARGET_HI, BRCM_MSI_DATA_CONFIG_VAL8);
 
     /* Device side: walk the VL805 cap list for MSI (0x05) and read it back. Config-space access,
      * but at this point only the (idle) enumeration/enable paths share EXT_CFG_INDEX. */
@@ -739,10 +754,11 @@ int plat_pcie_xhci_msi_status(char *buf, int bufsize) {
     uint32_t data    = cfg_rd(b, d, f, is64 ? (uint32_t)msi + 0xC : (uint32_t)msi + 0x8) & 0xFFFF;
     w += snprintf(buf + w, bufsize - w,
         "msi-dev: cap@0x%x ctrl=0x%04x EN=%d MME=%u is64=%d addr=0x%08x%08x data=0x%04x"
-        " (want addr=0x%08x data=0x%04x)\n",
+        " (want addr=0x%x%08x data=0x%04x)\n",
         (unsigned)msi, ctrl, ctrl & 1, (ctrl >> 4) & 0x7, is64,
         addr_hi, addr_lo, data,
-        (unsigned)BRCM_MSI_TARGET_ADDR_LO, (unsigned)(BRCM_MSI_DATA_MATCH | BRCM_XHCI_MSI_VECTOR));
+        (unsigned)BRCM_MSI_TARGET_HI, (unsigned)BRCM_MSI_TARGET_ADDR_LO,
+        (unsigned)(BRCM_MSI_DATA_MATCH | BRCM_XHCI_MSI_VECTOR));
     return w;
 }
 
