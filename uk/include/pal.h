@@ -25,8 +25,9 @@ typedef struct {
 
 /* --- guest world lifecycle --- */
 
-/* Load + start the AIOS program at `path` under the host trap mechanism. Returns 0 on success. */
-int pal_spawn_guest(const char *path);
+/* Load + start the AIOS program at `path` under the host trap mechanism, with `argv` as the
+ * program's argument vector (argv[0] = the program, NULL-terminated). Returns 0 on success. */
+int pal_spawn_guest(const char *path, char *const argv[]);
 
 /* Block until the guest's next syscall, or its exit. Returns:
  *   1  a syscall trapped  -> *out filled (the syscall is NOT executed by the host kernel)

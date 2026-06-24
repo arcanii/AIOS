@@ -2,4 +2,5 @@
 aios-uk
 guest_hello
 guest_fileio
+guest_cat
 *.o

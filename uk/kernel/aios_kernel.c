@@ -101,9 +101,9 @@ static long sys_close(uint64_t fd) {
 }
 
 /* The kernel's per-program dispatch loop: trap a syscall, service it per the AIOS ABI, return. */
-int aios_kernel_run(const char *guest_path) {
+int aios_kernel_run(const char *guest_path, char *const guest_argv[]) {
     fd_table_init();
-    if (pal_spawn_guest(guest_path) != 0) return -1;
+    if (pal_spawn_guest(guest_path, guest_argv) != 0) return -1;
     for (;;) {
         pal_syscall_t sc;
         int code = 0;
@@ -125,13 +125,17 @@ int aios_kernel_run(const char *guest_path) {
 }
 
 int main(int argc, char **argv) {
-    const char *guest = (argc > 1) ? argv[1] : "./guest_hello";
-    kputs("[aios-uk] AIOS userspace kernel -- M2 (VFS) (Linux/ptrace PAL)\n");
+    if (argc < 2) { kputs("usage: aios-uk <guest-program> [args...]\n"); return 2; }
+    const char *guest = argv[1];
+    /* The guest's argv is the kernel's argv shifted by one: guest argv[0] = the guest program. */
+    char *const *guest_argv = (char *const *)&argv[1];
+
+    kputs("[aios-uk] AIOS userspace kernel -- M3 (loader+argv) (Linux/ptrace PAL)\n");
     kputs("[aios-uk] launching guest: ");
     kputs(guest);
     kputs("\n");
 
-    int code = aios_kernel_run(guest);
+    int code = aios_kernel_run(guest, guest_argv);
 
     kputs("[aios-uk] guest exited via AIOS ABI, code=");
     kput_int(code);

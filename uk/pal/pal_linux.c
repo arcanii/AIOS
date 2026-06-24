@@ -39,13 +39,14 @@ static int write_regs(void) {
     return ptrace(PTRACE_SETREGSET, g_guest, (void *)NT_PRSTATUS, &io) == 0 ? 0 : -1;
 }
 
-int pal_spawn_guest(const char *path) {
+int pal_spawn_guest(const char *path, char *const argv[]) {
     pid_t pid = fork();
     if (pid < 0) return -1;
     if (pid == 0) {
-        /* Child becomes the guest: ask to be traced, then exec the AIOS-ABI program. */
+        /* Child becomes the guest: ask to be traced, then exec the AIOS-ABI program. The host
+         * sets up the initial stack (argc/argv/envp/auxv); the guest's _start reads argv from it.
+         * (A future seL4 PAL builds this stack itself -- here the host loader does it for us.) */
         ptrace(PTRACE_TRACEME, 0, 0, 0);
-        char *const argv[] = { (char *)path, NULL };
         execv(path, argv);
         _exit(127);                              /* exec failed */
     }

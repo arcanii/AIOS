@@ -18,7 +18,9 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            echo "=== M1: guest_hello (WRITE + EXIT) ===" &&
            ./aios-uk ./guest_hello; echo "  [exit $?]";
            echo "=== M2: guest_fileio (VFS: OPEN/WRITE/READ/CLOSE) ===" &&
-           ./aios-uk ./guest_fileio; rc=$?; echo "  [exit $rc]";
+           ./aios-uk ./guest_fileio; echo "  [exit $?]";
            echo "=== host shell confirms the AIOS program wrote a REAL file: ===";
            ls -l /tmp/aios_m2.txt && cat /tmp/aios_m2.txt;
-           test "$rc" = 7'
+           echo "=== M3: guest_cat /etc/hostname (real cat, filename from argv) ===" &&
+           ./aios-uk ./guest_cat /etc/hostname; rc=$?; echo "  [exit $rc]";
+           test "$rc" = 0'
