@@ -54,8 +54,27 @@ reaches storage only through the PAL. `guest/guest_fileio.c` creates a file, wri
 back, and echoes it — `uk/run.sh` then shows the **real host file** the AIOS program produced
 (`/tmp/aios_m2.txt`). Verified in colima and natively on the RPi4.
 
+## M3 — toward operational ✅ (the process model is complete)
+
+Real C programs run on the AIOS ABI, and the kernel is now multi-process:
+
+- **M3a** loader + argv (a real `cat`). **M3b** `libaios`, a minimal C runtime on the ABI. **M3c**
+  `wc`/`tail`/`bigalloc`: stdin pipes, mmap-backed `malloc` (in-place syscall injection), `fstat`/
+  `lseek`.
+- **M3d — the process model.** `exec` (execve injection), `fork`/`wait`/`exit` (the kernel went
+  multi-process: a process table, a `waitpid(-1)` event loop over all guests, per-process fd tables
+  over a refcounted open-file table), and `pipe`/`dup2` (non-blocking pipe ends + park/wake so the
+  single-threaded kernel never wedges). Capstone: **`prog_sh`**, a shell that runs real pipelines —
+  `./prog_args one two | ./prog_wc | ./prog_wc` works.
+
+**AIOS ABI today:** WRITE/READ/OPEN/CLOSE/EXIT/MMAP/FSTAT/LSEEK/EXEC/FORK/WAIT/PIPE/DUP2.
+
+`uk/run.sh` runs the whole M1..M3d suite (colima); each milestone is also validated natively on the
+RPi4.
+
 ## Next (per the design doc)
 
-M3 dash/sbase as AIOS programs (operational — the big ABI jump: argv/env/auxv loading, brk/mmap,
-stat, exec/fork/wait…) · M4 enforce the boundary (seccomp/namespaces so a program *cannot* bypass
-the kernel) · M5 `sched_ext` · M6 the seL4/x86-64 replant seam.
+Grow `libaios` into the AIOS-ABI retarget of the seL4 `libaios_posix` (shadow standard headers under
+`lib/include` with `-nostdinc` so real sources compile unmodified) → recompile **sbase** → **dash** =
+fully operational. Then **M4** enforce the boundary (seccomp/namespaces so a program *cannot* bypass
+the kernel) · **M5** `sched_ext` · **M6** the seL4/x86-64 replant seam.
