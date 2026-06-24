@@ -5,4 +5,5 @@ guest_fileio
 guest_cat
 prog_args
 prog_wc
+prog_bigalloc
 *.o

@@ -111,6 +111,10 @@ int aios_kernel_run(const char *guest_path, char *const guest_argv[]) {
         if (r == 0) return code;          /* guest exited (host-detected) */
         if (r < 0)  return -1;
 
+        /* mmap rewrites the guest's own syscall into a host mmap in place -- it consumes the
+         * syscall exit itself, so it does NOT go through pal_guest_return. */
+        if (sc.nr == AIOS_SYS_MMAP) { pal_guest_mmap((size_t)sc.arg[0]); continue; }
+
         uint64_t ret;
         switch (sc.nr) {
         case AIOS_SYS_WRITE: ret = (uint64_t)sys_write(sc.arg[0], sc.arg[1], sc.arg[2]); break;

@@ -71,15 +71,23 @@ int atoi(const char *s) {
 int isspace(int c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
 int isdigit(int c) { return c >= '0' && c <= '9'; }
 
-/* --- bump allocator over a static arena (no brk/mmap syscall yet; free is a no-op) --- */
-#define AIOS_HEAP_SIZE (256 * 1024)
-static unsigned char g_heap[AIOS_HEAP_SIZE];
-static size_t g_heap_off;
+/* --- bump allocator over mmap'd regions (real heap; the AIOS kernel injects the host mmap).
+ * free is still a no-op; when a region is exhausted we mmap another. Simple, but real memory. --- */
+#define AIOS_MMAP_CHUNK (1024 * 1024)           /* grow the heap a MB at a time */
+static unsigned char *g_brk;                    /* next free byte in the current region */
+static unsigned char *g_brk_end;                /* end of the current region            */
 void *malloc(size_t n) {
     n = (n + 15) & ~(size_t)15;                 /* 16-byte align */
-    if (g_heap_off + n > AIOS_HEAP_SIZE) return NULL;
-    void *p = &g_heap[g_heap_off];
-    g_heap_off += n;
+    if (g_brk + n > g_brk_end) {
+        size_t chunk = n > AIOS_MMAP_CHUNK ? n : AIOS_MMAP_CHUNK;
+        chunk = (chunk + 4095) & ~(size_t)4095; /* page-align */
+        long addr = asys(AIOS_SYS_MMAP, (long)chunk, 0, 0);
+        if (addr == 0) return NULL;             /* out of memory */
+        g_brk = (unsigned char *)addr;
+        g_brk_end = g_brk + chunk;              /* note: any tail of the old region is dropped */
+    }
+    void *p = g_brk;
+    g_brk += n;
     return p;
 }
 void free(void *p) { (void)p; }

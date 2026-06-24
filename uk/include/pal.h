@@ -48,6 +48,13 @@ size_t pal_guest_read(uint64_t gaddr, void *dst, size_t len);
  * (0 on failure). Used to return syscall results (e.g. read data) back into the guest. */
 size_t pal_guest_write(uint64_t gaddr, const void *src, size_t len);
 
+/* Grow the guest's address space by `len` bytes of fresh anonymous memory; returns the guest
+ * address of the new region, or 0 on failure. The host mechanism is its own business: the Linux
+ * PAL injects a real mmap into the (stopped) guest; a future seL4 PAL maps frames via caps. The
+ * AIOS kernel calls this to back the guest's allocator -- it stays host-agnostic. Only valid
+ * while a guest syscall is being serviced (the guest is stopped). */
+uint64_t pal_guest_mmap(size_t len);
+
 /* --- host-driver gateway --- */
 /* A backing object the host provides for a file/stream. Opaque to the AIOS kernel, which keeps
  * these in its own fd table and never assumes their representation (the Linux PAL uses a host

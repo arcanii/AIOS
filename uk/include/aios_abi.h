@@ -18,6 +18,7 @@
 #define AIOS_SYS_OPEN    0x1002   /* (path, flags, mode)   -> aios fd, or -1        */
 #define AIOS_SYS_READ    0x1003   /* (fd, buf, len)        -> bytes read (0 = EOF)  */
 #define AIOS_SYS_CLOSE   0x1004   /* (fd)                  -> 0, or -1              */
+#define AIOS_SYS_MMAP    0x1005   /* (len)                 -> guest addr, or 0      */
 
 /* AIOS open flags -- AIOS owns these values; the host PAL translates them to its native flags
  * (Linux O_*). The low 2 bits are the access mode. */
