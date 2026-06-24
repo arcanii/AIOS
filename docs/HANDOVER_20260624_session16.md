@@ -51,6 +51,18 @@ Decision (Bryan): pursue the driver fix. Detail: [[project_usb_kbd_dma_stall]].
   in seL4_Wait, never woken; reboot recovers to poll). seL4 side fine; the MSI SOURCE is not
   delivering.
 
+## SESSION-END ADDENDUM
+- **All 11 commits PUSHED to origin/main** (b39e945 .. 9fc0f7a).
+- **Fresh stall data point (important):** after the checkpoint, typing on the USB keyboard (board in
+  default POLL mode, MSI dormant) **HARD-WEDGED the whole box** -- network fully dead ("Host is down"),
+  and the **watchdog did NOT recover it** in ~2.5 min; needed a physical POWER-CYCLE. This is the
+  keyboard-amplified ~32.4s stall (Source B, VL805 DMA vs A72 TLBI) escalating to an unrecoverable
+  freeze, NOT a regression (poll kernel, same stall-prone path as always). Reinforces: the keyboard is
+  the AMPLIFIER -> **run the board KEYBOARD-UNPLUGGED for stable netconsole/SSH sessions** until the
+  stall is actually cured; the watchdog is not a guaranteed safety net for this wedge. After the
+  power-cycle the board is healthy again: v0.4.300 build 2953, poll, kbd_ok=1, IRQ 180 bound,
+  laststall=none. See [[feedback_stall_open_concern]] + [[project_usb_kbd_dma_stall]].
+
 ## SEED PROMPT (next session)
 
 >>> SEED PROMPT <<<
@@ -63,7 +75,11 @@ docs/NEXT_20260624_xhci_msi.md.
 DONE this session: SHM-ring bulk file write (PIPE_PWRITE_BULK) -- QEMU 8/8 + HW-validated (soak 7/7,
 tcc ~33x fewer IPCs), default-OFF, commits b39e945+e4364e7+b7b42f9+9e83dfa. netconsole MAX_NET_SOCKETS
 8->16 (605771a). USB-keyboard strategic review (it's a driver fix, not SMP). Keyboard lead #1
-(cacheable DMA) HW-tested -> DEAD END (42641f0+cf9e310). Board on v0.4.300 build 2953 (poll, keyboard works).
+(cacheable DMA) HW-tested -> DEAD END (42641f0+cf9e310). All 11 commits PUSHED. Board recovered via
+power-cycle, healthy: v0.4.300 build 2953 (poll, kbd_ok=1, IRQ 180 bound, laststall=none). CAUTION:
+typing on the keyboard HARD-WEDGED the box this session (watchdog did NOT recover -> power-cycle); the
+keyboard amplifies the ~32.4s stall, so the MSI debug below (which needs keyboard typing) can freeze the
+board -- Bryan must be AT the board to power-cycle, and run keyboard-UNPLUGGED for any non-USB work.
 
 PRIMARY TASK -- finish lead #3 (xHCI MSI): it is IMPLEMENTED + the seL4 IRQ 180 BINDS, but the MSI is
 not firing on HW (count=0 on keypress; driver blocks). DEBUG OVER NETCONSOLE (no serial): add to
