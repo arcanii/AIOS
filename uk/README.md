@@ -69,12 +69,24 @@ Real C programs run on the AIOS ABI, and the kernel is now multi-process:
 
 **AIOS ABI today:** WRITE/READ/OPEN/CLOSE/EXIT/MMAP/FSTAT/LSEEK/EXEC/FORK/WAIT/PIPE/DUP2.
 
-`uk/run.sh` runs the whole M1..M3d suite (colima); each milestone is also validated natively on the
-RPi4.
+## M3e — the libc retarget (in progress: real C compiles unmodified)
+
+The road to "fully operational = dash" is recompiling real `sbase`/`dash` against AIOS's libc. The
+foundation is in:
+
+- **M3e.1** — AIOS **shadow standard headers** under `lib/include` (string/ctype/stdlib/unistd/fcntl/
+  stdio/sys/...), compiled with **`-nostdinc -isystem <gcc-include>`** so ordinary C picks up AIOS's
+  libc (implemented by libaios on the ABI) instead of the host's. libaios grew a standard-named POSIX
+  surface (read/write/open/fork/execv/waitpid/strtol/getenv/…). Proof: `prog_libc.c` — real C, only
+  standard headers.
+- **M3e.2** — **FILE\* buffered stdio** (stdin/stdout/stderr, fopen/fgets/fprintf/fread/fwrite/…;
+  line-buffered stdout, flushed on exit). Proof: `prog_stdio.c`.
+
+`uk/run.sh` runs the whole suite (colima); each milestone is also validated natively on the RPi4.
 
 ## Next (per the design doc)
 
-Grow `libaios` into the AIOS-ABI retarget of the seL4 `libaios_posix` (shadow standard headers under
-`lib/include` with `-nostdinc` so real sources compile unmodified) → recompile **sbase** → **dash** =
-fully operational. Then **M4** enforce the boundary (seccomp/namespaces so a program *cannot* bypass
-the kernel) · **M5** `sched_ext` · **M6** the seL4/x86-64 replant seam.
+Continue M3e: errno + a real `-errno` path, `sys/stat.h` + path stat/getcwd/chdir/unlink (new ABI
+syscalls), getopt, real getpid, signals → then **vendor + compile real `sbase`** unmodified, then
+**dash** = fully operational. Then **M4** enforce the boundary (seccomp/namespaces so a program
+*cannot* bypass the kernel) · **M5** `sched_ext` · **M6** the seL4/x86-64 replant seam.

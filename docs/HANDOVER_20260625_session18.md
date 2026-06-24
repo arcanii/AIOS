@@ -84,19 +84,39 @@ printf, malloc, string/ctype, exec/fork/wait/waitpid/pipe/dup2, `environ`, WEXIT
 - Concurrent guests genuinely interleave (the kernel round-robins per syscall via `waitpid(-1)`), so
   multi-writer stdout is char-interleaved -- cosmetic, not a bug.
 
-## NEXT -> fully operational (the parallel track the seed always pointed at)
-The process model is DONE; the remaining road to "operational = dash" is the **libaios -> sbase ->
-dash retarget**:
-1. Grow `libaios` into the AIOS-ABI retarget of the seL4 `libaios_posix` (on `main`). Ideally
-   **shadow standard headers** (string.h/stdio.h/unistd.h/fcntl.h/...) under `uk/lib/include` and
-   compile real sources with **`-nostdinc`** so `sbase`/`dash` compile UNMODIFIED. Fill the libc
-   surface they need (stdio FILE\* + buffering, full string/ctype, errno, env, getopt, etc.).
-2. Recompile **sbase** against it (start with the utilities prog_sh already wants: echo, cat, ls,
-   wc...). Then **dash**. The ABI likely needs a few more syscalls (getcwd/chdir, dup, stat-by-path,
-   getpid, brk or keep mmap-malloc, maybe a vfork/clone-flavoured fast path, signals).
-3. Then **M4** enforce the boundary (seccomp/namespaces so a guest's stray real-Linux syscall is
-   *forbidden*, not just ENOSYS'd) · **M5** sched_ext (custom RPi kernel w/ CONFIG_SCHED_CLASS_EXT) ·
-   **M6** `pal_sel4.c` (the replant seam -- prove the now-much-larger PAL on a second host).
+## M3e -- the libc retarget BEGUN (2 more commits, same session; the road to dash)
+The process model is DONE; the road to "operational = dash" is the **libaios -> sbase -> dash
+retarget**, and it has started:
+
+- **M3e.1 (`96cf73a`) -- the -nostdinc scaffolding + POSIX surface.** AIOS **shadow standard headers**
+  under `uk/lib/include` (string/ctype/stdlib/unistd/fcntl/stdio/sys/types/sys/wait), so ordinary C
+  compiled with **`-nostdinc -isystem $(cc -print-file-name=include)`** picks up AIOS's libc instead
+  of the host's (the compiler's own freestanding stddef/stdint/stdarg are kept). A Makefile "libc
+  program" class wires it. libaios grew the standard-named surface (read/write/open/close/lseek/pipe/
+  dup2/fork/execv/execvp/wait/waitpid/exit/_exit + string/ctype/stdlib extras: strrchr/strstr/strncpy/
+  strcat/memchr/memcmp/strdup/strtol/strtoul/calloc/realloc/getenv...). printf refactored onto a
+  "sink" core (snprintf/vsnprintf share it; +%o/%X/%p + l/z modifiers). Proof: `prog_libc.c` -- real
+  C, only standard headers, no aios_* names.
+- **M3e.2 (`3ecf05c`) -- FILE\* buffered stdio.** stdin/stdout/stderr + fopen/fclose/fread/fwrite/
+  fgets/fgetc/getchar/fputc/putchar/fputs/feof/ferror/fileno/perror + fprintf/vfprintf (through the
+  same sink). stdout line-buffered (fork-safe -- empty between '\n' lines), stderr unbuffered, files
+  fully buffered; flushed on exit/main-return. Proof: `prog_stdio.c`.
+
+**NEXT (continue M3e -> sbase -> dash):**
+1. Fill the remaining libc gaps real sbase/dash hit: **errno** (needs the kernel to return -errno --
+   today syscalls return -1; thread a real error path through the ABI/PAL), **sys/stat.h** + path
+   `stat`/`lstat` + `getcwd`/`chdir`/`unlink`/`mkdir`/`rmdir`/`rename` (new AIOS syscalls -> kernel
+   -> PAL -> host), **getopt**, a real **getpid** (AIOS_SYS_GETPID; today stubbed to 1), `qsort`,
+   `setvbuf`, `tmpfile`-ish, signals (`signal`/`kill` -- dash needs job-control/SIGINT eventually).
+2. **Vendor real `sbase`** into the repo (suckless, MIT) and compile its utilities UNMODIFIED with
+   the libc-program class -- start trivial (true/false/echo/yes/cat/wc), then ls/rm/mkdir (need the
+   stat/path syscalls). sbase shares a `util.h`/libutil (eprintf/estrtol/ARGBEGIN) -- vendor that too.
+   NOTE: sbase source is NOT in this repo yet; fetching needs network (the Pi has it; or clone in the
+   container and copy in). Commit the vendored source for reproducibility.
+3. Then **dash** (vendor + compile; it leans harder on signals/job-control/`getcwd`/`wait` flags).
+   Replace `prog_sh` with real dash once it runs.
+4. Then **M4** boundary (seccomp/namespaces so a guest's stray real-Linux syscall is *forbidden*, not
+   just ENOSYS'd) · **M5** sched_ext (custom RPi kernel) · **M6** `pal_sel4.c` (the replant seam).
 
 The seL4 stall + lead-#3 keyboard stay mooted by leaving the platform (seL4 tree preserved on `main`).
 
@@ -110,31 +130,38 @@ is the soul; programs see only the AIOS ABI, the host sits behind a narrow PAL).
 [[project_pivot_linux_userspace_kernel]] + docs/HANDOVER_20260625_session18.md +
 docs/DESIGN_20260624_aios_userspace_kernel_on_linux.md + uk/README.md.
 
-WORKING BRANCH = `userspace-kernel` (commits M1..M3d.4, LOCAL -- Bryan pushes). The `uk/` tree: a
+WORKING BRANCH = `userspace-kernel` (commits M1..M3e.2, LOCAL -- Bryan pushes). The `uk/` tree: a
 host-agnostic kernel (kernel/aios_kernel.c includes ONLY aios_abi.h + pal.h) over the ONLY host-aware
 file (pal/pal_linux.c, a multi-process PTRACE_SYSCALL driver) + libaios (lib/libaios.{c,h}, a C
-runtime on the AIOS ABI). DONE: M0..M3c (first-light, VFS, argv, libaios, wc/tail/bigalloc) and the
-**entire PROCESS MODEL (M3d): exec, fork, wait, exit, pipe, dup2** -- the kernel is multi-process
-(process table, waitpid(-1) loop, pid-keyed PAL, refcounted open-file table, park/wake for wait +
-pipes), and **`prog_sh` is a working AIOS shell running real multi-stage pipelines** (`./prog_args a |
-./prog_wc | ./prog_wc`). AIOS ABI: WRITE/READ/OPEN/CLOSE/EXIT/MMAP/FSTAT/LSEEK/EXEC/FORK/WAIT/PIPE/
-DUP2. The driver classifies stops with PTRACE_GET_SYSCALL_INFO (never assume entry/exit alternation);
-fds are released on exit (pipe EOF depends on it). Validated colima + native RPi4 (Linux 6.12).
+runtime on the AIOS ABI) + shadow standard headers (lib/include, used with -nostdinc). DONE: M0..M3c
+(first-light, VFS, argv, libaios, wc/tail/bigalloc); the **entire PROCESS MODEL (M3d): exec, fork,
+wait, exit, pipe, dup2** -- the kernel is multi-process (process table, waitpid(-1) loop, pid-keyed
+PAL, refcounted open-file table, park/wake for wait + pipes), and **`prog_sh` is a working AIOS shell
+running real multi-stage pipelines** (`./prog_args a | ./prog_wc | ./prog_wc`); and the **libc
+retarget BEGUN (M3e): -nostdinc shadow headers + a POSIX libc surface + FILE\* buffered stdio** so
+real C compiles unmodified (proofs prog_libc.c, prog_stdio.c). AIOS ABI: WRITE/READ/OPEN/CLOSE/EXIT/
+MMAP/FSTAT/LSEEK/EXEC/FORK/WAIT/PIPE/DUP2. The driver classifies stops with PTRACE_GET_SYSCALL_INFO
+(never assume entry/exit alternation); fds are released on exit (pipe EOF depends on it). Validated
+colima + native RPi4 (Linux 6.12).
 
-DEV LOOP: `uk/run.sh` (colima aarch64 container, --cap-add=SYS_PTRACE; overall rc=0 gates M1..M3d);
+DEV LOOP: `uk/run.sh` (colima aarch64 container, --cap-add=SYS_PTRACE; overall rc=0 gates the suite);
 HW-validate via `scp -r uk pi@192.168.0.8:~/ && ssh pi@192.168.0.8 'cd ~/uk && make && ./aios-uk
-<prog>'` (login pi/aios, keyless SSH; Linux 6.12). DEBUG: a ptrace hang is SILENT -> in-container
-`timeout N` (hang -> rc=124) + fprintf(stderr) in pal_linux.c. Container sh is dash (no
-${PIPESTATUS[*]}).
+<prog>'` (login pi/aios, keyless SSH; Linux 6.12). The libc-program build class is `-nostdinc -isystem
+$(cc -print-file-name=include) -Ilib -Ilib/include` (real C, shadow headers). DEBUG: a ptrace hang is
+SILENT -> in-container `timeout N` (hang -> rc=124) + fprintf(stderr) in pal_linux.c. Container sh is
+dash (no ${PIPESTATUS[*]}).
 
-PRIMARY TASK -> **fully operational = dash**, via the libaios -> sbase -> dash retarget. Grow libaios
-into the AIOS-ABI retarget of the seL4 `libaios_posix` (on `main`): shadow standard headers under
-uk/lib/include and compile real sources with `-nostdinc` so sbase/dash compile UNMODIFIED; fill the
-libc surface (stdio FILE\*+buffering, full string/ctype, errno, env, getopt...). Recompile **sbase**
-(echo/cat/ls/wc first), then **dash**. Expect to add a few ABI syscalls (getcwd/chdir, dup, stat-by-
-path, getpid, signals, maybe brk). Keep kernel/aios_kernel.c host-agnostic and the PAL seam minimal
-(it's the future verified boundary). Commit per milestone on `userspace-kernel`; validate colima + Pi
-each step; Bryan pushes.
+PRIMARY TASK -> **fully operational = dash**, CONTINUING the libc retarget (M3e begun: scaffolding +
+POSIX surface + FILE* stdio done). Next: fill the libc gaps real sbase/dash hit -- **errno** (needs a
+real -errno path through the ABI/PAL; today syscalls just return -1), **sys/stat.h** + path stat/
+getcwd/chdir/unlink/mkdir/rename (NEW AIOS syscalls -> kernel -> PAL -> host), **getopt**, a real
+**getpid** (today stubbed 1), qsort, signals -- then **VENDOR real `sbase`** (suckless, MIT; not in
+the repo yet -- fetch via the Pi/container + commit it) and compile its utilities UNMODIFIED with the
+libc-program class (true/echo/cat/wc first, then ls/rm/mkdir once stat/path land; vendor its util.h/
+libutil too). Then **dash** (it leans harder on signals/job-control/getcwd; replace prog_sh with it).
+Expect to add a few ABI syscalls (getcwd/chdir, stat-by-path, getpid, signals, maybe brk). Keep
+kernel/aios_kernel.c host-agnostic and the PAL seam minimal (it's the future verified boundary).
+Commit per milestone on `userspace-kernel`; validate colima + Pi each step; Bryan pushes.
 
 THEN: M4 enforce the boundary (seccomp/namespaces so a guest CANNOT bypass the kernel -- today a
 stray real-Linux syscall just ENOSYSes); M5 sched_ext (stock RPi kernel lacks CONFIG_SCHED_CLASS_EXT
