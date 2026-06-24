@@ -109,35 +109,179 @@ void free(void *p) { (void)p; }
 int puts(const char *s) { aios_write(AIOS_FD_STDOUT, s, strlen(s)); aios_write(AIOS_FD_STDOUT, "\n", 1); return 0; }
 void fdputs(int fd, const char *s) { aios_write(fd, s, strlen(s)); }
 
-static void emit(const char *s, size_t n) { aios_write(AIOS_FD_STDOUT, s, n); }
-static void emit_uint(unsigned long v, int base) {
-    char b[24]; int i = sizeof b;
-    const char *dig = "0123456789abcdef";
-    b[--i] = '\0';
-    do { b[--i] = dig[v % base]; v /= base; } while (v);
-    emit(&b[i], (size_t)(sizeof b - 1 - i));
+/* The formatter writes to a "sink" -- either an fd (printf) or a bounded buffer (snprintf) -- so a
+ * single core serves both. (FILE*-buffered stdio lands in the next step.) */
+struct sink { char *buf; size_t cap; size_t len; int fd; };
+static void sink_write(struct sink *s, const char *p, size_t n) {
+    if (s->buf) { for (size_t i = 0; i < n; i++) if (s->len + i < s->cap) s->buf[s->len + i] = p[i]; }
+    else if (n) aios_write(s->fd, p, n);
+    s->len += n;
 }
-static void emit_int(long v) {
-    if (v < 0) { emit("-", 1); emit_uint((unsigned long)(-v), 10); }
-    else         emit_uint((unsigned long)v, 10);
+static void sink_uint(struct sink *s, unsigned long v, int base, int upper) {
+    char b[24]; int i = sizeof b;
+    const char *dig = upper ? "0123456789ABCDEF" : "0123456789abcdef";
+    do { b[--i] = dig[v % (unsigned)base]; v /= (unsigned)base; } while (v);
+    sink_write(s, &b[i], (size_t)(sizeof b - i));
+}
+static void sink_int(struct sink *s, long v) {
+    if (v < 0) { sink_write(s, "-", 1); sink_uint(s, (unsigned long)(-v), 10, 0); }
+    else         sink_uint(s, (unsigned long)v, 10, 0);
 }
 
-int printf(const char *fmt, ...) {
-    va_list ap; va_start(ap, fmt);
+/* Minimal printf-family core: %s %d %i %u %x %X %o %c %p %% and the l/z length modifiers
+ * (%ld %lu %lx %zu ...). No field width/precision yet -- grow as sbase/dash need it. */
+static void vformat(struct sink *s, const char *fmt, va_list ap) {
     for (const char *p = fmt; *p; p++) {
-        if (*p != '%') { emit(p, 1); continue; }
-        switch (*++p) {
-        case 's': { const char *s = va_arg(ap, const char *); if (!s) s = "(null)"; emit(s, strlen(s)); break; }
-        case 'd': case 'i': emit_int(va_arg(ap, int)); break;
-        case 'u': emit_uint((unsigned)va_arg(ap, unsigned int), 10); break;
-        case 'x': emit_uint((unsigned)va_arg(ap, unsigned int), 16); break;
-        case 'c': { char c = (char)va_arg(ap, int); emit(&c, 1); break; }
-        case '%': emit("%", 1); break;
-        default:  emit("%", 1); if (*p) emit(p, 1); break;
+        if (*p != '%') { sink_write(s, p, 1); continue; }
+        p++;
+        int lng = 0;
+        while (*p == 'l' || *p == 'z') { lng = 1; p++; }   /* long / size_t width */
+        switch (*p) {
+        case 's': { const char *a = va_arg(ap, const char *); if (!a) a = "(null)"; sink_write(s, a, strlen(a)); break; }
+        case 'd': case 'i': sink_int(s, lng ? va_arg(ap, long) : (long)va_arg(ap, int)); break;
+        case 'u': sink_uint(s, lng ? va_arg(ap, unsigned long) : va_arg(ap, unsigned int), 10, 0); break;
+        case 'x': sink_uint(s, lng ? va_arg(ap, unsigned long) : va_arg(ap, unsigned int), 16, 0); break;
+        case 'X': sink_uint(s, lng ? va_arg(ap, unsigned long) : va_arg(ap, unsigned int), 16, 1); break;
+        case 'o': sink_uint(s, lng ? va_arg(ap, unsigned long) : va_arg(ap, unsigned int),  8, 0); break;
+        case 'p': sink_write(s, "0x", 2); sink_uint(s, (unsigned long)va_arg(ap, void *), 16, 0); break;
+        case 'c': { char c = (char)va_arg(ap, int); sink_write(s, &c, 1); break; }
+        case '%': sink_write(s, "%", 1); break;
+        default:  sink_write(s, "%", 1); if (*p) sink_write(s, p, 1); break;
         }
         if (!*p) break;
     }
-    va_end(ap);
+}
+
+int printf(const char *fmt, ...) {
+    struct sink s = { 0, 0, 0, AIOS_FD_STDOUT };
+    va_list ap; va_start(ap, fmt); vformat(&s, fmt, ap); va_end(ap);
+    return (int)s.len;
+}
+int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
+    struct sink s = { buf, size, 0, -1 };
+    vformat(&s, fmt, ap);
+    if (size) buf[s.len < size ? s.len : size - 1] = '\0';
+    return (int)s.len;
+}
+int snprintf(char *buf, size_t size, const char *fmt, ...) {
+    va_list ap; va_start(ap, fmt); int r = vsnprintf(buf, size, fmt, ap); va_end(ap);
+    return r;
+}
+int putchar(int c) { char b = (char)c; aios_write(AIOS_FD_STDOUT, &b, 1); return c; }
+
+/* ===== POSIX libc surface =====
+ * Standard-named entry points so real C sources compile UNMODIFIED against the shadow headers in
+ * lib/include (-nostdinc). Thin wrappers over the aios_* core / the AIOS ABI. Definitions use plain
+ * types (the shadow typedefs ssize_t/off_t/pid_t are long/long/int -- compatible). */
+
+/* unistd / fcntl */
+long read (int fd, void *b, unsigned long n)        { return aios_read(fd, b, n); }
+long write(int fd, const void *b, unsigned long n)  { return aios_write(fd, b, n); }
+int  close(int fd)                                  { return aios_close(fd); }
+long lseek(int fd, long off, int whence)            { return aios_lseek(fd, off, whence); }
+int  pipe (int fds[2])                              { return aios_pipe(fds); }
+int  dup2 (int o, int n)                            { return (int)aios_dup2(o, n); }
+int  fork (void)                                    { return (int)aios_fork(); }
+int  execv (const char *p, char *const argv[])      { return (int)aios_execve(p, argv, environ); }
+int  execvp(const char *f, char *const argv[])      { return (int)aios_execve(f, argv, environ); } /* no PATH search yet */
+void _exit(int code)                                { aios_exit(code); }
+int  getpid(void)  { return 1; }                    /* TODO: a real AIOS_SYS_GETPID */
+int  isatty(int fd){ (void)fd; return 0; }          /* no tty layer yet */
+int  open(const char *path, int flags, ...) {
+    int mode = 0;
+    if (flags & AIOS_O_CREAT) { va_list ap; va_start(ap, flags); mode = va_arg(ap, int); va_end(ap); }
+    return (int)aios_open(path, flags, mode);
+}
+
+/* sys/wait */
+int wait(int *status)                          { return (int)aios_wait(status); }
+int waitpid(int pid, int *status, int options) { return (int)aios_waitpid(pid, status, options); }
+
+/* string extras */
+char *strrchr(const char *s, int c) {
+    const char *last = 0;
+    for (;; s++) { if (*s == (char)c) last = s; if (!*s) break; }
+    return (char *)last;
+}
+char *strstr(const char *h, const char *n) {
+    if (!*n) return (char *)h;
+    for (; *h; h++) { const char *a = h, *b = n; while (*a && *b && *a == *b) { a++; b++; } if (!*b) return (char *)h; }
+    return 0;
+}
+char *strncpy(char *d, const char *s, size_t n) {
+    size_t i = 0;
+    for (; i < n && s[i]; i++) d[i] = s[i];
+    for (; i < n; i++) d[i] = '\0';
+    return d;
+}
+char *strcat(char *d, const char *s) { char *r = d; while (*d) d++; while ((*d++ = *s++)) ; return r; }
+char *strncat(char *d, const char *s, size_t n) {
+    char *r = d; while (*d) d++;
+    while (n-- && *s) *d++ = *s++;
+    *d = '\0'; return r;
+}
+int memcmp(const void *a, const void *b, size_t n) {
+    const unsigned char *x = a, *y = b;
+    for (size_t i = 0; i < n; i++) if (x[i] != y[i]) return (int)x[i] - (int)y[i];
+    return 0;
+}
+void *memchr(const void *s, int c, size_t n) {
+    const unsigned char *p = s;
+    for (size_t i = 0; i < n; i++) if (p[i] == (unsigned char)c) return (void *)(p + i);
+    return 0;
+}
+char *strdup(const char *s) { size_t n = strlen(s) + 1; char *p = malloc(n); if (p) memcpy(p, s, n); return p; }
+char *strerror(int e) { (void)e; return "error"; }   /* minimal; real errno strings come with errno */
+
+/* ctype extras */
+int isalpha(int c)  { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
+int isupper(int c)  { return c >= 'A' && c <= 'Z'; }
+int islower(int c)  { return c >= 'a' && c <= 'z'; }
+int isalnum(int c)  { return isalpha(c) || isdigit(c); }
+int isxdigit(int c) { return isdigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
+int isprint(int c)  { return c >= 0x20 && c < 0x7f; }
+int isgraph(int c)  { return c > 0x20 && c < 0x7f; }
+int ispunct(int c)  { return isgraph(c) && !isalnum(c); }
+int iscntrl(int c)  { return c < 0x20 || c == 0x7f; }
+int isblank(int c)  { return c == ' ' || c == '\t'; }
+int toupper(int c)  { return islower(c) ? c - 32 : c; }
+int tolower(int c)  { return isupper(c) ? c + 32 : c; }
+
+/* stdlib extras */
+void  exit(int code)  { aios_exit(code); }
+void  abort(void)     { aios_exit(134); }              /* 128 + SIGABRT */
+void *calloc(size_t nmemb, size_t size) {
+    size_t t = nmemb * size; void *p = malloc(t); if (p) memset(p, 0, t); return p;
+}
+void *realloc(void *old, size_t n) {                    /* bump heap: fresh block + copy (no shrink) */
+    void *p = malloc(n); if (p && old) memcpy(p, old, n); return p;
+}
+long strtol(const char *s, char **end, int base) {
+    while (*s == ' ' || *s == '\t' || *s == '\n') s++;
+    int neg = 0;
+    if (*s == '-') { neg = 1; s++; } else if (*s == '+') s++;
+    if ((base == 0 || base == 16) && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) { s += 2; base = 16; }
+    else if (base == 0 && s[0] == '0') base = 8;
+    else if (base == 0) base = 10;
+    long v = 0;
+    for (;; s++) {
+        int d;
+        if (*s >= '0' && *s <= '9') d = *s - '0';
+        else if (*s >= 'a' && *s <= 'z') d = *s - 'a' + 10;
+        else if (*s >= 'A' && *s <= 'Z') d = *s - 'A' + 10;
+        else break;
+        if (d >= base) break;
+        v = v * base + d;
+    }
+    if (end) *end = (char *)s;
+    return neg ? -v : v;
+}
+unsigned long strtoul(const char *s, char **end, int base) { return (unsigned long)strtol(s, end, base); }
+long atol(const char *s) { return strtol(s, 0, 10); }
+char *getenv(const char *name) {
+    size_t n = strlen(name);
+    for (char **e = environ; e && *e; e++)
+        if (strncmp(*e, name, n) == 0 && (*e)[n] == '=') return *e + n + 1;
     return 0;
 }
 

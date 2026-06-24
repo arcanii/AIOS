@@ -49,6 +49,8 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            echo "=== M3d.4: prog_sh -- an AIOS shell running real pipelines (capstone) ===" &&
            printf "./prog_args alpha beta | ./prog_wc\n./prog_args x | ./prog_wc | ./prog_wc\nexit\n" \
              | ./aios-uk ./prog_sh 2>/dev/null; echo "  [shell stdout above: 2-stage then 3-stage wc]";
+           echo "=== M3e.1: prog_libc -- real C, standard headers only, compiled -nostdinc ===" &&
+           ./aios-uk ./prog_libc 2>/dev/null; echo "  [exit $?]";
            echo "=== M3d gate: prog_pipebig exit must be 0 ===" &&
            ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [exit $rc]";
            test "$rc" = 0'
