@@ -10,7 +10,13 @@
 [![Claude](https://img.shields.io/badge/Claude-D97757?logo=claude&logoColor=fff)](#)
 </div>
 
-A research microkernel operating system built on seL4
+A research microkernel operating system. 
+- Major pivot ongoing : hit a brick wall.
+- 0.4.x was built on seL4.
+- 0.5.x is being re-baselined for Linux as a HAL kernel.
+
+Hit a 32 second arm core stall on seL4 due to still unknown issues (I gave up on that path).
+The cool bit is this is the first major re-pivot off the core kernel - and it should be (knock on wood) transportable.
 
 ## Get going fast (MacOS)
 
