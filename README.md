@@ -3,114 +3,199 @@
 <img src="art/aries_screen.png" width="256" alt="icon">
 
 [![C](https://img.shields.io/badge/C-00599C?logo=c&logoColor=white)](#)
-[![C++](https://img.shields.io/badge/C++-%2300599C.svg?logo=c%2B%2B&logoColor=white)](#)
 [![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=fff)](#)
-[![Zsh](https://img.shields.io/badge/Zsh-F15A24?logo=zsh&logoColor=fff)](#)
+[![seL4](https://img.shields.io/badge/seL4-the%20destination-blue?style=flat-square)](#)
+[![Linux](https://img.shields.io/badge/Linux-the%20interim%20HAL-FCC624?logo=linux&logoColor=000)](#)
 [![License](https://img.shields.io/badge/License-MIT-purple?style=flat-square)](LICENSE)
 [![Claude](https://img.shields.io/badge/Claude-D97757?logo=claude&logoColor=fff)](#)
 </div>
 
-A research microkernel operating system. 
-- Major pivot ongoing : hit a brick wall.
-- 0.4.x was built on seL4.
-- 0.5.x is being re-baselined for Linux as a HAL kernel.
+A research operating system whose soul is **formal verification**. AIOS is a **gVisor-style
+userspace kernel**: programs compile for the **AIOS ABI** and never see the host; their syscalls are
+*trapped* and serviced by the AIOS kernel, which reaches the machine only through a narrow
+**Platform Abstraction Layer (PAL)** — the host/HAL seam. Linux is the interim substrate today;
+**a verified seL4 (x86-64) is the destination.** Swap the host underneath and the programs — and the
+entire AIOS kernel above the PAL — do not change.
 
-Hit a 32 second arm core stall on seL4 due to still unknown issues (I gave up on that path).
-The cool bit is this is the first major re-pivot off the core kernel - and it should be (knock on wood) transportable.
+> **Field note (Bryan):** Major pivot ongoing — I hit a brick wall. 0.4.x was built on seL4; 0.5.x is
+> being re-baselined for Linux as a HAL kernel. I hit a ~32-second Arm-core stall on seL4 from
+> still-unknown issues and gave up on that path. The cool bit: this is the first major re-pivot off
+> the core kernel — and it should (knock on wood) be transportable.
 
-## Get going fast (MacOS)
+> **Active line: `v0.5.x`** — the userspace kernel, in the `uk/` tree (`uk/include/aios_version.h`).
+> **We are holding at 0.5.x while we explore and mature the Linux-based HAL** (the PAL's Linux
+> backend) before advancing the roadmap.
+>
+> **Prior line: `v0.4.x`** — the seL4/RPi4 bare-metal microkernel, on `main` (`include/aios/version.h`).
+> Preserved as the record + fallback, and the source of the userspace personality that transfers.
 
-```bash
-git clone https://github.com/arcanii/AIOS.git && cd AIOS
-./build_environment.sh          # checks host tools, fetches pinned deps,
-                                # applies patches, builds, boots a QEMU smoke test
-python3 scripts/qemu-boot.py    # interactive boot -- log in as root / root
+---
+
+## The pivot (2026): why AIOS moved off bare-metal seL4
+
+For many milestones AIOS was a from-scratch OS on **seL4 on the Raspberry Pi 4** — and it got
+remarkably far (standalone HDMI + USB console, a hand-written GPU driver, 4-core SMP, an isolated
+network process, TCC self-hosting, a 55/55 POSIX core; see *The 0.4.x seL4 line* below). But a
+hard truth emerged from our own analysis:
+
+- **seL4's verification guarantee is not realized on the RPi4.** The proofs are uniprocessor, and
+  the RPi4 is not a verified platform. So we were paying *all* of seL4's costs — porting every
+  driver by hand, fighting a ~32.4 s idle-teardown stall, chasing MSI/DMA/USB-hub quirks — and
+  collecting *none* of its benefit.
+- The microcosm: this era's last hardware lead proved the brcmstb GT_4GB MSI programming *correct*
+  on silicon, yet still couldn't be validated because the USB hub wouldn't deliver a keystroke.
+  **Linux solves all of that for free.**
+
+**The decision (Bryan):** re-base AIOS as a userspace kernel. **Linux = a pragmatic interim
+substrate** (mature drivers, no stall, get operational fast). **A verified seL4 on x86-64 = the
+destination** — because verification is the soul of the project. The architecture is built to
+*replant* onto seL4 later, behind a strict seam, so nothing above the PAL has to change.
+
+`0.5.x` is therefore a deliberate new design line, not a continuation of `0.4.x`. The seL4 tree is
+intact on `main`; its real value — the shell, fs semantics, the net/pipe/exec model, the POSIX
+personality — is exactly what the userspace kernel inherits.
+
+## The model
+
+```
+        AIOS programs   (compiled for the AIOS ABI — host-agnostic, unmodified across hosts)
+              │   syscall instruction (TRAPPED; the program thinks AIOS IS the kernel)
+   ┌──────────▼────────────────────────────────────────────┐
+   │  AIOS userspace kernel   (the stable, portable core)    │   ← the future verified TCB
+   │  ABI dispatch · VFS · process/exec · pipe/IPC · …        │
+   └──────────┬────────────────────────────────────────────┘
+              │  PAL — the narrow platform/HAL seam (the future verified boundary)
+   ┌──────────▼─────────────┐               ┌────────────────────────────┐
+   │  PAL → Linux  (NOW)     │      or       │  PAL → seL4 (DESTINATION)   │
+   │  trap: ptrace            │               │  trap: VMM / fault handler  │
+   │  hw:   Linux drivers     │               │  hw:   device untyped + IRQ │
+   │  sched: sched_ext (BPF)  │               │  sched: seL4 sched config   │
+   └──────────────────────────┘               └────────────────────────────┘
 ```
 
-`build_environment.sh` takes a fresh clone to a running system: it verifies the
-host toolchain (printing the exact `brew`/`apt` commands for anything missing),
-clones every dependency at the commit pinned in [DEPS.md](DEPS.md), applies the
-patch set from `deps/patches/`, configures + builds the QEMU tree, and boots it
-to the login prompt as a smoke test. Re-running is safe (idempotent); add
-`--rpi4` to also build the Raspberry Pi 4 image, `--check` to only verify host
-tools. Manual step-by-step instructions remain below under
-[Prerequisites](#prerequisites) and [Building](#building).
+The defining property: **programs only ever see AIOS's ABI.** The host kernel is an implementation
+detail of the PAL. The AIOS kernel (`uk/kernel/aios_kernel.c`) includes *only* AIOS-owned headers —
+never a host header — so it is host-agnostic by construction. The only host-aware file is the PAL
+backend (`uk/pal/pal_linux.c`). Today that backend is a `ptrace(PTRACE_SYSCALL)` driver; a future
+`pal_sel4.c` implements the same contract via seL4 virtualization. **Keeping the PAL narrow is the
+whole game** — every primitive added there is future proof obligation.
 
-Architectures / Hardware Supported
-- :white_check_mark: AArch64 (QEMU virt)
-- :white_check_mark: AArch64 (Raspberry Pi 4 Model B) -- 4-core SMP, GENET networking, HDMI console + V3D GPU 3D, USB keyboard (xHCI over PCIe), SSH + netconsole over LAN (serial : TXD : GPIO14, RXD : GPIO15)
-- :white_medium_square: AArch64 (Raspberry Pi 5)
-- :white_medium_square: X86-64 
+Design detail: [docs/DESIGN_20260624_aios_userspace_kernel_on_linux.md](docs/DESIGN_20260624_aios_userspace_kernel_on_linux.md) ·
+tree overview: [uk/README.md](uk/README.md).
 
-## Highlights
+## Status — v0.5.x, exploring the Linux HAL
 
-- **Standalone Raspberry Pi 4** -- USB keyboard in, HDMI monitor out, no serial
-  cable or laptop: brcmstb PCIe -> VL805 xHCI -> USB hub -> HID keyboard, with
-  the shell mirrored to the framebuffer console (all HW-verified; known open
-  issue: the HDMI console can freeze on its first scroll on hardware -- see
-  [CHANGELOG.md](CHANGELOG.md))
-- **Hardware 3D graphics** -- a hand-written VideoCore VI (V3D) driver renders a
-  GPU-accelerated spinning cube to the live HDMI framebuffer (clear -> rainbow
-  triangle -> backface-culled cube, emitted as byte-exact control lists), all
-  HW-verified on real Pi silicon
-- **4-core SMP on real hardware** -- all four Cortex-A72 cores via spin-table
-- **On the LAN** -- GENET Ethernet + DHCP, always-on SSH (AES-256-CTR +
-  HMAC-SHA-256, sftp/scp), netconsole remote control, DNS, SNTP wall-clock time
-- **TCC self-hosting** -- TinyCC compiles C programs natively on AIOS
-- **POSIX core 55/55** -- real fork+exec+waitpid, signals, pipelines; dash as
-  login shell, zsh (ZLE) interactive, 99 sbase utilities
-- **Microkernel-honest memory** -- demand-paged ELF text/BSS, shared read-only
-  .text, COW fork, write-back block cache (4.5x faster eMMC writes)
-- **Fault-isolated networking (netd)** -- the whole net stack (socket server +
-  TCP/IP + NIC driver) runs in its own MMU-protected process, with zero client
-  ABI change; a deliberate net-stack crash is contained and recovered (root +
-  shell keep running) -- HW-verified on a real Pi. Now the production default
-  (`AIOS_NETD` ON); the legacy in-root path stays available via `-DAIOS_NETD=OFF`.
-- **Flash-free kernel updates over the LAN** -- `scripts/pi_flash.py` pushes a new
-  `kernel8.img` over netconsole, rewrites the FAT32 boot partition in place
-  (`fatswap`), sha-verifies, and reboots -- no SD card handling
+The `uk/` tree is a working userspace kernel. Everything below is validated **in a Linux container
+(colima) AND natively on a real Raspberry Pi 4 running Linux** (the same board that used to run
+AIOS-on-bare-metal now boots stock Raspberry Pi OS — the hardware just works).
 
-The full arc-by-arc history lives in [CHANGELOG.md](CHANGELOG.md).
+- **M0 — Linux substrate.** The RPi4 boots mainline Linux; every device we hand-fought on seL4
+  (USB keyboard through the VL805 hub, GENET, V3D, 4 cores) works out of the box.
+- **M1 — first light.** A trivial AIOS-ABI program's syscalls are *trapped* and serviced by the AIOS
+  kernel (AIOS syscall numbers are disjoint from Linux's, so the output provably came from AIOS).
+- **M2 — a VFS behind the ABI.** The kernel owns an fd namespace and services real file I/O through
+  the PAL.
+- **M3 — toward operational.** Real C programs run on the ABI (a `libaios` C runtime), and the
+  kernel is now **multi-process**:
+  - **The process model (M3d)** — `exec`, `fork`, `wait`, `exit`, `pipe`, `dup2`. A process table, a
+    `waitpid(-1)` event loop over all guests, per-process fd tables over a refcounted open-file
+    table, and park/wake so the single-threaded kernel never wedges on a blocked pipe or wait. The
+    capstone is **`prog_sh`, an AIOS shell that runs real pipelines** —
+    `./prog_args one two | ./prog_wc | ./prog_wc` works.
+  - **The libc retarget (M3e, in progress)** — AIOS **shadow standard headers** compiled with
+    `-nostdinc`, so ordinary C (and ultimately real `sbase`/`dash`) compiles *unmodified* against
+    AIOS's libc, plus **FILE\* buffered stdio**.
 
-## Overview
+**AIOS ABI today:** `WRITE/READ/OPEN/CLOSE/EXIT/MMAP/FSTAT/LSEEK/EXEC/FORK/WAIT/PIPE/DUP2`.
 
-AIOS is an experimental OS exploring how far POSIX compliance and Unix
-design principles can be carried on a formally verified microkernel.
-Development follows strict Unix philosophy: real fork+exec+waitpid
-process launching, POSIX signals, pipelines, shell operators, and
-a growing set of standard utilities.
+We are intentionally **holding at 0.5.x** here — consolidating and hardening the Linux HAL (the trap
+model, the PAL surface, the libc) before pushing on to a full `sbase`/`dash` userland and then the
+boundary-enforcement and scheduling milestones.
 
-External AI (Claude) is used as a development tool for code generation
-and review. This project is also a study in AI-assisted systems programming.
-The long-term goal is self-hosted development within AIOS itself.
+## Get going — the userspace kernel (`uk/`)
 
-**Current version:** v0.4.252 (authoritative: `include/aios/version.h`; history: [CHANGELOG.md](CHANGELOG.md))
-
-## Quick Start
-
-**First-time setup** (one-time): run `./build_environment.sh` -- it automates
-everything in [Prerequisites](#prerequisites) and
-[Setting Up Dependencies](#setting-up-dependencies) below (host-tool check,
-pinned dependency clones per [DEPS.md](DEPS.md), the `deps/patches/` patch set,
-configure, build, QEMU smoke test). The manual steps below are the reference
-for what it does.
-
-Once the toolchain and `deps/` are in place, the fastest path to a running system on
-**QEMU**:
+The Mac host is darwin and cannot `ptrace` Linux, so iteration runs in a Linux container:
 
 ```bash
-cd AIOS
+# Fast loop: build + run the M0..M3e demo suite in an aarch64 Linux container
+colima start --arch aarch64        # once (brew install colima docker)
+uk/run.sh                          # builds aios-uk + the guest programs, runs the suite
 
-# 1. Configure the build (once):
+# Build + run a single program by hand (inside the container or any aarch64 Linux):
+cd uk && make
+./aios-uk ./prog_sh                # an interactive AIOS shell
+echo './prog_args hi | ./prog_wc' | ./aios-uk ./prog_sh
+```
+
+On **real hardware** (a Raspberry Pi 4 running Linux, login `pi`):
+
+```bash
+scp -r uk pi@<pi-ip>:~/
+ssh pi@<pi-ip> 'cd ~/uk && make && ./aios-uk ./prog_sh'
+```
+
+`aios-uk` needs `CAP_SYS_PTRACE` (tracing its own child needs no privilege on the Pi). `uk/run.sh`
+passing `rc=0` is the gate. A `ptrace` hang is silent — bound it with an in-container `timeout N`.
+
+## Roadmap
+
+| Milestone | Goal | State |
+|-----------|------|-------|
+| **M0** | Boot Linux on the RPi4 (+ a Linux dev box / container) | ✅ |
+| **M1** | First light — trap + service an AIOS-ABI program | ✅ |
+| **M2** | A VFS behind the ABI (open/read/write/close to real storage) | ✅ |
+| **M3** | Operational — process model + a real userland | ⏳ process model ✅; libc retarget → `sbase` → `dash` in progress |
+| **M4** | Enforce the boundary (seccomp/namespaces — a program *cannot* bypass the kernel) | ◻ |
+| **M5** | AIOS owns scheduling (`sched_ext` BPF; needs a custom RPi kernel) | ◻ |
+| **M6** | The replant seam — stand up `pal_sel4.c` on verified seL4 (x86-64) | ◻ |
+
+Verification stays the soul: M6 is where AIOS programs run unmodified on a verified base. The PAL
+seam is kept minimal precisely so that proof obligation stays small.
+
+---
+
+## The 0.4.x seL4 line (the prior era — preserved on `main`)
+
+Before the pivot, AIOS was a from-scratch microkernel OS on **bare seL4** (single root task, no
+Microkit) for AArch64 — QEMU and a standalone Raspberry Pi 4. It is preserved on `main` as the
+record and fallback; its userspace personality is what the 0.5.x kernel inherits. What that line
+achieved (all HW-verified on real Pi silicon unless noted; full history in
+[CHANGELOG.md](CHANGELOG.md)):
+
+- **Standalone Raspberry Pi 4** — USB keyboard in, HDMI monitor out, no serial cable: brcmstb PCIe →
+  VL805 xHCI → USB hub → HID keyboard, shell mirrored to the framebuffer console.
+- **Hardware 3D graphics** — a hand-written VideoCore VI (V3D) driver renders a GPU-accelerated
+  spinning cube to the live HDMI framebuffer (byte-exact control lists).
+- **4-core SMP** on real silicon (Cortex-A72 via spin-table).
+- **On the LAN** — GENET Ethernet + DHCP, always-on SSH (AES-256-CTR + HMAC-SHA-256, sftp/scp),
+  netconsole remote control, DNS, SNTP.
+- **Fault-isolated networking (`netd`)** — the whole net stack runs in its own MMU-protected
+  process; a deliberate crash is contained and recovered with root + shell still up.
+- **TCC self-hosting** — TinyCC compiles C natively on AIOS.
+- **POSIX core 55/55** — real fork+exec+waitpid, signals, pipelines; **dash** login shell, **zsh**
+  (ZLE) interactive, 99 **sbase** utilities; an ext2 filesystem, demand-paged ELF, COW fork.
+- **Flash-free kernel updates over the LAN** — push a new `kernel8.img` over netconsole, rewrite the
+  FAT32 boot partition in place (`fatswap`), sha-verify, reboot.
+
+> ⚠️ The major open concern that *motivated* the pivot: a ~32.4 s idle-teardown **stall** on the
+> RPi4, AIOS-on-seL4-specific, mitigated (watchdog/prewarm) but never cured. Mooted by leaving the
+> platform; the analysis is in the docs and memory.
+
+<details>
+<summary><b>Building + running the 0.4.x seL4 tree (QEMU and RPi4)</b></summary>
+
+The seL4 ecosystem libraries are gitignored; clone them into `deps/` at the commits pinned in
+[DEPS.md](DEPS.md) (`./build_environment.sh` automates the host-tool check, the clones, the
+`deps/patches/` set, the configure/build, and a QEMU smoke test).
+
+```bash
+# 1. Configure + build kernel + root task + all AIOS programs (once):
 mkdir -p build-04 && cd build-04
 cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=../deps/kernel/gcc.cmake \
     -DCROSS_COMPILER_PREFIX=aarch64-linux-gnu- ..
-cd ..
+cd .. && python3 scripts/build_apps.py     # ninja + sbase + dash + tcc + disk image
 
-# 2. Build EVERYTHING in one command (kernel + root task + sbase + dash + tcc + disk):
-python3 scripts/build_apps.py
-
-# 3. Boot in QEMU:
+# 2. Boot in QEMU (log in root / root; login shell is dash):
 qemu-system-aarch64 -machine virt,virtualization=on -cpu cortex-a53 -smp 4 -m 2G \
     -serial mon:stdio -device ramfb \
     -drive file=disk/disk_ext2.img,format=raw,if=none,id=hd0 \
@@ -118,424 +203,52 @@ qemu-system-aarch64 -machine virt,virtualization=on -cpu cortex-a53 -smp 4 -m 2G
     -kernel build-04/images/aios_root-image-arm-qemu-arm-virt
 ```
 
-Log in as `root` / `root` (the login shell is dash). `scripts/build_apps.py` is the
-one-command rebuild for everyday work -- it runs ninja, sbase, dash, tcc, and remakes
-the disk image. The detailed per-component steps are under [Building](#building).
-
-To run on a **real Raspberry Pi 4**, see
-[Running on Raspberry Pi 4](#running-on-raspberry-pi-4-real-hardware).
-
-## What Works
-
-- **seL4 microkernel** on AArch64/QEMU (Cortex-A53) and Raspberry Pi 4 (Cortex-A72), both 4-core SMP
-- **ext2 filesystem** with read/write, indirect blocks, multi-group allocation, block/inode freeing on unlink
-- **VFS layer** with ext2 root mount and procfs at /proc
-- **86+ POSIX syscalls** via musllibc shim (open, read, write, fork, exec, pipe, dup2, statx, getrandom, futex, poll, ...)
-- **fork+exec+waitpid** process model with full ELF loading from disk
-- **Low per-process footprint** -- demand-paged ELF .text + BSS (resident = executed code only); read-only .text shared across same-binary processes to lift the concurrent-process ceiling
-- **POSIX signals** (sigaction, kill, sigprocmask) with cooperative handler dispatch
-- **Unix pipelines** (echo hello | cat | wc -c, ls /tmp | head) with error recovery
-- **Shell operators** (&&, ||, >, >>, <) and environment variables
-- **dash login shell** -- POSIX shell as primary login shell via /etc/passwd pw_shell
-- **zsh script mode** -- alternative shell with arrays, extended globbing, arithmetic (Phase 1)
-- **SSH server** -- AES-256-CTR + HMAC-SHA-256, password auth, Ctrl-C forwarding, sftp + scp file transfer; always-on (getty auto-starts sshd), survives sequential reconnects with shell self-heal
-- **Graphical display** -- ramfb (QEMU) + VideoCore mailbox (RPi4) framebuffer, 1024x768, fb_console
-- **Display server IPC** -- user programs draw to framebuffer via disp_ep (fbshow command)
-- **HDMI console** -- the interactive shell mirrors to the framebuffer (`tty_server` -> `display_server` -> `fb_console`), so a monitor + USB keyboard is a full standalone console (no serial)
-- **USB HID keyboard** -- xHCI host controller driver with USB hub enumeration + HID boot-protocol keymap; generic ECAM (QEMU) and brcmstb PCIe (RPi4 VL805); keystrokes feed the tty like serial input
-- **V3D GPU 3D rendering (RPi4)** -- a hand-written VideoCore VI driver (V3D 4.2, 8 QPUs) renders real 3D on the silicon, all HW-verified on a real Pi to the live HDMI framebuffer: GPU clear -> rainbow triangle (the GL shader-state path) -> a spinning shaded cube (backface-culled, no depth buffer -- a convex cube needs only culling), emitted as byte-exact control lists (host golden gate) and submitted through an 8MB GPU MMU pool. Full power/MMU/IRQ bring-up + fault decoding (fault page + AXI client from `MMU_DEBUG_INFO`); driven over `/proc/v3d` (`.test`/`.tri`/`.cube`/`.quad`) and `fbshow --gpu-*`
-- **Networking** -- virtio-net (QEMU) + GENET Ethernet (RPi4), ARP/ICMP/UDP/TCP, DHCP (+ T1 lease renewal), DNS (`nslookup`), SNTP, HTTP server, POSIX sockets
-- **netd (isolated network process)** -- behind `option(AIOS_NETD)`: the socket server + TCP/IP + NIC driver dev-half run in a separate MMU-protected CPIO process; root keeps device provisioning and serves the unchanged `net_ep`. A `/proc/net` cacheable heartbeat page is the IPC-free liveness detector; a net-stack crash is contained + a reply-sweep wakes parked callers. HW-verified on a real RPi4 (DHCP/ping/ssh/netconsole + crash recovery; live NIC diagnostics via the sacrificial userland `/bin/netdiag` tool over NET_DIAG, with `/proc/genet` a read-only UMAC/MDIO-free register view); default ON -- the production net path (the legacy in-root path stays available via `-DAIOS_NETD=OFF`)
-- **Network control** -- netconsole: run commands, push/pull files (`pi_filexfer.py`), and reboot the Pi over the LAN; flash a new kernel over the LAN (`pi_flash.py` + `fatswap`)
-- **Process tools** -- `pidof` / `pkill` / `killall` (process lookup + signalling via /proc/status)
-- **UART IRQ wakeup** -- PL011 interrupt-driven main loop (seL4_Wait replaces busy-polling)
-- **136+ programs** -- 99 sbase utilities, 30 AIOS programs, dash, zsh, tcc, sshd
-- **TCC self-hosting** -- all 12 TCC source files compile natively on AIOS; tcc2 binary runs
-- **Crypto server** -- ChaCha20 CSPRNG, /dev/urandom + getrandom() via IPC endpoint
-- **Architecture layer** -- src/arch/ with aarch64 + x86_64 stubs (barriers, page ops)
-- **Dual-drive support** -- system disk + log disk, identified by ext2 volume label
-- **File-based logging** -- boot entries with timestamps persisted to /log/aios.log
-- **Ctrl-C (SIGINT)** -- two-stage signal delivery: SIGINT first, force-kill on second ^C
-- **Shared-memory pipes** with mapped frame buffers (client-side enabled)
-- **pthreads** (create, join, mutex) via manual TCB creation in child VSpaces
-- **Auth server** with SHA-3-512 (Keccak) passwords, login/logout, su/passwd
-- **Kernel log** ring buffer + serial echo + file log (/log/aios.log)
-- **Linux compat layer** -- getrandom, futex, ppoll, pselect6, prlimit64, prctl, sysinfo, getrusage, membarrier
-- **O_NONBLOCK pipes** -- pipe2 flags, fcntl F_GETFL/F_SETFL, server-side EAGAIN for nonblocking reads
-- **Virtual devices** -- /dev/urandom (splitmix64 PRNG), /dev/random, /dev/zero
-- **Extended procfs** -- cpuinfo, stat, loadavg, /proc/self/exe, /proc/self/fd via readlinkat; `/proc/cpufreq` + `/proc/temp` (live ARM clock + SoC temperature via the VC mailbox, RPi4; `/proc/cpufreq.set.MHZ` sets the cluster-wide ARM clock for manual DVFS, with `arm_freq_min` in `config.txt` opening the floor; a load-driven auto-governor downclocks to 300MHz at idle and boosts to 600 under load, runtime-tunable via `/proc/cpufreq.tune` -- HW-verified, ~4-5C idle cooling); `/proc/net` (netd liveness heartbeat)
-- **POSIX core 55/55 (100%)** -- all core POSIX interfaces implemented
-- **PSCI shutdown** -- clean power-off via /bin/aios/shutdown
-- **getconf** -- sysconf, confstr, pathconf, limits (99/99 sbase tools)
-- **VKA allocator audit** -- per-subsystem resource tracking via /proc/vka and debug command
-- **RPi4 SD card** -- BCM2711 EMMC2 SDHCI driver, PIO read/write, write-back cache + CMD25 multi-block, 25MHz 4-bit bus, MBR partition
-
-## Architecture
-
-AIOS runs as a single root task on bare seL4 (no Microkit). Server threads
-handle IPC-based services; user processes get isolated VSpaces with
-capability-mediated access to servers.
-
-    User programs (dash, sbase tools, test programs)
-            |
-       aios_posix.c  (POSIX shim: 86+ syscalls, signals, pthreads, statx)
-            |
-       +--------+--------+--------+--------+--------+---------+---------+
-       |        |        |        |        |        |         |         |
-    pipe_srv exec_srv fs_srv  thread  auth_srv net_srv disp_srv crypto
-    (pipes,  (ELF,    (VFS,   (pthr)  (SHA-3,  (TCP/  (frame-  (CSPRNG
-     fork,   process  ext2          users,  IP,    buffer,  /dev/
-     exec,   life-    I/O)          sess)   HTTP)  fbshow)  urandom)
-     wait)   cycle)
-            |
-       +----------+----------+
-       |          |          |
-     ext2.c    procfs.c    vfs.c
-       |
-    virtio-blk + virtio-net + ramfb (QEMU)
-    BCM2711 EMMC2 + VideoCore mailbox (RPi4)
-       |
-    seL4 microkernel (AArch64, 4-core SMP -- QEMU + RPi4, HW-verified)
-       |
-    QEMU virt / Raspberry Pi 4
-
-Under `AIOS_NETD`, net_srv (the socket server + TCP/IP + NIC driver dev-half) is
-not a root thread but a separate MMU-isolated `netd` process; root retains device
-provisioning and hands netd a copy of the same `net_ep`, so clients are unchanged.
-
-## Prerequisites
-
-### macOS (Apple Silicon)
-
-Install these via Homebrew:
-
-```bash
-# Cross-compiler toolchain
-brew install aarch64-unknown-linux-gnu
-
-# Build tools
-brew install cmake ninja python3
-
-# QEMU for AArch64 emulation
-brew install qemu
-
-# Required by seL4 build system
-brew install gnu-sed texinfo dtc libxml2
-
-# Add GNU tools to PATH (required for seL4 kernel build)
-export PATH="/opt/homebrew/opt/gnu-sed/libexec/gnubin:$PATH"
-export PATH="/opt/homebrew/opt/texinfo/bin:$PATH"
-```
-
-### Linux (Ubuntu/Debian)
-
-```bash
-sudo apt install gcc-aarch64-linux-gnu cmake ninja-build python3 \
-    qemu-system-arm device-tree-compiler libxml2-utils texinfo
-```
-
-## Setting Up Dependencies
-
-The seL4 ecosystem libraries are required but gitignored. Clone them into `deps/`:
-
-```bash
-cd AIOS
-mkdir -p deps
-
-# seL4 kernel (symlinked as deps/kernel)
-git clone https://github.com/seL4/seL4.git deps/seL4-kernel
-ln -s seL4-kernel deps/kernel
-
-# seL4 libraries
-git clone https://github.com/seL4/musllibc.git deps/musllibc
-git clone https://github.com/seL4/seL4_libs.git deps/seL4_libs
-git clone https://github.com/seL4/seL4_tools.git deps/seL4_tools
-git clone https://github.com/seL4/sel4runtime.git deps/sel4runtime
-git clone https://github.com/seL4/util_libs.git deps/util_libs
-
-# Symlink for build system
-ln -sf deps/seL4_tools/cmake-tool tools/seL4
-```
-
-### Required Patches (GCC 15)
-
-GCC 15 changes default symbol visibility, breaking musllibc. Apply these patches
-after cloning deps (documented in `docs/patches/`):
-
-**deps/musllibc** -- `vis.h` and `stdio_impl.h`: change `__attribute__((visibility("protected")))`
-to `__attribute__((visibility("default")))`.
-
-**deps/util_libs** -- `libplatsupport/src/common.c`: suppress format warning
-(documented in `docs/patches/platsupport-warning.md`).
-
-### sbase (Unix utilities)
-
-```bash
-# Clone sbase alongside AIOS (same parent directory)
-cd ..
-git clone https://git.suckless.org/sbase
-cd AIOS
-```
-
-### dash (login shell -- required)
-
-```bash
-cd ..
-git clone https://github.com/tklauser/dash.git
-cd dash/src
-
-# Generate required headers on macOS/Linux host
-cc -o mksyntax mksyntax.c && ./mksyntax
-cc -o mknodes mknodes.c && ./mknodes nodetypes nodes.c.pat
-cc -o mkinit mkinit.c && ./mkinit *.c
-cc -DSMALL -DJOBS=0 -o mkbuiltins mkbuiltins.c 2>/dev/null || \
-  sh mkbuiltins shell.h builtins.def
-cc -o mksignames mksignames.c && ./mksignames
-
-# Create config.h for AIOS (see docs/DASH_PORT.md for full details)
-# Key defines: JOBS=0, SMALL=1, GLOB_BROKEN=1, stat64->stat mappings
-```
-
-## Building
-
-> **Tip:** after the one-time `cmake` configure in step 1, `python3 scripts/build_apps.py`
-> runs every step below in a single command (ninja + sbase + dash + tcc + disk image).
-> The manual steps are kept here for reference and first-time setup.
-
-### 1. Build kernel + root task + all AIOS programs
-
-```bash
-cd AIOS
-rm -rf build-04 && mkdir build-04 && cd build-04
-cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=../deps/kernel/gcc.cmake \
-    -DCROSS_COMPILER_PREFIX=aarch64-linux-gnu- ..
-ninja
-```
-
-### 2. Build sbase utilities
-
-```bash
-cd AIOS
-python3 scripts/build_sbase.py
-```
-
-This cross-compiles 99 sbase tools into `build-04/sbase/` using `scripts/aios-cc`.
-
-### 3. Build dash shell
-
-```bash
-cd AIOS
-DASH=~/Desktop/github_repos/dash/src
-./scripts/aios-cc \
-    $DASH/main.c $DASH/eval.c $DASH/parser.c $DASH/expand.c \
-    $DASH/exec.c $DASH/jobs.c $DASH/trap.c $DASH/redir.c \
-    $DASH/input.c $DASH/output.c $DASH/var.c $DASH/cd.c \
-    $DASH/error.c $DASH/options.c $DASH/memalloc.c \
-    $DASH/mystring.c $DASH/syntax.c $DASH/nodes.c \
-    $DASH/builtins.c $DASH/init.c $DASH/show.c \
-    $DASH/arith_yacc.c $DASH/arith_yylex.c \
-    $DASH/miscbltin.c $DASH/system.c \
-    $DASH/alias.c $DASH/histedit.c $DASH/mail.c $DASH/signames.c \
-    $DASH/bltin/test.c $DASH/bltin/printf.c $DASH/bltin/times.c \
-    -I $DASH -include $DASH/config.h -DSHELL -DSMALL -DGLOB_BROKEN \
-    -o build-04/sbase/dash
-```
-
-Dash is the primary login shell. It links against `libaios_posix.a` -- if you
-change any `src/lib/posix_*.c` file, you must rebuild dash (ninja does not
-rebuild it automatically).
-
-### 4. Create disk image
-
-```bash
-python3 scripts/mkdisk.py disk/disk_ext2.img \
-    --rootfs disk/rootfs \
-    --install-elfs build-04/sbase \
-    --aios-elfs build-04/projects/aios/
-```
-
-Creates a 256MB ext2 image with all programs installed.
-
-### 4b. Create log disk (optional, enables file logging)
-
-```bash
-MKE2FS=/opt/homebrew/opt/e2fsprogs/sbin/mke2fs  # macOS
-dd if=/dev/zero of=disk/log_ext2.img bs=1M count=16
-$MKE2FS -b 1024 -I 128 -t ext2 -L "aios-log" disk/log_ext2.img
-```
-
-Creates a 16MB ext2 log disk. At boot, AIOS identifies it by volume label
-("aios-log") and mounts at /log. Boot entries are written to /log/aios.log.
-
-**Important:** The disk image must be rebuilt whenever programs in `src/apps/`
-change (mini_shell, getty, etc.), since these are loaded from disk at runtime.
-Only the root task and CPIO-embedded servers (tty_server, auth_server) are
-loaded directly from the kernel image.
-
-### 5. Boot
-
-```bash
-qemu-system-aarch64 \
-    -machine virt,virtualization=on \
-    -cpu cortex-a53 -smp 4 -m 2G \
-    -serial mon:stdio \
-    -device ramfb \
-    -drive file=disk/disk_ext2.img,format=raw,if=none,id=hd0 \
-    -device virtio-blk-device,drive=hd0 \
-    -drive file=disk/log_ext2.img,format=raw,if=none,id=hd1 \
-    -device virtio-blk-device,drive=hd1 \
-    -device virtio-net-device,netdev=net0 \
-    -netdev user,id=net0,hostfwd=tcp::8080-:80 \
-    -kernel build-04/images/aios_root-image-arm-qemu-arm-virt
-```
-
-A QEMU window opens showing the framebuffer (boot splash + optional
-splash image). The serial console runs in the terminal via stdio.
-The log drive, network, and display are all optional -- omit any
-`-device` line and boot continues without that subsystem.
-
-Login as `root` (password: `root`). The login shell is dash (configured
-in `/etc/passwd`).
-
-To display an image on the framebuffer:
-```bash
-# On host: convert PNG to raw format
-pip3 install Pillow
-python3 scripts/png_to_raw.py image.png --resize 1024x768
-
-# Rebuild disk, boot, then in AIOS shell:
-fbshow /images/splash.raw
-fbshow --info
-fbshow --clear
-```
-
-### Incremental Development Cycle
-
-For most source changes, a full rebuild is not needed:
-
-```bash
-# After editing server code (pipe_server.c, fork.c, etc.):
-cd build-04 && ninja
-# These are part of aios_root -- no disk rebuild needed
-
-# After editing app code (mini_shell.c, getty.c, etc.):
-cd build-04 && ninja && cd ..
-python3 scripts/mkdisk.py disk/disk_ext2.img \
-    --rootfs disk/rootfs \
-    --install-elfs build-04/sbase \
-    --aios-elfs build-04/projects/aios/
-# Disk rebuild IS needed -- apps load from ext2
-```
-
-## Running on Raspberry Pi 4 (real hardware)
-
-AIOS boots on a stock Raspberry Pi 4 Model B from an SD card. The RPi4 target builds
-into a separate `build-rpi4/` tree (BCM2711 / Cortex-A72, 4-core SMP) selected by
-`settings-rpi4.cmake`.
-
-### 1. Configure + build the RPi4 image (once)
-
-```bash
-cd AIOS
-mkdir -p build-rpi4 && cd build-rpi4
-cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=../deps/kernel/gcc.cmake \
-    -DCROSS_COMPILER_PREFIX=aarch64-linux-gnu- \
-    -DAIOS_SETTINGS=settings-rpi4.cmake ..
-ninja
-cd ..
-```
-
-(Build the userspace disk first if you have not already -- `python3 scripts/build_apps.py`
-produces `disk/disk_ext2.img`, which the SD image embeds.)
-
-### 2. Build the bootable SD-card image
-
-```bash
-python3 scripts/mksdcard.py --mem 4096 --output disk/sdcard-rpi4.img
-```
-
-This writes a ~193 MB image with a **FAT32** partition (Raspberry Pi firmware +
-`config.txt` + `kernel8.img`) and an **ext2** partition (the AIOS system disk).
-
-### 3. Flash the SD card
-
-Easiest is [balenaEtcher](https://etcher.balena.io/): select `disk/sdcard-rpi4.img`,
-your SD card, then Flash. (macOS CLI helper: `scripts/flash-rpi4.sh /dev/diskN`.)
-
-### 4. Boot
-
-Insert the card and power on. AIOS boots to a login prompt on the **HDMI monitor** --
-log in with a **USB keyboard** (`root` / `root`); the Pi runs standalone, no serial
-needed. Optionally a USB-serial adapter on GPIO14/15 (115200 8N1) gives the same
-console over serial. After DHCP the Pi is on the LAN for SSH (port 2222) and netconsole.
-
-### Fast iteration: flash-free updates
-
-Re-flashing 193 MB per change is slow. Most development does not need it:
-
-```bash
-# KERNEL / root-task changes, OVER THE LAN (no card handling) -- preferred:
-ninja -C build-rpi4
-python3 scripts/pi_flash.py --build --host <pi-ip>  # push kernel8 over netconsole,
-                                                    # fatswap rewrites the FAT boot
-                                                    # partition, sha-verify, reboot
-
-# KERNEL change with the card in hand -> swap kernel8.img on the FAT partition:
-ninja -C build-rpi4
-python3 scripts/mkkernel8.py                        # -> disk/kernel8.img
-cp disk/kernel8.img /Volumes/AIOSBOOT/kernel8.img   # FAT partition mounts on macOS
-diskutil eject AIOSBOOT                              # reinsert + power on
-
-# USERSPACE / app changes -> push over the LAN, no reflash:
-python3 scripts/pi_filexfer.py push build-04/sbase/<tool> /bin/<tool> <pi-ip>
-```
-
-See `hw/rpi4/BOOT_NOTES.md` for the firmware `config.txt` and boot details.
-
-## Hardware Targets
-
-- **Development:** QEMU virt (AArch64) -- current platform
-- **Primary:** Raspberry Pi 4/5 (BCM2711/BCM2712, AArch64)
-- **Future:** x86-64
-
-## Design Philosophy
-
-- Pure POSIX: no alias tables, no prefix stripping, no magic
-- Strict Unix philosophy: shell searches PATH, sends full path to exec
-- Correctness over performance (research OS)
-- Modular server architecture with small source files
-- Everything is IPC: all syscalls route through capability-protected endpoints
+For a **real RPi4**: build the `build-rpi4/` tree (`-DAIOS_SETTINGS=settings-rpi4.cmake`), make an
+SD image with `python3 scripts/mksdcard.py`, flash with balenaEtcher, and boot to a login prompt on
+HDMI with a USB keyboard. Flash-free iteration over the LAN: `python3 scripts/pi_flash.py`. Full
+prerequisites, dependency setup, the GCC-15 musl patches, and the per-component build steps live in
+[docs/ENVIRONMENT_BUILD.md](docs/ENVIRONMENT_BUILD.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+
+</details>
+
+---
+
+## Design philosophy
+
+- **Verification is the soul.** Linux is a pragmatic interim; the destination is a verified base. The
+  PAL seam is sacred and stays minimal — it is the future verified boundary.
+- **The kernel is host-agnostic.** `uk/kernel/aios_kernel.c` reaches the host only through `pal.h`;
+  all host knowledge is confined to one PAL backend.
+- **Programs see only the AIOS ABI.** Swapping the host (Linux → seL4) is invisible above the PAL.
+- **Correctness over performance** (a research OS) — `ptrace` is slow but correctness-first;
+  throughput (seccomp/KVM, then `sched_ext`) comes later.
+- **Pure POSIX, strict Unix philosophy** — the personality the seL4 line built, carried forward.
+- **AI-assisted systems programming.** Claude is used as a development tool for code generation and
+  review; this project is also a study in that workflow. The long-term goal is self-hosted
+  development within AIOS itself.
 
 ## Documentation
 
-- [CONTRIBUTING.md](CONTRIBUTING.md) -- How to build, test, and contribute (style, rebuild rules, conventions)
-- [CHANGELOG.md](CHANGELOG.md) -- Milestone history
-- [ENVIRONMENT_BUILD.md](docs/ENVIRONMENT_BUILD.md) -- Step-by-step build environment setup
-- [AI_BRIEFING.md](docs/AI_BRIEFING.md) -- Project context for AI sessions
-- [ARCHITECTURE.md](docs/ARCHITECTURE.md) -- System design
-- [DESIGN_0.4.md](docs/DESIGN_0.4.md) -- 0.4.x design decisions
-- [LEARNINGS.md](docs/LEARNINGS.md) -- Hard-won lessons from seL4 development
-- [DASH_PORT.md](docs/DASH_PORT.md) -- dash shell porting guide
-- [DESIGN_NET.md](docs/DESIGN_NET.md) -- Networking subsystem design (virtio-net)
-- [DESIGN_NETD.md](docs/DESIGN_NETD.md) -- De-monolithizing the root task: the isolated netd network process
-- [DESIGN_TCC.md](docs/DESIGN_TCC.md) -- tcc self-hosted compilation design
-- [DESIGN_ZSH.md](docs/DESIGN_ZSH.md) -- zsh shell port design
-- [DESIGN_USB_HID.md](docs/DESIGN_USB_HID.md) -- USB HID keyboard: PCIe + xHCI + hub + HID
+- [docs/DESIGN_20260624_aios_userspace_kernel_on_linux.md](docs/DESIGN_20260624_aios_userspace_kernel_on_linux.md) — **the pivot design** (model, PAL, roadmap)
+- [uk/README.md](uk/README.md) — the userspace-kernel tree (layout, milestones, build/run)
+- [docs/HANDOVER_20260625_session18.md](docs/HANDOVER_20260625_session18.md) — latest deep state (the process model + libc retarget)
+- [CHANGELOG.md](CHANGELOG.md) — milestone history (the 0.4.x arc)
+- [CONTRIBUTING.md](CONTRIBUTING.md) — build, test, style, conventions
+- [docs/LEARNINGS.md](docs/LEARNINGS.md) — hard-won lessons from seL4 development
+- 0.4.x architecture + subsystem designs: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/DESIGN_0.4.md](docs/DESIGN_0.4.md), [docs/DESIGN_NETD.md](docs/DESIGN_NETD.md), [docs/DESIGN_USB_HID.md](docs/DESIGN_USB_HID.md), [docs/DESIGN_TCC.md](docs/DESIGN_TCC.md)
 
-## Project Status
+## Project status
 
-This is in an experimental/research phase. Collaborators welcome -- see
-[CONTRIBUTING.md](CONTRIBUTING.md) for the workflow, style, and test
-conventions.
-
-The 0.4.x line runs on bare seL4 (single root task, no Microkit).
-Earlier branches (0.2.x, 0.3.x) explored Microkit-based designs.
+Experimental / research. The active line is **`v0.5.x`** — the userspace kernel on a Linux HAL, held
+here while that seam matures. The **`v0.4.x`** seL4 line is preserved on `main` as the record and
+fallback. Collaborators welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-First-party code is MIT -- see [LICENSE](LICENSE).
+First-party code is MIT — see [LICENSE](LICENSE).
 
-AIOS builds on and ships alongside third-party components (seL4 kernel
-(GPL-2.0), sbase, dash, zsh, TinyCC (LGPL-2.1), Mbed TLS, musl, Raspberry Pi
-firmware). Their licenses and the obligations for distributing built images
-are catalogued in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+AIOS builds on and ships alongside third-party components. The userspace kernel itself depends only
+on a host kernel (Linux today). The seL4 line and the eventual verified-seL4 destination ship with
+seL4 (GPL-2.0), and the inherited userland with sbase, dash, zsh, TinyCC (LGPL-2.1), Mbed TLS, musl,
+and Raspberry Pi firmware. Their licenses and the obligations for distributing built images are
+catalogued in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
