@@ -66,3 +66,7 @@ src/lib/aios_posix.c.pre_modular
 # clangd database (symlink into build-04/)
 compile_commands.json
 .cache/
+
+# AI tooling: Claude config/skills + the installed BMad modules (developer-local, not OS source)
+.claude/
+_bmad/
