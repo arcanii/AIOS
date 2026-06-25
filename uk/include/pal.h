@@ -17,6 +17,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "aios_abi.h"   /* struct aios_stat (the metadata format the PAL fills) -- host-agnostic */
 
 /* One intercepted guest syscall: the AIOS-ABI request a program made (see aios_abi.h). */
 typedef struct {
@@ -127,9 +128,22 @@ int  pal_host_close(pal_file_t f);
  * in-kernel ring or notification pair.) */
 int pal_host_pipe(pal_file_t *rd, pal_file_t *wr);
 
-/* Reposition (whence is AIOS_SEEK_*; returns the new absolute offset, or <0) and stat (fills size
- * + mode; returns 0 or -1). The PAL maps these onto the host (Linux: lseek/fstat). */
+/* Reposition (whence is AIOS_SEEK_*; returns the new absolute offset, or -errno) and stat by fd
+ * (fills *out; 0 or -errno). The PAL maps these onto the host (Linux: lseek/fstat). */
 long long pal_host_lseek(pal_file_t f, long long off, int whence);
-int       pal_host_fstat(pal_file_t f, unsigned long long *size, unsigned int *mode);
+int       pal_host_fstat(pal_file_t f, struct aios_stat *out);
+
+/* --- filesystem namespace ops (by path) --- All return 0 (or a length, getcwd) on success, or a
+ * negated AIOS error code. The Linux PAL maps to stat/lstat/unlink/mkdir/rmdir/rename/chdir/getcwd;
+ * a future seL4 PAL routes them to its fs server. `follow` selects stat (1) vs lstat (0). cwd is a
+ * single host-side (tracer) cwd for now -- correct for a shell + its sequential commands; per-process
+ * cwd comes when concurrent subshells need it. */
+int  pal_host_stat  (const char *path, struct aios_stat *out, int follow);
+int  pal_host_unlink(const char *path);
+int  pal_host_mkdir (const char *path, unsigned int mode);
+int  pal_host_rmdir (const char *path);
+int  pal_host_rename(const char *oldpath, const char *newpath);
+int  pal_host_chdir (const char *path);
+long pal_host_getcwd(char *buf, size_t size);
 
 #endif /* AIOS_PAL_H */

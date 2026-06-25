@@ -26,6 +26,7 @@
 #include <fcntl.h>              /* O_* + open() */
 #include <signal.h>            /* SIGCHLD, SIGTRAP, SIGSTOP */
 #include <stdint.h>
+#include <stdio.h>             /* rename() */
 #include <string.h>
 #include <unistd.h>
 #include <sys/ptrace.h>
@@ -324,10 +325,42 @@ long long pal_host_lseek(pal_file_t f, long long off, int whence) {
     off_t r = lseek((int)f, (off_t)off, whence);           /* AIOS_SEEK_* == SEEK_* */
     return r < 0 ? (long long)pal_errno() : (long long)r;
 }
-int pal_host_fstat(pal_file_t f, unsigned long long *size, unsigned int *mode) {
+/* glibc's <sys/stat.h> #defines st_atime/st_mtime/st_ctime as macros (-> st_atim.tv_sec ...). Undo
+ * them so the AIOS struct can name its fields the same; the host timespec members st_atim/st_mtim/
+ * st_ctim (used below) are unaffected. */
+#undef st_atime
+#undef st_mtime
+#undef st_ctime
+static void fill_aios_stat(struct aios_stat *a, const struct stat *s) {
+    a->st_dev   = (unsigned long long)s->st_dev;
+    a->st_ino   = (unsigned long long)s->st_ino;
+    a->st_mode  = (unsigned int)s->st_mode;                /* st_mode layout matches AIOS_S_IF* */
+    a->st_nlink = (unsigned int)s->st_nlink;
+    a->st_uid   = (unsigned int)s->st_uid;
+    a->st_gid   = (unsigned int)s->st_gid;
+    a->_pad     = 0;
+    a->st_size    = (long long)s->st_size;
+    a->st_blksize = (long long)s->st_blksize;
+    a->st_blocks  = (long long)s->st_blocks;
+    a->st_atime   = (long long)s->st_atim.tv_sec;
+    a->st_mtime   = (long long)s->st_mtim.tv_sec;
+    a->st_ctime   = (long long)s->st_ctim.tv_sec;
+}
+int pal_host_fstat(pal_file_t f, struct aios_stat *out) {
     struct stat st;
     if (fstat((int)f, &st) != 0) return (int)pal_errno();
-    if (size) *size = (unsigned long long)st.st_size;
-    if (mode) *mode = (unsigned int)st.st_mode;            /* st_mode layout matches AIOS_S_IF* */
+    fill_aios_stat(out, &st);
     return 0;
 }
+int pal_host_stat(const char *path, struct aios_stat *out, int follow) {
+    struct stat st;
+    if ((follow ? stat(path, &st) : lstat(path, &st)) != 0) return (int)pal_errno();
+    fill_aios_stat(out, &st);
+    return 0;
+}
+int  pal_host_unlink(const char *path)               { return unlink(path) == 0 ? 0 : (int)pal_errno(); }
+int  pal_host_mkdir (const char *path, unsigned int m){ return mkdir(path, (mode_t)m) == 0 ? 0 : (int)pal_errno(); }
+int  pal_host_rmdir (const char *path)               { return rmdir(path) == 0 ? 0 : (int)pal_errno(); }
+int  pal_host_rename(const char *o, const char *n)   { return rename(o, n) == 0 ? 0 : (int)pal_errno(); }
+int  pal_host_chdir (const char *path)               { return chdir(path) == 0 ? 0 : (int)pal_errno(); }
+long pal_host_getcwd(char *buf, size_t size)         { return getcwd(buf, size) ? (long)strlen(buf) : pal_errno(); }

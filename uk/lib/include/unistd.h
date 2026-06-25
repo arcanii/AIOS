@@ -21,6 +21,7 @@ int     execvp(const char *file, char *const argv[]);
 pid_t   getpid(void);
 int     isatty(int fd);
 int     unlink(const char *path);
+int     rmdir(const char *path);
 int     chdir(const char *path);
 char   *getcwd(char *buf, size_t size);
 void    _exit(int code) __attribute__((noreturn));

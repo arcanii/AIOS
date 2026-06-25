@@ -172,11 +172,60 @@ static long sys_lseek(proc_t *p, uint64_t fd, uint64_t off, uint64_t whence) {
 static long sys_fstat(proc_t *p, uint64_t fd, uint64_t gstat) {
     if (!fd_valid(p, fd)) return -AIOS_EBADF;
     struct aios_stat s;
-    s._pad = 0;
-    int r = pal_host_fstat(fd_backing(p, fd), &s.size, &s.mode);
+    int r = pal_host_fstat(fd_backing(p, fd), &s);
     if (r != 0) return r;                              /* -errno */
     if (pal_guest_write(p->pid, gstat, &s, sizeof s) != sizeof s) return -AIOS_EFAULT;
     return 0;
+}
+
+/* Bounce a path string out of the guest into `dst` (NUL-terminated). 0 on success, -errno. */
+static long read_path(proc_t *p, uint64_t gpath, char *dst, size_t cap) {
+    size_t n = pal_guest_read(p->pid, gpath, dst, cap - 1);
+    if (n == 0) return -AIOS_EFAULT;
+    dst[n] = '\0';
+    return 0;
+}
+
+static long sys_stat(proc_t *p, uint64_t gpath, uint64_t gstat, int follow) {
+    char path[256];
+    long e = read_path(p, gpath, path, sizeof path); if (e) return e;
+    struct aios_stat s;
+    int r = pal_host_stat(path, &s, follow);
+    if (r != 0) return r;
+    if (pal_guest_write(p->pid, gstat, &s, sizeof s) != sizeof s) return -AIOS_EFAULT;
+    return 0;
+}
+
+static long sys_getcwd(proc_t *p, uint64_t gbuf, uint64_t size) {
+    char buf[1024];
+    size_t cap = size < sizeof buf ? (size_t)size : sizeof buf;
+    long r = pal_host_getcwd(buf, cap);
+    if (r < 0) return r;
+    if (pal_guest_write(p->pid, gbuf, buf, (size_t)r + 1) != (size_t)r + 1) return -AIOS_EFAULT; /* +NUL */
+    return r;
+}
+
+static long sys_chdir (proc_t *p, uint64_t gpath) {
+    char path[256]; long e = read_path(p, gpath, path, sizeof path); if (e) return e;
+    return pal_host_chdir(path);
+}
+static long sys_unlink(proc_t *p, uint64_t gpath) {
+    char path[256]; long e = read_path(p, gpath, path, sizeof path); if (e) return e;
+    return pal_host_unlink(path);
+}
+static long sys_mkdir (proc_t *p, uint64_t gpath, uint64_t mode) {
+    char path[256]; long e = read_path(p, gpath, path, sizeof path); if (e) return e;
+    return pal_host_mkdir(path, (unsigned int)mode);
+}
+static long sys_rmdir (proc_t *p, uint64_t gpath) {
+    char path[256]; long e = read_path(p, gpath, path, sizeof path); if (e) return e;
+    return pal_host_rmdir(path);
+}
+static long sys_rename(proc_t *p, uint64_t gold, uint64_t gnew) {
+    char o[256], n[256];
+    long e = read_path(p, gold, o, sizeof o); if (e) return e;
+    e = read_path(p, gnew, n, sizeof n);      if (e) return e;
+    return pal_host_rename(o, n);
 }
 
 /* ---- pipes ----
@@ -447,6 +496,15 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
     case AIOS_SYS_LSEEK: ret = (uint64_t)sys_lseek(p, sc->arg[0], sc->arg[1], sc->arg[2]); break;
     case AIOS_SYS_FSTAT: ret = (uint64_t)sys_fstat(p, sc->arg[0], sc->arg[1]);             break;
     case AIOS_SYS_DUP2:  ret = (uint64_t)sys_dup2 (p, sc->arg[0], sc->arg[1]);             break;
+    case AIOS_SYS_STAT:  ret = (uint64_t)sys_stat (p, sc->arg[0], sc->arg[1], 1);          break;
+    case AIOS_SYS_LSTAT: ret = (uint64_t)sys_stat (p, sc->arg[0], sc->arg[1], 0);          break;
+    case AIOS_SYS_GETCWD:ret = (uint64_t)sys_getcwd(p, sc->arg[0], sc->arg[1]);            break;
+    case AIOS_SYS_CHDIR: ret = (uint64_t)sys_chdir(p, sc->arg[0]);                         break;
+    case AIOS_SYS_UNLINK:ret = (uint64_t)sys_unlink(p, sc->arg[0]);                        break;
+    case AIOS_SYS_MKDIR: ret = (uint64_t)sys_mkdir(p, sc->arg[0], sc->arg[1]);             break;
+    case AIOS_SYS_RMDIR: ret = (uint64_t)sys_rmdir(p, sc->arg[0]);                         break;
+    case AIOS_SYS_RENAME:ret = (uint64_t)sys_rename(p, sc->arg[0], sc->arg[1]);            break;
+    case AIOS_SYS_GETPID:ret = (uint64_t)p->pid;                                           break;
     default:             ret = (uint64_t)-AIOS_ENOSYS; /* unknown AIOS syscall */           break;
     }
     pal_guest_return(p->pid, ret);

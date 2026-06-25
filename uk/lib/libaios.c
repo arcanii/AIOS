@@ -329,12 +329,34 @@ int  fork (void)                                    { return (int)__ret(aios_for
 int  execv (const char *p, char *const argv[])      { return (int)__ret(aios_execve(p, argv, environ)); }
 int  execvp(const char *f, char *const argv[])      { return (int)__ret(aios_execve(f, argv, environ)); } /* no PATH yet */
 void _exit(int code)                                { aios_exit(code); }
-int  getpid(void)  { return 1; }                    /* TODO: a real AIOS_SYS_GETPID */
+int  getpid(void)  { return (int)asys(AIOS_SYS_GETPID, 0, 0, 0); }
 int  isatty(int fd){ (void)fd; return 0; }          /* no tty layer yet */
 int  open(const char *path, int flags, ...) {
     int mode = 0;
     if (flags & AIOS_O_CREAT) { va_list ap; va_start(ap, flags); mode = va_arg(ap, int); va_end(ap); }
     return (int)__ret(aios_open(path, flags, mode));
+}
+
+/* filesystem namespace (sys/stat.h + unistd.h + stdio.h). The stat pointer is forwarded straight to
+ * the kernel, which fills it -- libaios never touches the struct (the program's `struct stat` ==
+ * the kernel's `struct aios_stat`, byte for byte), so a void* keeps libaios independent of it. */
+int  stat (const char *path, void *st) { return (int)__ret(asys(AIOS_SYS_STAT,  (long)path, (long)st, 0)); }
+int  lstat(const char *path, void *st) { return (int)__ret(asys(AIOS_SYS_LSTAT, (long)path, (long)st, 0)); }
+int  fstat(int fd, void *st)           { return (int)__ret(asys(AIOS_SYS_FSTAT, fd, (long)st, 0)); }
+int  unlink(const char *path)          { return (int)__ret(asys(AIOS_SYS_UNLINK, (long)path, 0, 0)); }
+int  rmdir (const char *path)          { return (int)__ret(asys(AIOS_SYS_RMDIR,  (long)path, 0, 0)); }
+int  chdir (const char *path)          { return (int)__ret(asys(AIOS_SYS_CHDIR,  (long)path, 0, 0)); }
+int  mkdir (const char *path, unsigned int mode)  { return (int)__ret(asys(AIOS_SYS_MKDIR, (long)path, (long)mode, 0)); }
+int  rename(const char *o, const char *n)         { return (int)__ret(asys(AIOS_SYS_RENAME, (long)o, (long)n, 0)); }
+int  remove(const char *path) {                   /* POSIX: unlink a file, or rmdir a directory */
+    int r = unlink(path);
+    if (r != 0 && errno == AIOS_EISDIR) r = rmdir(path);
+    return r;
+}
+char *getcwd(char *buf, unsigned long size) {
+    long r = asys(AIOS_SYS_GETCWD, (long)buf, (long)size, 0);
+    if (AIOS_IS_ERR(r)) { errno = (int)-r; return 0; }
+    return buf;
 }
 
 /* sys/wait */

@@ -26,6 +26,15 @@
 #define AIOS_SYS_WAIT    0x100A   /* (pid, int *status, flags) -> reaped pid, or -1 (no children) */
 #define AIOS_SYS_PIPE    0x100B   /* (int fds[2])          -> 0 (fds[0]=read end, fds[1]=write), -1 */
 #define AIOS_SYS_DUP2    0x100C   /* (oldfd, newfd)        -> newfd, or -1                        */
+#define AIOS_SYS_STAT    0x100D   /* (path, struct aios_stat*) -> 0, or -errno (follows symlinks) */
+#define AIOS_SYS_LSTAT   0x100E   /* (path, struct aios_stat*) -> 0, or -errno (no follow)        */
+#define AIOS_SYS_GETCWD  0x100F   /* (buf, size)           -> length written, or -errno           */
+#define AIOS_SYS_CHDIR   0x1010   /* (path)                -> 0, or -errno                         */
+#define AIOS_SYS_UNLINK  0x1011   /* (path)                -> 0, or -errno                         */
+#define AIOS_SYS_MKDIR   0x1012   /* (path, mode)          -> 0, or -errno                         */
+#define AIOS_SYS_RMDIR   0x1013   /* (path)                -> 0, or -errno                         */
+#define AIOS_SYS_RENAME  0x1014   /* (oldpath, newpath)    -> 0, or -errno                         */
+#define AIOS_SYS_GETPID  0x1015   /* ()                    -> the caller's pid                     */
 
 /* AIOS_SYS_WAIT: pid selector + the wait status it stores via *status. pid == -1 waits for ANY
  * child; a positive pid waits for that child. The status encodes a normal exit as
@@ -68,16 +77,33 @@
 #define AIOS_SEEK_CUR    1
 #define AIOS_SEEK_END    2
 
-/* File metadata returned by AIOS_SYS_FSTAT (the kernel fills it in the guest's memory). mode bits
- * follow the conventional layout (matches host st_mode), so AIOS_S_IF* below decode the type. */
+/* File metadata returned by AIOS_SYS_FSTAT / STAT / LSTAT (the kernel fills it in the guest's
+ * memory). mode bits follow the conventional layout (matches host st_mode), so AIOS_S_IF* decode
+ * the type. POSIX field names so this is byte-identical to the shadow <sys/stat.h> `struct stat`
+ * (THEY MUST MATCH -- the kernel writes these bytes, the program reads them as struct stat). */
 struct aios_stat {
-    unsigned long long size;   /* file size in bytes */
-    unsigned int       mode;   /* type + permission bits */
+    unsigned long long st_dev;
+    unsigned long long st_ino;
+    unsigned int       st_mode;    /* type + permission bits */
+    unsigned int       st_nlink;
+    unsigned int       st_uid;
+    unsigned int       st_gid;
     unsigned int       _pad;
+    long long          st_size;    /* file size in bytes */
+    long long          st_blksize;
+    long long          st_blocks;
+    long long          st_atime;   /* seconds */
+    long long          st_mtime;
+    long long          st_ctime;
 };
 #define AIOS_S_IFMT      0xF000
 #define AIOS_S_IFREG     0x8000
 #define AIOS_S_IFDIR     0x4000
+#define AIOS_S_IFLNK     0xA000
+#define AIOS_S_IFCHR     0x2000
+#define AIOS_S_IFBLK     0x6000
+#define AIOS_S_IFIFO     0x1000
+#define AIOS_S_IFSOCK    0xC000
 
 /* AIOS open flags -- AIOS owns these values; the host PAL translates them to its native flags
  * (Linux O_*). The low 2 bits are the access mode. */

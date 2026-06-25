@@ -27,8 +27,8 @@ int main(int argc, char **argv) {
     long len = 0;
 
     struct aios_stat st;
-    if (path && aios_fstat(fd, &st) == 0 && st.size > (unsigned long long)CAP) {
-        aios_lseek(fd, (long)(st.size - CAP), AIOS_SEEK_SET);   /* skip to the trailing window */
+    if (path && aios_fstat(fd, &st) == 0 && st.st_size > (long long)CAP) {
+        aios_lseek(fd, (long)(st.st_size - CAP), AIOS_SEEK_SET);   /* skip to the trailing window */
         len = aios_read(fd, buf, CAP);
     } else {
         long r;                                                  /* stdin or a small file */

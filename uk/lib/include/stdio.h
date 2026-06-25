@@ -34,6 +34,8 @@ int    ferror(FILE *f);
 void   clearerr(FILE *f);
 int    fileno(FILE *f);
 void   perror(const char *s);
+int    rename(const char *oldpath, const char *newpath);
+int    remove(const char *path);
 
 int    printf(const char *fmt, ...);
 int    fprintf(FILE *f, const char *fmt, ...);
