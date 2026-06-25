@@ -289,18 +289,19 @@ static int xlate_open_flags(uint64_t f) {
     return o;
 }
 
-pal_file_t pal_host_open(const char *path, uint64_t aios_flags, uint64_t mode) {
-    int fd = open(path, xlate_open_flags(aios_flags), (mode_t)mode);
-    return fd < 0 ? PAL_FILE_INVALID : (pal_file_t)fd;
+/* host errno -> a negated AIOS error code. The AIOS error numbers (aios_abi.h) are chosen to match
+ * Linux, so the Linux PAL's mapping is just `-errno`; this also yields PAL_EWOULDBLOCK (-EAGAIN) and
+ * PAL_EPIPE (-EPIPE) for the two the pipe path tests by name. */
+static long pal_errno(void) {
+    int e = errno;
+    return e ? -(long)e : -1;
 }
 
-/* errno -> host-agnostic PAL code (the kernel never sees errno). Only the conditions the kernel
- * reasons about (would-block on a non-blocking pipe, broken pipe) get distinct codes. */
-static long pal_errno(void) {
-    if (errno == EAGAIN || errno == EWOULDBLOCK) return PAL_EWOULDBLOCK;
-    if (errno == EPIPE) return PAL_EPIPE;
-    return -1;
+pal_file_t pal_host_open(const char *path, uint64_t aios_flags, uint64_t mode) {
+    int fd = open(path, xlate_open_flags(aios_flags), (mode_t)mode);
+    return fd < 0 ? (pal_file_t)pal_errno() : (pal_file_t)fd;   /* -errno on failure */
 }
+
 long pal_host_read(pal_file_t f, void *buf, size_t len) {
     long n = (long)read((int)f, buf, len);
     return n < 0 ? pal_errno() : n;
@@ -313,18 +314,19 @@ int  pal_host_close(pal_file_t f)                              { return close((i
 
 int pal_host_pipe(pal_file_t *rd, pal_file_t *wr) {
     int fds[2];
-    if (pipe2(fds, O_NONBLOCK) != 0) return -1;    /* non-blocking: the kernel parks, never wedges */
+    if (pipe2(fds, O_NONBLOCK) != 0) return (int)pal_errno();   /* non-blocking: kernel parks, never wedges */
     *rd = (pal_file_t)fds[0];
     *wr = (pal_file_t)fds[1];
     return 0;
 }
 
 long long pal_host_lseek(pal_file_t f, long long off, int whence) {
-    return (long long)lseek((int)f, (off_t)off, whence);   /* AIOS_SEEK_* == SEEK_* */
+    off_t r = lseek((int)f, (off_t)off, whence);           /* AIOS_SEEK_* == SEEK_* */
+    return r < 0 ? (long long)pal_errno() : (long long)r;
 }
 int pal_host_fstat(pal_file_t f, unsigned long long *size, unsigned int *mode) {
     struct stat st;
-    if (fstat((int)f, &st) != 0) return -1;
+    if (fstat((int)f, &st) != 0) return (int)pal_errno();
     if (size) *size = (unsigned long long)st.st_size;
     if (mode) *mode = (unsigned int)st.st_mode;            /* st_mode layout matches AIOS_S_IF* */
     return 0;

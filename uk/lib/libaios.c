@@ -19,6 +19,9 @@ static long asys(long nr, long a0, long a1, long a2) {
     return x0;
 }
 
+int errno;   /* POSIX errno; set by the standard-named wrappers (see __ret) and read by perror */
+char *strerror(int errnum);   /* defined below; declared early so perror (stdio) can use it */
+
 long aios_open(const char *p, int fl, int mode) { return asys(AIOS_SYS_OPEN, (long)p, fl, mode); }
 long aios_read(int fd, void *b, unsigned long n)  { return asys(AIOS_SYS_READ,  fd, (long)b, n); }
 long aios_write(int fd, const void *b, unsigned long n){ return asys(AIOS_SYS_WRITE, fd, (long)b, n); }
@@ -228,7 +231,8 @@ int fclose(FILE *f) {
 }
 void perror(const char *s) {
     if (s && *s) { fputs(s, stderr); fputs(": ", stderr); }
-    fputs("error\n", stderr);
+    fputs(strerror(errno), stderr);
+    fputc('\n', stderr);
 }
 
 /* --- output --- */
@@ -309,28 +313,33 @@ int putchar(int c) { return fputc(c, stdout); }
  * lib/include (-nostdinc). Thin wrappers over the aios_* core / the AIOS ABI. Definitions use plain
  * types (the shadow typedefs ssize_t/off_t/pid_t are long/long/int -- compatible). */
 
+/* A failing syscall returns a negated AIOS error code (-errno); these wrappers translate that to
+ * the POSIX contract: set `errno`, return -1. (The lower-level aios_* functions return the raw
+ * value.) `errno` itself (defined near the top) is what the shadow <errno.h> declares extern. */
+static long __ret(long r) { if (AIOS_IS_ERR(r)) { errno = (int)-r; return -1; } return r; }
+
 /* unistd / fcntl */
-long read (int fd, void *b, unsigned long n)        { return aios_read(fd, b, n); }
-long write(int fd, const void *b, unsigned long n)  { return aios_write(fd, b, n); }
-int  close(int fd)                                  { return aios_close(fd); }
-long lseek(int fd, long off, int whence)            { return aios_lseek(fd, off, whence); }
-int  pipe (int fds[2])                              { return aios_pipe(fds); }
-int  dup2 (int o, int n)                            { return (int)aios_dup2(o, n); }
-int  fork (void)                                    { return (int)aios_fork(); }
-int  execv (const char *p, char *const argv[])      { return (int)aios_execve(p, argv, environ); }
-int  execvp(const char *f, char *const argv[])      { return (int)aios_execve(f, argv, environ); } /* no PATH search yet */
+long read (int fd, void *b, unsigned long n)        { return __ret(aios_read(fd, b, n)); }
+long write(int fd, const void *b, unsigned long n)  { return __ret(aios_write(fd, b, n)); }
+int  close(int fd)                                  { return (int)__ret(aios_close(fd)); }
+long lseek(int fd, long off, int whence)            { return __ret(aios_lseek(fd, off, whence)); }
+int  pipe (int fds[2])                              { return (int)__ret(aios_pipe(fds)); }
+int  dup2 (int o, int n)                            { return (int)__ret(aios_dup2(o, n)); }
+int  fork (void)                                    { return (int)__ret(aios_fork()); }
+int  execv (const char *p, char *const argv[])      { return (int)__ret(aios_execve(p, argv, environ)); }
+int  execvp(const char *f, char *const argv[])      { return (int)__ret(aios_execve(f, argv, environ)); } /* no PATH yet */
 void _exit(int code)                                { aios_exit(code); }
 int  getpid(void)  { return 1; }                    /* TODO: a real AIOS_SYS_GETPID */
 int  isatty(int fd){ (void)fd; return 0; }          /* no tty layer yet */
 int  open(const char *path, int flags, ...) {
     int mode = 0;
     if (flags & AIOS_O_CREAT) { va_list ap; va_start(ap, flags); mode = va_arg(ap, int); va_end(ap); }
-    return (int)aios_open(path, flags, mode);
+    return (int)__ret(aios_open(path, flags, mode));
 }
 
 /* sys/wait */
-int wait(int *status)                          { return (int)aios_wait(status); }
-int waitpid(int pid, int *status, int options) { return (int)aios_waitpid(pid, status, options); }
+int wait(int *status)                          { return (int)__ret(aios_wait(status)); }
+int waitpid(int pid, int *status, int options) { return (int)__ret(aios_waitpid(pid, status, options)); }
 
 /* string extras */
 char *strrchr(const char *s, int c) {
@@ -366,7 +375,34 @@ void *memchr(const void *s, int c, size_t n) {
     return 0;
 }
 char *strdup(const char *s) { size_t n = strlen(s) + 1; char *p = malloc(n); if (p) memcpy(p, s, n); return p; }
-char *strerror(int e) { (void)e; return "error"; }   /* minimal; real errno strings come with errno */
+char *strerror(int e) {
+    switch (e) {
+    case 0:                   return "Success";
+    case AIOS_EPERM:          return "Operation not permitted";
+    case AIOS_ENOENT:         return "No such file or directory";
+    case AIOS_ESRCH:          return "No such process";
+    case AIOS_EINTR:          return "Interrupted system call";
+    case AIOS_EIO:            return "Input/output error";
+    case AIOS_EBADF:          return "Bad file descriptor";
+    case AIOS_ECHILD:         return "No child processes";
+    case AIOS_EAGAIN:         return "Resource temporarily unavailable";
+    case AIOS_ENOMEM:         return "Cannot allocate memory";
+    case AIOS_EACCES:         return "Permission denied";
+    case AIOS_EFAULT:         return "Bad address";
+    case AIOS_EBUSY:          return "Device or resource busy";
+    case AIOS_EEXIST:         return "File exists";
+    case AIOS_ENOTDIR:        return "Not a directory";
+    case AIOS_EISDIR:         return "Is a directory";
+    case AIOS_EINVAL:         return "Invalid argument";
+    case AIOS_EMFILE:         return "Too many open files";
+    case AIOS_ESPIPE:         return "Illegal seek";
+    case AIOS_EPIPE:          return "Broken pipe";
+    case AIOS_ERANGE:         return "Numerical result out of range";
+    case AIOS_ENAMETOOLONG:   return "File name too long";
+    case AIOS_ENOSYS:         return "Function not implemented";
+    default:                  return "Unknown error";
+    }
+}
 
 /* ctype extras */
 int isalpha(int c)  { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }

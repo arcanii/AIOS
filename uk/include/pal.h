@@ -106,14 +106,15 @@ typedef int64_t pal_file_t;
 pal_file_t pal_host_std(int which);
 
 /* Open a host-backed file. `aios_flags` are AIOS_O_* (aios_abi.h) -- the PAL translates them to
- * native host flags. Returns a backing handle, or PAL_FILE_INVALID. This is the AIOS kernel's
- * route to real storage (Linux: open(2); seL4: an fs-server IPC). */
+ * native host flags. Returns a backing handle (>= 0), or a negated AIOS error code (-errno < 0) on
+ * failure. This is the AIOS kernel's route to real storage (Linux: open(2); seL4: an fs-server IPC). */
 pal_file_t pal_host_open(const char *path, uint64_t aios_flags, uint64_t mode);
 
 /* Read/write/close a backing object. write is also the kernel's diagnostic + stdout path. Return
- * bytes transferred / 0 on EOF (read) or close-OK, or a negative PAL error code below. The codes
- * are host-agnostic: the kernel reasons in terms of "would block" / "broken pipe", never errno, so
- * a future seL4 PAL reports the same conditions from its own pipe implementation. */
+ * bytes transferred / 0 on EOF (read) or close-OK, or a NEGATED AIOS error code (-errno, see
+ * aios_abi.h) on failure. The codes are host-agnostic AIOS values: a future seL4 PAL maps its own
+ * errors onto the same set. PAL_EWOULDBLOCK / PAL_EPIPE are named conveniences for the two the pipe
+ * path tests by name (= -AIOS_EAGAIN / -AIOS_EPIPE). */
 #define PAL_EWOULDBLOCK (-11)   /* a non-blocking pipe end would block (empty for read / full write) */
 #define PAL_EPIPE       (-32)   /* write to a pipe whose read ends are all closed                   */
 long pal_host_read (pal_file_t f, void *buf, size_t len);

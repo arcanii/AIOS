@@ -33,6 +33,36 @@
 #define AIOS_WAIT_ANY        ((unsigned long)-1)
 #define AIOS_WEXITSTATUS(s)  (((s) >> 8) & 0xff)
 
+/* ---- error reporting ----
+ * A syscall reports failure by returning a NEGATED error code: a value in [-4095, -1] means
+ * -errno; any value >= 0 (or <= -4096, e.g. a high mmap address) is success. (Same convention as
+ * Linux's MAX_ERRNO.) The codes are AIOS-owned but chosen to match Linux values, so the Linux PAL
+ * maps host errno straight through; a future seL4 PAL maps its own errors onto these. libaios sets
+ * `errno` from the negated return (see lib/include/errno.h). */
+#define AIOS_EPERM        1   /* operation not permitted */
+#define AIOS_ENOENT       2   /* no such file or directory */
+#define AIOS_ESRCH        3   /* no such process */
+#define AIOS_EINTR        4   /* interrupted */
+#define AIOS_EIO          5   /* I/O error */
+#define AIOS_EBADF        9   /* bad file descriptor */
+#define AIOS_ECHILD      10   /* no child processes */
+#define AIOS_EAGAIN      11   /* try again / would block */
+#define AIOS_ENOMEM      12   /* out of memory */
+#define AIOS_EACCES      13   /* permission denied */
+#define AIOS_EFAULT      14   /* bad address */
+#define AIOS_EBUSY       16   /* device or resource busy */
+#define AIOS_EEXIST      17   /* file exists */
+#define AIOS_ENOTDIR     20   /* not a directory */
+#define AIOS_EISDIR      21   /* is a directory */
+#define AIOS_EINVAL      22   /* invalid argument */
+#define AIOS_EMFILE      24   /* too many open files */
+#define AIOS_ESPIPE      29   /* illegal seek */
+#define AIOS_EPIPE       32   /* broken pipe */
+#define AIOS_ERANGE      34   /* result out of range */
+#define AIOS_ENAMETOOLONG 36  /* file name too long */
+#define AIOS_ENOSYS      38   /* function not implemented */
+#define AIOS_IS_ERR(r)   ((r) < 0 && (r) >= -4095)   /* is a syscall return an -errno code? */
+
 /* lseek whence (AIOS-owned; the PAL maps to host SEEK_*). */
 #define AIOS_SEEK_SET    0
 #define AIOS_SEEK_CUR    1

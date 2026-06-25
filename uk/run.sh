@@ -53,6 +53,8 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            ./aios-uk ./prog_libc 2>/dev/null; echo "  [exit $?]";
            echo "=== M3e.2: prog_stdio -- FILE* buffered stdio (fopen/fprintf/fgets/fwrite) ===" &&
            ./aios-uk ./prog_stdio; echo "  [exit $?]";
+           echo "=== M3e.3: prog_errno -- errno + strerror + perror (ENOENT/EBADF) ===" &&
+           ./aios-uk ./prog_errno; echo "  [exit $?]";
            echo "=== M3d gate: prog_pipebig exit must be 0 ===" &&
            ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [exit $rc]";
            test "$rc" = 0'

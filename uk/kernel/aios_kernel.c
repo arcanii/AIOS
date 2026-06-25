@@ -137,26 +137,26 @@ static void fd_release(proc_t *p, int fd) {
 static long sys_open(proc_t *p, uint64_t gpath, uint64_t flags, uint64_t mode) {
     char path[256];
     size_t n = pal_guest_read(p->pid, gpath, path, sizeof path - 1);
-    if (n == 0) return -1;
+    if (n == 0) return -AIOS_EFAULT;
     path[n] = '\0';                                  /* backstop terminator */
     pal_file_t f = pal_host_open(path, flags, mode);
-    if (f == PAL_FILE_INVALID) return -1;
+    if (f < 0) return (long)f;                        /* -errno from the PAL (ENOENT, EACCES, ...) */
     int oi = ofile_alloc(f);
-    if (oi < 0) { pal_host_close(f); return -1; }    /* open-file table full */
+    if (oi < 0) { pal_host_close(f); return -AIOS_EMFILE; }   /* open-file table full */
     int fd = fd_alloc(p);
-    if (fd < 0) { ofile_unref(oi); return -1; }      /* fd table full (unref closes f) */
+    if (fd < 0) { ofile_unref(oi); return -AIOS_EMFILE; }     /* fd table full (unref closes f) */
     p->fd[fd] = oi;
     return fd;
 }
 
 static long sys_close(proc_t *p, uint64_t fd) {
-    if (!fd_valid(p, fd)) return -1;
+    if (!fd_valid(p, fd)) return -AIOS_EBADF;
     fd_release(p, (int)fd);                            /* unref + wake pipe peers if last ref */
     return 0;
 }
 
 static long sys_dup2(proc_t *p, uint64_t oldfd, uint64_t newfd) {
-    if (!fd_valid(p, oldfd) || newfd >= AIOS_MAX_FD) return -1;
+    if (!fd_valid(p, oldfd) || newfd >= AIOS_MAX_FD) return -AIOS_EBADF;
     if (oldfd == newfd) return (long)newfd;
     if (p->fd[newfd] >= 0) fd_release(p, (int)newfd);  /* close whatever newfd referred to */
     p->fd[newfd] = p->fd[oldfd];                       /* alias the same open-file object */
@@ -165,16 +165,17 @@ static long sys_dup2(proc_t *p, uint64_t oldfd, uint64_t newfd) {
 }
 
 static long sys_lseek(proc_t *p, uint64_t fd, uint64_t off, uint64_t whence) {
-    if (!fd_valid(p, fd)) return -1;
-    return (long)pal_host_lseek(fd_backing(p, fd), (long long)off, (int)whence);
+    if (!fd_valid(p, fd)) return -AIOS_EBADF;
+    return (long)pal_host_lseek(fd_backing(p, fd), (long long)off, (int)whence);  /* -errno on fail */
 }
 
 static long sys_fstat(proc_t *p, uint64_t fd, uint64_t gstat) {
-    if (!fd_valid(p, fd)) return -1;
+    if (!fd_valid(p, fd)) return -AIOS_EBADF;
     struct aios_stat s;
     s._pad = 0;
-    if (pal_host_fstat(fd_backing(p, fd), &s.size, &s.mode) != 0) return -1;
-    if (pal_guest_write(p->pid, gstat, &s, sizeof s) != sizeof s) return -1;
+    int r = pal_host_fstat(fd_backing(p, fd), &s.size, &s.mode);
+    if (r != 0) return r;                              /* -errno */
+    if (pal_guest_write(p->pid, gstat, &s, sizeof s) != sizeof s) return -AIOS_EFAULT;
     return 0;
 }
 
@@ -229,7 +230,7 @@ static int try_continue_write(proc_t *p) {
     int r = pipe_write_some(p, g_ofile[p->fd[p->blk_fd]].backing, p->blk_buf, p->blk_len, &p->blk_done);
     if (r == 1)        { p->state = PS_RUNNING; pal_guest_return(p->pid, (uint64_t)p->blk_len); return 1; }
     if (r == PAL_EPIPE){ p->state = PS_RUNNING;
-                         pal_guest_return(p->pid, p->blk_done ? p->blk_done : (uint64_t)-1); return 1; }
+                         pal_guest_return(p->pid, p->blk_done ? p->blk_done : (uint64_t)-AIOS_EPIPE); return 1; }
     return p->blk_done > before;                     /* wrote some but still blocked (full) */
 }
 
@@ -252,7 +253,7 @@ static void pipe_settle(int pipe_id) {
  * own pal_guest_return / parking, so it is dispatched specially. */
 static void do_read(proc_t *p, uint64_t fd, uint64_t gbuf, uint64_t len) {
     p->state = PS_RUNNING;
-    if (!fd_valid(p, fd)) { pal_guest_return(p->pid, (uint64_t)-1); return; }
+    if (!fd_valid(p, fd)) { pal_guest_return(p->pid, (uint64_t)-AIOS_EBADF); return; }
     int oi = p->fd[fd];
     if (g_ofile[oi].is_pipe && !g_ofile[oi].pipe_write) {
         long n = pipe_read_once(p, g_ofile[oi].backing, gbuf, len);
@@ -272,7 +273,7 @@ static void do_read(proc_t *p, uint64_t fd, uint64_t gbuf, uint64_t len) {
         size_t chunk = (size_t)len - total;
         if (chunk > sizeof tmp) chunk = sizeof tmp;
         long n = pal_host_read(g_ofile[oi].backing, tmp, chunk);
-        if (n < 0)  { if (!total) { pal_guest_return(p->pid, (uint64_t)-1); return; } break; }
+        if (n < 0)  { if (!total) { pal_guest_return(p->pid, (uint64_t)n); return; } break; }  /* -errno */
         if (n == 0) break;                           /* EOF */
         size_t put = pal_guest_write(p->pid, gbuf + total, tmp, (size_t)n);
         total += put;
@@ -284,14 +285,14 @@ static void do_read(proc_t *p, uint64_t fd, uint64_t gbuf, uint64_t len) {
 /* write: pipe write-ends are non-blocking (park on full); everything else writes up to len. */
 static void do_write(proc_t *p, uint64_t fd, uint64_t gbuf, uint64_t len) {
     p->state = PS_RUNNING;
-    if (!fd_valid(p, fd)) { pal_guest_return(p->pid, (uint64_t)-1); return; }
+    if (!fd_valid(p, fd)) { pal_guest_return(p->pid, (uint64_t)-AIOS_EBADF); return; }
     int oi = p->fd[fd];
     if (g_ofile[oi].is_pipe && g_ofile[oi].pipe_write) {
         uint64_t done = 0;
         int r = pipe_write_some(p, g_ofile[oi].backing, gbuf, len, &done);
         pipe_settle(g_ofile[oi].pipe_id);            /* wrote bytes -> wake readers */
         if (r == 1)         { pal_guest_return(p->pid, (uint64_t)len); return; }
-        if (r == PAL_EPIPE) { pal_guest_return(p->pid, done ? done : (uint64_t)-1); return; }
+        if (r == PAL_EPIPE) { pal_guest_return(p->pid, done ? done : (uint64_t)-AIOS_EPIPE); return; }
         p->state = PS_BLOCKED_WRITE;                 /* pipe full, bytes pending -> park */
         p->blk_fd = (int)fd; p->blk_buf = gbuf; p->blk_len = len;
         p->blk_done = done; p->blk_pipe = g_ofile[oi].pipe_id;
@@ -305,7 +306,7 @@ static void do_write(proc_t *p, uint64_t fd, uint64_t gbuf, uint64_t len) {
         size_t got = pal_guest_read(p->pid, gbuf + total, tmp, chunk);
         if (got == 0) break;
         long w = pal_host_write(g_ofile[oi].backing, tmp, got);
-        if (w < 0) { if (!total) { pal_guest_return(p->pid, (uint64_t)-1); return; } break; }
+        if (w < 0) { if (!total) { pal_guest_return(p->pid, (uint64_t)w); return; } break; }  /* -errno */
         total += (size_t)w;
         if ((size_t)w < got) break;
     }
@@ -315,7 +316,8 @@ static void do_write(proc_t *p, uint64_t fd, uint64_t gbuf, uint64_t len) {
 /* pipe: allocate two backing ends + two fds, tag them as a pipe, and store the fd pair in guest. */
 static void do_pipe(proc_t *p, uint64_t gfds) {
     pal_file_t rd, wr;
-    if (pal_host_pipe(&rd, &wr) != 0) { pal_guest_return(p->pid, (uint64_t)-1); return; }
+    int pr = pal_host_pipe(&rd, &wr);
+    if (pr != 0) { pal_guest_return(p->pid, (uint64_t)pr); return; }   /* -errno */
     int ri = ofile_alloc(rd);
     int wi = ofile_alloc(wr);
     int afd0 = -1, afd1 = -1;
@@ -327,7 +329,7 @@ static void do_pipe(proc_t *p, uint64_t gfds) {
         if (afd0 >= 0) p->fd[afd0] = -1;
         if (ri >= 0) ofile_unref(ri); else pal_host_close(rd);
         if (wi >= 0) ofile_unref(wi); else pal_host_close(wr);
-        pal_guest_return(p->pid, (uint64_t)-1);
+        pal_guest_return(p->pid, (uint64_t)-AIOS_EMFILE);
         return;
     }
     p->fd[afd1] = wi;
@@ -349,7 +351,7 @@ static int wait_matches(unsigned long want, const proc_t *child) {
  * PAL place each side's return value (child pid in the parent, 0 in the child) and resume both. */
 static void do_fork(proc_t *parent) {
     proc_t *child = proc_alloc();
-    if (!child) { pal_guest_return(parent->pid, (uint64_t)-1); return; }   /* too many procs */
+    if (!child) { pal_guest_return(parent->pid, (uint64_t)-AIOS_EAGAIN); return; }   /* too many procs */
     pal_pid_t cpid = pal_guest_fork(parent->pid);
     if (cpid == PAL_PID_NONE) { pal_guest_resume(parent->pid); return; }   /* PAL set x0 = -1 */
 
@@ -391,7 +393,7 @@ static void do_wait(proc_t *p, unsigned long want, uint64_t gstatus) {
             return;                                   /* do NOT resume p */
         }
     }
-    pal_guest_return(p->pid, (uint64_t)-1);           /* ECHILD: no such child */
+    pal_guest_return(p->pid, (uint64_t)-AIOS_ECHILD); /* no such child */
 }
 
 /* A guest exited. First detach its own children (free zombies, orphan the living). Then either
@@ -445,7 +447,7 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
     case AIOS_SYS_LSEEK: ret = (uint64_t)sys_lseek(p, sc->arg[0], sc->arg[1], sc->arg[2]); break;
     case AIOS_SYS_FSTAT: ret = (uint64_t)sys_fstat(p, sc->arg[0], sc->arg[1]);             break;
     case AIOS_SYS_DUP2:  ret = (uint64_t)sys_dup2 (p, sc->arg[0], sc->arg[1]);             break;
-    default:             ret = (uint64_t)-1;       /* unknown AIOS syscall */              break;
+    default:             ret = (uint64_t)-AIOS_ENOSYS; /* unknown AIOS syscall */           break;
     }
     pal_guest_return(p->pid, ret);
 }
