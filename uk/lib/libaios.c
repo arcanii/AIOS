@@ -478,6 +478,66 @@ char *getenv(const char *name) {
     return 0;
 }
 
+/* --- qsort: generic in-place heapsort (O(n log n) worst case, no recursion, no aux allocation).
+ * sbase's sort + ls sort their lines/entries through this; heapsort keeps it allocation-free. --- */
+static void aios_qswap(char *a, char *b, size_t sz) {
+    while (sz--) { char t = *a; *a++ = *b; *b++ = t; }
+}
+static void aios_sift(char *base, size_t root, size_t n, size_t sz,
+                      int (*cmp)(const void *, const void *)) {
+    for (;;) {
+        size_t child = 2 * root + 1;
+        if (child >= n) break;
+        if (child + 1 < n && cmp(base + child * sz, base + (child + 1) * sz) < 0) child++;
+        if (cmp(base + root * sz, base + child * sz) >= 0) break;
+        aios_qswap(base + root * sz, base + child * sz, sz);
+        root = child;
+    }
+}
+void qsort(void *base, size_t n, size_t sz, int (*cmp)(const void *, const void *)) {
+    char *b = base;
+    if (n < 2 || sz == 0) return;
+    for (size_t i = n / 2; i-- > 0; ) aios_sift(b, i, n, sz, cmp);   /* build a max-heap */
+    for (size_t end = n; --end > 0; ) {                             /* pop the max into the tail */
+        aios_qswap(b, b + end * sz, sz);
+        aios_sift(b, 0, end, sz, cmp);
+    }
+}
+
+/* --- getopt: POSIX single-shot option parsing (no GNU permutation -- stops at the first
+ * non-option). sbase parses args via its own arg.h, but getopt is part of the libc surface and
+ * plenty of programs lean on it. State lives in the standard globals. --- */
+char *optarg;
+int   optind = 1, opterr = 1, optopt;
+int getopt(int argc, char *const argv[], const char *optstring) {
+    static int optpos = 1;                        /* char index within a clustered "-abc" group */
+    if (optind >= argc || !argv[optind] || argv[optind][0] != '-' || argv[optind][1] == '\0')
+        return -1;                                /* no (more) options */
+    if (argv[optind][1] == '-' && argv[optind][2] == '\0') { optind++; return -1; }  /* "--" ends */
+    int c = (unsigned char)argv[optind][optpos];
+    const char *o = strchr(optstring, c);
+    if (c == ':' || !o) {                         /* unknown option */
+        optopt = c;
+        if (opterr && optstring[0] != ':') fprintf(stderr, "%s: illegal option -- %c\n", argv[0], c);
+        if (argv[optind][++optpos] == '\0') { optind++; optpos = 1; }
+        return '?';
+    }
+    if (o[1] == ':') {                            /* this option takes an argument */
+        if (argv[optind][optpos + 1] != '\0') { optarg = &argv[optind][optpos + 1]; optind++; }
+        else if (optind + 1 < argc)            { optarg = argv[optind + 1];        optind += 2; }
+        else {                                    /* argument missing */
+            optopt = c; optind++; optpos = 1;
+            if (optstring[0] == ':') return ':';
+            if (opterr) fprintf(stderr, "%s: option requires an argument -- %c\n", argv[0], c);
+            return '?';
+        }
+        optpos = 1;
+        return c;
+    }
+    if (argv[optind][++optpos] == '\0') { optind++; optpos = 1; }   /* simple flag */
+    return c;
+}
+
 /* --- runtime entry: _start lifts argc/argv off the stack, runs main, exits with its return --- */
 extern int main(int argc, char **argv);
 char **environ;                                   /* POSIX env; envp follows argv on the stack */

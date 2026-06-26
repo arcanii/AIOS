@@ -26,6 +26,11 @@ int     chdir(const char *path);
 char   *getcwd(char *buf, size_t size);
 void    _exit(int code) __attribute__((noreturn));
 
+/* getopt + its standard globals (POSIX option parsing). */
+extern char *optarg;
+extern int   optind, opterr, optopt;
+int     getopt(int argc, char *const argv[], const char *optstring);
+
 #define SEEK_SET 0
 #define SEEK_CUR 1
 #define SEEK_END 2

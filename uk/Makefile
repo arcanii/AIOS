@@ -33,7 +33,7 @@ LIBC_HDRS   = $(wildcard lib/include/*.h lib/include/sys/*.h)
 .PHONY: all run clean
 all: aios-uk guest_hello guest_fileio guest_cat prog_args prog_wc prog_bigalloc prog_tail prog_exec \
      prog_fork prog_spawn prog_pipe prog_pipeline prog_pipebig prog_sh prog_libc prog_stdio prog_errno \
-     prog_fs
+     prog_fs prog_getopt
 
 aios-uk: $(KERNEL_SRC) include/pal.h include/aios_abi.h include/aios_version.h
 	$(CC) $(KERNEL_CFLAGS) -o $@ $(KERNEL_SRC)
@@ -94,10 +94,13 @@ prog_errno: guest/prog_errno.c $(LIBAIOS) $(LIBC_HDRS) include/aios_abi.h
 prog_fs: guest/prog_fs.c $(LIBAIOS) $(LIBC_HDRS) include/aios_abi.h
 	$(CC) $(LIBC_CFLAGS) -o $@ guest/prog_fs.c $(LIBAIOS)
 
+prog_getopt: guest/prog_getopt.c $(LIBAIOS) $(LIBC_HDRS) include/aios_abi.h
+	$(CC) $(LIBC_CFLAGS) -o $@ guest/prog_getopt.c $(LIBAIOS)
+
 run: all
 	./aios-uk ./prog_tail -n 3 /etc/os-release
 
 clean:
 	rm -f aios-uk guest_hello guest_fileio guest_cat prog_args prog_wc prog_bigalloc prog_tail \
 	      prog_exec prog_fork prog_spawn prog_pipe prog_pipeline prog_pipebig prog_sh prog_libc \
-	      prog_stdio prog_errno prog_fs
+	      prog_stdio prog_errno prog_fs prog_getopt

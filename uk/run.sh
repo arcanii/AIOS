@@ -57,6 +57,8 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            ./aios-uk ./prog_errno; echo "  [exit $?]";
            echo "=== M3e.4: prog_fs -- mkdir/stat/rename/getcwd/chdir/unlink/rmdir/getpid ===" &&
            ./aios-uk ./prog_fs; echo "  [exit $?]";
+           echo "=== M3e.5: prog_getopt -- getopt option parsing + qsort generic sort ===" &&
+           ./aios-uk ./prog_getopt; echo "  [exit $?]";
            echo "=== M3d gate: prog_pipebig exit must be 0 ===" &&
            ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [exit $rc]";
            test "$rc" = 0'
