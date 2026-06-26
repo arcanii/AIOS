@@ -87,11 +87,15 @@ static pid_t waitpid_r(pid_t pid, int *st, int flags) {
         if (r >= 0 || errno != EINTR) return r;
     }
 }
-/* A no-op SIGINT handler: its only job is to EXIST (so the kernel does not die on ^C) and to lack
- * SA_RESTART (so a blocking host read the kernel is mid-way through on a guest's behalf returns
- * EINTR, freeing the guest to receive its own ^C). The guests get SIGINT via the process group;
- * pal_guest_next reports it to the kernel. */
-static void pal_noop_sig(int s) { (void)s; }
+/* Terminal-signal routing (job control). The kernel owns the controlling terminal; the guests are
+ * moved OFF the kernel's host process group (setpgid in the spawn child below), so the host pty no
+ * longer delivers ^C/^Z to them -- only to the kernel. This handler just RECORDS the caught terminal
+ * signal (and lacks SA_RESTART, so a blocking host read the kernel is mid-way through returns EINTR);
+ * the kernel reads it via pal_take_term_signal and forwards it to the FOREGROUND process group. A
+ * handler for SIGTSTP is also what stops the KERNEL itself from being suspended by ^Z. */
+static volatile sig_atomic_t g_term_sig;
+static void pal_term_handler(int s) { g_term_sig = s; }
+int pal_take_term_signal(void) { int s = (int)g_term_sig; g_term_sig = 0; return s; }
 
 static void pal_fs_init_once(void);              /* M4.2: defined with the confinement layer below */
 /* M4.2 confinement state + opener, forward-declared so pal_guest_exec (above the layer) can clamp the
@@ -107,17 +111,22 @@ pal_pid_t pal_guest_spawn(const char *path, char *const argv[]) {
     /* The kernel does pipe writes on the guests' behalf; a write to a pipe with no readers must
      * surface as PAL_EPIPE, not a SIGPIPE that kills the kernel. */
     signal(SIGPIPE, SIG_IGN);
-    /* Catch SIGINT (^C) so the kernel survives it AND its blocking reads interrupt (no SA_RESTART);
-     * the guests receive their own ^C via the process group. */
-    struct sigaction sa; sa.sa_handler = pal_noop_sig; sa.sa_flags = 0; sigemptyset(&sa.sa_mask);
-    sigaction(SIGINT, &sa, NULL);
+    /* Catch the terminal signals (^C -> SIGINT, ^Z -> SIGTSTP) so the kernel SURVIVES them (a SIGTSTP
+     * handler stops the kernel from being suspended), its blocking reads interrupt (no SA_RESTART),
+     * and it can FORWARD them to the foreground process group. The guests are off the kernel's host
+     * pgrp (below), so the host pty signals only the kernel. */
+    struct sigaction sa; sa.sa_handler = pal_term_handler; sa.sa_flags = 0; sigemptyset(&sa.sa_mask);
+    sigaction(SIGINT,  &sa, NULL);
+    sigaction(SIGTSTP, &sa, NULL);
     pid_t pid = fork();
     if (pid < 0) return PAL_PID_NONE;
     if (pid == 0) {
-        /* Child becomes the guest: ask to be traced, then exec the AIOS-ABI program. The host
-         * sets up the initial stack (argc/argv/envp/auxv); the guest's _start reads argv from it.
-         * (A future seL4 PAL builds this stack itself.) */
+        /* Child becomes the guest: ask to be traced, leave the kernel's host process group (so the
+         * host pty no longer delivers terminal signals to guests -- the kernel routes them), then
+         * exec the AIOS-ABI program. The host sets up the initial stack (argc/argv/envp/auxv); the
+         * guest's _start reads argv from it. (A future seL4 PAL builds this stack itself.) */
         ptrace(PTRACE_TRACEME, 0, 0, 0);
+        setpgid(0, 0);                           /* own host process group -- off the kernel's, off the pty fg */
         execv(path, argv);
         _exit(127);                              /* exec failed */
     }
@@ -128,14 +137,16 @@ pal_pid_t pal_guest_spawn(const char *path, char *const argv[]) {
     return (pal_pid_t)pid;                        /* stopped at entry; the kernel resumes it */
 }
 
-/* Wait for the next event from ANY live guest. Returns 1 (syscall on *who), 0 (*who exited), -1
- * (no live guests). Skips syscall exits + injected artifacts, and re-injects real signals so a
- * crashing guest dies (rather than spinning on a re-faulting instruction). */
+/* Wait for the next event from ANY live guest. Returns 1 (syscall on *who), 0 (*who exited), 2 (async
+ * signal `*exit_code` on *who), 3 (a TERMINAL signal `*exit_code` was caught -- the kernel forwards it
+ * to the foreground group; *who unused), -1 (no live guests). Skips syscall exits + injected artifacts,
+ * and re-injects real signals so a crashing guest dies (rather than spinning on a re-faulting instr). */
 int pal_guest_next(pal_pid_t *who, pal_syscall_t *sc, int *exit_code) {
     for (;;) {
+        if (g_term_sig) { *who = PAL_PID_NONE; if (exit_code) *exit_code = pal_take_term_signal(); return 3; }
         int st;
         pid_t pid = waitpid(-1, &st, 0);
-        if (pid < 0) { if (errno == EINTR) continue; return -1; }   /* EINTR (^C): retry; ECHILD: done */
+        if (pid < 0) { if (errno == EINTR) continue; return -1; }   /* EINTR (^C): loop -> the g_term_sig check returns 3 */
         if (WIFEXITED(st))   { *who = pid; if (exit_code) *exit_code = WEXITSTATUS(st);    return 0; }
         if (WIFSIGNALED(st)) { *who = pid; if (exit_code) *exit_code = 128 + WTERMSIG(st); return 0; }
         if (!WIFSTOPPED(st)) continue;

@@ -664,6 +664,30 @@ static void handle_signal_stop(proc_t *p, int sig) {
     pal_guest_deliver(p->pid, h, (uint64_t)sig, p->sig_tramp, p->sigsave);
 }
 
+/* A terminal signal (^C -> SIGINT, ^Z -> SIGTSTP) was caught by the kernel (the guests are off the
+ * host pty's foreground group, so only the kernel receives it). Forward it to EVERY guest in the
+ * FOREGROUND process group -- and to no one else (that is the whole point of job control: ^C kills
+ * the foreground job, not the shell or background jobs). A RUNNING guest is interrupted with a host
+ * signal so it stops and runs handle_signal_stop; a guest parked in a blocked syscall has that
+ * syscall return EINTR with the signal delivered (kreturn). */
+static void forward_terminal_signal(int sig) {
+    for (int i = 0; i < MAX_PROCS; i++) {
+        proc_t *g = &g_proc[i];
+        if (g->state == PS_FREE || g->state == PS_ZOMBIE || g->state == PS_STOPPED) continue;
+        if (g->pgid != g_fg_pgrp) continue;
+        /* Deliver entirely through the kernel's own pending-signal path -- never a host kill of a
+         * tracee (a tracee stopped at a not-yet-serviced syscall would queue the signal, which the
+         * setret/run-to-exit machinery then eats). A RUNNING guest takes the signal at its next
+         * syscall (kreturn, or the do_read/do_write/do_wait entry check); a guest parked in a blocked
+         * syscall has that syscall return EINTR with the signal delivered right now. */
+        g->pending_sig = sig;
+        if (g->state == PS_BLOCKED_WAIT || g->state == PS_BLOCKED_READ || g->state == PS_BLOCKED_WRITE) {
+            g->state = PS_RUNNING;
+            kreturn(g, (uint64_t)-AIOS_EINTR);
+        }
+    }
+}
+
 /* ---- pipes ----
  * A pipe is two backing ends (non-blocking at the host) sharing a pipe_id. read/write to a pipe
  * never block the single-threaded kernel: an empty read / full write PARKS the calling guest and
@@ -734,10 +758,21 @@ static void pipe_settle(int pipe_id) {
     }
 }
 
+/* If p has a deliverable (unblocked) pending signal, return EINTR from the syscall it is at and run
+ * the signal -- 1 if so. The "special" syscalls (read/write/wait) bypass kreturn, so they call this
+ * at entry; otherwise a forwarded terminal signal (^C/^Z) would not reach a guest about to block. */
+static int deliver_pending(proc_t *p) {
+    int sig = p->pending_sig;
+    if (!sig || sig_blocked(p, sig)) return 0;
+    kreturn(p, (uint64_t)-AIOS_EINTR);
+    return 1;
+}
+
 /* read: pipe read-ends are non-blocking (park on empty); everything else fills up to len. Owns its
  * own pal_guest_return / parking, so it is dispatched specially. */
 static void do_read(proc_t *p, uint64_t fd, uint64_t gbuf, uint64_t len) {
     p->state = PS_RUNNING;
+    if (deliver_pending(p)) return;                  /* a forwarded ^C/^Z interrupts the read */
     if (!fd_valid(p, fd)) { pal_guest_return(p->pid, (uint64_t)-AIOS_EBADF); return; }
     int oi = p->fd[fd];
     if (g_ofile[oi].is_pipe && !g_ofile[oi].pipe_write) {
@@ -765,6 +800,7 @@ static void do_read(proc_t *p, uint64_t fd, uint64_t gbuf, uint64_t len) {
 /* write: pipe write-ends are non-blocking (park on full); everything else writes up to len. */
 static void do_write(proc_t *p, uint64_t fd, uint64_t gbuf, uint64_t len) {
     p->state = PS_RUNNING;
+    if (deliver_pending(p)) return;                  /* a forwarded ^C/^Z interrupts the write */
     if (!fd_valid(p, fd)) { pal_guest_return(p->pid, (uint64_t)-AIOS_EBADF); return; }
     int oi = p->fd[fd];
     if (g_ofile[oi].is_pipe && g_ofile[oi].pipe_write) {
@@ -866,6 +902,7 @@ static void do_fork(proc_t *parent) {
  * stop/continue (no reap). If a matching child is still alive but has no event, PARK the caller until
  * one comes (WNOHANG -> return 0 instead). -ECHILD if it has no matching child at all. */
 static void do_wait(proc_t *p, unsigned long want, uint64_t gstatus, unsigned long flags) {
+    if (deliver_pending(p)) return;                  /* a forwarded ^C/^Z interrupts the wait */
     for (int i = 0; i < MAX_PROCS; i++) {             /* 1. an exited (zombie) child -> report + reap */
         proc_t *c = &g_proc[i];
         if (c->state == PS_ZOMBIE && c->parent_pid == p->pid && wait_matches(want, c)) {
@@ -1064,6 +1101,10 @@ int aios_kernel_run(const char *guest_path, char *const guest_argv[]) {
         if (r == 0) {                                 /* `who` exited */
             if (who == init_pid) init_code = code;
             if (p) on_exit(p, code);
+            continue;
+        }
+        if (r == 3) {                                 /* a terminal signal (^C/^Z) -> the foreground group */
+            forward_terminal_signal(code);
             continue;
         }
         if (r == 2) {                                 /* `who` got an async signal (code = signum) */

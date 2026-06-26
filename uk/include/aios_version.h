@@ -79,8 +79,19 @@
  * the async path leave it) until sigprocmask unblocks it, delivered then; SIGKILL/SIGSTOP are never
  * blockable. dash JOBS=1 needs this for its sigblockall/sigclearmask critical sections. The pending
  * slot is single (one masked signal at a time -- a documented simplification). Proof: guest/prog_sigmask.c
- * (block SIGUSR1 -> raise -> handler does NOT run; unblock -> it is delivered). Terminal-signal ROUTING
- * + dash JOBS=1 are the remaining part of increment 3, so M5 ^C is still untouched.
+ * (block SIGUSR1 -> raise -> handler does NOT run; unblock -> it is delivered).
+ * 0.5.18 = job control increment 3 (part 2): TERMINAL-SIGNAL ROUTING (no new ABI). The guests are
+ * moved OFF the kernel's host process group (setpgid in the spawn child), so the host pty delivers
+ * ^C/^Z only to the KERNEL; the kernel catches SIGINT/SIGTSTP (a SIGTSTP handler stops the kernel
+ * itself being suspended), and pal_guest_next surfaces a caught terminal signal as a new event (3).
+ * The kernel then forwards it to ONLY the FOREGROUND process group (g_fg_pgrp) -- via the guests' own
+ * pending-signal path (NOT a host kill of a tracee, which would hit a setret/run-to-exit hazard on a
+ * guest stopped at a not-yet-serviced syscall): a RUNNING guest takes it at its next syscall, a parked
+ * guest's blocked syscall returns EINTR with the signal delivered; the special syscalls read/write/wait
+ * gained an entry-time pending-signal check (they bypass kreturn). So ^C now kills the foreground job
+ * and the shell survives -- proven INTERACTIVELY on a pty by test/ctrlc_job_pty.c (a foreground
+ * ./prog_loop, ^C, dash returns to its prompt) in addition to the existing ctrlc_pty. dash is still
+ * JOBS=0 (so the fg group is everything); rebuilding dash JOBS=1 for ^Z/fg/bg is the last part.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -90,7 +101,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 17
+#define AIOS_VERSION_PATCH 18
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

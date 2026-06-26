@@ -158,9 +158,12 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            echo "--- prog_signal: install handler + raise + SIG_IGN ---" &&
            ./aios-uk ./prog_signal 2>/dev/null | sed "s/^/    /";
            printf "  dash trap+kill: "; ./aios-uk ./dash -c "trap \"echo caught-it\" USR1; kill -USR1 \$\$; echo then-continued" 2>/dev/null | tr "\n" " "; echo;
-           echo "--- interactive dash + ^C over a pty (the kernel delivers SIGINT to dash) ---" &&
+           echo "--- interactive dash + ^C over a pty (the kernel routes SIGINT to the foreground group) ---" &&
            cc -O2 -o /tmp/ctrlc_pty test/ctrlc_pty.c -lutil 2>/dev/null &&
-           timeout 25 /tmp/ctrlc_pty ./aios-uk ./dash 2>/dev/null;
+           timeout 25 /tmp/ctrlc_pty ./aios-uk ./dash 2>/dev/null; cprc=$?;
+           echo "--- ^C kills a FOREGROUND JOB, dash survives (job-control routing) ---" &&
+           cc -O2 -o /tmp/ctrlc_job_pty test/ctrlc_job_pty.c -lutil 2>/dev/null &&
+           timeout 30 /tmp/ctrlc_job_pty ./aios-uk ./dash 2>/dev/null; cjrc=$?;
            echo "=== M4: boundary ENFORCED -- a guest CANNOT bypass the kernel (escape is blocked) ===" &&
            echo "  guest_escape attempts a raw Linux write(64); the [2] LINUX line must NOT appear:" &&
            ./aios-uk ./guest_escape 2>&1 | sed "s/^/    /"; ./aios-uk ./guest_escape >/dev/null 2>&1; echo "  [escape guest killed, exit $? (expect 159)]";
@@ -187,6 +190,6 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            echo "  confined dash drives an in-root binary, but an out-of-root one is denied:";
            AIOS_ROOT="$JR" ./aios-uk ./dash -c "/jailtrue && echo in-root-exec-ok; /bin/echo SHOULD-NOT-PRINT" 2>&1 | grep -v aios-uk | sed "s/^/      /";
            rm -rf "$JR" "$SECRET";
-           echo "=== gate: pipebig, jail, execjail, clock, pcwd, umask, regex, pwgrp, jobctl, stop, sigmask must exit 0 ===" &&
-           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig $rc, jail $jrc, execjail $ejrc, clock $clkrc, pcwd $pcwdrc, umask $umrc, regex $rxrc, pwgrp $pwrc, jobctl $jcrc, stop $strc, sigmask $smrc]";
-           test "$rc" = 0 && test "$jrc" = 0 && test "$ejrc" = 0 && test "$clkrc" = 0 && test "$pcwdrc" = 0 && test "$umrc" = 0 && test "$rxrc" = 0 && test "$pwrc" = 0 && test "$jcrc" = 0 && test "$strc" = 0 && test "$smrc" = 0'
+           echo "=== gate: pipebig jail execjail clock pcwd umask regex pwgrp jobctl stop sigmask ctrlc ctrlc-job must exit 0 ===" &&
+           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig $rc, jail $jrc, execjail $ejrc, clock $clkrc, pcwd $pcwdrc, umask $umrc, regex $rxrc, pwgrp $pwrc, jobctl $jcrc, stop $strc, sigmask $smrc, ctrlc $cprc, ctrlc-job $cjrc]";
+           test "$rc" = 0 && test "$jrc" = 0 && test "$ejrc" = 0 && test "$clkrc" = 0 && test "$pcwdrc" = 0 && test "$umrc" = 0 && test "$rxrc" = 0 && test "$pwrc" = 0 && test "$jcrc" = 0 && test "$strc" = 0 && test "$smrc" = 0 && test "$cprc" = 0 && test "$cjrc" = 0'

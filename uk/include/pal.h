@@ -53,6 +53,11 @@ pal_pid_t pal_guest_spawn(const char *path, char *const argv[]);
  *  -1  no live guests / error                                                                   */
 int pal_guest_next(pal_pid_t *who, pal_syscall_t *sc, int *exit_code);
 
+/* Job control: pal_take_term_signal returns+clears a TERMINAL signal (^C -> SIGINT, ^Z -> SIGTSTP)
+ * the PAL caught for the controlling terminal (or 0). pal_guest_next surfaces it as event 3; the
+ * kernel then forwards it to the foreground process group (via the guests' own pending-signal path). */
+int pal_take_term_signal(void);
+
 /* Set the value `who` sees returned from the syscall it is stopped at, and resume it toward its
  * next syscall. Valid only when `who` is stopped at a syscall ENTRY (a normal trapped syscall, or
  * a parent parked in wait that the kernel is now waking). */

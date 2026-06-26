@@ -303,11 +303,33 @@ are never blockable. (The pending slot is single — one masked signal at a time
 simplification.) Proof: `guest/prog_sigmask.c` (block `SIGUSR1` → raise → handler does *not* run;
 unblock → it's delivered) in the gate. Validated on colima and the RPi4. M5's `^C` is still untouched.
 
+## M7 — job control, increment 3 (part 2): terminal-signal routing ✅
+
+The interactive payoff. Before this, M5's `^C` worked by the **host pty broadcasting** `SIGINT` to the
+kernel's whole process group (the kernel + every guest). Now the guests are moved **off** the kernel's
+host process group (`setpgid` in the spawn child), so the host pty delivers `^C`/`^Z` only to the
+**kernel** — which catches `SIGINT`/`SIGTSTP` (a `SIGTSTP` handler is also what stops the *kernel*
+being suspended by `^Z`), and the PAL surfaces a caught terminal signal as a new `pal_guest_next`
+event. The kernel then forwards it to **only the foreground process group** (`g_fg_pgrp`).
+
+The forwarding goes entirely through the kernel's **own** pending-signal path — never a host `kill`
+of a tracee, which would hit a `ptrace` hazard (a guest stopped at a not-yet-serviced syscall queues
+the signal, which the `setret`/run-to-exit machinery then eats). A RUNNING guest takes the signal at
+its next syscall; a guest parked in a blocked syscall has that syscall return `EINTR` with the signal
+delivered. The "special" syscalls (`read`/`write`/`wait`) bypass the normal return path, so they
+gained an entry-time pending-signal check. No new ABI.
+
+So **`^C` now kills the foreground job and the shell survives** — proven *interactively on a pty* by
+`test/ctrlc_job_pty.c` (a foreground `./prog_loop`, `^C`, dash returns to its prompt), alongside the
+existing `ctrlc_pty` (`^C` at the prompt); both are in the gate. Validated on colima and the RPi4.
+dash is still `JOBS=0` (so the foreground group is everything); rebuilding dash `JOBS=1` for `^Z`/
+`fg`/`bg` is the last part.
+
 ## Next (per the design doc)
 
-**Job control, increment 3 (part 2)** — the interactive payoff: route terminal signals (`^C`/`^Z`) to
-*only* the foreground process group (today every guest shares the kernel's process group, so M5's `^C`
-works by the host pty broadcasting to it — that gets reworked: move guests off the kernel's host group
-and have the kernel forward terminal signals to `g_fg_pgrp`), then rebuild dash **`JOBS=1`** so `^Z`/
-`fg`/`bg` and "`^C` kills only the foreground job" work interactively. Then **sched_ext** · the
-seL4/x86-64 replant seam (`pal_sel4.c`).
+**Job control, increment 3 (part 3)** — rebuild dash **`JOBS=1`** so `^Z` suspends a foreground job
+(`SIGTSTP` → the `PS_STOPPED` state from increment 2, reported via `WUNTRACED`), `fg`/`bg` resume it,
+and `^C` reaches *only* the foreground job's group (not the shell). The kernel pieces — process groups,
+`tcsetpgrp`, stop/continue, `sigprocmask`, terminal routing — are all in place; this is the dash build
+flag + interactive `^Z`/`fg`/`bg` testing. Then **sched_ext** · the seL4/x86-64 replant seam
+(`pal_sel4.c`).
