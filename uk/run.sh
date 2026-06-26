@@ -107,6 +107,20 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            printf "  sort -u:  "; printf "cherry\napple\nbanana\napple\n" | ./aios-uk ./sbase-sort -u 2>/dev/null | tr "\n" " "; echo;
            printf "  sort -n:  "; printf "1.5\n0.2\n10.25\n1.05\n2\n" | ./aios-uk ./sbase-sort -n 2>/dev/null | tr "\n" " "; echo;
            printf "  sort -rn: "; printf "10\n2\n1\n22\n3\n" | ./aios-uk ./sbase-sort -rn 2>/dev/null | tr "\n" " "; echo;
+           echo "=== grep: the first regex util -- a real BRE/ERE engine in libaios, sbase grep UNMODIFIED ===" &&
+           echo "--- prog_regex: the regcomp/regexec battery (BRE/ERE, classes, anchors, intervals) ---" &&
+           ./aios-uk ./prog_regex 2>/dev/null | sed "s/^/    /";
+           ./aios-uk ./prog_regex >/dev/null 2>&1; rxrc=$?; echo "  [prog_regex exit $rxrc (expect 0)]";
+           printf "fig\napple\nbanana\ncherry\napricot\n" >/tmp/aios_fruit.txt;
+           printf "  grep an (BRE substr):   "; ./aios-uk ./sbase-grep an /tmp/aios_fruit.txt 2>/dev/null | tr "\n" " "; echo;
+           printf "  grep -E a(pp|pr):       "; ./aios-uk ./sbase-grep -E "a(pp|pr)" /tmp/aios_fruit.txt 2>/dev/null | tr "\n" " "; echo;
+           printf "  grep -i APPLE:          "; ./aios-uk ./sbase-grep -i APPLE /tmp/aios_fruit.txt 2>/dev/null | tr "\n" " "; echo;
+           printf "  grep -v a (lines no a): "; ./aios-uk ./sbase-grep -v a /tmp/aios_fruit.txt 2>/dev/null | tr "\n" " "; echo;
+           printf "  grep -c a (count):      "; ./aios-uk ./sbase-grep -c a /tmp/aios_fruit.txt 2>/dev/null;
+           printf "  grep -n ^a (anchored):  "; ./aios-uk ./sbase-grep -n "^a" /tmp/aios_fruit.txt 2>/dev/null | tr "\n" " "; echo;
+           printf "  grep -w fig (word):     "; ./aios-uk ./sbase-grep -w fig /tmp/aios_fruit.txt 2>/dev/null | tr "\n" " "; echo;
+           printf "  dash pipe grep|wc -l:   "; ./aios-uk ./dash -c "./sbase-grep a /tmp/aios_fruit.txt | ./sbase-wc -l" 2>/dev/null;
+           rm -f /tmp/aios_fruit.txt;
            echo "=== M3i: dash (Debian Almquist shell) compiled UNMODIFIED -- the operational shell ===" &&
            printf "  echo arith: "; ./aios-uk ./dash -c "echo \$((2 + 3 * 4))" 2>/dev/null;
            printf "  control:    "; ./aios-uk ./dash -c "true && echo yes || echo no" 2>/dev/null;
@@ -158,6 +172,6 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            echo "  confined dash drives an in-root binary, but an out-of-root one is denied:";
            AIOS_ROOT="$JR" ./aios-uk ./dash -c "/jailtrue && echo in-root-exec-ok; /bin/echo SHOULD-NOT-PRINT" 2>&1 | grep -v aios-uk | sed "s/^/      /";
            rm -rf "$JR" "$SECRET";
-           echo "=== gate: pipebig, jail (M4.2), execjail (M4.3), clock, pcwd, umask must exit 0 ===" &&
-           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig $rc, jail $jrc, execjail $ejrc, clock $clkrc, pcwd $pcwdrc, umask $umrc]";
-           test "$rc" = 0 && test "$jrc" = 0 && test "$ejrc" = 0 && test "$clkrc" = 0 && test "$pcwdrc" = 0 && test "$umrc" = 0'
+           echo "=== gate: pipebig, jail (M4.2), execjail (M4.3), clock, pcwd, umask, regex must exit 0 ===" &&
+           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig $rc, jail $jrc, execjail $ejrc, clock $clkrc, pcwd $pcwdrc, umask $umrc, regex $rxrc]";
+           test "$rc" = 0 && test "$jrc" = 0 && test "$ejrc" = 0 && test "$clkrc" = 0 && test "$pcwdrc" = 0 && test "$umrc" = 0 && test "$rxrc" = 0'

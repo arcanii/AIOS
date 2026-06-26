@@ -46,6 +46,15 @@
  * 0.5.12 = vendored sbase `sort` runs UNMODIFIED (no new ABI): libaios grew a real strtod (the numeric
  * compare -n needs it; aarch64 HW FP, no soft-float runtime) + the full libutf rune chain wired in.
  * dash config.h now sets HAVE_STRTOD so dash uses the real strtod instead of its no-op fallback.
+ * 0.5.13 = vendored sbase `grep` runs UNMODIFIED (no new ABI -- the last major coreutil): libaios
+ * grew a real POSIX regex engine (regcomp/regexec/regfree/regerror), a small BRE/ERE matcher that
+ * parses to an AST, compiles to a Thompson NFA program, and matches by LINEAR NFA simulation -- no
+ * catastrophic backtracking, guaranteed to halt. Supports literals, dot, bracket classes (+POSIX
+ * [:class:]), anchors, word boundaries, grouping, alternation, the star/plus/quest and {m,n}
+ * quantifiers, and REG_ICASE in both BRE and ERE (boolean match -- grep compiles REG_NOSUB; submatch
+ * capture is not yet needed). Plus the
+ * libc grep needs: fmemopen (a read-mode mem stream), sprintf, strcasestr, and a shadow <strings.h>.
+ * Proof: guest/prog_regex.c (a 75-case regcomp/regexec battery) + sbase grep -EFHcilnvwx in run.sh.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -55,7 +64,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 12
+#define AIOS_VERSION_PATCH 13
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

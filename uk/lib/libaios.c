@@ -154,6 +154,7 @@ struct _IO_FILE {
     int    eof, err;
     int    bufmode;         /* _IOFBF / _IOLBF / _IONBF */
     int    is_static;       /* stdin/stdout/stderr -- never freed */
+    int    is_mem;          /* fmemopen stream: buf is the whole content, fd is -1 (no host I/O) */
     unsigned char *buf;
     size_t cap;             /* buffer capacity */
     size_t pos;             /* read: cursor; write: pending byte count */
@@ -200,6 +201,7 @@ size_t fwrite(const void *ptr, size_t sz, size_t nm, FILE *f) {
 }
 static int _refill(FILE *f) {
     if (!f->rd || !f->buf) return -1;
+    if (f->is_mem) { f->eof = 1; return 0; }   /* mem stream: content is already in buf, so this is a clean EOF */
     long n = aios_read(f->fd, f->buf, f->cap);
     if (n < 0) { f->err = 1; return -1; }
     if (n == 0) { f->eof = 1; return 0; }
@@ -276,7 +278,24 @@ int fclose(FILE *f) {
     fflush(f);
     int fd = f->fd;
     if (!f->is_static) { free(f->buf); free(f); }   /* free is a no-op today; FILEs are not reclaimed */
-    return aios_close(fd);
+    return fd >= 0 ? aios_close(fd) : 0;             /* mem streams (fd<0) have no host fd to close */
+}
+
+/* fmemopen -- a read-mode in-memory stream over a PRIVATE copy of buf[0..size). grep/sed open their
+ * -e/-f and literal patterns this way (then getline over the FILE). Reads return the bytes then a
+ * clean EOF (is_mem, so ferror stays false). Write modes are not implemented -- no in-scope util
+ * needs them. */
+FILE *fmemopen(void *buf, size_t size, const char *mode) {
+    if (!mode || mode[0] != 'r') { errno = AIOS_EINVAL; return 0; }
+    FILE *f = malloc(sizeof *f);
+    if (!f) return 0;
+    memset(f, 0, sizeof *f);
+    f->fd = -1; f->rd = 1; f->is_mem = 1; f->bufmode = _IOFBF;
+    f->buf = malloc(size ? size : 1);
+    if (!f->buf) { free(f); return 0; }
+    if (size && buf) memcpy(f->buf, buf, size);
+    f->cap = size; f->pos = 0; f->end = size;
+    return f;
 }
 void perror(const char *s) {
     if (s && *s) { fputs(s, stderr); fputs(": ", stderr); }
@@ -392,6 +411,10 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
 }
 int snprintf(char *buf, size_t size, const char *fmt, ...) {
     va_list ap; va_start(ap, fmt); int r = vsnprintf(buf, size, fmt, ap); va_end(ap);
+    return r;
+}
+int sprintf(char *buf, const char *fmt, ...) {            /* unbounded -- grep builds its -w/-x patterns with it */
+    va_list ap; va_start(ap, fmt); int r = vsnprintf(buf, (size_t)-1, fmt, ap); va_end(ap);
     return r;
 }
 int putchar(int c) { return fputc(c, stdout); }
@@ -633,6 +656,15 @@ int strncasecmp(const char *a, const char *b, size_t n) {
         int ca = tolower((unsigned char)a[i]), cb = tolower((unsigned char)b[i]);
         if (ca != cb) return ca - cb;
         if (!a[i]) break;
+    }
+    return 0;
+}
+char *strcasestr(const char *h, const char *n) {         /* case-insensitive strstr (grep -iF) */
+    if (!*n) return (char *)h;
+    for (; *h; h++) {
+        const char *a = h, *b = n;
+        while (*a && *b && tolower((unsigned char)*a) == tolower((unsigned char)*b)) { a++; b++; }
+        if (!*b) return (char *)h;
     }
     return 0;
 }
@@ -1118,3 +1150,542 @@ __asm__(
     "  csinc w0, w1, wzr, ne\n"   /* return val ? val : 1 */
     "  ret\n"
 );
+
+/* ===== POSIX regular expressions: regcomp / regexec / regfree / regerror =====
+ *
+ * A small, self-contained BRE/ERE engine, added to libaios so vendored `grep` runs UNMODIFIED (grep
+ * is the first regex-using utility; sbase is never patched -- the missing libc feature grows here).
+ *
+ * Design (correctness/termination is the soul of the project): parse the pattern to a small AST,
+ * compile the AST to a Thompson NFA program (a flat instruction array), and MATCH by NFA SIMULATION
+ * (a Pike-style two-thread-list sweep) -- LINEAR in the input length, with NO catastrophic
+ * backtracking and a guaranteed halt: a per-step visited stamp dedups program counters, so even
+ * empty-loop constructs like (a*)* cannot spin. The search is unanchored via an implicit leading
+ * ".*"; ^ and $ stay real anchors because the assertions test the ABSOLUTE input position.
+ *
+ * Supported: literals, '.', bracket expressions ([abc], ranges, [^..] negation, POSIX [:class:]),
+ * '^' '$' anchors, '\<' '\>' word boundaries, grouping, '|' alternation, the '*' '+' '?' quantifiers
+ * and '{m,n}' intervals, and REG_ICASE. BRE vs ERE per REG_EXTENDED, with the GNU-ish leniencies
+ * grep relies on (a quantifier with nothing to repeat is a literal; \< \> \+ \? \| work in BRE).
+ *
+ * Scope (honest): boolean match only. grep compiles REG_NOSUB and never inspects pmatch, and no
+ * other vendored utility needs submatch capture yet, so regexec sets pmatch[*] = {-1,-1}. \1..\9
+ * backreferences are rejected (REG_ESUBREG) -- a backtracking engine would be needed and nothing in
+ * scope uses them. The day a util needs captures, this gains a Pike-VM save layer; the parser stays. */
+
+/* libaios.c is its own translation unit and never includes the shadow <regex.h> (it is compiled
+ * under two include regimes -- the -nostdinc libc class AND the plain prog class -- so it stays
+ * self-contained, just like struct _IO_FILE above). These mirror lib/include/regex.h EXACTLY: the
+ * program TU that calls regcomp passes a regex_t laid out by the shadow header, so the layouts MUST
+ * agree. Guarded so an accidental shadow-header include would not redefine. */
+#ifndef _REGEX_H
+typedef long regoff_t;
+typedef struct { size_t re_nsub; void *__impl; } regex_t;
+typedef struct { regoff_t rm_so; regoff_t rm_eo; } regmatch_t;
+#define REG_EXTENDED  1
+#define REG_ICASE     2
+#define REG_NOSUB     4
+#define REG_NEWLINE   8
+#define REG_NOTBOL    1
+#define REG_NOTEOL    2
+#define REG_NOMATCH   1
+#define REG_BADPAT    2
+#define REG_ECOLLATE  3
+#define REG_ECTYPE    4
+#define REG_EESCAPE   5
+#define REG_ESUBREG   6
+#define REG_EBRACK    7
+#define REG_EPAREN    8
+#define REG_EBRACE    9
+#define REG_BADBR    10
+#define REG_ERANGE   11
+#define REG_ESPACE   12
+#define REG_BADRPT   13
+#endif
+
+enum {                 /* AST node kinds */
+    RXN_CHAR, RXN_ANY, RXN_SET, RXN_BOL, RXN_EOL, RXN_WSTART, RXN_WEND,
+    RXN_CAT, RXN_ALT, RXN_STAR, RXN_PLUS, RXN_QUEST, RXN_REP, RXN_EMPTY
+};
+typedef struct rx_node {
+    int kind;
+    int ch;                 /* RXN_CHAR */
+    unsigned char *set;     /* RXN_SET: 32-byte (256-bit) membership bitmap */
+    struct rx_node *a, *b;  /* CAT/ALT children; unary ops use a */
+    int min, max;           /* RXN_REP: max<0 == unbounded */
+} rx_node;
+
+enum {                 /* NFA instruction ops */
+    RXI_CHAR, RXI_ANY, RXI_SET, RXI_MATCH, RXI_JMP, RXI_SPLIT,
+    RXI_BOL, RXI_EOL, RXI_WSTART, RXI_WEND
+};
+typedef struct { int op; int c; unsigned char *set; int x, y; } rx_inst;
+
+typedef struct {       /* the compiled program, hung off regex_t.__impl */
+    rx_inst *prog;
+    int      nprog;
+    int      icase;
+    int     *clist, *nlist;   /* reused thread scratch (free() is a no-op, so never alloc per line) */
+    int     *seen;            /* per-step visited stamps */
+    unsigned gen;             /* monotone stamp; seen[i]==gen means "added this step" */
+} rx_prog;
+
+typedef struct {       /* parser state */
+    const char *p;
+    int ere, icase, depth, ngroup, err;
+} rx_parser;
+
+typedef struct { rx_inst *prog; int n, cap, err; } rx_emit;
+
+/* ---- AST ---- */
+static rx_node *rxn_new(rx_parser *ps, int kind) {
+    rx_node *n = malloc(sizeof *n);
+    if (!n) { ps->err = REG_ESPACE; return 0; }
+    memset(n, 0, sizeof *n);
+    n->kind = kind;
+    return n;
+}
+static rx_node *rxn_char(rx_parser *ps, int c) { rx_node *n = rxn_new(ps, RXN_CHAR); if (n) n->ch = c & 0xff; return n; }
+static rx_node *rxn_unary(rx_parser *ps, int kind, rx_node *a) { rx_node *n = rxn_new(ps, kind); if (n) n->a = a; return n; }
+static void rxn_free(rx_node *n) {
+    if (!n) return;
+    rxn_free(n->a); rxn_free(n->b);
+    if (n->set) free(n->set);
+    free(n);
+}
+
+/* ---- parser ---- */
+static rx_node *rx_parse_alt(rx_parser *ps);
+
+static int rx_branch_end(rx_parser *ps) {        /* current char ends a branch (top level or a group/alt) */
+    if (*ps->p == '\0') return 1;
+    /* '|' is always a separator (top-level alternation is valid); a ')' ends a branch only inside a
+     * group -- a ')' with no open group is an ordinary literal (GNU-ish). */
+    if (ps->ere) return *ps->p == '|' || (*ps->p == ')' && ps->depth > 0);
+    if (ps->p[0] == '\\' && (ps->p[1] == '|' || (ps->p[1] == ')' && ps->depth > 0))) return 1;
+    return 0;
+}
+
+static void rx_set_add(unsigned char *set, int c, int icase) {
+    c &= 0xff;
+    set[c >> 3] |= (unsigned char)(1u << (c & 7));
+    if (icase) {
+        int o = (c >= 'A' && c <= 'Z') ? c + 32 : (c >= 'a' && c <= 'z') ? c - 32 : c;
+        if (o != c) set[o >> 3] |= (unsigned char)(1u << (o & 7));
+    }
+}
+
+static int rx_class_fill(const char *name, unsigned char *set) {
+    int (*fn)(int) = 0;
+    if      (!strcmp(name, "alpha"))  fn = isalpha;
+    else if (!strcmp(name, "digit"))  fn = isdigit;
+    else if (!strcmp(name, "alnum"))  fn = isalnum;
+    else if (!strcmp(name, "upper"))  fn = isupper;
+    else if (!strcmp(name, "lower"))  fn = islower;
+    else if (!strcmp(name, "space"))  fn = isspace;
+    else if (!strcmp(name, "blank"))  fn = isblank;
+    else if (!strcmp(name, "punct"))  fn = ispunct;
+    else if (!strcmp(name, "cntrl"))  fn = iscntrl;
+    else if (!strcmp(name, "print"))  fn = isprint;
+    else if (!strcmp(name, "graph"))  fn = isgraph;
+    else if (!strcmp(name, "xdigit")) fn = isxdigit;
+    else return 0;
+    for (int x = 0; x < 256; x++) if (fn(x)) rx_set_add(set, x, 0);
+    return 1;
+}
+
+static rx_node *rx_parse_bracket(rx_parser *ps) {
+    ps->p++;                                            /* past '[' */
+    rx_node *node = rxn_new(ps, RXN_SET);
+    if (!node) return 0;
+    unsigned char *set = malloc(32);
+    if (!set) { ps->err = REG_ESPACE; return 0; }
+    memset(set, 0, 32);
+    node->set = set;
+    int neg = 0;
+    if (*ps->p == '^') { neg = 1; ps->p++; }
+    int first = 1;                                      /* a ']' as the first member is a literal ']' */
+    for (;;) {
+        int c = (unsigned char)*ps->p;
+        if (c == '\0') { ps->err = REG_EBRACK; return 0; }
+        if (c == ']' && !first) { ps->p++; break; }
+        first = 0;
+        if (c == '[' && ps->p[1] == ':') {             /* POSIX [:class:] */
+            ps->p += 2;
+            char name[16]; int ni = 0;
+            while (*ps->p && *ps->p != ':' && ni < 15) name[ni++] = *ps->p++;
+            name[ni] = '\0';
+            if (!(ps->p[0] == ':' && ps->p[1] == ']')) { ps->err = REG_ECTYPE; return 0; }
+            ps->p += 2;
+            if (!rx_class_fill(name, set)) { ps->err = REG_ECTYPE; return 0; }
+            continue;
+        }
+        if (c == '[' && (ps->p[1] == '.' || ps->p[1] == '=')) {  /* [.x.] / [=x=]: take the single char */
+            char close = ps->p[1];
+            ps->p += 2;
+            int cc = (unsigned char)*ps->p;
+            if (cc == '\0') { ps->err = REG_EBRACK; return 0; }
+            ps->p++;
+            if (!(ps->p[0] == close && ps->p[1] == ']')) { ps->err = REG_ECOLLATE; return 0; }
+            ps->p += 2;
+            rx_set_add(set, cc, ps->icase);
+            continue;
+        }
+        ps->p++;
+        if (*ps->p == '-' && ps->p[1] != ']' && ps->p[1] != '\0') {   /* a range c-hi */
+            ps->p++;
+            int hi = (unsigned char)*ps->p;
+            ps->p++;
+            if (hi < c) { ps->err = REG_ERANGE; return 0; }
+            for (int x = c; x <= hi; x++) rx_set_add(set, x, ps->icase);
+        } else {
+            rx_set_add(set, c, ps->icase);
+        }
+    }
+    if (neg) for (int i = 0; i < 32; i++) set[i] = (unsigned char)~set[i];
+    return node;
+}
+
+static int rx_interval_ahead(rx_parser *ps) {
+    const char *q = ps->p;
+    if (ps->ere) { if (*q != '{') return 0; q++; }
+    else { if (!(q[0] == '\\' && q[1] == '{')) return 0; q += 2; }
+    return isdigit((unsigned char)*q) || *q == ',';
+}
+
+static rx_node *rx_parse_interval(rx_parser *ps, rx_node *atom) {
+    if (ps->ere) ps->p++; else ps->p += 2;             /* past '{' or '\{' */
+    int m = 0, n = 0, haveM = 0, haveComma = 0, haveN = 0;
+    while (isdigit((unsigned char)*ps->p)) { m = m * 10 + (*ps->p++ - '0'); haveM = 1; if (m > 255) { ps->err = REG_BADBR; return 0; } }
+    if (*ps->p == ',') { haveComma = 1; ps->p++;
+        while (isdigit((unsigned char)*ps->p)) { n = n * 10 + (*ps->p++ - '0'); haveN = 1; if (n > 255) { ps->err = REG_BADBR; return 0; } }
+    }
+    if (ps->ere) { if (*ps->p != '}') { ps->err = REG_EBRACE; return 0; } ps->p++; }
+    else { if (!(ps->p[0] == '\\' && ps->p[1] == '}')) { ps->err = REG_EBRACE; return 0; } ps->p += 2; }
+    if (!haveM && !haveComma) { ps->err = REG_BADBR; return 0; }
+    rx_node *rep = rxn_new(ps, RXN_REP);
+    if (!rep) return 0;
+    rep->a = atom;
+    rep->min = haveM ? m : 0;
+    rep->max = !haveComma ? rep->min : (!haveN ? -1 : n);
+    if (rep->max >= 0 && rep->max < rep->min) { ps->err = REG_BADBR; return 0; }
+    return rep;
+}
+
+static rx_node *rx_parse_escape(rx_parser *ps) {
+    ps->p++;                                           /* past '\' */
+    int c = (unsigned char)*ps->p;
+    if (c == '\0') { ps->err = REG_EESCAPE; return 0; }
+    ps->p++;
+    if (!ps->ere) {                                    /* BRE-only escapes */
+        if (c == '(') {
+            ps->depth++;
+            rx_node *in = rx_parse_alt(ps);
+            if (!in) return 0;
+            if (!(ps->p[0] == '\\' && ps->p[1] == ')')) { ps->err = REG_EPAREN; return 0; }
+            ps->p += 2; ps->depth--; ps->ngroup++;
+            return in;
+        }
+        if (c == ')') { ps->err = REG_EPAREN; return 0; }
+        if (c >= '1' && c <= '9') { ps->err = REG_ESUBREG; return 0; }   /* backrefs unsupported */
+    }
+    if (c == '<') return rxn_new(ps, RXN_WSTART);
+    if (c == '>') return rxn_new(ps, RXN_WEND);
+    if (c == 'n') return rxn_char(ps, '\n');
+    if (c == 't') return rxn_char(ps, '\t');
+    if (c == 'r') return rxn_char(ps, '\r');
+    return rxn_char(ps, c);                             /* \. \* \\ \( (ERE literal '(') ... */
+}
+
+static rx_node *rx_parse_atom(rx_parser *ps, int atstart) {
+    int c = (unsigned char)*ps->p;
+    if (c == '\\') return rx_parse_escape(ps);
+    if (c == '.') { ps->p++; return rxn_new(ps, RXN_ANY); }
+    if (c == '[') return rx_parse_bracket(ps);
+    if (ps->ere) {
+        if (c == '(') {
+            ps->p++; ps->depth++;
+            rx_node *in = rx_parse_alt(ps);
+            if (!in) return 0;
+            if (*ps->p != ')') { ps->err = REG_EPAREN; return 0; }
+            ps->p++; ps->depth--; ps->ngroup++;
+            return in;
+        }
+        if (c == '^') { ps->p++; return rxn_new(ps, RXN_BOL); }
+        if (c == '$') { ps->p++; return rxn_new(ps, RXN_EOL); }
+        ps->p++; return rxn_char(ps, c);               /* a stray ) * + ? { | here is a literal (GNU-ish) */
+    }
+    /* BRE: ^ anchors only at a branch start; $ only at a branch end; everything else (incl. a
+     * leading *) is a literal -- a * that is a real quantifier is consumed by rx_parse_piece. */
+    if (c == '^') { ps->p++; if (atstart) return rxn_new(ps, RXN_BOL); return rxn_char(ps, '^'); }
+    if (c == '$') { ps->p++; if (rx_branch_end(ps)) return rxn_new(ps, RXN_EOL); return rxn_char(ps, '$'); }
+    ps->p++; return rxn_char(ps, c);
+}
+
+static rx_node *rx_parse_piece(rx_parser *ps, int atstart) {
+    rx_node *atom = rx_parse_atom(ps, atstart);
+    if (!atom) return 0;
+    int kind = -1;
+    if (ps->ere) {
+        if (*ps->p == '*') kind = RXN_STAR;
+        else if (*ps->p == '+') kind = RXN_PLUS;
+        else if (*ps->p == '?') kind = RXN_QUEST;
+        else if (*ps->p == '{' && rx_interval_ahead(ps)) return rx_parse_interval(ps, atom);
+        if (kind >= 0) ps->p++;
+    } else {
+        if (*ps->p == '*') { kind = RXN_STAR; ps->p++; }
+        else if (ps->p[0] == '\\' && ps->p[1] == '+') { kind = RXN_PLUS; ps->p += 2; }   /* GNU BRE */
+        else if (ps->p[0] == '\\' && ps->p[1] == '?') { kind = RXN_QUEST; ps->p += 2; }  /* GNU BRE */
+        else if (ps->p[0] == '\\' && ps->p[1] == '{') return rx_parse_interval(ps, atom);
+    }
+    if (kind >= 0) return rxn_unary(ps, kind, atom);
+    return atom;
+}
+
+static rx_node *rx_parse_cat(rx_parser *ps) {
+    rx_node *left = 0;
+    int first = 1;
+    while (!rx_branch_end(ps)) {
+        rx_node *pc = rx_parse_piece(ps, first);
+        first = 0;
+        if (!pc) return 0;
+        if (!left) left = pc;
+        else { rx_node *cat = rxn_new(ps, RXN_CAT); if (!cat) return 0; cat->a = left; cat->b = pc; left = cat; }
+    }
+    return left ? left : rxn_new(ps, RXN_EMPTY);
+}
+
+static rx_node *rx_parse_alt(rx_parser *ps) {
+    rx_node *left = rx_parse_cat(ps);
+    if (!left) return 0;
+    for (;;) {
+        if (ps->ere && *ps->p == '|') ps->p++;
+        else if (!ps->ere && ps->p[0] == '\\' && ps->p[1] == '|') ps->p += 2;
+        else break;
+        rx_node *right = rx_parse_cat(ps);
+        if (!right) return 0;
+        rx_node *alt = rxn_new(ps, RXN_ALT);
+        if (!alt) return 0;
+        alt->a = left; alt->b = right; left = alt;
+    }
+    return left;
+}
+
+/* ---- emit AST -> NFA program ---- */
+static int rx_emit_inst(rx_emit *e, int op, int c, unsigned char *set) {
+    if (e->n >= e->cap) {
+        int nc = e->cap ? e->cap * 2 : 32;
+        rx_inst *np = realloc(e->prog, (size_t)nc * sizeof *np);
+        if (!np) { e->err = REG_ESPACE; return -1; }
+        e->prog = np; e->cap = nc;
+    }
+    int i = e->n++;
+    e->prog[i].op = op; e->prog[i].c = c; e->prog[i].set = set; e->prog[i].x = e->prog[i].y = -1;
+    return i;
+}
+
+static void rx_emit_node(rx_emit *e, rx_node *n) {
+    if (e->err || !n) return;
+    switch (n->kind) {
+    case RXN_EMPTY: break;
+    case RXN_CHAR: rx_emit_inst(e, RXI_CHAR, n->ch, 0); break;
+    case RXN_ANY:  rx_emit_inst(e, RXI_ANY, 0, 0); break;
+    case RXN_SET:  rx_emit_inst(e, RXI_SET, 0, n->set); n->set = 0; break;   /* ownership -> inst */
+    case RXN_BOL:  rx_emit_inst(e, RXI_BOL, 0, 0); break;
+    case RXN_EOL:  rx_emit_inst(e, RXI_EOL, 0, 0); break;
+    case RXN_WSTART: rx_emit_inst(e, RXI_WSTART, 0, 0); break;
+    case RXN_WEND:   rx_emit_inst(e, RXI_WEND, 0, 0); break;
+    case RXN_CAT:  rx_emit_node(e, n->a); rx_emit_node(e, n->b); break;
+    case RXN_ALT: {
+        int sp = rx_emit_inst(e, RXI_SPLIT, 0, 0); if (sp < 0) return;
+        e->prog[sp].x = e->n; rx_emit_node(e, n->a);
+        int jmp = rx_emit_inst(e, RXI_JMP, 0, 0);
+        e->prog[sp].y = e->n; rx_emit_node(e, n->b);
+        if (jmp >= 0) e->prog[jmp].x = e->n;
+        break;
+    }
+    case RXN_STAR: {
+        int sp = rx_emit_inst(e, RXI_SPLIT, 0, 0); if (sp < 0) return;
+        e->prog[sp].x = e->n; rx_emit_node(e, n->a);
+        int jmp = rx_emit_inst(e, RXI_JMP, 0, 0);
+        if (jmp >= 0) e->prog[jmp].x = sp;
+        e->prog[sp].y = e->n;
+        break;
+    }
+    case RXN_PLUS: {
+        int start = e->n; rx_emit_node(e, n->a);
+        int sp = rx_emit_inst(e, RXI_SPLIT, 0, 0); if (sp < 0) return;
+        e->prog[sp].x = start; e->prog[sp].y = e->n;
+        break;
+    }
+    case RXN_QUEST: {
+        int sp = rx_emit_inst(e, RXI_SPLIT, 0, 0); if (sp < 0) return;
+        e->prog[sp].x = e->n; rx_emit_node(e, n->a);
+        e->prog[sp].y = e->n;
+        break;
+    }
+    case RXN_REP: {
+        for (int i = 0; i < n->min; i++) rx_emit_node(e, n->a);
+        if (n->max < 0) {                              /* {min,} -> min copies then a star */
+            int sp = rx_emit_inst(e, RXI_SPLIT, 0, 0); if (sp < 0) return;
+            e->prog[sp].x = e->n; rx_emit_node(e, n->a);
+            int jmp = rx_emit_inst(e, RXI_JMP, 0, 0);
+            if (jmp >= 0) e->prog[jmp].x = sp;
+            e->prog[sp].y = e->n;
+        } else {                                       /* {min,max} -> (max-min) optional copies */
+            int extra = n->max - n->min;
+            int splits[256], ns = 0;
+            for (int i = 0; i < extra && ns < 256; i++) {
+                int sp = rx_emit_inst(e, RXI_SPLIT, 0, 0); if (sp < 0) return;
+                e->prog[sp].x = e->n; splits[ns++] = sp;
+                rx_emit_node(e, n->a);
+            }
+            int end = e->n;
+            for (int i = 0; i < ns; i++) e->prog[splits[i]].y = end;
+        }
+        break;
+    }
+    }
+}
+
+/* ---- match: NFA simulation ---- */
+static int rx_isword(int c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'; }
+
+static void rx_addthread(rx_prog *rp, int *list, int *nlist, unsigned gen,
+                         int pc, const char *s, int sp, int slen) {
+    if (pc < 0 || rp->seen[pc] == (int)gen) return;
+    rp->seen[pc] = (int)gen;
+    rx_inst *in = &rp->prog[pc];
+    switch (in->op) {
+    case RXI_JMP:   rx_addthread(rp, list, nlist, gen, in->x, s, sp, slen); break;
+    case RXI_SPLIT: rx_addthread(rp, list, nlist, gen, in->x, s, sp, slen);
+                    rx_addthread(rp, list, nlist, gen, in->y, s, sp, slen); break;
+    case RXI_BOL:   if (sp == 0)    rx_addthread(rp, list, nlist, gen, pc + 1, s, sp, slen); break;
+    case RXI_EOL:   if (sp == slen) rx_addthread(rp, list, nlist, gen, pc + 1, s, sp, slen); break;
+    case RXI_WSTART: {
+        int before = sp > 0    ? rx_isword((unsigned char)s[sp - 1]) : 0;
+        int here   = sp < slen ? rx_isword((unsigned char)s[sp])     : 0;
+        if (!before && here) rx_addthread(rp, list, nlist, gen, pc + 1, s, sp, slen);
+        break;
+    }
+    case RXI_WEND: {
+        int before = sp > 0    ? rx_isword((unsigned char)s[sp - 1]) : 0;
+        int here   = sp < slen ? rx_isword((unsigned char)s[sp])     : 0;
+        if (before && !here) rx_addthread(rp, list, nlist, gen, pc + 1, s, sp, slen);
+        break;
+    }
+    default: list[(*nlist)++] = pc; break;             /* CHAR/ANY/SET/MATCH: a real thread */
+    }
+}
+
+static int rx_search(rx_prog *rp, const char *s, int slen) {
+    int np = rp->nprog, cn = 0;
+    int *cl = rp->clist, *nl = rp->nlist;
+    unsigned gen = ++rp->gen;
+    if (gen == 0) { for (int i = 0; i < np; i++) rp->seen[i] = 0; gen = ++rp->gen; }  /* wrap guard */
+    rx_addthread(rp, cl, &cn, gen, 0, s, 0, slen);
+    for (int sp = 0; ; sp++) {
+        for (int i = 0; i < cn; i++) if (rp->prog[cl[i]].op == RXI_MATCH) return 1;
+        if (sp >= slen) return 0;
+        int c = (unsigned char)s[sp], nn = 0;
+        gen = ++rp->gen;
+        if (gen == 0) { for (int i = 0; i < np; i++) rp->seen[i] = 0; gen = ++rp->gen; }
+        for (int i = 0; i < cn; i++) {
+            rx_inst *in = &rp->prog[cl[i]];
+            int adv = 0;
+            switch (in->op) {
+            case RXI_CHAR: adv = (c == in->c) || (rp->icase && tolower(c) == tolower(in->c)); break;
+            case RXI_ANY:  adv = 1; break;
+            case RXI_SET:  adv = (in->set[c >> 3] >> (c & 7)) & 1; break;
+            default: break;
+            }
+            if (adv) rx_addthread(rp, nl, &nn, gen, cl[i] + 1, s, sp + 1, slen);
+        }
+        int *t = cl; cl = nl; nl = t; cn = nn;
+    }
+}
+
+/* ---- public API ---- */
+int regcomp(regex_t *preg, const char *pattern, int cflags) {
+    rx_parser ps = { pattern, (cflags & REG_EXTENDED) ? 1 : 0, (cflags & REG_ICASE) ? 1 : 0, 0, 0, 0 };
+    preg->__impl = 0; preg->re_nsub = 0;
+    rx_node *root = rx_parse_alt(&ps);
+    if (!ps.err && *ps.p != '\0') ps.err = REG_EPAREN;     /* unconsumed input -> unbalanced */
+    if (ps.err) { rxn_free(root); return ps.err; }
+
+    rx_emit e = { 0, 0, 0, 0 };
+    int sp = rx_emit_inst(&e, RXI_SPLIT, 0, 0);            /* implicit leading ".*" (unanchored search) */
+    int any = rx_emit_inst(&e, RXI_ANY, 0, 0);
+    int jmp = rx_emit_inst(&e, RXI_JMP, 0, 0);
+    if (e.err) { rxn_free(root); free(e.prog); return e.err; }
+    e.prog[sp].x = any; e.prog[jmp].x = sp; e.prog[sp].y = e.n;
+    rx_emit_node(&e, root);
+    rx_emit_inst(&e, RXI_MATCH, 0, 0);
+    rxn_free(root);
+    if (e.err) {
+        for (int i = 0; i < e.n; i++) if (e.prog[i].op == RXI_SET && e.prog[i].set) free(e.prog[i].set);
+        free(e.prog);
+        return e.err;
+    }
+
+    rx_prog *rp = malloc(sizeof *rp);
+    if (rp) { rp->clist = malloc((size_t)e.n * sizeof(int));
+              rp->nlist = malloc((size_t)e.n * sizeof(int));
+              rp->seen  = malloc((size_t)e.n * sizeof(int)); }
+    if (!rp || !rp->clist || !rp->nlist || !rp->seen) {
+        for (int i = 0; i < e.n; i++) if (e.prog[i].op == RXI_SET && e.prog[i].set) free(e.prog[i].set);
+        free(e.prog);
+        if (rp) { free(rp->clist); free(rp->nlist); free(rp->seen); free(rp); }
+        return REG_ESPACE;
+    }
+    for (int i = 0; i < e.n; i++) rp->seen[i] = 0;   /* 0 = the permanent "unvisited" sentinel; gen is always >=1 (never 0), so a stamp never collides with it -- the dedup is collision-free across all searches */
+    rp->prog = e.prog; rp->nprog = e.n; rp->icase = ps.icase; rp->gen = 0;
+    preg->re_nsub = (size_t)ps.ngroup;
+    preg->__impl = rp;
+    return 0;
+}
+
+int regexec(const regex_t *preg, const char *string, size_t nmatch, regmatch_t pmatch[], int eflags) {
+    (void)eflags;                                          /* REG_NOTBOL/REG_NOTEOL: no in-scope caller sets them */
+    rx_prog *rp = preg->__impl;
+    for (size_t i = 0; i < nmatch; i++) { pmatch[i].rm_so = -1; pmatch[i].rm_eo = -1; }  /* no submatch capture */
+    if (!rp) return REG_NOMATCH;
+    return rx_search(rp, string, (int)strlen(string)) > 0 ? 0 : REG_NOMATCH;
+}
+
+size_t regerror(int errcode, const regex_t *preg, char *errbuf, size_t errbuf_size) {
+    (void)preg;
+    const char *msg;
+    switch (errcode) {
+    case 0:            msg = "Success"; break;
+    case REG_NOMATCH:  msg = "No match"; break;
+    case REG_BADPAT:   msg = "Invalid regular expression"; break;
+    case REG_ECOLLATE: msg = "Invalid collating element"; break;
+    case REG_ECTYPE:   msg = "Invalid character class"; break;
+    case REG_EESCAPE:  msg = "Trailing backslash"; break;
+    case REG_ESUBREG:  msg = "Invalid back reference"; break;
+    case REG_EBRACK:   msg = "Unmatched [, [^, [:, [. or [="; break;
+    case REG_EPAREN:   msg = "Unmatched ( or \\("; break;
+    case REG_EBRACE:   msg = "Unmatched \\{"; break;
+    case REG_BADBR:    msg = "Invalid content of \\{\\}"; break;
+    case REG_ERANGE:   msg = "Invalid range end"; break;
+    case REG_ESPACE:   msg = "Out of memory"; break;
+    case REG_BADRPT:   msg = "Invalid preceding regular expression"; break;
+    default:           msg = "Unknown regex error"; break;
+    }
+    size_t len = strlen(msg);
+    if (errbuf_size) {
+        size_t n = len < errbuf_size - 1 ? len : errbuf_size - 1;
+        memcpy(errbuf, msg, n);
+        errbuf[n] = '\0';
+    }
+    return len + 1;
+}
+
+void regfree(regex_t *preg) {
+    rx_prog *rp = preg->__impl;
+    if (!rp) return;
+    for (int i = 0; i < rp->nprog; i++) if (rp->prog[i].op == RXI_SET && rp->prog[i].set) free(rp->prog[i].set);
+    free(rp->prog); free(rp->clist); free(rp->nlist); free(rp->seen); free(rp);
+    preg->__impl = 0;
+}

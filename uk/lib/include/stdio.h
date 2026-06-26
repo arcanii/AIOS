@@ -19,6 +19,7 @@ typedef struct _IO_FILE FILE;          /* opaque -- programs only ever use FILE*
 extern FILE *stdin, *stdout, *stderr;
 
 FILE  *fopen(const char *path, const char *mode);
+FILE  *fmemopen(void *buf, size_t size, const char *mode);   /* read-mode mem stream (grep -e/-f) */
 int    fclose(FILE *f);
 int    fflush(FILE *f);
 size_t fread(void *ptr, size_t sz, size_t nmemb, FILE *f);
@@ -42,6 +43,7 @@ int    remove(const char *path);
 
 int    printf(const char *fmt, ...);
 int    fprintf(FILE *f, const char *fmt, ...);
+int    sprintf(char *buf, const char *fmt, ...);
 int    snprintf(char *buf, size_t size, const char *fmt, ...);
 int    vfprintf(FILE *f, const char *fmt, va_list ap);
 int    vsnprintf(char *buf, size_t size, const char *fmt, va_list ap);

@@ -1,8 +1,7 @@
-/* regex.h -- AIOS shadow header (see sys/types.h). DECLARATIONS ONLY: sbase's util.h includes
- * <regex.h> for the regex_t type so it can declare eregcomp/enregcomp, but utilities that do not
- * actually match (echo, cat, wc, ...) never call regcomp/regexec, so no implementation is linked.
- * The day a regex-using utility (grep) is vendored, libaios grows a real regex -- the sources stay
- * unmodified. */
+/* regex.h -- AIOS shadow header (see sys/types.h). Backed by a real BRE/ERE engine in libaios
+ * (regcomp/regexec/regfree/regerror -- a linear NFA-simulation matcher; see libaios.c) so vendored
+ * `grep` runs UNMODIFIED. Boolean match only today: grep compiles REG_NOSUB and never reads pmatch,
+ * so regexec sets pmatch[*] = {-1,-1} (submatch capture is not yet implemented). */
 #ifndef _REGEX_H
 #define _REGEX_H
 #include <stddef.h>
@@ -25,8 +24,20 @@ typedef struct {
 /* regexec eflags */
 #define REG_NOTBOL   1
 #define REG_NOTEOL   2
-/* error codes */
-#define REG_NOMATCH  1
+/* error codes (glibc-compatible values; regcomp returns one, regerror maps it to a message) */
+#define REG_NOMATCH   1
+#define REG_BADPAT    2
+#define REG_ECOLLATE  3
+#define REG_ECTYPE    4
+#define REG_EESCAPE   5
+#define REG_ESUBREG   6
+#define REG_EBRACK    7
+#define REG_EPAREN    8
+#define REG_EBRACE    9
+#define REG_BADBR    10
+#define REG_ERANGE   11
+#define REG_ESPACE   12
+#define REG_BADRPT   13
 
 int    regcomp(regex_t *, const char *, int);
 int    regexec(const regex_t *, const char *, size_t, regmatch_t *, int);

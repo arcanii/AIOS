@@ -93,9 +93,10 @@ The headline proof of the retarget: genuine third-party POSIX-utility source (**
 vendored unmodified under `vendor/sbase` — see `vendor/README.md`) compiles UNMODIFIED against
 `libaios` and runs on the AIOS kernel. sbase is never patched; missing libc features are added to
 `libaios`. Working utilities: **true / false / echo / cat / wc / mkdir / rm / ls** (incl. `ls -l`)
-**/ head / tail / cp / mv / ln / chmod / sort** (`cp -p` preserves mode + times; `ln`/`ln -s` make
-hard/symlinks — backed by the file-metadata syscalls below; `sort` does lexical/`-u`/`-n`/`-r`, the
-numeric compare using a real `strtod`). `grep` still needs a real `<regex.h>`.
+**/ head / tail / cp / mv / ln / chmod / sort / grep** (`cp -p` preserves mode + times; `ln`/`ln -s`
+make hard/symlinks — backed by the file-metadata syscalls below; `sort` does lexical/`-u`/`-n`/`-r`,
+the numeric compare using a real `strtod`; `grep` is `-EFHcilnvwx`, backed by a real regex engine —
+see M3j below).
 
 - **M3f** vendored sbase; `true/false/echo/cat` (then `wc` + the libutf rune layer, then `mkdir` +
   `umask`/`parsemode`). **M3g** the **`*at` family** (`openat`/`fstatat`/`unlinkat`/`faccessat` +
@@ -126,6 +127,28 @@ READLINK/FCNTL.
 
 `uk/run.sh` runs the whole suite (colima); milestones through M3e.3 are also validated natively on
 the RPi4 (M3e.4 onward is colima-verified, Pi-pending — the Pi went offline mid-s19).
+
+## M3j — grep: a real regex engine ✅
+
+The last major coreutil. Real **grep** compiles UNMODIFIED against `libaios` and runs `-EFHcilnvwx`
+through the kernel — driven by a real **POSIX regex engine** added to `libaios`
+(`regcomp`/`regexec`/`regfree`/`regerror`; the shadow `<regex.h>` was declarations-only). The
+engine parses the pattern to an AST, compiles it to a Thompson **NFA program**, and matches by
+**linear NFA simulation** (a Pike-style thread sweep) — so there is **no catastrophic backtracking**
+and the matcher is **guaranteed to halt** (a per-step visited stamp dedups program counters, so even
+`(a*)*` cannot spin). It supports literals, `.`, bracket expressions (ranges, `[^…]` negation, POSIX
+`[:class:]`), `^`/`$` anchors, `\<`/`\>` word boundaries, grouping, `|` alternation, the `* + ?`
+quantifiers and `{m,n}` intervals, and `REG_ICASE`, in both BRE and ERE (with the GNU-ish leniencies
+grep relies on). It is a boolean matcher: grep compiles `REG_NOSUB` and never reads `pmatch`, and no
+other vendored utility needs submatch capture yet. No new ABI — regex is pure `libaios`. The libc
+gaps grep needed also landed: `fmemopen` (a read-mode in-memory stream for `-e`/`-f`/literal
+patterns), `sprintf`, `strcasestr`, and a shadow `<strings.h>`.
+
+Proofs: `guest/prog_regex.c` — a **75-case** `regcomp`/`regexec` battery (BRE/ERE, classes, anchors,
+intervals, word boundaries, icase, the exact patterns `grep -w`/`-x` build, compile-error reporting,
+and the catastrophic patterns that prove linearity) — wired into the run.sh gate; plus the live
+`sbase grep` demos (`-E`/`-i`/`-v`/`-c`/`-n`/`-w`, an anchored BRE, and a `grep | wc -l` dash
+pipeline). Validated on colima.
 
 ## M4 — the boundary is enforced ✅
 
@@ -232,6 +255,6 @@ clamped back into the root. Validated on colima and the RPi4.
 
 ## Next (per the design doc)
 
-`grep` (needs a real `<regex.h>` engine); full job control (dash built `JOBS=0` — would need
-`setpgid`/`tcsetpgrp` + a termios layer). Then **sched_ext** · the seL4/x86-64 replant seam
-(`pal_sel4.c`).
+Full job control (dash built `JOBS=0` — would need `setpgid`/`tcsetpgrp` + a termios layer); a
+passwd/group db (so `ls`/`grep` show names, not numeric ids). Then **sched_ext** · the seL4/x86-64
+replant seam (`pal_sel4.c`).
