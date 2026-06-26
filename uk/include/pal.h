@@ -168,4 +168,24 @@ int        pal_host_faccessat(pal_file_t dir, const char *path, int amode);
  * negated AIOS error code. (Linux: readlink(2); a future seL4 PAL asks its fs server.) */
 long pal_host_readlink(const char *path, char *buf, size_t bufsize);
 
+/* Is a backing object a terminal? 1 / 0 / -errno. (Linux: isatty/tcgetattr.) */
+int pal_host_isatty(pal_file_t f);
+
+/* Set the value `who` sees returned from the syscall it is stopped at, WITHOUT resuming it -- it
+ * stays stopped at the syscall exit. (pal_guest_return = this + pal_guest_resume.) The kernel uses
+ * it to interpose signal delivery between finishing a syscall and resuming. */
+int pal_guest_setret(pal_pid_t who, uint64_t retval);
+
+/* --- signal delivery (register manipulation is host-specific, so it lives in the PAL) ---
+ * The guest `who` is stopped at a syscall EXIT (its result already set via pal_guest_setret).
+ * pal_guest_deliver makes it RUN its handler: it saves the guest's full post-syscall register state
+ * into `savebuf` (opaque, >= PAL_SIGSAVE_SIZE), then sets pc = handler, arg0 = signum, return-
+ * address = tramp, and resumes into the handler. When the handler returns it traps via the
+ * trampoline (AIOS_SYS_SIGRETURN); pal_guest_sigreturn then restores `savebuf` so the guest resumes
+ * right after the interrupted syscall. The kernel keeps `savebuf` per-process (host-agnostic bytes);
+ * a future seL4 PAL builds a real signal frame instead. */
+#define PAL_SIGSAVE_SIZE 512
+int pal_guest_deliver  (pal_pid_t who, uint64_t handler, uint64_t signum, uint64_t tramp, void *savebuf);
+int pal_guest_sigreturn(pal_pid_t who, const void *savebuf);
+
 #endif /* AIOS_PAL_H */

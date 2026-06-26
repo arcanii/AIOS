@@ -42,6 +42,15 @@
 #define AIOS_SYS_FACCESSAT 0x101A /* (dirfd, path, amode) -> 0, or -errno                          */
 #define AIOS_SYS_READLINK 0x101B  /* (path, buf, bufsize) -> bytes (no NUL), or -errno             */
 #define AIOS_SYS_FCNTL    0x101C  /* (fd, cmd, arg) -> result, or -errno (F_DUPFD/F_GETFD/F_SETFD) */
+#define AIOS_SYS_SIGACTION 0x101D /* (signum, handler, tramp) -> old handler (0=DFL,1=IGN,else addr) */
+#define AIOS_SYS_SIGRETURN 0x101E /* () -> does not return normally (the kernel restores pre-signal regs) */
+#define AIOS_SYS_KILL     0x101F  /* (pid, signum) -> 0, or -errno; signum 0 = existence check       */
+#define AIOS_SYS_ISATTY   0x1020  /* (fd) -> 1 if a terminal, 0 if not, or -errno                     */
+
+/* signal dispositions (handler arg to SIGACTION): an address, or these two sentinels (match POSIX). */
+#define AIOS_SIG_DFL 0   /* default action */
+#define AIOS_SIG_IGN 1   /* ignore         */
+#define AIOS_NSIG    65  /* signals 1..64  */
 
 /* fcntl commands (AIOS-owned; match Linux). F_DUPFD = lowest free fd >= arg, sharing the backing --
  * dash uses it to park its script fd above 10. FD flags (close-on-exec) are accepted + ignored

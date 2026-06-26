@@ -382,7 +382,7 @@ int  execve(const char *p, char *const argv[], char *const envp[]) { return (int
 int  vfork(void)                                    { return (int)__ret(aios_fork()); }  /* fork: separate AS (safe) */
 void _exit(int code)                                { aios_exit(code); }
 int  getpid(void)  { return (int)asys(AIOS_SYS_GETPID, 0, 0, 0); }
-int  isatty(int fd){ (void)fd; return 0; }          /* no tty layer yet */
+int  isatty(int fd){ return asys(AIOS_SYS_ISATTY, fd, 0, 0) > 0 ? 1 : 0; }
 int  open(const char *path, int flags, ...) {
     int mode = 0;
     if (flags & AIOS_O_CREAT) { va_list ap; va_start(ap, flags); mode = va_arg(ap, int); va_end(ap); }
@@ -788,24 +788,28 @@ long times(struct aios_tms *t) {                   /* no clock yet -> all zero *
     return 0;
 }
 
-/* --- signals: dispositions are RECORDED but not yet delivered (no async signal path through the
- * PAL yet). dash installs handlers + masks signals; with -c scripts nothing fires, so recording is
- * enough to run. kill is a real-ish stub. A real delivery path is future work. --- */
+/* --- signals: REGISTERED with the kernel, which DELIVERS them by running the handler (the kernel
+ * saves/restores the guest's regs around it; the handler returns through __aios_sigtramp, which
+ * issues AIOS_SYS_SIGRETURN). dash's trap/kill + interactive interrupts ride this. --- */
 typedef void (*aios_sighandler)(int);
-static aios_sighandler g_sigdisp[65];              /* Linux _NSIG = 65 (signals 1..64) */
 typedef struct { aios_sighandler sa_handler; unsigned long sa_mask; int sa_flags; } aios_sigaction;
+extern void __aios_sigtramp(void);                 /* the sigreturn trampoline (asm, below) */
+_Static_assert(AIOS_SYS_SIGRETURN == 0x101E, "the trampoline's hard-coded SIGRETURN nr must match");
+
 aios_sighandler signal(int sig, aios_sighandler h) {
-    if (sig < 0 || sig >= 65) return (aios_sighandler)-1;
-    aios_sighandler old = g_sigdisp[sig]; g_sigdisp[sig] = h; return old;
+    long old = asys(AIOS_SYS_SIGACTION, sig, (long)h, (long)__aios_sigtramp);
+    if (AIOS_IS_ERR(old)) { errno = (int)-old; return (aios_sighandler)(long)-1; }   /* SIG_ERR */
+    return (aios_sighandler)old;
 }
 int sigaction(int sig, const aios_sigaction *act, aios_sigaction *old) {
-    if (sig < 0 || sig >= 65) { errno = AIOS_EINVAL; return -1; }
-    if (old) { old->sa_handler = g_sigdisp[sig]; old->sa_mask = 0; old->sa_flags = 0; }
-    if (act) g_sigdisp[sig] = act->sa_handler;
+    if (!act) { if (old) { old->sa_handler = 0; old->sa_mask = 0; old->sa_flags = 0; } return 0; }
+    long prev = asys(AIOS_SYS_SIGACTION, sig, (long)act->sa_handler, (long)__aios_sigtramp);
+    if (AIOS_IS_ERR(prev)) { errno = (int)-prev; return -1; }
+    if (old) { old->sa_handler = (aios_sighandler)prev; old->sa_mask = 0; old->sa_flags = 0; }
     return 0;
 }
-int kill(int pid, int sig) { (void)pid; (void)sig; return 0; }   /* no delivery path yet */
-int raise(int sig) { (void)sig; return 0; }
+int kill(int pid, int sig) { return (int)__ret(asys(AIOS_SYS_KILL, pid, sig, 0)); }
+int raise(int sig)         { return kill(getpid(), sig); }
 unsigned int alarm(unsigned int sec) { (void)sec; return 0; }
 /* signal sets + masking are no-ops (no pending/blocked model yet). */
 int sigemptyset(unsigned long *set) { if (set) *set = 0; return 0; }
@@ -934,6 +938,17 @@ __asm__(
     "  add x1, sp, #8\n"      /* argv (&argv[0]) */
     "  bl  __libaios_start\n"
     "1: b 1b\n"
+);
+
+/* The sigreturn trampoline: a signal handler "returns" here (the kernel set x30/lr to it), and it
+ * issues AIOS_SYS_SIGRETURN so the kernel restores the pre-signal registers. #0x101e == SIGRETURN
+ * (asserted in C above). It never returns -- the kernel resumes the guest elsewhere. */
+__asm__(
+    ".global __aios_sigtramp\n"
+    "__aios_sigtramp:\n"
+    "  mov x8, #0x101e\n"
+    "  svc #0\n"
+    "  b __aios_sigtramp\n"
 );
 
 /* setjmp/longjmp (aarch64): save/restore the callee-saved regs (x19-x28), fp (x29), lr (x30), sp,

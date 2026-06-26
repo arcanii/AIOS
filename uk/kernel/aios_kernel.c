@@ -88,8 +88,21 @@ typedef struct {
     uint64_t      blk_len;             /* total bytes requested */
     uint64_t      blk_done;            /* bytes already transferred (writes) */
     int           blk_pipe;            /* pipe_id this I/O is parked on */
+    /* signals: per-process dispositions + one pending signal + saved regs while a handler runs */
+    uint64_t      sig_handler[AIOS_NSIG];   /* 0 = SIG_DFL, 1 = SIG_IGN, else a guest handler address */
+    uint64_t      sig_tramp;           /* the guest's sigreturn trampoline (registered via sigaction) */
+    int           pending_sig;         /* a signal awaiting delivery (0 = none) */
+    int           in_handler;          /* a handler is currently running on this guest */
+    unsigned char sigsave[PAL_SIGSAVE_SIZE];   /* pre-signal regs, restored by sigreturn */
     int           fd[AIOS_MAX_FD];     /* AIOS fd -> ofile index, or -1 */
 } proc_t;
+
+static void sig_reset(proc_t *p) {     /* dispositions to default; no pending signal */
+    for (int i = 0; i < AIOS_NSIG; i++) p->sig_handler[i] = AIOS_SIG_DFL;
+    p->sig_tramp = 0;
+    p->pending_sig = 0;
+    p->in_handler = 0;
+}
 static proc_t g_proc[MAX_PROCS];
 
 static proc_t *proc_find(pal_pid_t pid) {
@@ -319,6 +332,53 @@ static long sys_readlink(proc_t *p, uint64_t gpath, uint64_t gbuf, uint64_t bufs
     return n;
 }
 
+static long sys_isatty(proc_t *p, uint64_t fd) {
+    if (!fd_valid(p, fd)) return 0;
+    return pal_host_isatty(fd_backing(p, fd));
+}
+
+/* ---- signals ---- */
+static long sys_sigaction(proc_t *p, uint64_t signum, uint64_t handler, uint64_t tramp) {
+    if (signum < 1 || signum >= AIOS_NSIG) return -AIOS_EINVAL;
+    if (signum == 9 || signum == 19) return -AIOS_EINVAL;          /* SIGKILL/SIGSTOP uncatchable */
+    uint64_t old = p->sig_handler[signum];
+    p->sig_handler[signum] = handler;
+    if (tramp) p->sig_tramp = tramp;                              /* the guest's sigreturn trampoline */
+    return (long)old;
+}
+static long sys_kill(proc_t *p, uint64_t pid, uint64_t signum) {
+    if (signum >= AIOS_NSIG) return -AIOS_EINVAL;
+    proc_t *target = ((long)pid > 0) ? proc_find((pal_pid_t)pid) : p;   /* <=0 (group/self) -> self for now */
+    if (!target) return -AIOS_ESRCH;
+    if (signum == 0) return 0;                                    /* existence check only */
+    target->pending_sig = (int)signum;                           /* delivered at its next syscall */
+    return 0;
+}
+
+/* Return a syscall result to p, then -- if p now has a pending signal -- act on it AT THE SYSCALL
+ * EXIT (the syscall is fully serviced first, so its return value is intact; the handler runs next;
+ * on sigreturn the guest resumes after the syscall). This is the single return path for every
+ * dispatched syscall, so e.g. raise()'s handler runs before raise() returns, the POSIX ordering. */
+static void kreturn(proc_t *p, uint64_t ret) {
+    int sig = p->pending_sig;
+    if (!sig) { pal_guest_return(p->pid, ret); return; }         /* common case: no signal */
+    p->pending_sig = 0;
+    uint64_t h = p->sig_handler[sig];
+    int dfl_ignore = (sig == 17 || sig == 18 || sig == 23 || sig == 28);   /* CHLD/CONT/URG/WINCH */
+    if (h == AIOS_SIG_IGN || (h == AIOS_SIG_DFL && dfl_ignore)) {
+        pal_guest_return(p->pid, ret);                           /* ignored -> just return */
+        return;
+    }
+    if (h == AIOS_SIG_DFL) {                                      /* default action: terminate */
+        pal_guest_exit(p->pid, 128 + sig);
+        return;
+    }
+    if (p->sig_tramp == 0) { pal_guest_return(p->pid, ret); return; }   /* no trampoline -> can't deliver */
+    pal_guest_setret(p->pid, ret);                               /* finish the syscall (stay stopped at exit) */
+    p->in_handler = 1;
+    pal_guest_deliver(p->pid, h, (uint64_t)sig, p->sig_tramp, p->sigsave);   /* run the handler */
+}
+
 /* ---- pipes ----
  * A pipe is two backing ends (non-blocking at the host) sharing a pipe_id. read/write to a pipe
  * never block the single-threaded kernel: an empty read / full write PARKS the calling guest and
@@ -501,6 +561,10 @@ static void do_fork(proc_t *parent) {
     child->exit_code = 0;
     child->wait_for = 0;
     child->wait_status_gaddr = 0;
+    for (int i = 0; i < AIOS_NSIG; i++) child->sig_handler[i] = parent->sig_handler[i];  /* inherited */
+    child->sig_tramp = parent->sig_tramp;
+    child->pending_sig = 0;                            /* pending signals are NOT inherited */
+    child->in_handler = 0;
     for (int i = 0; i < AIOS_MAX_FD; i++) {
         child->fd[i] = parent->fd[i];
         if (parent->fd[i] >= 0) ofile_ref(parent->fd[i]);
@@ -583,11 +647,15 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
     }
     switch (sc->nr) {
     case AIOS_SYS_MMAP: pal_guest_mmap(p->pid, (size_t)sc->arg[0]); pal_guest_resume(p->pid); return;
-    case AIOS_SYS_EXEC: pal_guest_exec(p->pid, sc->arg[0], sc->arg[1], sc->arg[2]);
-                        pal_guest_resume(p->pid); return;
+    case AIOS_SYS_EXEC:
+        if (pal_guest_exec(p->pid, sc->arg[0], sc->arg[1], sc->arg[2]) == 0)
+            for (int i = 1; i < AIOS_NSIG; i++)        /* caught signals reset to default across exec */
+                if (p->sig_handler[i] != AIOS_SIG_IGN) p->sig_handler[i] = AIOS_SIG_DFL;
+        pal_guest_resume(p->pid); return;
     case AIOS_SYS_FORK: do_fork(p);                                        return;
     case AIOS_SYS_WAIT: do_wait(p, (unsigned long)sc->arg[0], sc->arg[1]); return;
     case AIOS_SYS_EXIT: pal_guest_exit(p->pid, (int)sc->arg[0]);           return;
+    case AIOS_SYS_SIGRETURN: pal_guest_sigreturn(p->pid, p->sigsave); p->in_handler = 0; return;
     /* read/write/pipe own their own return/parking (pipes may block) -> dispatched specially */
     case AIOS_SYS_READ:  do_read (p, sc->arg[0], sc->arg[1], sc->arg[2]); return;
     case AIOS_SYS_WRITE: do_write(p, sc->arg[0], sc->arg[1], sc->arg[2]); return;
@@ -616,9 +684,12 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
     case AIOS_SYS_FACCESSAT:ret = (uint64_t)sys_faccessat(p, sc->arg[0], sc->arg[1], sc->arg[2]);        break;
     case AIOS_SYS_READLINK:ret = (uint64_t)sys_readlink(p, sc->arg[0], sc->arg[1], sc->arg[2]);          break;
     case AIOS_SYS_FCNTL:   ret = (uint64_t)sys_fcntl(p, sc->arg[0], sc->arg[1], sc->arg[2]);             break;
+    case AIOS_SYS_ISATTY:  ret = (uint64_t)sys_isatty(p, sc->arg[0]);                                    break;
+    case AIOS_SYS_SIGACTION:ret = (uint64_t)sys_sigaction(p, sc->arg[0], sc->arg[1], sc->arg[2]);        break;
+    case AIOS_SYS_KILL:    ret = (uint64_t)sys_kill(p, sc->arg[0], sc->arg[1]);                          break;
     default:             ret = (uint64_t)-AIOS_ENOSYS; /* unknown AIOS syscall */           break;
     }
-    pal_guest_return(p->pid, ret);
+    kreturn(p, ret);   /* return the result + deliver a pending signal (e.g. raise) at the syscall exit */
 }
 
 /* The kernel's event loop: wait for ANY guest's next syscall or exit, service it, repeat -- until
@@ -635,6 +706,7 @@ int aios_kernel_run(const char *guest_path, char *const guest_argv[]) {
     init->exit_code = 0;
     init->wait_for = 0;
     init->wait_status_gaddr = 0;
+    sig_reset(init);
     fd_table_init_std(init);
 
     pal_pid_t init_pid = pid;

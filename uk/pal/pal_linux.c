@@ -128,12 +128,12 @@ int pal_guest_next(pal_pid_t *who, pal_syscall_t *sc, int *exit_code) {
     }
 }
 
-int pal_guest_return(pal_pid_t who, uint64_t retval) {
+int pal_guest_setret(pal_pid_t who, uint64_t retval) {
     /* `who` is stopped at a syscall ENTRY. ENFORCE THE BOUNDARY (M4): neutralize the trapped syscall
      * number (-1) so the host SKIPS it -- the guest's chosen syscall, AIOS-numbered or a smuggled
      * real-Linux one, NEVER executes on the host. Only the kernel's deliberate injections (mmap/exec/
      * fork/exit, their own paths) ever run a real host syscall. Then run the now-skipped syscall to
-     * its EXIT, plant the AIOS result in x0, and resume toward the next syscall. */
+     * its EXIT and plant the AIOS result in x0 -- leaving `who` stopped at the exit (NOT resumed). */
     set_syscall_nr(who, -1);
     if (ptrace(PTRACE_SYSCALL, who, 0, 0) != 0) return -1;
     int st;
@@ -142,8 +142,11 @@ int pal_guest_return(pal_pid_t who, uint64_t retval) {
     struct user_pt_regs r;
     if (getregs(who, &r) != 0) return -1;
     r.regs[0] = (unsigned long long)retval;
-    if (setregs(who, &r) != 0) return -1;
-    return ptrace(PTRACE_SYSCALL, who, 0, 0) == 0 ? 0 : -1;   /* resume past the exit */
+    return setregs(who, &r) == 0 ? 0 : -1;
+}
+int pal_guest_return(pal_pid_t who, uint64_t retval) {
+    if (pal_guest_setret(who, retval) != 0) return -1;
+    return ptrace(PTRACE_SYSCALL, who, 0, 0) == 0 ? 0 : -1;   /* resume toward the next syscall */
 }
 
 int pal_guest_resume(pal_pid_t who) {
@@ -393,6 +396,35 @@ int pal_host_faccessat(pal_file_t dir, const char *path, int amode) {
 long pal_host_readlink(const char *path, char *buf, size_t bufsize) {
     ssize_t n = readlink(path, buf, bufsize);
     return n < 0 ? pal_errno() : (long)n;
+}
+int pal_host_isatty(pal_file_t f) { return isatty((int)f) ? 1 : 0; }
+
+/* --- signal delivery (register manipulation -- host-specific, so it lives here) ---
+ * `who` is stopped at a syscall EXIT (its result already planted by pal_guest_setret). Make it RUN
+ * its handler: save the post-syscall regs as-is (sigreturn restores them -> the guest resumes right
+ * after the interrupted syscall), then jump into the handler with x0=signum, lr=tramp. */
+int pal_guest_deliver(pal_pid_t who, uint64_t handler, uint64_t signum, uint64_t tramp, void *savebuf) {
+    struct user_pt_regs cur;
+    if (getregs(who, &cur) != 0) return -1;
+    memcpy(savebuf, &cur, sizeof cur);
+    struct user_pt_regs r = cur;
+    r.regs[0]  = signum;                              /* handler(int signum) */
+    r.regs[30] = tramp;                               /* x30 = lr = the sigreturn trampoline */
+    r.pc       = handler;                             /* jump into the handler */
+    if (setregs(who, &r) != 0) return -1;
+    return ptrace(PTRACE_SYSCALL, who, 0, 0) == 0 ? 0 : -1;   /* resume into the handler */
+}
+/* The guest is stopped at the SIGRETURN syscall entry (the trampoline called it). Neutralize that,
+ * run it to exit, then restore the saved pre-signal regs so the guest re-executes its deferred call. */
+int pal_guest_sigreturn(pal_pid_t who, const void *savebuf) {
+    set_syscall_nr(who, -1);
+    if (ptrace(PTRACE_SYSCALL, who, 0, 0) != 0) return -1;
+    int st;
+    if (waitpid(who, &st, 0) < 0 || !WIFSTOPPED(st)) return -1;
+    struct user_pt_regs saved;
+    memcpy(&saved, savebuf, sizeof saved);
+    if (setregs(who, &saved) != 0) return -1;
+    return ptrace(PTRACE_SYSCALL, who, 0, 0) == 0 ? 0 : -1;   /* resume -> re-executes the deferred syscall */
 }
 
 /* A directory listing: getdents64 into a host temp, then translate each linux_dirent64 into an
