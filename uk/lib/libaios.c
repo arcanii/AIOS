@@ -31,6 +31,7 @@ static long asys4(long nr, long a0, long a1, long a2, long a3) {
 
 int errno;   /* POSIX errno; set by the standard-named wrappers (see __ret) and read by perror */
 char *strerror(int errnum);   /* defined below; declared early so perror (stdio) can use it */
+int tolower(int c), toupper(int c);   /* defined below; used earlier by strcasecmp (gcc14: no implicit decls) */
 
 long aios_open(const char *p, int fl, int mode) { return asys(AIOS_SYS_OPEN, (long)p, fl, mode); }
 long aios_read(int fd, void *b, unsigned long n)  { return asys(AIOS_SYS_READ,  fd, (long)b, n); }
