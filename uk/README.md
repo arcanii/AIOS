@@ -101,8 +101,8 @@ see M3j below).
 - **M3f** vendored sbase; `true/false/echo/cat` (then `wc` + the libutf rune layer, then `mkdir` +
   `umask`/`parsemode`). **M3g** the **`*at` family** (`openat`/`fstatat`/`unlinkat`/`faccessat` +
   `fdopendir`/`dirfd`) unlocks sbase's `recurse` → `rm -r` over real directory trees. **M3h** `ls` +
-  `ls -l`: `readlink`, a real (UTC) `gmtime`/`localtime`/`strftime` time layer, numeric uid/gid (no
-  passwd db yet), and a printf REWRITE with flags/width/precision so the columns align.
+  `ls -l`: `readlink`, a real (UTC) `gmtime`/`localtime`/`strftime` time layer, uid/gid → **names**
+  via the passwd/group DB below, and a printf REWRITE with flags/width/precision so the columns align.
 
 ## M3i — dash: AIOS is operational ✅
 
@@ -149,6 +149,16 @@ intervals, word boundaries, icase, the exact patterns `grep -w`/`-x` build, comp
 and the catastrophic patterns that prove linearity) — wired into the run.sh gate; plus the live
 `sbase grep` demos (`-E`/`-i`/`-v`/`-c`/`-n`/`-w`, an anchored BRE, and a `grep | wc -l` dash
 pipeline). Validated on colima.
+
+## M3k — a passwd/group database ✅
+
+`getpwuid`/`getpwnam`/`getgrgid`/`getgrnam` now read **`/etc/passwd`** and **`/etc/group`** (they
+returned `NULL` before), so **`ls -l` shows real user/group names** instead of numeric ids. Pure
+`libaios` — no new ABI; the lookups use the existing file I/O and return a pointer to static storage
+(POSIX). A missing or unreadable file still yields `NULL` → the numeric fallback, so a confined guest
+whose root has no `/etc/passwd` is unaffected. Proof: `guest/prog_pwgrp.c` (uid 0 → `root`, name
+round-trips, an unassigned uid → `NULL`) in the gate, plus `ls -l` resolving the owner name.
+Validated on colima and the RPi4 (`ls -l` → `pi pi` for a uid-1000 file).
 
 ## M4 — the boundary is enforced ✅
 
@@ -255,6 +265,9 @@ clamped back into the root. Validated on colima and the RPi4.
 
 ## Next (per the design doc)
 
-Full job control (dash built `JOBS=0` — would need `setpgid`/`tcsetpgrp` + a termios layer); a
-passwd/group db (so `ls`/`grep` show names, not numeric ids). Then **sched_ext** · the seL4/x86-64
-replant seam (`pal_sel4.c`).
+**Full job control** — dash is built `JOBS=0`; real job control needs kernel-tracked process groups
+(`setpgid`/`getpgrp`) + a controlling-terminal foreground group (`tcsetpgrp`/`tcgetpgrp`) + terminal-
+signal routing + a STOPPED process state + `WUNTRACED` waits, then dash rebuilt `JOBS=1`. A multi-step
+arc (today every guest shares the kernel's process group, so M5's `^C` works by the host pty
+broadcasting to it — that gets reworked). Then **sched_ext** · the seL4/x86-64 replant seam
+(`pal_sel4.c`).

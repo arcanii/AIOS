@@ -904,15 +904,92 @@ size_t strftime(char *s, size_t max, const char *fmt, const struct tm *tm) {
     return n;
 }
 
-/* --- users / groups: no passwd/group database yet, so the lookups fail (return NULL). Callers
- * (ls -l) fall back to the numeric uid/gid -- correct minimal behaviour. --- */
+/* --- users / groups: a real passwd/group database, parsed from /etc/passwd and /etc/group. The
+ * lookups return a pointer to STATIC storage (overwritten by the next call, per POSIX); ls -l now
+ * shows real user/group NAMES (it fell back to numeric ids while these returned NULL). A missing or
+ * unreadable file (e.g. a confined guest whose root has no /etc/passwd) still yields NULL -> the
+ * numeric fallback, unchanged. struct passwd/group MUST match the shadow <pwd.h>/<grp.h>. --- */
 struct passwd { char *pw_name; char *pw_passwd; unsigned int pw_uid, pw_gid;
                 char *pw_gecos, *pw_dir, *pw_shell; };
 struct group  { char *gr_name; char *gr_passwd; unsigned int gr_gid; char **gr_mem; };
-struct passwd *getpwuid(unsigned int uid) { (void)uid; return 0; }
-struct passwd *getpwnam(const char *name) { (void)name; return 0; }
-struct group  *getgrgid(unsigned int gid) { (void)gid; return 0; }
-struct group  *getgrnam(const char *name) { (void)name; return 0; }
+
+/* Split `line` in place on `sep` into up to `max` fields (NUL-terminating each); returns the count.
+ * The final field keeps any trailing separators (fine: passwd/group fields never embed the sep). */
+static int split_fields(char *line, int sep, char **fields, int max) {
+    int n = 0;
+    char *s = line;
+    while (n < max) {
+        fields[n++] = s;
+        char *c = strchr(s, sep);
+        if (!c) break;
+        *c = '\0';
+        s = c + 1;
+    }
+    return n;
+}
+static char *chomp(char *s) { size_t L = strlen(s); if (L && s[L-1] == '\n') s[L-1] = '\0'; return s; }
+
+static struct passwd s_pw;
+static char          s_pwline[512];
+/* Scan /etc/passwd for a match by uid (by_key=1) or name (by_key=0). Fields: name:passwd:uid:gid:
+ * gecos:dir:shell. */
+static struct passwd *pw_scan(unsigned int uid, const char *name, int by_key) {
+    FILE *f = fopen("/etc/passwd", "r");
+    if (!f) return 0;
+    struct passwd *r = 0;
+    while (fgets(s_pwline, sizeof s_pwline, f)) {
+        char *fld[7];
+        int nf = split_fields(chomp(s_pwline), ':', fld, 7);
+        if (nf < 4) continue;                                    /* malformed line */
+        unsigned int fuid = (unsigned int)atoi(fld[2]);
+        if (by_key ? (fuid == uid) : (name && !strcmp(fld[0], name))) {
+            s_pw.pw_name   = fld[0];
+            s_pw.pw_passwd = fld[1];
+            s_pw.pw_uid    = fuid;
+            s_pw.pw_gid    = (unsigned int)atoi(fld[3]);
+            s_pw.pw_gecos  = nf > 4 ? fld[4] : (char *)"";
+            s_pw.pw_dir    = nf > 5 ? fld[5] : (char *)"";
+            s_pw.pw_shell  = nf > 6 ? fld[6] : (char *)"";
+            r = &s_pw;
+            break;
+        }
+    }
+    fclose(f);
+    return r;
+}
+struct passwd *getpwuid(unsigned int uid) { return pw_scan(uid, 0, 1); }
+struct passwd *getpwnam(const char *name) { return name ? pw_scan(0, name, 0) : 0; }
+
+static struct group s_gr;
+static char         s_grline[4096];
+static char        *s_grmem[256];
+/* Scan /etc/group for a match by gid (by_key=1) or name (by_key=0). Fields: name:passwd:gid:m,m,... */
+static struct group *gr_scan(unsigned int gid, const char *name, int by_key) {
+    FILE *f = fopen("/etc/group", "r");
+    if (!f) return 0;
+    struct group *r = 0;
+    while (fgets(s_grline, sizeof s_grline, f)) {
+        char *fld[4];
+        int nf = split_fields(chomp(s_grline), ':', fld, 4);
+        if (nf < 3) continue;                                    /* malformed line */
+        unsigned int fgid = (unsigned int)atoi(fld[2]);
+        if (by_key ? (fgid == gid) : (name && !strcmp(fld[0], name))) {
+            s_gr.gr_name   = fld[0];
+            s_gr.gr_passwd = fld[1];
+            s_gr.gr_gid    = fgid;
+            int m = 0;
+            if (nf > 3 && fld[3][0]) m = split_fields(fld[3], ',', s_grmem, 255);
+            s_grmem[m] = 0;                                       /* NULL-terminate the member vector */
+            s_gr.gr_mem = s_grmem;
+            r = &s_gr;
+            break;
+        }
+    }
+    fclose(f);
+    return r;
+}
+struct group *getgrgid(unsigned int gid) { return gr_scan(gid, 0, 1); }
+struct group *getgrnam(const char *name) { return name ? gr_scan(0, name, 0) : 0; }
 
 /* --- process identity (single host-side identity for now; the kernel runs as the launching user) --- */
 int getppid(void) { return 1; }                    /* no parent-pid syscall yet; $PPID is cosmetic */

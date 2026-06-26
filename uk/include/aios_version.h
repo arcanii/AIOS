@@ -55,6 +55,10 @@
  * capture is not yet needed). Plus the
  * libc grep needs: fmemopen (a read-mode mem stream), sprintf, strcasestr, and a shadow <strings.h>.
  * Proof: guest/prog_regex.c (a 75-case regcomp/regexec battery) + sbase grep -EFHcilnvwx in run.sh.
+ * 0.5.14 = a real passwd/group DB (no new ABI): getpwuid/getpwnam/getgrgid/getgrnam now parse
+ * /etc/passwd and /etc/group (they returned NULL before), so ls -l shows real user/group NAMES
+ * instead of numeric ids; a missing/unreadable file still yields NULL -> the numeric fallback (a
+ * confined guest whose root lacks /etc/passwd is unaffected). Proof: guest/prog_pwgrp.c.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -64,7 +68,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 13
+#define AIOS_VERSION_PATCH 14
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

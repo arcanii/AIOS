@@ -1,5 +1,6 @@
-/* grp.h -- AIOS shadow header (see sys/types.h). No group database yet: getgrgid/getgrnam fail
- * (return NULL), so callers (ls -l) fall back to the numeric gid. struct group MUST match libaios. */
+/* grp.h -- AIOS shadow header (see sys/types.h). getgrgid/getgrnam read /etc/group (implemented in
+ * libaios), so ls -l shows real group names; a missing/unreadable file yields NULL -> the numeric-gid
+ * fallback. struct group MUST match libaios. */
 #ifndef _GRP_H
 #define _GRP_H
 #include <sys/types.h>

@@ -1,6 +1,6 @@
-/* pwd.h -- AIOS shadow header (see sys/types.h). No passwd database yet: getpwuid/getpwnam fail
- * (return NULL), so callers (ls -l) fall back to the numeric uid -- correct minimal behaviour.
- * struct passwd MUST match the copy in libaios. */
+/* pwd.h -- AIOS shadow header (see sys/types.h). getpwuid/getpwnam read /etc/passwd (implemented in
+ * libaios), returning a pointer to static storage, so ls -l shows real user names; a missing or
+ * unreadable file yields NULL -> the numeric-uid fallback. struct passwd MUST match the copy in libaios. */
 #ifndef _PWD_H
 #define _PWD_H
 #include <sys/types.h>
