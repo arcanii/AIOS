@@ -29,6 +29,7 @@
 #include <stdio.h>             /* rename() */
 #include <stdlib.h>           /* getenv (AIOS_ROOT -- host-specific config; the PAL is host-aware) */
 #include <string.h>
+#include <time.h>             /* clock_gettime + CLOCK_* (the host clock source) */
 #include <unistd.h>
 #include <sys/ptrace.h>
 #include <sys/stat.h>
@@ -716,6 +717,15 @@ long pal_host_readlink(const char *path, char *buf, size_t bufsize) {
     return n < 0 ? pal_errno() : (long)n;
 }
 int pal_host_isatty(pal_file_t f) { return isatty((int)f) ? 1 : 0; }
+
+int pal_host_clock_gettime(int clk_id, struct aios_timespec *out) {
+    clockid_t c = (clk_id == AIOS_CLOCK_MONOTONIC) ? CLOCK_MONOTONIC : CLOCK_REALTIME;
+    struct timespec ts;
+    if (clock_gettime(c, &ts) != 0) return (int)pal_errno();
+    out->tv_sec  = (long long)ts.tv_sec;
+    out->tv_nsec = (long long)ts.tv_nsec;
+    return 0;
+}
 
 /* --- signal delivery (register manipulation -- host-specific, so it lives here) ---
  * `who` is stopped at a syscall EXIT (its result already planted by pal_guest_setret). Make it RUN

@@ -30,6 +30,8 @@
  * more vendored sbase utilities run UNMODIFIED -- head / tail / cp / mv (+ libaios grew getline/
  * getdelim, creat, basename/dirname, llabs/sleep, and honest no-op/ENOSYS stubs for the file-metadata
  * ops cp/mv reach for; a real openat2-strict mode mask + a long-standing fopen-errno fix came with it).
+ * 0.5.8 = a REAL clock: AIOS_SYS_CLOCK_GETTIME (ABI -> 35) reads the host clock via the PAL, so
+ * time()/clock_gettime()/gettimeofday() are live (ls dates, dash timing); time() no longer returns 0.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -39,7 +41,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 7
+#define AIOS_VERSION_PATCH 8
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

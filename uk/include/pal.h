@@ -179,6 +179,11 @@ long pal_host_readlink(const char *path, char *buf, size_t bufsize);
 /* Is a backing object a terminal? 1 / 0 / -errno. (Linux: isatty/tcgetattr.) */
 int pal_host_isatty(pal_file_t f);
 
+/* Read a clock into *out (clk_id is AIOS_CLOCK_REALTIME / AIOS_CLOCK_MONOTONIC). 0, or a negated
+ * AIOS error code. The Linux PAL maps to clock_gettime(2); a future seL4 PAL reads its own timer
+ * source. This is the kernel's only wall-clock/monotonic time source. */
+int pal_host_clock_gettime(int clk_id, struct aios_timespec *out);
+
 /* Set the value `who` sees returned from the syscall it is stopped at, WITHOUT resuming it -- it
  * stays stopped at the syscall exit. (pal_guest_return = this + pal_guest_resume.) The kernel uses
  * it to interpose signal delivery between finishing a syscall and resuming. */

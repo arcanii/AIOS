@@ -96,6 +96,10 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            printf "  for loop:   "; ./aios-uk ./dash -c "for i in 1 2 3; do printf \"\$i \"; done; echo" 2>/dev/null;
            printf "  pipeline:   "; ./aios-uk ./dash -c "./sbase-echo a b c d e | ./sbase-wc -w" 2>/dev/null;
            printf "  cmd subst:  "; ./aios-uk ./dash -c "echo got=\$(./sbase-echo hi)" 2>/dev/null;
+           echo "=== a real clock -- AIOS_SYS_CLOCK_GETTIME (time/clock_gettime/gettimeofday are live) ===" &&
+           ./aios-uk ./prog_clock 2>/dev/null | sed "s/^/    /";
+           ./aios-uk ./prog_clock >/dev/null 2>&1; clkrc=$?; echo "  [prog_clock exit $clkrc (expect 0)]";
+           printf "  host date -u:        "; date -u "+%Y-%m-%d %H:%M:%S UTC";
            echo "=== M5: real signal delivery -- the kernel runs a guest signal handler ===" &&
            echo "--- prog_signal: install handler + raise + SIG_IGN ---" &&
            ./aios-uk ./prog_signal 2>/dev/null | sed "s/^/    /";
@@ -129,6 +133,6 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            echo "  confined dash drives an in-root binary, but an out-of-root one is denied:";
            AIOS_ROOT="$JR" ./aios-uk ./dash -c "/jailtrue && echo in-root-exec-ok; /bin/echo SHOULD-NOT-PRINT" 2>&1 | grep -v aios-uk | sed "s/^/      /";
            rm -rf "$JR" "$SECRET";
-           echo "=== gate: prog_pipebig (M3d), prog_jail (M4.2), prog_execjail (M4.3) must exit 0 ===" &&
-           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig $rc, jail $jrc, execjail $ejrc]";
-           test "$rc" = 0 && test "$jrc" = 0 && test "$ejrc" = 0'
+           echo "=== gate: pipebig (M3d), jail (M4.2), execjail (M4.3), clock must exit 0 ===" &&
+           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig $rc, jail $jrc, execjail $ejrc, clock $clkrc]";
+           test "$rc" = 0 && test "$jrc" = 0 && test "$ejrc" = 0 && test "$clkrc" = 0'

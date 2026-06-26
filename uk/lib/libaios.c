@@ -748,11 +748,11 @@ char *getenv(const char *name) {
     return 0;
 }
 
-/* --- time (UTC; no timezone, no RTC) ---
+/* --- time (UTC; no timezone) ---
  * localtime == gmtime (no zone). gmtime converts a time_t to a broken-down struct tm via the civil-
  * from-days algorithm; strftime formats it (the subset ls -l needs, with manual zero-padding since
- * the printf core has no field widths yet). time() has no clock to read, so it returns a fixed 0
- * "now" -- enough for ls's recent-vs-old date heuristic; a real clock syscall is future work.
+ * the printf core has no field widths yet). time()/gettimeofday() now read a REAL clock via
+ * AIOS_SYS_CLOCK_GETTIME (the kernel's PAL clock source) -- so ls dates, dash timing, etc. are live.
  * struct tm here MUST match the shadow <time.h> one (ls reads the fields). */
 struct tm { int tm_sec, tm_min, tm_hour, tm_mday, tm_mon, tm_year, tm_wday, tm_yday, tm_isdst; };
 static struct tm _tm;
@@ -777,7 +777,19 @@ struct tm *gmtime(const long *tp) {
     return &_tm;
 }
 struct tm *localtime(const long *tp) { return gmtime(tp); }
-long time(long *tp) { if (tp) *tp = 0; return 0; }          /* no RTC: a fixed "now" */
+
+/* clock_gettime forwards the guest's struct timespec to the kernel, which fills it from the PAL clock
+ * (struct timespec == struct aios_timespec, two 8-byte fields -- so a void* keeps libaios struct-free).
+ * time()/gettimeofday() are thin REALTIME readers over it. */
+int clock_gettime(int clk_id, void *ts) {
+    return (int)__ret(asys(AIOS_SYS_CLOCK_GETTIME, clk_id, (long)ts, 0));
+}
+long time(long *tp) {
+    long long ts[2] = { 0, 0 };                             /* aios_timespec: {sec, nsec} */
+    clock_gettime(AIOS_CLOCK_REALTIME, ts);
+    if (tp) *tp = (long)ts[0];
+    return (long)ts[0];
+}
 
 static const char _mon3[12][4] = {"Jan","Feb","Mar","Apr","May","Jun",
                                   "Jul","Aug","Sep","Oct","Nov","Dec"};
@@ -898,11 +910,15 @@ char *strsignal(int sig) {
     return "Unknown signal";
 }
 
-/* gettimeofday / ioctl: no clock or terminal-geometry source yet -> zero / failure. dash uses these
- * for timing + terminal width; both degrade gracefully. */
+/* gettimeofday: a REALTIME reader over clock_gettime (microsecond precision). ioctl: no terminal-
+ * geometry source yet -> failure (dash uses it for terminal width; it degrades gracefully). */
 struct aios_timeval { long tv_sec; long tv_usec; };
 int gettimeofday(struct aios_timeval *tv, void *tz) {
-    (void)tz; if (tv) { tv->tv_sec = 0; tv->tv_usec = 0; } return 0;
+    (void)tz;
+    long long ts[2] = { 0, 0 };
+    clock_gettime(AIOS_CLOCK_REALTIME, ts);
+    if (tv) { tv->tv_sec = (long)ts[0]; tv->tv_usec = (long)(ts[1] / 1000); }
+    return 0;
 }
 int ioctl(int fd, unsigned long req, ...) { (void)fd; (void)req; errno = AIOS_ENOTTY; return -1; }
 

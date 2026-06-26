@@ -337,6 +337,15 @@ static long sys_isatty(proc_t *p, uint64_t fd) {
     return pal_host_isatty(fd_backing(p, fd));
 }
 
+/* Read a clock (AIOS_CLOCK_*) into the guest's struct aios_timespec. The kernel's only time source. */
+static long sys_clock_gettime(proc_t *p, uint64_t clk_id, uint64_t gts) {
+    struct aios_timespec ts;
+    int r = pal_host_clock_gettime((int)clk_id, &ts);
+    if (r != 0) return r;
+    if (pal_guest_write(p->pid, gts, &ts, sizeof ts) != sizeof ts) return -AIOS_EFAULT;
+    return 0;
+}
+
 /* ---- signals ---- */
 static long sys_sigaction(proc_t *p, uint64_t signum, uint64_t handler, uint64_t tramp) {
     if (signum < 1 || signum >= AIOS_NSIG) return -AIOS_EINVAL;
@@ -695,6 +704,7 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
     case AIOS_SYS_READLINK:ret = (uint64_t)sys_readlink(p, sc->arg[0], sc->arg[1], sc->arg[2]);          break;
     case AIOS_SYS_FCNTL:   ret = (uint64_t)sys_fcntl(p, sc->arg[0], sc->arg[1], sc->arg[2]);             break;
     case AIOS_SYS_ISATTY:  ret = (uint64_t)sys_isatty(p, sc->arg[0]);                                    break;
+    case AIOS_SYS_CLOCK_GETTIME: ret = (uint64_t)sys_clock_gettime(p, sc->arg[0], sc->arg[1]);           break;
     case AIOS_SYS_SIGACTION:ret = (uint64_t)sys_sigaction(p, sc->arg[0], sc->arg[1], sc->arg[2]);        break;
     case AIOS_SYS_KILL:    ret = (uint64_t)sys_kill(p, sc->arg[0], sc->arg[1]);                          break;
     default:             ret = (uint64_t)-AIOS_ENOSYS; /* unknown AIOS syscall */           break;

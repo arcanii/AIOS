@@ -46,6 +46,11 @@
 #define AIOS_SYS_SIGRETURN 0x101E /* () -> does not return normally (the kernel restores pre-signal regs) */
 #define AIOS_SYS_KILL     0x101F  /* (pid, signum) -> 0, or -errno; signum 0 = existence check       */
 #define AIOS_SYS_ISATTY   0x1020  /* (fd) -> 1 if a terminal, 0 if not, or -errno                     */
+#define AIOS_SYS_CLOCK_GETTIME 0x1021 /* (clk_id, struct aios_timespec*) -> 0, or -errno              */
+
+/* clock ids for AIOS_SYS_CLOCK_GETTIME (AIOS-owned; the PAL maps to the host's CLOCK_*). */
+#define AIOS_CLOCK_REALTIME  0   /* wall-clock seconds since the Unix epoch (time/gettimeofday)   */
+#define AIOS_CLOCK_MONOTONIC 1   /* a steadily-increasing clock from an unspecified start         */
 
 /* signal dispositions (handler arg to SIGACTION): an address, or these two sentinels (match POSIX). */
 #define AIOS_SIG_DFL 0   /* default action */

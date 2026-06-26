@@ -161,7 +161,12 @@ returns) then runs the next command. A `do_read` single-read fix (POSIX semantic
 available, don't loop to fill the buffer) was what made interactive mode function. HW-validated on the
 RPi4 (kernel 6.12).
 
-**AIOS ABI now (34 syscalls):** … READLINK/FCNTL/SIGACTION/SIGRETURN/KILL/ISATTY.
+**AIOS ABI now (35 syscalls):** … READLINK/FCNTL/SIGACTION/SIGRETURN/KILL/ISATTY/CLOCK_GETTIME.
+
+A real clock: `AIOS_SYS_CLOCK_GETTIME` reads the host clock through the PAL (`pal_host_clock_gettime`
+→ `clock_gettime(2)`; `AIOS_CLOCK_REALTIME`/`MONOTONIC`), so `time()`/`clock_gettime()`/`gettimeofday()`
+are live — `time()` no longer returns a fixed 0. `ls -l` dates now use the real recent-vs-old format,
+and `prog_clock.c` confirms the wall clock matches the host and the monotonic clock advances.
 
 ## M4.2 — filesystem confinement (the other half of the boundary) ✅
 
@@ -203,6 +208,6 @@ clamped back into the root. Validated on colima and the RPi4.
 
 ## Next (per the design doc)
 
-A real `time()`/CLOCK syscall; per-process cwd/umask. `sort` (needs `strtod` + the full libutf rune
-layer) and `grep` (needs a real `<regex.h>`); a real file-metadata layer (chmod/chown/symlink/utime
-syscalls) so `cp -p` and `ln` work. Then **sched_ext** · the seL4/x86-64 replant seam (`pal_sel4.c`).
+Per-process cwd/umask. `sort` (needs `strtod` + the full libutf rune layer) and `grep` (needs a real
+`<regex.h>`); a real file-metadata layer (chmod/chown/symlink/utime syscalls) so `cp -p` and `ln`
+work. Then **sched_ext** · the seL4/x86-64 replant seam (`pal_sel4.c`).
