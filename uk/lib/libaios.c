@@ -570,7 +570,8 @@ size_t strcspn(const char *s, const char *reject) {
     size_t n = 0; for (; s[n]; n++) if (strchr(reject, s[n])) break; return n;
 }
 char *strpbrk(const char *s, const char *accept) {
-    for (; *s; s++) if (strchr(accept, *s)) return (char *)s; return 0;
+    for (; *s; s++) if (strchr(accept, *s)) return (char *)s;
+    return 0;
 }
 char *strtok(char *s, const char *delim) {
     static char *save;
@@ -734,7 +735,8 @@ size_t strftime(char *s, size_t max, const char *fmt, const struct tm *tm) {
         case 'y': two = (tm->tm_year + 1900) % 100; break;
         case 'Y': { unsigned y = (unsigned)(tm->tm_year + 1900); char b[8]; char *p = b + 7; *p = 0;
                     do { *--p = (char)('0' + y % 10); y /= 10; } while (y);
-                    while (*p && n < max - 1) s[n++] = *p++; continue; }
+                    while (*p && n < max - 1) s[n++] = *p++;
+                    continue; }
         case '%': s[n++] = '%'; continue;
         default:  s[n++] = '%'; if (n < max - 1) s[n++] = *fmt; continue;
         }
