@@ -65,5 +65,11 @@ int    fstat(int fd, struct stat *st);
 int    fstatat(int dirfd, const char *path, struct stat *st, int flags);
 int    mkdir(const char *path, mode_t mode);
 mode_t umask(mode_t mask);
+/* metadata ops with no AIOS syscall yet -- libaios no-ops (mode/times not modeled; cp/mv copy
+ * content + structure, -p preservation is degraded) / ENOSYS (mknod cannot make special files). */
+int    chmod(const char *path, mode_t mode);
+int    fchmod(int fd, mode_t mode);
+int    mknod(const char *path, mode_t mode, dev_t dev);
+int    utimensat(int dirfd, const char *path, const void *times, int flags);
 
 #endif /* _SYS_STAT_H */

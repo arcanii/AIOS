@@ -92,7 +92,9 @@ Proofs: `prog_libc/stdio/errno/fs/getopt/dir.c` (real C, shadow headers only).
 The headline proof of the retarget: genuine third-party POSIX-utility source (**suckless sbase**,
 vendored unmodified under `vendor/sbase` — see `vendor/README.md`) compiles UNMODIFIED against
 `libaios` and runs on the AIOS kernel. sbase is never patched; missing libc features are added to
-`libaios`. Working utilities: **true / false / echo / cat / wc / mkdir / rm / ls** (incl. `ls -l`).
+`libaios`. Working utilities: **true / false / echo / cat / wc / mkdir / rm / ls** (incl. `ls -l`)
+**/ head / tail / cp / mv** (cp/mv copy content + structure; `-p` metadata is degraded and
+symlinks/special files report `ENOSYS` — there are no mode/owner/time/symlink syscalls yet).
 
 - **M3f** vendored sbase; `true/false/echo/cat` (then `wc` + the libutf rune layer, then `mkdir` +
   `umask`/`parsemode`). **M3g** the **`*at` family** (`openat`/`fstatat`/`unlinkat`/`faccessat` +
@@ -201,5 +203,6 @@ clamped back into the root. Validated on colima and the RPi4.
 
 ## Next (per the design doc)
 
-More sbase utils (head/tail/cp/mv/sort; grep needs a real regex). A real `time()`/CLOCK syscall;
-per-process cwd/umask. Then **sched_ext** · the seL4/x86-64 replant seam (`pal_sel4.c`).
+A real `time()`/CLOCK syscall; per-process cwd/umask. `sort` (needs `strtod` + the full libutf rune
+layer) and `grep` (needs a real `<regex.h>`); a real file-metadata layer (chmod/chown/symlink/utime
+syscalls) so `cp -p` and `ln` work. Then **sched_ext** · the seL4/x86-64 replant seam (`pal_sel4.c`).

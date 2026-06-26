@@ -77,6 +77,19 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            echo "--- M3h: sbase ls + ls -l (readdir + stat + readlink + time/strftime + printf widths) ---" &&
            rm -rf /tmp/aios_lst && mkdir -p /tmp/aios_lst/sub && echo hi >/tmp/aios_lst/afile && ln -s afile /tmp/aios_lst/alink &&
            { echo "  plain ls:"; ./aios-uk ./sbase-ls /tmp/aios_lst 2>/dev/null | sed "s/^/    /"; echo "  ls -l:"; ./aios-uk ./sbase-ls -l /tmp/aios_lst 2>/dev/null | sed "s/^/    /"; }; rm -rf /tmp/aios_lst;
+           echo "--- more vendored sbase utils, UNMODIFIED: head / tail / cp / mv ---" &&
+           printf "l1\nl2\nl3\nl4\nl5\n" >/tmp/aios_u.txt;
+           printf "  head -n 2:  "; ./aios-uk ./sbase-head -n 2 /tmp/aios_u.txt 2>/dev/null | tr "\n" " "; echo;
+           printf "  tail -n 2:  "; ./aios-uk ./sbase-tail -n 2 /tmp/aios_u.txt 2>/dev/null | tr "\n" " "; echo;
+           rm -f /tmp/aios_cp.txt; ./aios-uk ./sbase-cp /tmp/aios_u.txt /tmp/aios_cp.txt 2>/dev/null;
+           { cmp -s /tmp/aios_u.txt /tmp/aios_cp.txt && echo "  cp:         byte-identical copy OK"; };
+           ./aios-uk ./sbase-mv /tmp/aios_cp.txt /tmp/aios_mv.txt 2>/dev/null;
+           { test ! -e /tmp/aios_cp.txt && test -f /tmp/aios_mv.txt && echo "  mv:         src gone, dst present OK"; };
+           rm -rf /tmp/aios_ct; mkdir -p /tmp/aios_ct/sub && echo x >/tmp/aios_ct/a && echo y >/tmp/aios_ct/sub/b;
+           ./aios-uk ./sbase-cp -r /tmp/aios_ct /tmp/aios_ct2 2>/dev/null;
+           { test -f /tmp/aios_ct2/sub/b && echo "  cp -r:      nested tree copied OK"; };
+           printf "  dash pipe (head|tail): "; ./aios-uk ./dash -c "printf \"a\nb\nc\nd\n\" | ./sbase-head -n 3 | ./sbase-tail -n 1" 2>/dev/null;
+           rm -rf /tmp/aios_u.txt /tmp/aios_mv.txt /tmp/aios_ct /tmp/aios_ct2;
            echo "=== M3i: dash (Debian Almquist shell) compiled UNMODIFIED -- the operational shell ===" &&
            printf "  echo arith: "; ./aios-uk ./dash -c "echo \$((2 + 3 * 4))" 2>/dev/null;
            printf "  control:    "; ./aios-uk ./dash -c "true && echo yes || echo no" 2>/dev/null;

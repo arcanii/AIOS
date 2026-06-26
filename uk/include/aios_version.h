@@ -26,7 +26,10 @@
  * denied; in-root access works). 0.5.6 = M4.3 exec confinement: a guest-issued exec (AIOS_SYS_EXEC)
  * is resolved INSIDE the root too (openat2 + canonical /proc/self/fd path), so a guest can only
  * launch binaries in its root; the INIT program the operator names is the trusted entry, exempt.
- * Proof: guest/prog_execjail.c (in-root binaries run; out-of-root host paths denied).
+ * Proof: guest/prog_execjail.c (in-root binaries run; out-of-root host paths denied). 0.5.7 = four
+ * more vendored sbase utilities run UNMODIFIED -- head / tail / cp / mv (+ libaios grew getline/
+ * getdelim, creat, basename/dirname, llabs/sleep, and honest no-op/ENOSYS stubs for the file-metadata
+ * ops cp/mv reach for; a real openat2-strict mode mask + a long-standing fopen-errno fix came with it).
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -36,7 +39,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 6
+#define AIOS_VERSION_PATCH 7
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

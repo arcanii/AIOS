@@ -37,6 +37,15 @@ char   *getcwd(char *buf, size_t size);
 int     access(const char *path, int amode);
 int     faccessat(int dirfd, const char *path, int amode, int flags);
 ssize_t readlink(const char *path, char *buf, size_t bufsize);
+unsigned int sleep(unsigned int seconds);
+/* ownership/link ops with no AIOS syscall yet -- libaios no-ops (chown: owner not modeled) /
+ * ENOSYS (symlink/link cannot create the object). cp/mv use them only under -p / when a source is
+ * itself a symlink; default copies of regular files + trees are unaffected. */
+int     chown(const char *path, uid_t owner, gid_t group);
+int     fchown(int fd, uid_t owner, gid_t group);
+int     lchown(const char *path, uid_t owner, gid_t group);
+int     symlink(const char *target, const char *linkpath);
+int     link(const char *oldpath, const char *newpath);
 void    _exit(int code) __attribute__((noreturn));
 
 /* sysconf keys (subset; match the libaios sysconf switch). _SC_LOGIN_NAME_MAX also doubles as a

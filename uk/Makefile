@@ -38,7 +38,8 @@ SBASE        = vendor/sbase
 # our own libaios is linted in the prog_* builds. -I$(SBASE) resolves util.h/arg.h/fs.h/utf.h.
 SBASE_CFLAGS = $(LIBC_CFLAGS) -I$(SBASE) -w
 SBASE_DEPS   = $(LIBAIOS) $(LIBC_HDRS) $(SBASE)/util.h $(SBASE)/arg.h $(SBASE)/compat.h
-SBASE_BINS   = sbase-true sbase-false sbase-echo sbase-cat sbase-wc sbase-mkdir sbase-rm sbase-ls
+SBASE_BINS   = sbase-true sbase-false sbase-echo sbase-cat sbase-wc sbase-mkdir sbase-rm sbase-ls \
+               sbase-head sbase-tail sbase-cp sbase-mv
 
 # Vendored dash (the Debian Almquist shell, BSD) -- compiled UNMODIFIED against libaios. config.h +
 # the generated sources (syntax/nodes/builtins/init/signames/token.h) are AIOS build inputs (see
@@ -173,6 +174,25 @@ sbase-ls: $(SBASE)/ls.c $(SBASE_DEPS) $(SBASE)/fs.h $(SBASE)/utf.h
 	      $(SBASE)/libutil/human.c $(SBASE)/libutil/fshut.c \
 	      $(SBASE)/libutf/rune.c $(SBASE)/libutf/runetype.c $(SBASE)/libutf/isprintrune.c \
 	      $(SBASE)/libutf/iscntrlrune.c $(LIBAIOS)
+sbase-head: $(SBASE)/head.c $(SBASE_DEPS)
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/head.c \
+	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/fshut.c $(SBASE)/libutil/strtonum.c $(LIBAIOS)
+sbase-tail: $(SBASE)/tail.c $(SBASE_DEPS) $(SBASE)/utf.h
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/tail.c \
+	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/ealloc.c $(SBASE)/libutil/strtonum.c \
+	      $(SBASE)/libutil/concat.c $(SBASE)/libutil/writeall.c $(SBASE)/libutil/fshut.c \
+	      $(SBASE)/libutf/rune.c $(SBASE)/libutf/runetype.c $(LIBAIOS)
+# cp/mv share libutil/cp.c (the copy engine) + recurse; cp/mv copy content + structure (-p metadata
+# is degraded: no chmod/chown/utime syscalls; symlinks/special files report ENOSYS -- see libaios).
+CP_OBJS = $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/ealloc.c $(SBASE)/libutil/fshut.c \
+          $(SBASE)/libutil/cp.c $(SBASE)/libutil/fnck.c $(SBASE)/libutil/recurse.c \
+          $(SBASE)/libutil/concat.c $(SBASE)/libutil/enmasse.c $(SBASE)/libutil/strlcpy.c \
+          $(SBASE)/libutil/strlcat.c $(SBASE)/libutil/confirm.c $(SBASE)/libutil/writeall.c \
+          $(SBASE)/libutil/strtonum.c
+sbase-cp: $(SBASE)/cp.c $(SBASE_DEPS) $(SBASE)/fs.h
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/cp.c $(CP_OBJS) $(LIBAIOS)
+sbase-mv: $(SBASE)/mv.c $(SBASE_DEPS) $(SBASE)/fs.h
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/mv.c $(CP_OBJS) $(SBASE)/libutil/rm.c $(LIBAIOS)
 
 # dash = the operational shell. One cc invocation over the dash sources + generated sources + libaios.
 dash: $(DASH_CFILES) $(LIBAIOS) $(LIBC_HDRS) $(DASH)/config.h

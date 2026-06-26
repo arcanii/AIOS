@@ -412,7 +412,9 @@ static void pal_fs_init_once(void) {
 static long openat2_in_root(int dirfd, const char *path, uint64_t hflags, unsigned int mode) {
     struct aios_open_how how;
     how.flags   = hflags;
-    how.mode    = (hflags & (uint64_t)O_CREAT) ? (uint64_t)mode : 0;
+    /* openat2 is STRICT: how.mode must be 0 without O_CREAT/O_TMPFILE, and must carry ONLY permission
+     * bits (a callers's st_mode with S_IFREG etc. -> EINVAL, where plain open() silently ignores them). */
+    how.mode    = (hflags & (uint64_t)O_CREAT) ? (uint64_t)(mode & 07777) : 0;
     how.resolve = RESOLVE_IN_ROOT;
     return syscall(__NR_openat2, dirfd, path, &how, sizeof how);
 }

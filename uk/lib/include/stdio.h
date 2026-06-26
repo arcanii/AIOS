@@ -4,6 +4,7 @@
 #define _STDIO_H
 #include <stddef.h>
 #include <stdarg.h>
+#include <sys/types.h>   /* ssize_t (getline/getdelim) */
 
 #ifndef NULL
 #define NULL ((void *)0)
@@ -25,6 +26,8 @@ size_t fwrite(const void *ptr, size_t sz, size_t nmemb, FILE *f);
 int    fgetc(FILE *f);
 int    getchar(void);
 char  *fgets(char *s, int n, FILE *f);
+ssize_t getline(char **lineptr, size_t *n, FILE *f);
+ssize_t getdelim(char **lineptr, size_t *n, int delim, FILE *f);
 int    fputc(int c, FILE *f);
 int    putchar(int c);
 int    fputs(const char *s, FILE *f);

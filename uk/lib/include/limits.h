@@ -21,6 +21,8 @@
 #define LLONG_MAX   9223372036854775807LL
 #define LLONG_MIN   (-LLONG_MAX - 1LL)
 #define ULLONG_MAX  18446744073709551615ULL
+#define SIZE_MAX    18446744073709551615UL
+#define SSIZE_MAX   9223372036854775807L     /* LP64: ssize_t == long (sort/parseoffset reach for it) */
 
 #define PATH_MAX             4096
 #define NAME_MAX             255

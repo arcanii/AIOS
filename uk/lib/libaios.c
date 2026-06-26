@@ -32,6 +32,9 @@ static long asys4(long nr, long a0, long a1, long a2, long a3) {
 int errno;   /* POSIX errno; set by the standard-named wrappers (see __ret) and read by perror */
 char *strerror(int errnum);   /* defined below; declared early so perror (stdio) can use it */
 int tolower(int c), toupper(int c);   /* defined below; used earlier by strcasecmp (gcc14: no implicit decls) */
+void *realloc(void *p, size_t n);     /* defined below; used earlier by getdelim */
+char *strrchr(const char *s, int c);  /* defined below; used earlier by basename/dirname */
+static long __ret(long r);            /* defined below; used earlier by fopen (errno on failure) */
 
 long aios_open(const char *p, int fl, int mode) { return asys(AIOS_SYS_OPEN, (long)p, fl, mode); }
 long aios_read(int fd, void *b, unsigned long n)  { return asys(AIOS_SYS_READ,  fd, (long)b, n); }
@@ -208,6 +211,30 @@ char *fgets(char *s, int n, FILE *f) {
     s[i] = '\0';
     return s;
 }
+/* getdelim/getline: read a record (up to + including `delim`) into a malloc'd, auto-growing buffer.
+ * POSIX semantics -- the lineptr+n pair owns the buffer across calls; -1 at EOF with nothing read.
+ * head and many libc programs read their input this way. */
+long getdelim(char **lineptr, size_t *n, int delim, FILE *f) {
+    if (!lineptr || !n) { errno = AIOS_EINVAL; return -1; }
+    if (!*lineptr || *n == 0) { *n = 128; *lineptr = malloc(*n); if (!*lineptr) { *n = 0; return -1; } }
+    size_t len = 0;
+    for (;;) {
+        int c = fgetc(f);
+        if (c == EOF) { if (len == 0) return -1; break; }
+        if (len + 1 >= *n) {
+            size_t nn = *n * 2;
+            char *p = realloc(*lineptr, nn);
+            if (!p) return -1;
+            *lineptr = p; *n = nn;
+        }
+        (*lineptr)[len++] = (char)c;
+        if (c == delim) break;
+    }
+    (*lineptr)[len] = '\0';
+    return (long)len;
+}
+long getline(char **lineptr, size_t *n, FILE *f) { return getdelim(lineptr, n, '\n', f); }
+
 int  getchar(void)        { return fgetc(stdin); }
 int  feof(FILE *f)        { return f->eof; }
 int  ferror(FILE *f)      { return f->err; }
@@ -223,7 +250,7 @@ FILE *fopen(const char *path, const char *mode) {
     else if (mode[0] == 'a') { flags = AIOS_O_WRONLY|AIOS_O_CREAT|AIOS_O_APPEND; wr = 1;
                                if (mode[1]=='+'){ flags = AIOS_O_RDWR|AIOS_O_CREAT|AIOS_O_APPEND; rd = 1; } }
     else return 0;
-    long fd = aios_open(path, flags, 0644);
+    long fd = __ret(aios_open(path, flags, 0644));   /* __ret sets errno on failure (fopen must too) */
     if (fd < 0) return 0;
     FILE *f = malloc(sizeof *f);
     if (!f) { aios_close((int)fd); return 0; }
@@ -388,6 +415,10 @@ int  open(const char *path, int flags, ...) {
     if (flags & AIOS_O_CREAT) { va_list ap; va_start(ap, flags); mode = va_arg(ap, int); va_end(ap); }
     return (int)__ret(aios_open(path, flags, mode));
 }
+/* creat(path, mode) == open for write/create/truncate (sbase cp opens its destination this way). */
+int  creat(const char *path, unsigned int mode) {
+    return (int)__ret(aios_open(path, AIOS_O_WRONLY | AIOS_O_CREAT | AIOS_O_TRUNC, (int)mode));
+}
 
 /* filesystem namespace (sys/stat.h + unistd.h + stdio.h). The stat pointer is forwarded straight to
  * the kernel, which fills it -- libaios never touches the struct (the program's `struct stat` ==
@@ -406,6 +437,38 @@ int  rename(const char *o, const char *n)         { return (int)__ret(asys(AIOS_
  * kernel work. */
 static unsigned int __aios_umask = 022;
 unsigned int umask(unsigned int m) { unsigned int old = __aios_umask; __aios_umask = m & 0777; return old; }
+
+/* File metadata ops cp/mv reach for. There are no AIOS syscalls for mode/owner/times yet, so these
+ * are HONEST stubs (documented degradations, not silent hacks): mode/owner/time setters succeed as
+ * no-ops (cp/mv copy content + structure; `-p` preservation is degraded, like umask/time elsewhere),
+ * while symlink/link/mknod -- which would have to CREATE a new object we cannot -- fail ENOSYS, so a
+ * tree with symlinks/special files reports it rather than silently dropping them. Default copies of
+ * regular files and directory trees are unaffected (they never call these). basename/dirname are real
+ * string ops (POSIX: may modify the buffer). */
+int chmod (const char *p, unsigned int m)                       { (void)p; (void)m; return 0; }
+int fchmod(int fd, unsigned int m)                              { (void)fd; (void)m; return 0; }
+int chown (const char *p, unsigned int u, unsigned int g)       { (void)p; (void)u; (void)g; return 0; }
+int fchown(int fd, unsigned int u, unsigned int g)              { (void)fd; (void)u; (void)g; return 0; }
+int lchown(const char *p, unsigned int u, unsigned int g)       { (void)p; (void)u; (void)g; return 0; }
+int utimensat(int d, const char *p, const void *t, int f)       { (void)d; (void)p; (void)t; (void)f; return 0; }
+int utime (const char *p, const void *t)                        { (void)p; (void)t; return 0; }
+int symlink(const char *t, const char *l)                       { (void)t; (void)l; errno = AIOS_ENOSYS; return -1; }
+int link  (const char *o, const char *n)                        { (void)o; (void)n; errno = AIOS_ENOSYS; return -1; }
+int mknod (const char *p, unsigned int m, unsigned long long d) { (void)p; (void)m; (void)d; errno = AIOS_ENOSYS; return -1; }
+
+static char *__path_tail(char *path, int wantdir) {
+    if (!path || !*path) return (char *)".";
+    size_t n = strlen(path);
+    while (n > 1 && path[n - 1] == '/') path[--n] = '\0';   /* strip trailing slashes */
+    char *s = strrchr(path, '/');
+    if (!wantdir) return s ? s + 1 : path;                  /* basename */
+    if (!s) return (char *)".";                             /* dirname: no slash -> "." */
+    if (s == path) return (char *)"/";                      /* dirname of "/x" -> "/"  */
+    *s = '\0';
+    return path;
+}
+char *basename(char *path) { return __path_tail(path, 0); }
+char *dirname (char *path) { return __path_tail(path, 1); }
 
 /* the *at family (path resolved relative to a dir fd, or AT_FDCWD). The recurse-based utilities
  * (rm, ls, cp) walk a tree through these. */
@@ -671,6 +734,11 @@ long strtol(const char *s, char **end, int base) {
 }
 unsigned long strtoul(const char *s, char **end, int base) { return (unsigned long)strtol(s, end, base); }
 long long strtoll(const char *s, char **end, int base) { return strtol(s, end, base); }            /* LP64: long == long long */
+long long llabs(long long v) { return v < 0 ? -v : v; }
+long      labs (long v)      { return v < 0 ? -v : v; }
+int       abs  (int v)       { return v < 0 ? -v : v; }
+/* sleep: no clock/timer syscall yet -- a no-op (tail -f, the only sbase user, just busy-follows). */
+unsigned int sleep(unsigned int sec) { (void)sec; return 0; }
 unsigned long long strtoull(const char *s, char **end, int base) { return strtoul(s, end, base); }
 long atol(const char *s) { return strtol(s, 0, 10); }
 char *getenv(const char *name) {

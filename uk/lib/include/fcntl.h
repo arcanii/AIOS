@@ -2,6 +2,7 @@
  * values are AIOS-owned (aios_abi.h, via libaios) and the kernel/PAL translate to the host's. */
 #ifndef _FCNTL_H
 #define _FCNTL_H
+#include <sys/types.h>   /* mode_t (creat) */
 #include "aios_abi.h"
 
 #define O_RDONLY    AIOS_O_RDONLY
@@ -33,6 +34,7 @@
 
 int open(const char *path, int flags, ...);
 int openat(int dirfd, const char *path, int flags, ...);
+int creat(const char *path, mode_t mode);
 int fcntl(int fd, int cmd, ...);
 
 #endif /* _FCNTL_H */
