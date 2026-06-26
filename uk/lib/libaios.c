@@ -377,6 +377,8 @@ int  dup2 (int o, int n)                            { return (int)__ret(aios_dup
 int  fork (void)                                    { return (int)__ret(aios_fork()); }
 int  execv (const char *p, char *const argv[])      { return (int)__ret(aios_execve(p, argv, environ)); }
 int  execvp(const char *f, char *const argv[])      { return (int)__ret(aios_execve(f, argv, environ)); } /* no PATH yet */
+int  execve(const char *p, char *const argv[], char *const envp[]) { return (int)__ret(aios_execve(p, argv, envp)); }
+int  vfork(void)                                    { return (int)__ret(aios_fork()); }  /* fork: separate AS (safe) */
 void _exit(int code)                                { aios_exit(code); }
 int  getpid(void)  { return (int)asys(AIOS_SYS_GETPID, 0, 0, 0); }
 int  isatty(int fd){ (void)fd; return 0; }          /* no tty layer yet */
@@ -425,6 +427,11 @@ int access(const char *path, int amode) { return faccessat(AIOS_AT_FDCWD, path, 
 long readlink(const char *path, char *buf, unsigned long bufsize) {
     return __ret(asys(AIOS_SYS_READLINK, (long)path, (long)buf, (long)bufsize));
 }
+int fcntl(int fd, int cmd, ...) {                  /* variadic arg used by F_DUPFD/F_SETFD/F_SETFL */
+    va_list ap; va_start(ap, cmd); long arg = va_arg(ap, long); va_end(ap);
+    return (int)__ret(asys(AIOS_SYS_FCNTL, fd, cmd, arg));
+}
+int dup(int fd) { return (int)__ret(asys(AIOS_SYS_FCNTL, fd, AIOS_F_DUPFD, 0)); }
 int  remove(const char *path) {                   /* POSIX: unlink a file, or rmdir a directory */
     int r = unlink(path);
     if (r != 0 && errno == AIOS_EISDIR) r = rmdir(path);
@@ -507,6 +514,7 @@ int dirfd(DIR *d) { return d ? d->fd : -1; }
 /* sys/wait */
 int wait(int *status)                          { return (int)__ret(aios_wait(status)); }
 int waitpid(int pid, int *status, int options) { return (int)__ret(aios_waitpid(pid, status, options)); }
+int wait3(int *status, int options, void *rusage) { (void)rusage; return waitpid(-1, status, options); }
 
 /* string extras */
 char *strrchr(const char *s, int c) {
@@ -542,6 +550,45 @@ void *memchr(const void *s, int c, size_t n) {
     return 0;
 }
 char *strdup(const char *s) { size_t n = strlen(s) + 1; char *p = malloc(n); if (p) memcpy(p, s, n); return p; }
+int strcasecmp(const char *a, const char *b) {
+    while (*a && tolower((unsigned char)*a) == tolower((unsigned char)*b)) { a++; b++; }
+    return tolower((unsigned char)*a) - tolower((unsigned char)*b);
+}
+int strncasecmp(const char *a, const char *b, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        int ca = tolower((unsigned char)a[i]), cb = tolower((unsigned char)b[i]);
+        if (ca != cb) return ca - cb;
+        if (!a[i]) break;
+    }
+    return 0;
+}
+size_t strspn(const char *s, const char *accept) {
+    size_t n = 0; for (; s[n]; n++) if (!strchr(accept, s[n])) break; return n;
+}
+size_t strcspn(const char *s, const char *reject) {
+    size_t n = 0; for (; s[n]; n++) if (strchr(reject, s[n])) break; return n;
+}
+char *strpbrk(const char *s, const char *accept) {
+    for (; *s; s++) if (strchr(accept, *s)) return (char *)s; return 0;
+}
+char *strtok(char *s, const char *delim) {
+    static char *save;
+    if (!s) s = save;
+    if (!s) return 0;
+    s += strspn(s, delim);
+    if (!*s) { save = 0; return 0; }
+    char *tok = s;
+    s = strpbrk(tok, delim);
+    if (s) { *s = '\0'; save = s + 1; } else save = 0;
+    return tok;
+}
+char *stpncpy(char *d, const char *s, size_t n) {
+    size_t i = 0;
+    for (; i < n && s[i]; i++) d[i] = s[i];
+    char *end = d + i;
+    for (; i < n; i++) d[i] = '\0';
+    return end;
+}
 char *strndup(const char *s, size_t n) {                /* copy at most n bytes + a NUL */
     size_t len = 0; while (len < n && s[len]) len++;
     char *p = malloc(len + 1);
@@ -621,6 +668,8 @@ long strtol(const char *s, char **end, int base) {
     return neg ? -v : v;
 }
 unsigned long strtoul(const char *s, char **end, int base) { return (unsigned long)strtol(s, end, base); }
+long long strtoll(const char *s, char **end, int base) { return strtol(s, end, base); }            /* LP64: long == long long */
+unsigned long long strtoull(const char *s, char **end, int base) { return strtoul(s, end, base); }
 long atol(const char *s) { return strtol(s, 0, 10); }
 char *getenv(const char *name) {
     size_t n = strlen(name);
@@ -705,7 +754,82 @@ struct passwd { char *pw_name; char *pw_passwd; unsigned int pw_uid, pw_gid;
                 char *pw_gecos, *pw_dir, *pw_shell; };
 struct group  { char *gr_name; char *gr_passwd; unsigned int gr_gid; char **gr_mem; };
 struct passwd *getpwuid(unsigned int uid) { (void)uid; return 0; }
+struct passwd *getpwnam(const char *name) { (void)name; return 0; }
 struct group  *getgrgid(unsigned int gid) { (void)gid; return 0; }
+struct group  *getgrnam(const char *name) { (void)name; return 0; }
+
+/* --- process identity (single host-side identity for now; the kernel runs as the launching user) --- */
+int getppid(void) { return 1; }                    /* no parent-pid syscall yet; $PPID is cosmetic */
+int getuid(void)  { return 0; }
+int geteuid(void) { return 0; }
+int getgid(void)  { return 0; }
+int getegid(void) { return 0; }
+
+/* --- sysconf / rlimit / times: minimal so dash's miscbltin (ulimit/times) + paths compile + run. --- */
+long sysconf(int name) {
+    switch (name) {
+    case 2:  return 100;        /* _SC_CLK_TCK  */
+    case 4:  return 64;         /* _SC_OPEN_MAX (matches the kernel's per-proc fd table) */
+    case 30: return 4096;       /* _SC_PAGESIZE */
+    default: return -1;
+    }
+}
+struct aios_rlimit { unsigned long long rlim_cur, rlim_max; };
+int getrlimit(int res, struct aios_rlimit *rl) {   /* everything unlimited for now */
+    (void)res; if (rl) { rl->rlim_cur = ~0ULL; rl->rlim_max = ~0ULL; } return 0;
+}
+int setrlimit(int res, const struct aios_rlimit *rl) { (void)res; (void)rl; return 0; }
+struct aios_tms { long tms_utime, tms_stime, tms_cutime, tms_cstime; };
+long times(struct aios_tms *t) {                   /* no clock yet -> all zero */
+    if (t) { t->tms_utime = t->tms_stime = t->tms_cutime = t->tms_cstime = 0; }
+    return 0;
+}
+
+/* --- signals: dispositions are RECORDED but not yet delivered (no async signal path through the
+ * PAL yet). dash installs handlers + masks signals; with -c scripts nothing fires, so recording is
+ * enough to run. kill is a real-ish stub. A real delivery path is future work. --- */
+typedef void (*aios_sighandler)(int);
+static aios_sighandler g_sigdisp[65];              /* Linux _NSIG = 65 (signals 1..64) */
+typedef struct { aios_sighandler sa_handler; unsigned long sa_mask; int sa_flags; } aios_sigaction;
+aios_sighandler signal(int sig, aios_sighandler h) {
+    if (sig < 0 || sig >= 65) return (aios_sighandler)-1;
+    aios_sighandler old = g_sigdisp[sig]; g_sigdisp[sig] = h; return old;
+}
+int sigaction(int sig, const aios_sigaction *act, aios_sigaction *old) {
+    if (sig < 0 || sig >= 65) { errno = AIOS_EINVAL; return -1; }
+    if (old) { old->sa_handler = g_sigdisp[sig]; old->sa_mask = 0; old->sa_flags = 0; }
+    if (act) g_sigdisp[sig] = act->sa_handler;
+    return 0;
+}
+int kill(int pid, int sig) { (void)pid; (void)sig; return 0; }   /* no delivery path yet */
+int raise(int sig) { (void)sig; return 0; }
+unsigned int alarm(unsigned int sec) { (void)sec; return 0; }
+/* signal sets + masking are no-ops (no pending/blocked model yet). */
+int sigemptyset(unsigned long *set) { if (set) *set = 0; return 0; }
+int sigfillset(unsigned long *set)  { if (set) *set = ~0UL; return 0; }
+int sigaddset(unsigned long *set, int s) { if (set) *set |= (1UL << (s & 63)); return 0; }
+int sigdelset(unsigned long *set, int s) { if (set) *set &= ~(1UL << (s & 63)); return 0; }
+int sigismember(const unsigned long *set, int s) { return set ? (int)((*set >> (s & 63)) & 1) : 0; }
+int sigprocmask(int how, const unsigned long *set, unsigned long *old) {
+    (void)how; (void)set; if (old) *old = 0; return 0;
+}
+int sigsuspend(const unsigned long *mask) { (void)mask; return -1; }   /* nothing to wait for */
+char *strsignal(int sig) {
+    static const char *n[] = { 0, "Hangup", "Interrupt", "Quit", "Illegal instruction",
+        "Trace/breakpoint trap", "Aborted", "Bus error", "Floating point exception", "Killed",
+        "User defined signal 1", "Segmentation fault", "User defined signal 2", "Broken pipe",
+        "Alarm clock", "Terminated" };
+    if (sig > 0 && sig < (int)(sizeof n / sizeof n[0])) return (char *)n[sig];
+    return "Unknown signal";
+}
+
+/* gettimeofday / ioctl: no clock or terminal-geometry source yet -> zero / failure. dash uses these
+ * for timing + terminal width; both degrade gracefully. */
+struct aios_timeval { long tv_sec; long tv_usec; };
+int gettimeofday(struct aios_timeval *tv, void *tz) {
+    (void)tz; if (tv) { tv->tv_sec = 0; tv->tv_usec = 0; } return 0;
+}
+int ioctl(int fd, unsigned long req, ...) { (void)fd; (void)req; errno = AIOS_ENOTTY; return -1; }
 
 /* --- qsort: generic in-place heapsort (O(n log n) worst case, no recursion, no aux allocation).
  * sbase's sort + ls sort their lines/entries through this; heapsort keeps it allocation-free. --- */
@@ -781,6 +905,14 @@ int getopt(int argc, char *const argv[], const char *optstring) {
     if (argv[optind][++optpos] == '\0') { optind++; optpos = 1; }   /* simple flag */
     return c;
 }
+/* getopt_long: AIOS has no long-option parsing; fall back to short getopt (ignore longopts). dash's
+ * SMALL histedit.c includes <getopt.h> but does not rely on long options. */
+struct option;   /* opaque here -- the shadow <getopt.h> defines it for callers */
+int getopt_long(int argc, char *const argv[], const char *optstring,
+                const struct option *longopts, int *longindex) {
+    (void)longopts; (void)longindex;
+    return getopt(argc, argv, optstring);
+}
 
 /* --- runtime entry: _start lifts argc/argv off the stack, runs main, exits with its return --- */
 extern int main(int argc, char **argv);
@@ -799,4 +931,47 @@ __asm__(
     "  add x1, sp, #8\n"      /* argv (&argv[0]) */
     "  bl  __libaios_start\n"
     "1: b 1b\n"
+);
+
+/* setjmp/longjmp (aarch64): save/restore the callee-saved regs (x19-x28), fp (x29), lr (x30), sp,
+ * and the callee-saved FP regs (d8-d15). sigsetjmp/siglongjmp ignore the savemask (no signal-mask
+ * model yet), so they alias setjmp/longjmp. jmp_buf must hold >= 22 doublewords (see <setjmp.h>). */
+__asm__(
+    ".global setjmp\n"
+    ".global sigsetjmp\n"
+    "setjmp:\n"
+    "sigsetjmp:\n"
+    "  stp x19, x20, [x0, #0]\n"
+    "  stp x21, x22, [x0, #16]\n"
+    "  stp x23, x24, [x0, #32]\n"
+    "  stp x25, x26, [x0, #48]\n"
+    "  stp x27, x28, [x0, #64]\n"
+    "  stp x29, x30, [x0, #80]\n"
+    "  mov x1, sp\n"
+    "  str x1, [x0, #96]\n"
+    "  stp d8,  d9,  [x0, #104]\n"
+    "  stp d10, d11, [x0, #120]\n"
+    "  stp d12, d13, [x0, #136]\n"
+    "  stp d14, d15, [x0, #152]\n"
+    "  mov w0, #0\n"
+    "  ret\n"
+    ".global longjmp\n"
+    ".global siglongjmp\n"
+    "longjmp:\n"
+    "siglongjmp:\n"
+    "  ldp x19, x20, [x0, #0]\n"
+    "  ldp x21, x22, [x0, #16]\n"
+    "  ldp x23, x24, [x0, #32]\n"
+    "  ldp x25, x26, [x0, #48]\n"
+    "  ldp x27, x28, [x0, #64]\n"
+    "  ldp x29, x30, [x0, #80]\n"
+    "  ldr x2,  [x0, #96]\n"
+    "  mov sp, x2\n"
+    "  ldp d8,  d9,  [x0, #104]\n"
+    "  ldp d10, d11, [x0, #120]\n"
+    "  ldp d12, d13, [x0, #136]\n"
+    "  ldp d14, d15, [x0, #152]\n"
+    "  cmp w1, #0\n"
+    "  csinc w0, w1, wzr, ne\n"   /* return val ? val : 1 */
+    "  ret\n"
 );

@@ -289,6 +289,8 @@ static int xlate_open_flags(uint64_t f) {
     if (f & AIOS_O_APPEND)    o |= O_APPEND;
     if (f & AIOS_O_CLOEXEC)   o |= O_CLOEXEC;
     if (f & AIOS_O_DIRECTORY) o |= O_DIRECTORY;
+    if (f & AIOS_O_EXCL)      o |= O_EXCL;
+    if (f & AIOS_O_NONBLOCK)  o |= O_NONBLOCK;
     return o;
 }
 

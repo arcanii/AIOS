@@ -164,6 +164,27 @@ static long sys_dup2(proc_t *p, uint64_t oldfd, uint64_t newfd) {
     return (long)newfd;
 }
 
+/* fcntl: F_DUPFD/F_DUPFD_CLOEXEC = alias the fd's backing onto the lowest free fd >= arg (dash parks
+ * its script fd above 10 this way); the FD-flag + status-flag commands are accepted no-ops. */
+static long sys_fcntl(proc_t *p, uint64_t fd, uint64_t cmd, uint64_t arg) {
+    if (!fd_valid(p, fd)) return -AIOS_EBADF;
+    switch (cmd) {
+    case AIOS_F_DUPFD:
+    case AIOS_F_DUPFD_CLOEXEC: {
+        if (arg >= AIOS_MAX_FD) return -AIOS_EINVAL;
+        int newfd = -1;
+        for (int i = (int)arg; i < AIOS_MAX_FD; i++) if (p->fd[i] < 0) { newfd = i; break; }
+        if (newfd < 0) return -AIOS_EMFILE;
+        p->fd[newfd] = p->fd[fd];
+        ofile_ref(p->fd[newfd]);
+        return newfd;
+    }
+    case AIOS_F_GETFD: case AIOS_F_GETFL: return 0;     /* no per-fd flags modelled */
+    case AIOS_F_SETFD: case AIOS_F_SETFL: return 0;
+    default: return -AIOS_EINVAL;
+    }
+}
+
 static long sys_lseek(proc_t *p, uint64_t fd, uint64_t off, uint64_t whence) {
     if (!fd_valid(p, fd)) return -AIOS_EBADF;
     return (long)pal_host_lseek(fd_backing(p, fd), (long long)off, (int)whence);  /* -errno on fail */
@@ -581,6 +602,7 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
     case AIOS_SYS_UNLINKAT:ret = (uint64_t)sys_unlinkat(p, sc->arg[0], sc->arg[1], sc->arg[2]);          break;
     case AIOS_SYS_FACCESSAT:ret = (uint64_t)sys_faccessat(p, sc->arg[0], sc->arg[1], sc->arg[2]);        break;
     case AIOS_SYS_READLINK:ret = (uint64_t)sys_readlink(p, sc->arg[0], sc->arg[1], sc->arg[2]);          break;
+    case AIOS_SYS_FCNTL:   ret = (uint64_t)sys_fcntl(p, sc->arg[0], sc->arg[1], sc->arg[2]);             break;
     default:             ret = (uint64_t)-AIOS_ENOSYS; /* unknown AIOS syscall */           break;
     }
     pal_guest_return(p->pid, ret);

@@ -14,11 +14,20 @@ ssize_t write(int fd, const void *buf, size_t n);
 int     close(int fd);
 off_t   lseek(int fd, off_t off, int whence);
 int     pipe(int fds[2]);
+int     dup(int fd);
 int     dup2(int oldfd, int newfd);
 pid_t   fork(void);
 int     execv(const char *path, char *const argv[]);
 int     execvp(const char *file, char *const argv[]);
+int     execve(const char *path, char *const argv[], char *const envp[]);
+pid_t   vfork(void);
 pid_t   getpid(void);
+pid_t   getppid(void);
+uid_t   getuid(void);
+uid_t   geteuid(void);
+gid_t   getgid(void);
+gid_t   getegid(void);
+long    sysconf(int name);
 int     isatty(int fd);
 int     unlink(const char *path);
 int     unlinkat(int dirfd, const char *path, int flags);
@@ -30,7 +39,12 @@ int     faccessat(int dirfd, const char *path, int amode, int flags);
 ssize_t readlink(const char *path, char *buf, size_t bufsize);
 void    _exit(int code) __attribute__((noreturn));
 
-/* sbase's ls uses this as a name-buffer size (normally a sysconf key). */
+/* sysconf keys (subset; match the libaios sysconf switch). _SC_LOGIN_NAME_MAX also doubles as a
+ * name-buffer size in sbase's ls. */
+#define _SC_CLK_TCK        2
+#define _SC_OPEN_MAX       4
+#define _SC_PAGESIZE       30
+#define _SC_PAGE_SIZE      30
 #define _SC_LOGIN_NAME_MAX 256
 
 /* access() / faccessat() modes (AIOS-owned; match AIOS_?_OK in aios_abi.h) */

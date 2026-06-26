@@ -30,5 +30,15 @@ extern int errno;
 #define ERANGE       AIOS_ERANGE
 #define ENAMETOOLONG AIOS_ENAMETOOLONG
 #define ENOSYS       AIOS_ENOSYS
+#define ENXIO        AIOS_ENXIO
+#define E2BIG        AIOS_E2BIG
+#define ENOEXEC      AIOS_ENOEXEC
+#define EXDEV        AIOS_EXDEV
+#define ENOTTY       AIOS_ENOTTY
+#define ETXTBSY      AIOS_ETXTBSY
+#define ENOSPC       AIOS_ENOSPC
+#define EDOM         AIOS_EDOM
+#define ENOTEMPTY    AIOS_ENOTEMPTY
+#define ELOOP        AIOS_ELOOP
 
 #endif /* _ERRNO_H */

@@ -77,6 +77,12 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            echo "--- M3h: sbase ls + ls -l (readdir + stat + readlink + time/strftime + printf widths) ---" &&
            rm -rf /tmp/aios_lst && mkdir -p /tmp/aios_lst/sub && echo hi >/tmp/aios_lst/afile && ln -s afile /tmp/aios_lst/alink &&
            { echo "  plain ls:"; ./aios-uk ./sbase-ls /tmp/aios_lst 2>/dev/null | sed "s/^/    /"; echo "  ls -l:"; ./aios-uk ./sbase-ls -l /tmp/aios_lst 2>/dev/null | sed "s/^/    /"; }; rm -rf /tmp/aios_lst;
+           echo "=== M3i: dash (Debian Almquist shell) compiled UNMODIFIED -- the operational shell ===" &&
+           printf "  echo arith: "; ./aios-uk ./dash -c "echo \$((2 + 3 * 4))" 2>/dev/null;
+           printf "  control:    "; ./aios-uk ./dash -c "true && echo yes || echo no" 2>/dev/null;
+           printf "  for loop:   "; ./aios-uk ./dash -c "for i in 1 2 3; do printf \"\$i \"; done; echo" 2>/dev/null;
+           printf "  pipeline:   "; ./aios-uk ./dash -c "./sbase-echo a b c d e | ./sbase-wc -w" 2>/dev/null;
+           printf "  cmd subst:  "; ./aios-uk ./dash -c "echo got=\$(./sbase-echo hi)" 2>/dev/null;
            echo "=== M3d gate: prog_pipebig exit must be 0 ===" &&
            ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [exit $rc]";
            test "$rc" = 0'

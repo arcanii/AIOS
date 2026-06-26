@@ -41,6 +41,18 @@
 #define AIOS_SYS_UNLINKAT 0x1019  /* (dirfd, path, flags) -> 0, or -errno (AT_REMOVEDIR -> rmdir)  */
 #define AIOS_SYS_FACCESSAT 0x101A /* (dirfd, path, amode) -> 0, or -errno                          */
 #define AIOS_SYS_READLINK 0x101B  /* (path, buf, bufsize) -> bytes (no NUL), or -errno             */
+#define AIOS_SYS_FCNTL    0x101C  /* (fd, cmd, arg) -> result, or -errno (F_DUPFD/F_GETFD/F_SETFD) */
+
+/* fcntl commands (AIOS-owned; match Linux). F_DUPFD = lowest free fd >= arg, sharing the backing --
+ * dash uses it to park its script fd above 10. FD flags (close-on-exec) are accepted + ignored
+ * (AIOS fds survive exec today). */
+#define AIOS_F_DUPFD         0
+#define AIOS_F_GETFD         1
+#define AIOS_F_SETFD         2
+#define AIOS_F_GETFL         3
+#define AIOS_F_SETFL         4
+#define AIOS_F_DUPFD_CLOEXEC 1030
+#define AIOS_FD_CLOEXEC      1
 
 /* The *at family resolves `path` relative to a directory fd, or -- when dirfd == AIOS_AT_FDCWD --
  * relative to the process cwd (the recurse-based utilities: rm, ls, cp, ...). AT_* are AIOS-owned;
@@ -87,6 +99,16 @@
 #define AIOS_ERANGE      34   /* result out of range */
 #define AIOS_ENAMETOOLONG 36  /* file name too long */
 #define AIOS_ENOSYS      38   /* function not implemented */
+#define AIOS_ENXIO        6   /* no such device or address */
+#define AIOS_E2BIG        7   /* argument list too long */
+#define AIOS_ENOEXEC      8   /* exec format error */
+#define AIOS_EXDEV       18   /* cross-device link */
+#define AIOS_ENOTTY      25   /* not a typewriter */
+#define AIOS_ETXTBSY     26   /* text file busy */
+#define AIOS_ENOSPC      28   /* no space left on device */
+#define AIOS_EDOM        33   /* math arg out of domain */
+#define AIOS_ENOTEMPTY   39   /* directory not empty */
+#define AIOS_ELOOP       40   /* too many symbolic links */
 #define AIOS_IS_ERR(r)   ((r) < 0 && (r) >= -4095)   /* is a syscall return an -errno code? */
 
 /* lseek whence (AIOS-owned; the PAL maps to host SEEK_*). */
@@ -159,6 +181,8 @@ struct aios_dirent {
 #define AIOS_O_APPEND    0x0400
 #define AIOS_O_CLOEXEC   0x0800   /* close-on-exec (advisory today: AIOS fds survive exec)        */
 #define AIOS_O_DIRECTORY 0x1000   /* fail unless the path is a directory                          */
+#define AIOS_O_EXCL      0x2000   /* with O_CREAT: fail if the path exists                        */
+#define AIOS_O_NONBLOCK  0x4000   /* non-blocking open/IO                                         */
 
 /* Reserved AIOS file descriptors (the kernel seeds these from the PAL std streams). */
 #define AIOS_FD_STDIN    0

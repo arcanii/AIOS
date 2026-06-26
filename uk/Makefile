@@ -40,10 +40,23 @@ SBASE_CFLAGS = $(LIBC_CFLAGS) -I$(SBASE) -w
 SBASE_DEPS   = $(LIBAIOS) $(LIBC_HDRS) $(SBASE)/util.h $(SBASE)/arg.h $(SBASE)/compat.h
 SBASE_BINS   = sbase-true sbase-false sbase-echo sbase-cat sbase-wc sbase-mkdir sbase-rm sbase-ls
 
+# Vendored dash (the Debian Almquist shell, BSD) -- compiled UNMODIFIED against libaios. config.h +
+# the generated sources (syntax/nodes/builtins/init/signames/token.h) are AIOS build inputs (see
+# vendor/README.md). -include config.h, -DSHELL etc. per the dash build; -Dalloca=__builtin_alloca
+# (alloca must hit the caller's stack); -w (never lint vendored code).
+DASH        = vendor/dash
+DASH_SRC    = $(DASH)/src
+DASH_CFLAGS = $(LIBC_CFLAGS) -I$(DASH_SRC) -include $(DASH)/config.h \
+              -DSHELL -DSMALL -DGLOB_BROKEN -D_GNU_SOURCE -Dalloca=__builtin_alloca -w
+DASH_CFILES = $(addprefix $(DASH_SRC)/, alias.c arith_yacc.c arith_yylex.c cd.c error.c eval.c \
+              exec.c expand.c histedit.c input.c jobs.c mail.c main.c memalloc.c miscbltin.c \
+              mystring.c options.c parser.c redir.c show.c trap.c output.c bltin/printf.c system.c \
+              bltin/test.c bltin/times.c var.c syntax.c nodes.c builtins.c init.c signames.c)
+
 .PHONY: all run clean sbase
 all: aios-uk guest_hello guest_fileio guest_cat prog_args prog_wc prog_bigalloc prog_tail prog_exec \
      prog_fork prog_spawn prog_pipe prog_pipeline prog_pipebig prog_sh prog_libc prog_stdio prog_errno \
-     prog_fs prog_getopt prog_dir $(SBASE_BINS)
+     prog_fs prog_getopt prog_dir $(SBASE_BINS) dash
 
 aios-uk: $(KERNEL_SRC) include/pal.h include/aios_abi.h include/aios_version.h
 	$(CC) $(KERNEL_CFLAGS) -o $@ $(KERNEL_SRC)
@@ -147,10 +160,14 @@ sbase-ls: $(SBASE)/ls.c $(SBASE_DEPS) $(SBASE)/fs.h $(SBASE)/utf.h
 	      $(SBASE)/libutf/rune.c $(SBASE)/libutf/runetype.c $(SBASE)/libutf/isprintrune.c \
 	      $(SBASE)/libutf/iscntrlrune.c $(LIBAIOS)
 
+# dash = the operational shell. One cc invocation over the dash sources + generated sources + libaios.
+dash: $(DASH_CFILES) $(LIBAIOS) $(LIBC_HDRS) $(DASH)/config.h
+	$(CC) $(DASH_CFLAGS) -o $@ $(DASH_CFILES) $(LIBAIOS)
+
 run: all
 	./aios-uk ./prog_tail -n 3 /etc/os-release
 
 clean:
 	rm -f aios-uk guest_hello guest_fileio guest_cat prog_args prog_wc prog_bigalloc prog_tail \
 	      prog_exec prog_fork prog_spawn prog_pipe prog_pipeline prog_pipebig prog_sh prog_libc \
-	      prog_stdio prog_errno prog_fs prog_getopt prog_dir $(SBASE_BINS)
+	      prog_stdio prog_errno prog_fs prog_getopt prog_dir $(SBASE_BINS) dash
