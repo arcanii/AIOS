@@ -93,6 +93,22 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            echo "=== M4: boundary ENFORCED -- a guest CANNOT bypass the kernel (escape is blocked) ===" &&
            echo "  guest_escape attempts a raw Linux write(64); the [2] LINUX line must NOT appear:" &&
            ./aios-uk ./guest_escape 2>&1 | sed "s/^/    /"; ./aios-uk ./guest_escape >/dev/null 2>&1; echo "  [escape guest killed, exit $? (expect 159)]";
-           echo "=== M3d gate: prog_pipebig exit must be 0 ===" &&
-           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [exit $rc]";
-           test "$rc" = 0'
+           echo "=== M4.2: filesystem confinement -- a serviced open() reaches ONLY the AIOS root ===" &&
+           JR=/tmp/aios_jail; SECRET=/tmp/aios_jail_secret.txt;
+           rm -rf "$JR" "$SECRET";
+           mkdir -p "$JR/sub" && echo visible > "$JR/inside.txt" && echo deep > "$JR/sub/deep.txt";
+           echo SECRET-host-data > "$SECRET";
+           ln -s /tmp/aios_jail_secret.txt "$JR/abs_link"; ln -s ../aios_jail_secret.txt "$JR/dotdot_link";
+           echo "  (a) UNCONFINED: real sbase cat reads a host file OUTSIDE any root (baseline):";
+           ./aios-uk ./sbase-cat "$SECRET" 2>/dev/null | sed "s/^/      /";
+           echo "  (b) CONFINED (AIOS_ROOT set): the SAME cat of that host file is DENIED:";
+           AIOS_ROOT="$JR" ./aios-uk ./sbase-cat "$SECRET" 2>&1 | grep -v aios-uk | sed "s/^/      /";
+           echo "  (c) CONFINED: cat of an in-root path still works:";
+           AIOS_ROOT="$JR" ./aios-uk ./sbase-cat /inside.txt 2>/dev/null | sed "s/^/      /";
+           echo "  (d) CONFINED red-team proof (prog_jail): every escape vector denied, in-root access works:";
+           AIOS_ROOT="$JR" ./aios-uk ./prog_jail 2>/dev/null | sed "s/^/      /";
+           AIOS_ROOT="$JR" ./aios-uk ./prog_jail >/dev/null 2>&1; jrc=$?; echo "  [prog_jail exit $jrc (expect 0)]";
+           rm -rf "$JR" "$SECRET";
+           echo "=== gate: prog_pipebig (M3d) AND prog_jail (M4.2) must exit 0 ===" &&
+           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig exit $rc, jail exit $jrc]";
+           test "$rc" = 0 && test "$jrc" = 0'

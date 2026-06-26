@@ -17,7 +17,13 @@
  * kernel's own injections reach Linux. 0.5.4 = M5 real signal delivery: the kernel runs a guest's
  * handler (sigaction/kill/sigreturn + a frame dance in the PAL), so dash trap/kill work AND
  * INTERACTIVE dash + ^C work -- ^C interrupts the prompt and dash survives (a do_read single-read
- * fix made interactive mode function).
+ * fix made interactive mode function). 0.5.5 = M4.2 the OTHER half of the boundary: filesystem
+ * confinement. When the PAL is launched with AIOS_ROOT set, every guest file path is resolved INSIDE
+ * that root via openat2(RESOLVE_IN_ROOT) -- absolute paths, ".." traversal, and symlinks (absolute
+ * or "..") are clamped to the root -- so a serviced open()/stat()/... can reach ONLY an AIOS root,
+ * never arbitrary host paths. It is an UNPRIVILEGED primitive (no chroot/CAP), purely a PAL policy:
+ * the kernel + ABI are UNCHANGED (zero new syscalls). Proof: guest/prog_jail.c (every escape vector
+ * denied; in-root access works).
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -27,7 +33,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 4
+#define AIOS_VERSION_PATCH 5
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

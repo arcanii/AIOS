@@ -110,7 +110,13 @@ pal_file_t pal_host_std(int which);
 
 /* Open a host-backed file. `aios_flags` are AIOS_O_* (aios_abi.h) -- the PAL translates them to
  * native host flags. Returns a backing handle (>= 0), or a negated AIOS error code (-errno < 0) on
- * failure. This is the AIOS kernel's route to real storage (Linux: open(2); seL4: an fs-server IPC). */
+ * failure. This is the AIOS kernel's route to real storage (Linux: open(2); seL4: an fs-server IPC).
+ *
+ * M4.2 confinement (a PAL-internal policy, NOT part of this contract -- the kernel passes the same
+ * path strings either way): when the Linux backend is launched with AIOS_ROOT set, this and EVERY
+ * path-taking primitive below resolve INSIDE that root (openat2 RESOLVE_IN_ROOT), so a serviced path
+ * can never escape to an arbitrary host path. A future seL4 PAL gets the same view from an fs cap
+ * rooted at the AIOS fs. Default (unset) = the whole host, behaviour unchanged. */
 pal_file_t pal_host_open(const char *path, uint64_t aios_flags, uint64_t mode);
 
 /* Read/write/close a backing object. write is also the kernel's diagnostic + stdout path. Return

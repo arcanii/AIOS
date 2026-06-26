@@ -161,8 +161,37 @@ RPi4 (kernel 6.12).
 
 **AIOS ABI now (34 syscalls):** … READLINK/FCNTL/SIGACTION/SIGRETURN/KILL/ISATTY.
 
+## M4.2 — filesystem confinement (the other half of the boundary) ✅
+
+M4 stopped a guest *bypassing* the kernel; M4.2 stops a guest — even going *through* the kernel —
+from reaching host paths **outside an AIOS root**. When the PAL is launched with `AIOS_ROOT` set,
+every guest file path is resolved **inside** that root with `openat2(RESOLVE_IN_ROOT)`: absolute
+paths, `..` traversal, and symlinks (absolute *or* `..`) are all clamped to the root by the host
+kernel. That is the standard **unprivileged** container path-safety primitive — no `chroot` /
+`CAP_SYS_CHROOT`, so it runs as plain user `pi` on the Pi.
+
+The shape of the win: confinement is **purely a PAL policy**. The AIOS kernel passes the same path
+strings either way; the kernel and the **ABI are unchanged — zero new syscalls**. A future seL4 PAL
+gets the same view from an fs cap rooted at the AIOS fs. Default (`AIOS_ROOT` unset) = the whole
+host, behaviour unchanged (every prior milestone runs byte-identically).
+
+It covers the **data** boundary — `open`/`stat`/`unlink`/`mkdir`/`rmdir`/`rename`/`chdir`/`getcwd`/
+`readlink` + the `*at` family (the kernel-side `cwd` is now a confined logical path). Path ops that
+have no single confined form (unlink/mkdir/rename/readlink) open the parent dir confined and act on a
+single non-walking leaf. **Exec is still resolved in the host namespace** (the kernel injects
+`execve` into the tracee), so confining *which binary* a guest may launch is a separate, still-open
+hardening step.
+
+`guest/prog_jail.c` is the red-team + positive proof (the M4.2 analogue of `guest_escape.c`): run
+under `AIOS_ROOT`, it confirms in-root open/stat/create/readdir/chdir/name-ops work while every
+escape vector — an absolute host path, a `..` traversal, an absolute symlink, a `..` symlink — is
+denied. `run.sh` also shows the *same* real `sbase cat` reading a host secret unconfined, then being
+denied that secret once confined, then reading an in-root file fine. Validated on colima and the
+RPi4 (kernel 6.12).
+
 ## Next (per the design doc)
 
-**M4.2** fs/resource isolation (a mount namespace / sandbox root so a guest's `open` can't reach
-arbitrary host paths). More sbase utils (head/tail/cp/mv/sort; grep needs a real regex). Then
-**sched_ext** · the seL4/x86-64 replant seam (`pal_sel4.c`).
+Exec-path confinement (resolve the injected `execve` through the AIOS root too, e.g. `execveat` on an
+`openat2`-resolved fd). More sbase utils (head/tail/cp/mv/sort; grep needs a real regex). A real
+`time()`/CLOCK syscall; per-process cwd/umask. Then **sched_ext** · the seL4/x86-64 replant seam
+(`pal_sel4.c`).

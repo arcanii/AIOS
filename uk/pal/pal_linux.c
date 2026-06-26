@@ -27,6 +27,7 @@
 #include <signal.h>            /* SIGCHLD, SIGTRAP, SIGSTOP */
 #include <stdint.h>
 #include <stdio.h>             /* rename() */
+#include <stdlib.h>           /* getenv (AIOS_ROOT -- host-specific config; the PAL is host-aware) */
 #include <string.h>
 #include <unistd.h>
 #include <sys/ptrace.h>
@@ -91,7 +92,10 @@ static pid_t waitpid_r(pid_t pid, int *st, int flags) {
  * pal_guest_next reports it to the kernel. */
 static void pal_noop_sig(int s) { (void)s; }
 
+static void pal_fs_init_once(void);              /* M4.2: defined with the confinement layer below */
+
 pal_pid_t pal_guest_spawn(const char *path, char *const argv[]) {
+    pal_fs_init_once();                          /* M4.2: establish the AIOS root (AIOS_ROOT) once, up front */
     /* The kernel does pipe writes on the guests' behalf; a write to a pipe with no readers must
      * surface as PAL_EPIPE, not a SIGPIPE that kills the kernel. */
     signal(SIGPIPE, SIG_IGN);
@@ -335,8 +339,140 @@ static long pal_errno(void) {
     return e ? -(long)e : -1;
 }
 
+/* ===================== M4.2: filesystem confinement (the other half of the boundary) =====================
+ * M4 stopped a guest BYPASSING the kernel; this stops a guest -- even going THROUGH the kernel -- from
+ * reaching host paths OUTSIDE an AIOS root. When the PAL is launched with AIOS_ROOT set, every guest file
+ * path is resolved INSIDE that root with openat2(RESOLVE_IN_ROOT): absolute paths, ".." traversal, and
+ * symlinks (absolute or "..") are all clamped to the root by the host kernel. That is the standard
+ * UNPRIVILEGED container path-safety primitive -- no chroot / CAP_SYS_CHROOT, so it runs as plain user
+ * `pi` on the Pi. The AIOS kernel above is UNCHANGED (same path strings, same ABI, zero new syscalls);
+ * confinement is purely a PAL host-gateway policy, which is exactly where it belongs -- a future seL4 PAL
+ * is simply handed an fs cap rooted at the AIOS fs, enforcing the same view with no kernel change.
+ *
+ * Default (AIOS_ROOT unset) = unconfined: the original open()/stat()/... paths, behaviour unchanged.
+ * SCOPE: this confines the DATA boundary (open/stat/unlink/mkdir/rmdir/rename/chdir/getcwd/readlink +
+ * the *at family). EXEC stays resolved in the host namespace (the kernel injects execve into the tracee),
+ * so confining WHICH binary a guest may launch is a separate, still-open hardening step. cwd is a single
+ * PAL-side logical path (as the host cwd was before); per-process cwd is future work. */
+
+#ifndef __NR_openat2
+#define __NR_openat2 437
+#endif
+#ifndef __NR_faccessat2
+#define __NR_faccessat2 439
+#endif
+#ifndef RESOLVE_IN_ROOT
+#define RESOLVE_IN_ROOT 0x10ULL   /* openat2: treat dirfd as "/" for this resolution (clamp escapes) */
+#endif
+#ifndef O_PATH
+#define O_PATH 010000000
+#endif
+#ifndef AT_EMPTY_PATH
+#define AT_EMPTY_PATH 0x1000
+#endif
+struct aios_open_how { uint64_t flags; uint64_t mode; uint64_t resolve; };   /* the openat2(2) arg */
+
+static int  g_confined = 0;        /* set once from AIOS_ROOT at spawn */
+static int  g_root_fd  = -1;       /* the AIOS root dir (O_PATH); confined resolution roots here */
+static char g_cwd[1024] = "/";     /* the guest's logical cwd WITHIN the root (confined mode) */
+
+/* Establish the confinement root ONCE, from AIOS_ROOT, before any guest runs. Fail CLOSED: if a root
+ * was requested but cannot be opened, refuse to start rather than silently expose the whole host. */
+static void pal_fs_init_once(void) {
+    static int done = 0;
+    if (done) return;
+    done = 1;
+    const char *root = getenv("AIOS_ROOT");
+    if (!root || !*root) return;                                  /* unconfined (default) */
+    int fd = open(root, O_PATH | O_DIRECTORY | O_CLOEXEC);
+    if (fd < 0) {
+        fprintf(stderr, "[pal] AIOS_ROOT=%s: cannot open as a directory (%s) -- refusing to start "
+                        "(fail closed)\n", root, strerror(errno));
+        _exit(71);
+    }
+    g_root_fd  = fd;
+    g_confined = 1;
+}
+
+/* openat2 with the resolution clamped to the root anchored at `dirfd`. Returns an fd (>= 0) or -1 with
+ * errno set. `mode` is only honoured with O_CREAT (openat2 rejects a nonzero mode otherwise). */
+static long openat2_in_root(int dirfd, const char *path, uint64_t hflags, unsigned int mode) {
+    struct aios_open_how how;
+    how.flags   = hflags;
+    how.mode    = (hflags & (uint64_t)O_CREAT) ? (uint64_t)mode : 0;
+    how.resolve = RESOLVE_IN_ROOT;
+    return syscall(__NR_openat2, dirfd, path, &how, sizeof how);
+}
+
+/* Collapse an absolute path TEXTUALLY ("."/empty dropped, ".." popped + clamped at root). Logical only:
+ * the real, secure resolution is always redone by openat2(RESOLVE_IN_ROOT); this just keeps getcwd tidy. */
+static void path_norm(const char *in, char *out, size_t outsz) {
+    size_t olen = 0;                                  /* build "/c1/c2/..."; empty result => root "/" */
+    const char *p = in;
+    while (*p) {
+        while (*p == '/') p++;
+        if (!*p) break;
+        const char *seg = p;
+        while (*p && *p != '/') p++;
+        size_t clen = (size_t)(p - seg);
+        if (clen == 1 && seg[0] == '.') continue;
+        if (clen == 2 && seg[0] == '.' && seg[1] == '.') {
+            while (olen > 0 && out[olen - 1] != '/') olen--;   /* drop last segment's chars */
+            if (olen > 0) olen--;                              /* and its leading '/'        */
+            continue;
+        }
+        if (olen + 1 + clen >= outsz) break;                   /* overflow: best-effort truncate */
+        out[olen++] = '/';
+        for (size_t i = 0; i < clen; i++) out[olen++] = seg[i];
+    }
+    if (olen == 0) out[olen++] = '/';
+    out[olen] = '\0';
+}
+
+/* The logical path to hand openat2 for an AT_FDCWD / plain-path op: absolute as-is, else joined onto the
+ * logical cwd. openat2(RESOLVE_IN_ROOT) does the secure resolution of any ".."/symlinks inside it. */
+static void eff_path(const char *path, char *out, size_t outsz) {
+    if      (path[0] == '/')    snprintf(out, outsz, "%s", path);
+    else if (g_cwd[1] == '\0')  snprintf(out, outsz, "/%s", path);          /* cwd == "/" */
+    else                        snprintf(out, outsz, "%s/%s", g_cwd, path);
+}
+
+/* For a confined op pick (base dir fd, path-under-it): PAL_AT_FDCWD -> (root, cwd-joined path); a real
+ * directory backing -> (that fd, the raw path resolved with the fd as its root). */
+static int confined_base(pal_file_t dir, const char *path, char *effbuf, size_t effsz, const char **outpath) {
+    if (dir == PAL_AT_FDCWD) { eff_path(path, effbuf, effsz); *outpath = effbuf; return g_root_fd; }
+    *outpath = path;
+    return (int)dir;
+}
+
+/* Open the PARENT directory of `fullpath` (resolved confined under `basefd`) and hand back the trailing
+ * leaf, for ops that must act on a name WITHOUT walking past it (unlink/rmdir/mkdir/rename/readlink). The
+ * parent walk is confined by openat2; the leaf op never follows further (unlinkat/readlinkat/mkdirat/
+ * renameat do not traverse a final symlink). The returned fd is the caller's to close (a dup of `basefd`
+ * when there is no slash, i.e. the leaf sits directly in basefd). */
+static long open_parent_at(int basefd, const char *fullpath, char *dirbuf, size_t dirsz, const char **leaf) {
+    const char *slash = strrchr(fullpath, '/');
+    if (!slash) { *leaf = fullpath; return dup(basefd); }           /* leaf relative to basefd */
+    if (slash[1] == '\0') { errno = EINVAL; return -1; }            /* trailing slash: no leaf */
+    *leaf = slash + 1;
+    size_t dl = (size_t)(slash - fullpath);
+    const char *dpath;
+    if (dl == 0) dpath = "/";                                       /* "/leaf" -> parent is the root */
+    else {
+        if (dl >= dirsz) { errno = ENAMETOOLONG; return -1; }
+        memcpy(dirbuf, fullpath, dl); dirbuf[dl] = '\0'; dpath = dirbuf;
+    }
+    return openat2_in_root(basefd, dpath, (uint64_t)(O_PATH | O_DIRECTORY | O_CLOEXEC), 0);
+}
+
 pal_file_t pal_host_open(const char *path, uint64_t aios_flags, uint64_t mode) {
-    int fd = open(path, xlate_open_flags(aios_flags), (mode_t)mode);
+    int hf = xlate_open_flags(aios_flags);
+    if (g_confined) {
+        char eff[2048]; eff_path(path, eff, sizeof eff);
+        long fd = openat2_in_root(g_root_fd, eff, (uint64_t)hf, (unsigned int)mode);
+        return fd < 0 ? (pal_file_t)pal_errno() : (pal_file_t)fd;
+    }
+    int fd = open(path, hf, (mode_t)mode);
     return fd < 0 ? (pal_file_t)pal_errno() : (pal_file_t)fd;   /* -errno on failure */
 }
 
@@ -387,35 +523,147 @@ int pal_host_fstat(pal_file_t f, struct aios_stat *out) {
 }
 int pal_host_stat(const char *path, struct aios_stat *out, int follow) {
     struct stat st;
+    if (g_confined) {
+        char eff[2048]; eff_path(path, eff, sizeof eff);
+        long fd = openat2_in_root(g_root_fd, eff, (uint64_t)(O_PATH | O_CLOEXEC | (follow ? 0 : O_NOFOLLOW)), 0);
+        if (fd < 0) return (int)pal_errno();                          /* an O_PATH|O_NOFOLLOW handle of */
+        int r = fstat((int)fd, &st); int e = errno; close((int)fd);  /* a symlink fstats the link (lstat) */
+        if (r != 0) { errno = e; return (int)pal_errno(); }
+        fill_aios_stat(out, &st);
+        return 0;
+    }
     if ((follow ? stat(path, &st) : lstat(path, &st)) != 0) return (int)pal_errno();
     fill_aios_stat(out, &st);
     return 0;
 }
-int  pal_host_unlink(const char *path)               { return unlink(path) == 0 ? 0 : (int)pal_errno(); }
-int  pal_host_mkdir (const char *path, unsigned int m){ return mkdir(path, (mode_t)m) == 0 ? 0 : (int)pal_errno(); }
-int  pal_host_rmdir (const char *path)               { return rmdir(path) == 0 ? 0 : (int)pal_errno(); }
-int  pal_host_rename(const char *o, const char *n)   { return rename(o, n) == 0 ? 0 : (int)pal_errno(); }
-int  pal_host_chdir (const char *path)               { return chdir(path) == 0 ? 0 : (int)pal_errno(); }
-long pal_host_getcwd(char *buf, size_t size)         { return getcwd(buf, size) ? (long)strlen(buf) : pal_errno(); }
+int pal_host_unlink(const char *path) {
+    if (g_confined) {
+        char eff[2048]; eff_path(path, eff, sizeof eff);
+        char dirb[2048]; const char *leaf;
+        long pfd = open_parent_at(g_root_fd, eff, dirb, sizeof dirb, &leaf);
+        if (pfd < 0) return (int)pal_errno();
+        int r = unlinkat((int)pfd, leaf, 0); int e = errno; close((int)pfd);
+        return r == 0 ? 0 : (errno = e, (int)pal_errno());
+    }
+    return unlink(path) == 0 ? 0 : (int)pal_errno();
+}
+int pal_host_mkdir(const char *path, unsigned int m) {
+    if (g_confined) {
+        char eff[2048]; eff_path(path, eff, sizeof eff);
+        char dirb[2048]; const char *leaf;
+        long pfd = open_parent_at(g_root_fd, eff, dirb, sizeof dirb, &leaf);
+        if (pfd < 0) return (int)pal_errno();
+        int r = mkdirat((int)pfd, leaf, (mode_t)m); int e = errno; close((int)pfd);
+        return r == 0 ? 0 : (errno = e, (int)pal_errno());
+    }
+    return mkdir(path, (mode_t)m) == 0 ? 0 : (int)pal_errno();
+}
+int pal_host_rmdir(const char *path) {
+    if (g_confined) {
+        char eff[2048]; eff_path(path, eff, sizeof eff);
+        char dirb[2048]; const char *leaf;
+        long pfd = open_parent_at(g_root_fd, eff, dirb, sizeof dirb, &leaf);
+        if (pfd < 0) return (int)pal_errno();
+        int r = unlinkat((int)pfd, leaf, AT_REMOVEDIR); int e = errno; close((int)pfd);
+        return r == 0 ? 0 : (errno = e, (int)pal_errno());
+    }
+    return rmdir(path) == 0 ? 0 : (int)pal_errno();
+}
+int pal_host_rename(const char *o, const char *n) {
+    if (g_confined) {
+        char effo[2048], effn[2048]; eff_path(o, effo, sizeof effo); eff_path(n, effn, sizeof effn);
+        char dbo[2048], dbn[2048]; const char *lo, *ln;
+        long pfo = open_parent_at(g_root_fd, effo, dbo, sizeof dbo, &lo);
+        if (pfo < 0) return (int)pal_errno();
+        long pfn = open_parent_at(g_root_fd, effn, dbn, sizeof dbn, &ln);
+        if (pfn < 0) { int e = errno; close((int)pfo); errno = e; return (int)pal_errno(); }
+        int r = renameat((int)pfo, lo, (int)pfn, ln); int e = errno;
+        close((int)pfo); close((int)pfn);
+        return r == 0 ? 0 : (errno = e, (int)pal_errno());
+    }
+    return rename(o, n) == 0 ? 0 : (int)pal_errno();
+}
+int pal_host_chdir(const char *path) {
+    if (g_confined) {
+        char eff[2048]; eff_path(path, eff, sizeof eff);
+        long fd = openat2_in_root(g_root_fd, eff, (uint64_t)(O_PATH | O_DIRECTORY | O_CLOEXEC), 0);
+        if (fd < 0) return (int)pal_errno();
+        close((int)fd);
+        char norm[1024]; path_norm(eff, norm, sizeof norm);          /* tidy logical cwd for getcwd */
+        snprintf(g_cwd, sizeof g_cwd, "%s", norm);
+        return 0;
+    }
+    return chdir(path) == 0 ? 0 : (int)pal_errno();
+}
+long pal_host_getcwd(char *buf, size_t size) {
+    if (g_confined) {
+        size_t n = strlen(g_cwd);
+        if (n + 1 > size) { errno = ERANGE; return pal_errno(); }
+        memcpy(buf, g_cwd, n + 1);
+        return (long)n;
+    }
+    return getcwd(buf, size) ? (long)strlen(buf) : pal_errno();
+}
 
 /* --- the *at family (relative to a host dirfd, or AT_FDCWD) --- */
 pal_file_t pal_host_openat(pal_file_t dir, const char *path, uint64_t aios_flags, uint64_t mode) {
-    int fd = openat(hostdir(dir), path, xlate_open_flags(aios_flags), (mode_t)mode);
+    int hf = xlate_open_flags(aios_flags);
+    if (g_confined) {
+        char eff[2048]; const char *full; int base = confined_base(dir, path, eff, sizeof eff, &full);
+        long fd = openat2_in_root(base, full, (uint64_t)hf, (unsigned int)mode);
+        return fd < 0 ? (pal_file_t)pal_errno() : (pal_file_t)fd;
+    }
+    int fd = openat(hostdir(dir), path, hf, (mode_t)mode);
     return fd < 0 ? (pal_file_t)pal_errno() : (pal_file_t)fd;
 }
 int pal_host_fstatat(pal_file_t dir, const char *path, struct aios_stat *out, int follow) {
     struct stat st;
+    if (g_confined) {
+        char eff[2048]; const char *full; int base = confined_base(dir, path, eff, sizeof eff, &full);
+        long fd = openat2_in_root(base, full, (uint64_t)(O_PATH | O_CLOEXEC | (follow ? 0 : O_NOFOLLOW)), 0);
+        if (fd < 0) return (int)pal_errno();
+        int r = fstat((int)fd, &st); int e = errno; close((int)fd);
+        if (r != 0) { errno = e; return (int)pal_errno(); }
+        fill_aios_stat(out, &st);
+        return 0;
+    }
     if (fstatat(hostdir(dir), path, &st, follow ? 0 : AT_SYMLINK_NOFOLLOW) != 0) return (int)pal_errno();
     fill_aios_stat(out, &st);
     return 0;
 }
 int pal_host_unlinkat(pal_file_t dir, const char *path, int removedir) {
+    if (g_confined) {
+        char eff[2048]; const char *full; int base = confined_base(dir, path, eff, sizeof eff, &full);
+        char dirb[2048]; const char *leaf;
+        long pfd = open_parent_at(base, full, dirb, sizeof dirb, &leaf);
+        if (pfd < 0) return (int)pal_errno();
+        int r = unlinkat((int)pfd, leaf, removedir ? AT_REMOVEDIR : 0); int e = errno; close((int)pfd);
+        return r == 0 ? 0 : (errno = e, (int)pal_errno());
+    }
     return unlinkat(hostdir(dir), path, removedir ? AT_REMOVEDIR : 0) == 0 ? 0 : (int)pal_errno();
 }
 int pal_host_faccessat(pal_file_t dir, const char *path, int amode) {
+    if (g_confined) {
+        char eff[2048]; const char *full; int base = confined_base(dir, path, eff, sizeof eff, &full);
+        long fd = openat2_in_root(base, full, (uint64_t)(O_PATH | O_CLOEXEC), 0);   /* symlinks followed within root */
+        if (fd < 0) return (int)pal_errno();
+        long r = syscall(__NR_faccessat2, (int)fd, "", (long)amode, (long)AT_EMPTY_PATH);
+        int e = errno; close((int)fd);
+        if (r == 0) return 0;
+        if (e == ENOSYS) return 0;        /* faccessat2 unavailable: the in-root path exists -> allow */
+        errno = e; return (int)pal_errno();
+    }
     return faccessat(hostdir(dir), path, amode, 0) == 0 ? 0 : (int)pal_errno();   /* AIOS_?_OK == ?_OK */
 }
 long pal_host_readlink(const char *path, char *buf, size_t bufsize) {
+    if (g_confined) {
+        char eff[2048]; eff_path(path, eff, sizeof eff);
+        char dirb[2048]; const char *leaf;
+        long pfd = open_parent_at(g_root_fd, eff, dirb, sizeof dirb, &leaf);
+        if (pfd < 0) return pal_errno();
+        ssize_t n = readlinkat((int)pfd, leaf, buf, bufsize); int e = errno; close((int)pfd);
+        return n < 0 ? (errno = e, pal_errno()) : (long)n;
+    }
     ssize_t n = readlink(path, buf, bufsize);
     return n < 0 ? pal_errno() : (long)n;
 }
