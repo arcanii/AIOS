@@ -1,10 +1,11 @@
-# HANDOVER -- session 20 (2026-06-26): real sbase runs UNMODIFIED on the AIOS kernel
+# HANDOVER -- session 20 (2026-06-26): AIOS is OPERATIONAL -- real sbase AND dash run UNMODIFIED
 
 Continues the userspace-kernel work (the 2026-06-24 pivot: AIOS as a gVisor-style userspace kernel
 on Linux; verified seL4-on-x86-64 is the destination; verification is the soul). This session
-finished the libc gaps sbase needed and then **vendored real suckless sbase and compiled 8 of its
-utilities UNMODIFIED** against AIOS's libc -- the headline proof of the retarget. All on `main`
-(0.5.x). Live state: memory [[project_pivot_linux_userspace_kernel]]. Design:
+finished the libc gaps sbase needed, **vendored real suckless sbase (8 utilities compile UNMODIFIED)**,
+and then -- the operational milestone -- **vendored real dash (the Debian Almquist Shell) which
+compiles UNMODIFIED and runs as a real shell on the AIOS kernel**. All on `main` (now v0.5.2). Live
+state: memory [[project_pivot_linux_userspace_kernel]]. Design:
 docs/DESIGN_20260624_aios_userspace_kernel_on_linux.md. README: uk/README.md.
 
 ## What shipped this session (all on `main`, 7 milestone commits + a version bump)
@@ -34,10 +35,25 @@ docs/DESIGN_20260624_aios_userspace_kernel_on_linux.md. README: uk/README.md.
   (flags `-`/`0`, width incl. `*`, precision incl. `.*`, l/z/h) so `ls -l` columns align. New shadow
   headers `<time.h>`/`<pwd.h>`/`<grp.h>`/`<sys/sysmacros.h>`.
 - **`1728c76`** -- version bump 0.5.0 -> **0.5.1** + README updated (M3e done; M3f/g/h documented).
+- **M3i `d247f1e` -- dash = OPERATIONAL.** Real dash (Debian Almquist Shell 0.5.11, BSD) compiles
+  UNMODIFIED + runs as a real shell: builtins, arithmetic w/ precedence, `&&`/`||`, if/test,
+  for/while, var expansion, external exec, multi-stage PIPELINES, command substitution, `>` redirect,
+  `$?`, -c/stdin/script-file modes -- driving real sbase `echo | wc | cat` through the process model.
+  1 new syscall **FCNTL** (0x101C; `F_DUPFD` = lowest free fd >= arg, how dash parks its script fd
+  >10). libaios grew: **setjmp/longjmp + sigsetjmp/siglongjmp** (aarch64 asm -- dash's exception
+  mechanism), a **signal layer** (dispositions RECORDED, NOT delivered -- no async PAL path yet;
+  -c/scripts never fire one), fcntl/dup/execve/vfork/wait3, sysconf/strtoll/getrlimit/times/strsignal/
+  gettimeofday/ioctl (stubs), getpwnam/getppid/getuid/.., string fns (strcasecmp/strspn/strcspn/
+  strpbrk/strtok/stpncpy), getopt_long; new errno (ENOEXEC/ELOOP/..) + O_EXCL/O_NONBLOCK + AT_EACCESS;
+  new shadow headers signal/setjmp/inttypes/alloca/getopt/sys.{param,resource,time,times,ioctl}.
+  Vendored dash @ 057cd650 under uk/vendor/dash; config.h + the generated sources (token/syntax/nodes/
+  builtins/signames/init) are AIOS build inputs from dash's own generators (provenance vendor/README.md).
+- **`17ba723`** -- version bump 0.5.1 -> **0.5.2** + README marks AIOS operational (M3i documented).
 
-**AIOS ABI now (29 syscalls):** WRITE/READ/OPEN/CLOSE/EXIT/MMAP/FSTAT/LSEEK/EXEC/FORK/WAIT/PIPE/DUP2/
+**AIOS ABI now (30 syscalls):** WRITE/READ/OPEN/CLOSE/EXIT/MMAP/FSTAT/LSEEK/EXEC/FORK/WAIT/PIPE/DUP2/
 STAT/LSTAT/GETCWD/CHDIR/UNLINK/MKDIR/RMDIR/RENAME/GETPID/GETDENTS/OPENAT/FSTATAT/UNLINKAT/FACCESSAT/
-READLINK. **Working vendored sbase utilities:** true, false, echo, cat, wc, mkdir, rm, ls (+ `ls -l`).
+READLINK/FCNTL. **Working vendored, UNMODIFIED:** sbase true/false/echo/cat/wc/mkdir/rm/ls (+ `ls -l`)
+AND **dash** (the operational shell).
 
 ## Dev loop (unchanged, plus one gotcha)
 
@@ -81,18 +97,19 @@ READLINK. **Working vendored sbase utilities:** true, false, echo, cat, wc, mkdi
   readlink, printf widths). The vendored build uses `-w` so upstream warnings do not clutter output;
   errors still surface, and libaios is linted in the prog_* builds.
 
-## NEXT -> dash (= fully operational), then enforce the boundary
+## NEXT (dash is DONE -- AIOS is operational), then enforce the boundary
 
-1. **dash** -- vendor (suckless/MIT, like sbase) + compile unmodified, replacing `prog_sh`. This is
-   the big one: dash leans hard on **signals** (`signal`/`sigaction`/`kill`/`SIGINT`/`SIGCHLD`) and
-   **job control** (process groups, `tcsetpgrp`, `setpgid`, waitpid status macros incl. WIFSIGNALED)
-   -- none of which the ABI/kernel model yet. Expect a real signals milestone first (an AIOS signal
-   delivery path through the PAL/ptrace), then dash. `getcwd`/`getpwnam`/`fnmatch`/`glob` may also
-   surface. Lessons from s15 (zsh job-control gap, [[project_zsh_pty]]) are relevant background.
-2. Likely smaller libc gaps dash/more-sbase want along the way: `sysconf`, `fnmatch`/`glob`,
-   `setjmp`/`longjmp` (dash uses them), `realpath`, a real `time()` (a CLOCK syscall), more sbase
-   utils (head/tail/cp/mv/sort -- cp/mv reuse the recurse + the *at family already built).
-3. Then **M4** enforce the boundary (seccomp/namespaces so a guest CANNOT bypass the kernel) ·
+1. **Real signal DELIVERY** -- an async path through the PAL/ptrace that actually delivers a signal
+   to a guest (inject the guest's handler frame / map a host signal -> the guest's recorded
+   disposition), so dash is fully INTERACTIVE (^C -> SIGINT, child death -> SIGCHLD). Today libaios
+   RECORDS dispositions but nothing fires; -c/script modes don't need it, interactive does. This is
+   the natural next milestone (a real kernel/PAL addition, not just libc).
+2. **More sbase utils** -- head/tail/cp/mv/sort (cp/mv reuse the *at + recurse already built), grep
+   (needs a REAL regex -- shadow <regex.h> is declarations-only today). Each is a small add now.
+3. Smaller gaps that will surface: a real `time()`/CLOCK syscall (ls date heuristic, dash timing),
+   per-guest umask + per-process cwd, maybe job control (dash is built JOBS=0; setpgid/tcsetpgrp).
+   s15 zsh job-control lessons [[project_zsh_pty]] are background.
+4. Then **M4** enforce the boundary (seccomp/namespaces so a guest CANNOT bypass the kernel) ·
    **M5** sched_ext (custom RPi kernel lacks CONFIG_SCHED_CLASS_EXT) · **M6** `pal_sel4.c` (the
    replant seam). The seL4 stall + lead-#3 keyboard stay MOOTED by leaving the platform (seL4 tree
    preserved on main/origin as record/fallback).
@@ -111,30 +128,37 @@ WORKING BRANCH = **`main`** (the 0.5.x userspace kernel; commit on main, Bryan p
 tree: a host-agnostic kernel (kernel/aios_kernel.c includes ONLY aios_abi.h + aios_version.h +
 pal.h) over the ONLY host-aware file (pal/pal_linux.c, a multi-process PTRACE_SYSCALL driver) +
 libaios (a C runtime on the AIOS ABI) + shadow standard headers (lib/include, used with -nostdinc).
-DONE through **v0.5.1**: M0..M3c, the FULL PROCESS MODEL (M3d), the libc retarget (M3e: shadow
-headers, FILE* stdio, errno, sys/stat + path ops, getopt/qsort/bsearch, directory streams), and --
-the milestone -- **vendored suckless sbase whose true/false/echo/cat/wc/mkdir/rm/ls compile
-UNMODIFIED** against AIOS's libc and run on the kernel (M3f/M3g/M3h: incl. the `*at` family for
-`rm -r`, readlink + a real time/strftime layer + a printf rewrite for `ls -l`). **29-syscall ABI.**
-sbase is vendored under uk/vendor/sbase and is NEVER patched -- missing libc features are added to
-libaios. Validated on colima (the RPi4 has been offline since s19 -- Pi-pending, re-confirm when back).
+DONE through **v0.5.2 -- AIOS IS OPERATIONAL**: M0..M3c, the FULL PROCESS MODEL (M3d), the libc
+retarget (M3e), **vendored suckless sbase -- true/false/echo/cat/wc/mkdir/rm/ls compile UNMODIFIED**
+(M3f/g/h: the `*at` family for `rm -r`, readlink + a UTC time/strftime layer + a printf rewrite for
+`ls -l`), and -- the milestone -- **vendored real dash (Debian Almquist Shell, BSD) compiles
+UNMODIFIED and runs as a real shell** (M3i): builtins, arithmetic, &&/||, if/test, for/while,
+pipelines, command substitution, `>` redirect, $?, -c/stdin/script modes, driving real sbase
+echo|wc|cat through the process model. **30-syscall ABI** (added FCNTL). To get dash: setjmp/
+sigsetjmp (aarch64 asm), a RECORD-ONLY signal layer (no async delivery yet), fcntl/execve/vfork +
+~10 new shadow headers. Both sbase + dash are vendored under uk/vendor/{sbase,dash} and are NEVER
+patched -- missing libc features are added to libaios. Validated on colima (the RPi4 has been offline
+since s19 -- Pi-pending, re-confirm when back).
 
 DEV LOOP: `uk/run.sh` (colima aarch64 container, --cap-add=SYS_PTRACE; rc=0 gates the suite). The
 libc-program class is `-nostdinc -isystem $(cc -print-file-name=include) -Ilib -Ilib/include`; the
-vendored-sbase class adds `-Ivendor/sbase -w`. HW via `scp -r uk pi@192.168.0.8:~/ && ssh pi@... 'cd
-~/uk && make && ./aios-uk <prog>'` (pi/aios). GOTCHA: colima's virtiofs mount lags after a host-side
-edit -- the first docker build can fail with "No rule to make target 'aios-uk'"; `sync` + a read-probe
-in a throwaway container (or just retry once) before the real build. A ptrace hang is SILENT ->
-in-container `timeout N` + fprintf(stderr).
+vendored-sbase class adds `-Ivendor/sbase -w`; dash adds `-Ivendor/dash/src -include
+vendor/dash/config.h -DSHELL -DSMALL -DGLOB_BROKEN -Dalloca=__builtin_alloca -w` (the `dash` Makefile
+target). HW via `scp -r uk pi@192.168.0.8:~/ && ssh pi@... 'cd ~/uk && make && ./aios-uk <prog>'`
+(pi/aios). GOTCHA: colima's virtiofs mount lags after a host-side edit -- the first docker build can
+fail with "No rule to make target 'aios-uk'" / "No such file"; `sync` + a read-probe in a throwaway
+container (or just retry once) before the real build. A ptrace hang is SILENT -> in-container
+`timeout N` + fprintf(stderr).
 
-PRIMARY TASK -> **dash = fully operational** (vendor suckless dash, MIT/BSD; compile UNMODIFIED to
-replace prog_sh). dash needs what the ABI/kernel do not model yet: **signals** (signal/sigaction/
-kill, SIGINT/SIGCHLD) and **job control** (setpgid/tcsetpgrp/process groups, WIFSIGNALED-style wait
-status). Expect to build a real AIOS **signals** milestone FIRST (delivery through the PAL/ptrace),
-then dash; smaller gaps (sysconf, fnmatch/glob, setjmp/longjmp, realpath, a real time()/CLOCK
-syscall) will surface. Keep kernel/aios_kernel.c host-agnostic + the PAL seam minimal (the future
-verified boundary); never patch vendored sources -- grow libaios. Commit per milestone on `main`;
-validate colima (+ Pi when reachable); Bryan pushes.
+PRIMARY TASK -> pick the next milestone (dash already operational): (1) **real signal DELIVERY** --
+an async path through the PAL/ptrace so a host signal reaches the guest's recorded disposition (^C ->
+SIGINT, SIGCHLD), making dash fully INTERACTIVE; today libaios records dispositions but nothing fires.
+This is a real kernel/PAL milestone. OR (2) **more sbase utils** -- head/tail/cp/mv/sort (cp/mv reuse
+the *at + recurse already built); grep needs a REAL regex (<regex.h> is decls-only). OR (3) smaller
+gaps: a real `time()`/CLOCK syscall, per-guest umask/cwd, job control (dash built JOBS=0). Keep
+kernel/aios_kernel.c host-agnostic + the PAL seam minimal (the future verified boundary); NEVER patch
+vendored sources -- grow libaios. Commit per milestone on `main`; validate colima (+ Pi when
+reachable); Bryan pushes.
 
 THEN: M4 enforce the boundary (seccomp/namespaces); M5 sched_ext; M6 pal_sel4.c (the replant seam).
 The seL4 stall + lead-#3 keyboard are MOOTED by leaving the platform (seL4 tree preserved on
