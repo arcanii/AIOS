@@ -47,6 +47,14 @@
 #define AIOS_SYS_KILL     0x101F  /* (pid, signum) -> 0, or -errno; signum 0 = existence check       */
 #define AIOS_SYS_ISATTY   0x1020  /* (fd) -> 1 if a terminal, 0 if not, or -errno                     */
 #define AIOS_SYS_CLOCK_GETTIME 0x1021 /* (clk_id, struct aios_timespec*) -> 0, or -errno              */
+/* file-metadata *at family (resolve `path` relative to a dirfd, or AIOS_AT_FDCWD). All return 0 or
+ * -errno. chmod/chown/utimensat follow the final symlink unless AIOS_AT_SYMLINK_NOFOLLOW; symlinkat/
+ * linkat CREATE a link. The plain chmod/chown/lchown/symlink/link/utimensat are these with AT_FDCWD. */
+#define AIOS_SYS_FCHMODAT  0x1022 /* (dirfd, path, mode, flags)                  -> 0, or -errno       */
+#define AIOS_SYS_FCHOWNAT  0x1023 /* (dirfd, path, owner, group, flags)          -> 0, or -errno       */
+#define AIOS_SYS_SYMLINKAT 0x1024 /* (target, newdirfd, linkpath)                -> 0, or -errno       */
+#define AIOS_SYS_LINKAT    0x1025 /* (olddirfd, oldpath, newdirfd, newpath, flags) -> 0, or -errno     */
+#define AIOS_SYS_UTIMENSAT 0x1026 /* (dirfd, path, struct aios_timespec[2], flags) -> 0, or -errno     */
 
 /* clock ids for AIOS_SYS_CLOCK_GETTIME (AIOS-owned; the PAL maps to the host's CLOCK_*). */
 #define AIOS_CLOCK_REALTIME  0   /* wall-clock seconds since the Unix epoch (time/gettimeofday)   */
@@ -72,8 +80,9 @@
  * relative to the process cwd (the recurse-based utilities: rm, ls, cp, ...). AT_* are AIOS-owned;
  * the host PAL maps them to its own. amode for FACCESSAT is the AIOS_?_OK set. */
 #define AIOS_AT_FDCWD             (-100)   /* dirfd sentinel: "relative to cwd" (matches Linux) */
-#define AIOS_AT_SYMLINK_NOFOLLOW  0x100    /* FSTATAT: do not follow a final symlink (lstat)    */
+#define AIOS_AT_SYMLINK_NOFOLLOW  0x100    /* FSTATAT/etc: do not follow a final symlink (lstat) */
 #define AIOS_AT_REMOVEDIR         0x200    /* UNLINKAT: remove a directory (rmdir) not a file   */
+#define AIOS_AT_SYMLINK_FOLLOW    0x400    /* LINKAT: follow a final symlink in oldpath          */
 #define AIOS_F_OK 0   /* faccessat: exists      */
 #define AIOS_X_OK 1   /* executable             */
 #define AIOS_W_OK 2   /* writable               */

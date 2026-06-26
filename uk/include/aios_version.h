@@ -32,6 +32,10 @@
  * ops cp/mv reach for; a real openat2-strict mode mask + a long-standing fopen-errno fix came with it).
  * 0.5.8 = a REAL clock: AIOS_SYS_CLOCK_GETTIME (ABI -> 35) reads the host clock via the PAL, so
  * time()/clock_gettime()/gettimeofday() are live (ls dates, dash timing); time() no longer returns 0.
+ * 0.5.9 = a file-METADATA layer: 5 confinement-aware *at syscalls (FCHMODAT/FCHOWNAT/SYMLINKAT/
+ * LINKAT/UTIMENSAT, ABI -> 40) turn the cp/mv stubs into real ops -- chmod/chown/symlink/link/utimes
+ * work, so `cp -p` preserves mode+times and the `ln`/`chmod` utilities run. Confined single-target
+ * ops resolve via openat2+/proc/self/fd so a symlink cannot redirect a metadata change to a host file.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -41,7 +45,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 8
+#define AIOS_VERSION_PATCH 9
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

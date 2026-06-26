@@ -346,6 +346,45 @@ static long sys_clock_gettime(proc_t *p, uint64_t clk_id, uint64_t gts) {
     return 0;
 }
 
+/* ---- file-metadata *at family (mode / owner / symlink / hardlink / times) ---- */
+static long sys_fchmodat(proc_t *p, uint64_t dirfd, uint64_t gpath, uint64_t mode, uint64_t flags) {
+    char path[256]; long e = read_path(p, gpath, path, sizeof path); if (e) return e;
+    pal_file_t dir; e = resolve_dir(p, dirfd, &dir); if (e) return e;
+    return pal_host_fchmodat(dir, path, (unsigned int)mode, (flags & AIOS_AT_SYMLINK_NOFOLLOW) ? 1 : 0);
+}
+static long sys_fchownat(proc_t *p, uint64_t dirfd, uint64_t gpath, uint64_t owner, uint64_t group, uint64_t flags) {
+    char path[256]; long e = read_path(p, gpath, path, sizeof path); if (e) return e;
+    pal_file_t dir; e = resolve_dir(p, dirfd, &dir); if (e) return e;
+    return pal_host_fchownat(dir, path, (unsigned int)owner, (unsigned int)group, (flags & AIOS_AT_SYMLINK_NOFOLLOW) ? 1 : 0);
+}
+static long sys_symlinkat(proc_t *p, uint64_t gtarget, uint64_t newdirfd, uint64_t glinkpath) {
+    char target[1024], linkpath[256];
+    long e = read_path(p, gtarget, target, sizeof target); if (e) return e;
+    e = read_path(p, glinkpath, linkpath, sizeof linkpath); if (e) return e;
+    pal_file_t newdir; e = resolve_dir(p, newdirfd, &newdir); if (e) return e;
+    return pal_host_symlinkat(target, newdir, linkpath);
+}
+static long sys_linkat(proc_t *p, uint64_t olddirfd, uint64_t goldpath, uint64_t newdirfd, uint64_t gnewpath, uint64_t flags) {
+    char oldpath[256], newpath[256];
+    long e = read_path(p, goldpath, oldpath, sizeof oldpath); if (e) return e;
+    e = read_path(p, gnewpath, newpath, sizeof newpath);      if (e) return e;
+    pal_file_t olddir, newdir;
+    e = resolve_dir(p, olddirfd, &olddir); if (e) return e;
+    e = resolve_dir(p, newdirfd, &newdir); if (e) return e;
+    return pal_host_linkat(olddir, oldpath, newdir, newpath, (flags & AIOS_AT_SYMLINK_FOLLOW) ? 1 : 0);
+}
+static long sys_utimensat(proc_t *p, uint64_t dirfd, uint64_t gpath, uint64_t gtimes, uint64_t flags) {
+    char path[256]; long e = read_path(p, gpath, path, sizeof path); if (e) return e;
+    pal_file_t dir; e = resolve_dir(p, dirfd, &dir); if (e) return e;
+    struct aios_timespec ts[2];
+    const struct aios_timespec *tp = NULL;
+    if (gtimes) {                                          /* NULL = "now"; else 2 timespecs */
+        if (pal_guest_read(p->pid, gtimes, ts, sizeof ts) != sizeof ts) return -AIOS_EFAULT;
+        tp = ts;
+    }
+    return pal_host_utimensat(dir, path, tp, (flags & AIOS_AT_SYMLINK_NOFOLLOW) ? 1 : 0);
+}
+
 /* ---- signals ---- */
 static long sys_sigaction(proc_t *p, uint64_t signum, uint64_t handler, uint64_t tramp) {
     if (signum < 1 || signum >= AIOS_NSIG) return -AIOS_EINVAL;
@@ -705,6 +744,11 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
     case AIOS_SYS_FCNTL:   ret = (uint64_t)sys_fcntl(p, sc->arg[0], sc->arg[1], sc->arg[2]);             break;
     case AIOS_SYS_ISATTY:  ret = (uint64_t)sys_isatty(p, sc->arg[0]);                                    break;
     case AIOS_SYS_CLOCK_GETTIME: ret = (uint64_t)sys_clock_gettime(p, sc->arg[0], sc->arg[1]);           break;
+    case AIOS_SYS_FCHMODAT:  ret = (uint64_t)sys_fchmodat (p, sc->arg[0], sc->arg[1], sc->arg[2], sc->arg[3]);            break;
+    case AIOS_SYS_FCHOWNAT:  ret = (uint64_t)sys_fchownat (p, sc->arg[0], sc->arg[1], sc->arg[2], sc->arg[3], sc->arg[4]); break;
+    case AIOS_SYS_SYMLINKAT: ret = (uint64_t)sys_symlinkat(p, sc->arg[0], sc->arg[1], sc->arg[2]);                        break;
+    case AIOS_SYS_LINKAT:    ret = (uint64_t)sys_linkat   (p, sc->arg[0], sc->arg[1], sc->arg[2], sc->arg[3], sc->arg[4]); break;
+    case AIOS_SYS_UTIMENSAT: ret = (uint64_t)sys_utimensat(p, sc->arg[0], sc->arg[1], sc->arg[2], sc->arg[3]);            break;
     case AIOS_SYS_SIGACTION:ret = (uint64_t)sys_sigaction(p, sc->arg[0], sc->arg[1], sc->arg[2]);        break;
     case AIOS_SYS_KILL:    ret = (uint64_t)sys_kill(p, sc->arg[0], sc->arg[1]);                          break;
     default:             ret = (uint64_t)-AIOS_ENOSYS; /* unknown AIOS syscall */           break;

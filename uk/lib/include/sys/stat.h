@@ -69,6 +69,7 @@ mode_t umask(mode_t mask);
  * content + structure, -p preservation is degraded) / ENOSYS (mknod cannot make special files). */
 int    chmod(const char *path, mode_t mode);
 int    fchmod(int fd, mode_t mode);
+int    fchmodat(int dirfd, const char *path, mode_t mode, int flags);
 int    mknod(const char *path, mode_t mode, dev_t dev);
 int    utimensat(int dirfd, const char *path, const void *times, int flags);
 

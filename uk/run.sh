@@ -90,6 +90,18 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            { test -f /tmp/aios_ct2/sub/b && echo "  cp -r:      nested tree copied OK"; };
            printf "  dash pipe (head|tail): "; ./aios-uk ./dash -c "printf \"a\nb\nc\nd\n\" | ./sbase-head -n 3 | ./sbase-tail -n 1" 2>/dev/null;
            rm -rf /tmp/aios_u.txt /tmp/aios_mv.txt /tmp/aios_ct /tmp/aios_ct2;
+           echo "--- file-metadata utils: ln / ln -s / chmod, and cp -p preserves mode+times ---" &&
+           rm -rf /tmp/aios_md; mkdir -p /tmp/aios_md && echo data >/tmp/aios_md/target;
+           ./aios-uk ./sbase-ln -s target /tmp/aios_md/lnk 2>/dev/null;
+           { test -L /tmp/aios_md/lnk && echo "  ln -s:      created a symlink OK"; };
+           ./aios-uk ./sbase-ln /tmp/aios_md/target /tmp/aios_md/hard 2>/dev/null;
+           { test "$(stat -c %h /tmp/aios_md/target)" -ge 2 && echo "  ln (hard):  nlink>=2 OK"; };
+           ./aios-uk ./sbase-chmod 0640 /tmp/aios_md/target 2>/dev/null;
+           { test "$(stat -c %a /tmp/aios_md/target)" = 640 && echo "  chmod 0640: mode set OK"; };
+           touch -d "2020-01-02 03:04:05" /tmp/aios_md/src 2>/dev/null; chmod 0641 /tmp/aios_md/src;
+           ./aios-uk ./sbase-cp -p /tmp/aios_md/src /tmp/aios_md/pcopy 2>/dev/null;
+           { test "$(stat -c %a%Y /tmp/aios_md/src)" = "$(stat -c %a%Y /tmp/aios_md/pcopy)" && echo "  cp -p:      mode + mtime preserved OK"; };
+           rm -rf /tmp/aios_md;
            echo "=== M3i: dash (Debian Almquist shell) compiled UNMODIFIED -- the operational shell ===" &&
            printf "  echo arith: "; ./aios-uk ./dash -c "echo \$((2 + 3 * 4))" 2>/dev/null;
            printf "  control:    "; ./aios-uk ./dash -c "true && echo yes || echo no" 2>/dev/null;

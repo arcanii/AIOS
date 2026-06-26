@@ -44,8 +44,11 @@ unsigned int sleep(unsigned int seconds);
 int     chown(const char *path, uid_t owner, gid_t group);
 int     fchown(int fd, uid_t owner, gid_t group);
 int     lchown(const char *path, uid_t owner, gid_t group);
+int     fchownat(int dirfd, const char *path, uid_t owner, gid_t group, int flags);
 int     symlink(const char *target, const char *linkpath);
+int     symlinkat(const char *target, int newdirfd, const char *linkpath);
 int     link(const char *oldpath, const char *newpath);
+int     linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, int flags);
 void    _exit(int code) __attribute__((noreturn));
 
 /* sysconf keys (subset; match the libaios sysconf switch). _SC_LOGIN_NAME_MAX also doubles as a

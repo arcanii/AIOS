@@ -184,6 +184,19 @@ int pal_host_isatty(pal_file_t f);
  * source. This is the kernel's only wall-clock/monotonic time source. */
 int pal_host_clock_gettime(int clk_id, struct aios_timespec *out);
 
+/* --- file-metadata *at family (mode / owner / symlink / hardlink / times) ---
+ * `dir` is a directory backing object or PAL_AT_FDCWD; `nofollow`/`follow` select the final-symlink
+ * behaviour. All return 0 or a negated AIOS error code. When the PAL is confined (M4.2), the
+ * single-target ops (chmod/chown/utimensat) resolve the path INSIDE the root first, so a final
+ * symlink the guest planted cannot redirect the metadata change to a host file; the create ops
+ * (symlinkat/linkat) confine the parent directory. `times` (utimensat) is a 2-element aios_timespec
+ * array, or NULL for "now". (Linux: fchmodat/fchownat/symlinkat/linkat/utimensat.) */
+int pal_host_fchmodat (pal_file_t dir, const char *path, unsigned int mode, int nofollow);
+int pal_host_fchownat (pal_file_t dir, const char *path, unsigned int owner, unsigned int group, int nofollow);
+int pal_host_symlinkat(const char *target, pal_file_t newdir, const char *linkpath);
+int pal_host_linkat   (pal_file_t olddir, const char *oldpath, pal_file_t newdir, const char *newpath, int follow);
+int pal_host_utimensat(pal_file_t dir, const char *path, const struct aios_timespec *times, int nofollow);
+
 /* Set the value `who` sees returned from the syscall it is stopped at, WITHOUT resuming it -- it
  * stays stopped at the syscall exit. (pal_guest_return = this + pal_guest_resume.) The kernel uses
  * it to interpose signal delivery between finishing a syscall and resuming. */

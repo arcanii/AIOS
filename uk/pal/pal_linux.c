@@ -481,6 +481,22 @@ static long open_parent_at(int basefd, const char *fullpath, char *dirbuf, size_
     return openat2_in_root(basefd, dpath, (uint64_t)(O_PATH | O_DIRECTORY | O_CLOEXEC), 0);
 }
 
+/* Resolve `path` (under basefd) INSIDE the root to a CANONICAL real host path in `out`, following the
+ * final symlink unless `nofollow`. openat2(RESOLVE_IN_ROOT) guarantees the result is under the root,
+ * so a plain host metadata op on `out` cannot be redirected out of the root by a final symlink the
+ * guest planted (the M4.3 exec trick, reused for chmod/chown/utimensat). 0, or -1 with errno set. */
+static long confined_canon(int basefd, const char *path, int nofollow, char *out, size_t outsz) {
+    long fd = openat2_in_root(basefd, path, (uint64_t)(O_PATH | O_CLOEXEC | (nofollow ? O_NOFOLLOW : 0)), 0);
+    if (fd < 0) return -1;                               /* errno set by openat2 */
+    char proc[64];
+    snprintf(proc, sizeof proc, "/proc/self/fd/%ld", fd);
+    ssize_t n = readlink(proc, out, outsz - 1);
+    int e = errno; close((int)fd);
+    if (n < 0) { errno = e; return -1; }
+    out[n] = '\0';
+    return 0;
+}
+
 /* M4.3 -- confine a guest-issued exec to the AIOS root. Resolve the guest's exec target INSIDE the
  * root (openat2 RESOLVE_IN_ROOT, following symlinks within the root), turn the resulting O_PATH handle
  * into a canonical real host path via /proc/self/fd, and stage that path in the guest's own stack
@@ -725,6 +741,73 @@ int pal_host_clock_gettime(int clk_id, struct aios_timespec *out) {
     out->tv_sec  = (long long)ts.tv_sec;
     out->tv_nsec = (long long)ts.tv_nsec;
     return 0;
+}
+
+/* --- file-metadata *at family. Confined single-target ops go through confined_canon (so a final
+ * symlink cannot redirect the change to a host file); create ops confine the parent dir. --- */
+#ifndef AT_SYMLINK_FOLLOW
+#define AT_SYMLINK_FOLLOW 0x400
+#endif
+int pal_host_fchmodat(pal_file_t dir, const char *path, unsigned int mode, int nofollow) {
+    if (g_confined) {
+        char eff[2048]; const char *full; int base = confined_base(dir, path, eff, sizeof eff, &full);
+        char canon[2048];
+        if (confined_canon(base, full, nofollow, canon, sizeof canon) != 0) return (int)pal_errno();
+        return fchmodat(AT_FDCWD, canon, (mode_t)mode, 0) == 0 ? 0 : (int)pal_errno();
+    }
+    return fchmodat(hostdir(dir), path, (mode_t)mode, 0) == 0 ? 0 : (int)pal_errno();
+}
+int pal_host_fchownat(pal_file_t dir, const char *path, unsigned int owner, unsigned int group, int nofollow) {
+    if (g_confined) {
+        char eff[2048]; const char *full; int base = confined_base(dir, path, eff, sizeof eff, &full);
+        char canon[2048];
+        if (confined_canon(base, full, nofollow, canon, sizeof canon) != 0) return (int)pal_errno();
+        return fchownat(AT_FDCWD, canon, (uid_t)owner, (gid_t)group, nofollow ? AT_SYMLINK_NOFOLLOW : 0) == 0
+                   ? 0 : (int)pal_errno();
+    }
+    return fchownat(hostdir(dir), path, (uid_t)owner, (gid_t)group, nofollow ? AT_SYMLINK_NOFOLLOW : 0) == 0
+               ? 0 : (int)pal_errno();
+}
+int pal_host_symlinkat(const char *target, pal_file_t newdir, const char *linkpath) {
+    if (g_confined) {
+        char eff[2048]; const char *full; int base = confined_base(newdir, linkpath, eff, sizeof eff, &full);
+        char dirb[2048]; const char *leaf;
+        long pfd = open_parent_at(base, full, dirb, sizeof dirb, &leaf);   /* link created in a confined dir */
+        if (pfd < 0) return (int)pal_errno();
+        int r = symlinkat(target, (int)pfd, leaf); int e = errno; close((int)pfd);
+        return r == 0 ? 0 : (errno = e, (int)pal_errno());                 /* target stored verbatim (resolved confined later) */
+    }
+    return symlinkat(target, hostdir(newdir), linkpath) == 0 ? 0 : (int)pal_errno();
+}
+int pal_host_linkat(pal_file_t olddir, const char *oldpath, pal_file_t newdir, const char *newpath, int follow) {
+    if (g_confined) {
+        char effo[2048]; const char *fullo; int baseo = confined_base(olddir, oldpath, effo, sizeof effo, &fullo);
+        char canono[2048];
+        if (confined_canon(baseo, fullo, follow ? 0 : 1, canono, sizeof canono) != 0) return (int)pal_errno();
+        char effn[2048]; const char *fulln; int basen = confined_base(newdir, newpath, effn, sizeof effn, &fulln);
+        char dirb[2048]; const char *leaf;
+        long pfd = open_parent_at(basen, fulln, dirb, sizeof dirb, &leaf);
+        if (pfd < 0) return (int)pal_errno();
+        int r = linkat(AT_FDCWD, canono, (int)pfd, leaf, 0); int e = errno; close((int)pfd);
+        return r == 0 ? 0 : (errno = e, (int)pal_errno());
+    }
+    return linkat(hostdir(olddir), oldpath, hostdir(newdir), newpath, follow ? AT_SYMLINK_FOLLOW : 0) == 0
+               ? 0 : (int)pal_errno();
+}
+int pal_host_utimensat(pal_file_t dir, const char *path, const struct aios_timespec *times, int nofollow) {
+    struct timespec ts[2], *tp = NULL;
+    if (times) {
+        ts[0].tv_sec = (time_t)times[0].tv_sec; ts[0].tv_nsec = (long)times[0].tv_nsec;
+        ts[1].tv_sec = (time_t)times[1].tv_sec; ts[1].tv_nsec = (long)times[1].tv_nsec;
+        tp = ts;
+    }
+    if (g_confined) {
+        char eff[2048]; const char *full; int base = confined_base(dir, path, eff, sizeof eff, &full);
+        char canon[2048];
+        if (confined_canon(base, full, nofollow, canon, sizeof canon) != 0) return (int)pal_errno();
+        return utimensat(AT_FDCWD, canon, tp, 0) == 0 ? 0 : (int)pal_errno();
+    }
+    return utimensat(hostdir(dir), path, tp, nofollow ? AT_SYMLINK_NOFOLLOW : 0) == 0 ? 0 : (int)pal_errno();
 }
 
 /* --- signal delivery (register manipulation -- host-specific, so it lives here) ---

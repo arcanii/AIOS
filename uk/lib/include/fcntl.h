@@ -21,6 +21,7 @@
 #define AT_FDCWD            AIOS_AT_FDCWD
 #define AT_SYMLINK_NOFOLLOW AIOS_AT_SYMLINK_NOFOLLOW
 #define AT_REMOVEDIR        AIOS_AT_REMOVEDIR
+#define AT_SYMLINK_FOLLOW   AIOS_AT_SYMLINK_FOLLOW
 #define AT_EACCESS          0x200
 
 /* fcntl commands + fd flags */

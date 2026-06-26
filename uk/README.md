@@ -93,8 +93,8 @@ The headline proof of the retarget: genuine third-party POSIX-utility source (**
 vendored unmodified under `vendor/sbase` — see `vendor/README.md`) compiles UNMODIFIED against
 `libaios` and runs on the AIOS kernel. sbase is never patched; missing libc features are added to
 `libaios`. Working utilities: **true / false / echo / cat / wc / mkdir / rm / ls** (incl. `ls -l`)
-**/ head / tail / cp / mv** (cp/mv copy content + structure; `-p` metadata is degraded and
-symlinks/special files report `ENOSYS` — there are no mode/owner/time/symlink syscalls yet).
+**/ head / tail / cp / mv / ln / chmod** (`cp -p` preserves mode + times; `ln`/`ln -s` make
+hard/symlinks — backed by the file-metadata syscalls below).
 
 - **M3f** vendored sbase; `true/false/echo/cat` (then `wc` + the libutf rune layer, then `mkdir` +
   `umask`/`parsemode`). **M3g** the **`*at` family** (`openat`/`fstatat`/`unlinkat`/`faccessat` +
@@ -161,12 +161,21 @@ returns) then runs the next command. A `do_read` single-read fix (POSIX semantic
 available, don't loop to fill the buffer) was what made interactive mode function. HW-validated on the
 RPi4 (kernel 6.12).
 
-**AIOS ABI now (35 syscalls):** … READLINK/FCNTL/SIGACTION/SIGRETURN/KILL/ISATTY/CLOCK_GETTIME.
+**AIOS ABI now (40 syscalls):** … READLINK/FCNTL/SIGACTION/SIGRETURN/KILL/ISATTY/CLOCK_GETTIME/
+FCHMODAT/FCHOWNAT/SYMLINKAT/LINKAT/UTIMENSAT.
 
 A real clock: `AIOS_SYS_CLOCK_GETTIME` reads the host clock through the PAL (`pal_host_clock_gettime`
 → `clock_gettime(2)`; `AIOS_CLOCK_REALTIME`/`MONOTONIC`), so `time()`/`clock_gettime()`/`gettimeofday()`
 are live — `time()` no longer returns a fixed 0. `ls -l` dates now use the real recent-vs-old format,
 and `prog_clock.c` confirms the wall clock matches the host and the monotonic clock advances.
+
+A file-metadata layer: five confinement-aware `*at` syscalls (`FCHMODAT`/`FCHOWNAT`/`SYMLINKAT`/
+`LINKAT`/`UTIMENSAT`) make `chmod`/`chown`/`symlink`/`link`/`utimes` real, so `cp -p` preserves
+mode+times and `ln`/`chmod` run. The confinement-critical detail: `chmod`/`chown`/`utimensat` follow
+the final symlink in the *host* namespace, so a confined guest's single-target ops first resolve the
+path inside the root (`openat2` + `/proc/self/fd`) — a planted in-root symlink can't redirect a
+metadata change to a host file (proven in `prog_jail.c`: `chmod` through an escaping symlink is denied
+while the host file's mode is untouched).
 
 ## M4.2 — filesystem confinement (the other half of the boundary) ✅
 
@@ -209,5 +218,4 @@ clamped back into the root. Validated on colima and the RPi4.
 ## Next (per the design doc)
 
 Per-process cwd/umask. `sort` (needs `strtod` + the full libutf rune layer) and `grep` (needs a real
-`<regex.h>`); a real file-metadata layer (chmod/chown/symlink/utime syscalls) so `cp -p` and `ln`
-work. Then **sched_ext** · the seL4/x86-64 replant seam (`pal_sel4.c`).
+`<regex.h>`). Then **sched_ext** · the seL4/x86-64 replant seam (`pal_sel4.c`).

@@ -91,6 +91,15 @@ int main(void) {
     if (ln > 0) { lbuf[ln] = '\0'; printf("  ok    readlink(/abs_link) -> \"%s\" (link text only)\n", lbuf); }
     else { printf("  FAIL  readlink(/abs_link): %s\n", strerror(errno)); fails++; }
 
+    /* metadata ops work in-root, but cannot escape THROUGH a symlink that points out of the root */
+    if (chmod("/inside.txt", 0640) == 0) printf("  ok    chmod(/inside.txt) within the root\n");
+    else { printf("  FAIL  chmod in-root: %s\n", strerror(errno)); fails++; }
+    unlink("/newlink");                          /* clean slate (idempotent across re-runs) */
+    if (symlink("inside.txt", "/newlink") == 0) printf("  ok    symlink created within the root\n");
+    else { printf("  FAIL  symlink in-root: %s\n", strerror(errno)); fails++; }
+    if (chmod("/abs_link", 0777) == 0) { printf("  FAIL  chmod through an escaping symlink succeeded!\n"); fails++; }
+    else printf("  ok    chmod(/abs_link) through an escaping symlink denied (%s)\n", strerror(errno));
+
     /* readdir of the root lists in-root names (opendir/getdents go through the confined open) */
     DIR *d = opendir("/");
     if (d) {

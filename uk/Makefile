@@ -39,7 +39,7 @@ SBASE        = vendor/sbase
 SBASE_CFLAGS = $(LIBC_CFLAGS) -I$(SBASE) -w
 SBASE_DEPS   = $(LIBAIOS) $(LIBC_HDRS) $(SBASE)/util.h $(SBASE)/arg.h $(SBASE)/compat.h
 SBASE_BINS   = sbase-true sbase-false sbase-echo sbase-cat sbase-wc sbase-mkdir sbase-rm sbase-ls \
-               sbase-head sbase-tail sbase-cp sbase-mv
+               sbase-head sbase-tail sbase-cp sbase-mv sbase-ln sbase-chmod
 
 # Vendored dash (the Debian Almquist shell, BSD) -- compiled UNMODIFIED against libaios. config.h +
 # the generated sources (syntax/nodes/builtins/init/signames/token.h) are AIOS build inputs (see
@@ -197,6 +197,12 @@ sbase-cp: $(SBASE)/cp.c $(SBASE_DEPS) $(SBASE)/fs.h
 	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/cp.c $(CP_OBJS) $(LIBAIOS)
 sbase-mv: $(SBASE)/mv.c $(SBASE_DEPS) $(SBASE)/fs.h
 	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/mv.c $(CP_OBJS) $(SBASE)/libutil/rm.c $(LIBAIOS)
+sbase-ln: $(SBASE)/ln.c $(SBASE_DEPS)
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/ln.c $(SBASE)/libutil/eprintf.c $(LIBAIOS)
+sbase-chmod: $(SBASE)/chmod.c $(SBASE_DEPS) $(SBASE)/fs.h
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/chmod.c \
+	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/ealloc.c $(SBASE)/libutil/mode.c \
+	      $(SBASE)/libutil/recurse.c $(SBASE)/libutil/strlcpy.c $(SBASE)/libutil/strtonum.c $(LIBAIOS)
 
 # dash = the operational shell. One cc invocation over the dash sources + generated sources + libaios.
 dash: $(DASH_CFILES) $(LIBAIOS) $(LIBC_HDRS) $(DASH)/config.h

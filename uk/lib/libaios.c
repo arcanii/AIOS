@@ -28,6 +28,17 @@ static long asys4(long nr, long a0, long a1, long a2, long a3) {
     __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2), "r"(x3) : "memory", "cc");
     return x0;
 }
+/* 5-argument variant (fchownat: dirfd,path,owner,group,flags; linkat: olddirfd,old,newdirfd,new,flags). */
+static long asys5(long nr, long a0, long a1, long a2, long a3, long a4) {
+    register long x8 __asm__("x8") = nr;
+    register long x0 __asm__("x0") = a0;
+    register long x1 __asm__("x1") = a1;
+    register long x2 __asm__("x2") = a2;
+    register long x3 __asm__("x3") = a3;
+    register long x4 __asm__("x4") = a4;
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4) : "memory", "cc");
+    return x0;
+}
 
 int errno;   /* POSIX errno; set by the standard-named wrappers (see __ret) and read by perror */
 char *strerror(int errnum);   /* defined below; declared early so perror (stdio) can use it */
@@ -438,22 +449,23 @@ int  rename(const char *o, const char *n)         { return (int)__ret(asys(AIOS_
 static unsigned int __aios_umask = 022;
 unsigned int umask(unsigned int m) { unsigned int old = __aios_umask; __aios_umask = m & 0777; return old; }
 
-/* File metadata ops cp/mv reach for. There are no AIOS syscalls for mode/owner/times yet, so these
- * are HONEST stubs (documented degradations, not silent hacks): mode/owner/time setters succeed as
- * no-ops (cp/mv copy content + structure; `-p` preservation is degraded, like umask/time elsewhere),
- * while symlink/link/mknod -- which would have to CREATE a new object we cannot -- fail ENOSYS, so a
- * tree with symlinks/special files reports it rather than silently dropping them. Default copies of
- * regular files and directory trees are unaffected (they never call these). basename/dirname are real
- * string ops (POSIX: may modify the buffer). */
-int chmod (const char *p, unsigned int m)                       { (void)p; (void)m; return 0; }
-int fchmod(int fd, unsigned int m)                              { (void)fd; (void)m; return 0; }
-int chown (const char *p, unsigned int u, unsigned int g)       { (void)p; (void)u; (void)g; return 0; }
-int fchown(int fd, unsigned int u, unsigned int g)              { (void)fd; (void)u; (void)g; return 0; }
-int lchown(const char *p, unsigned int u, unsigned int g)       { (void)p; (void)u; (void)g; return 0; }
-int utimensat(int d, const char *p, const void *t, int f)       { (void)d; (void)p; (void)t; (void)f; return 0; }
-int utime (const char *p, const void *t)                        { (void)p; (void)t; return 0; }
-int symlink(const char *t, const char *l)                       { (void)t; (void)l; errno = AIOS_ENOSYS; return -1; }
-int link  (const char *o, const char *n)                        { (void)o; (void)n; errno = AIOS_ENOSYS; return -1; }
+/* File metadata: real, confinement-aware syscalls (the *at forms are the primitives; the plain forms
+ * are them with AT_FDCWD). chmod/chown set mode/owner; symlink/link create links; utimensat sets
+ * times. fchmod/fchown have no fd-metadata syscall (nothing in our utils calls them) -> ENOSYS; utime
+ * is a legacy no-op; mknod cannot make special files -> ENOSYS. basename/dirname are real string ops. */
+int fchmodat(int d, const char *p, unsigned int m, int f) { return (int)__ret(asys4(AIOS_SYS_FCHMODAT, d, (long)p, (long)m, f)); }
+int chmod (const char *p, unsigned int m)                 { return fchmodat(AIOS_AT_FDCWD, p, m, 0); }
+int fchmod(int fd, unsigned int m)                        { (void)fd; (void)m; errno = AIOS_ENOSYS; return -1; }
+int fchownat(int d, const char *p, unsigned int u, unsigned int g, int f) { return (int)__ret(asys5(AIOS_SYS_FCHOWNAT, d, (long)p, (long)u, (long)g, f)); }
+int chown (const char *p, unsigned int u, unsigned int g) { return fchownat(AIOS_AT_FDCWD, p, u, g, 0); }
+int lchown(const char *p, unsigned int u, unsigned int g) { return fchownat(AIOS_AT_FDCWD, p, u, g, AIOS_AT_SYMLINK_NOFOLLOW); }
+int fchown(int fd, unsigned int u, unsigned int g)        { (void)fd; (void)u; (void)g; errno = AIOS_ENOSYS; return -1; }
+int symlinkat(const char *t, int d, const char *l)        { return (int)__ret(asys(AIOS_SYS_SYMLINKAT, (long)t, d, (long)l)); }
+int symlink(const char *t, const char *l)                 { return symlinkat(t, AIOS_AT_FDCWD, l); }
+int linkat(int od, const char *o, int nd, const char *n, int f) { return (int)__ret(asys5(AIOS_SYS_LINKAT, od, (long)o, nd, (long)n, f)); }
+int link  (const char *o, const char *n)                  { return linkat(AIOS_AT_FDCWD, o, AIOS_AT_FDCWD, n, 0); }
+int utimensat(int d, const char *p, const void *t, int f) { return (int)__ret(asys4(AIOS_SYS_UTIMENSAT, d, (long)p, (long)t, f)); }
+int utime (const char *p, const void *t)                  { (void)p; (void)t; return 0; }   /* legacy no-op */
 int mknod (const char *p, unsigned int m, unsigned long long d) { (void)p; (void)m; (void)d; errno = AIOS_ENOSYS; return -1; }
 
 static char *__path_tail(char *path, int wantdir) {
