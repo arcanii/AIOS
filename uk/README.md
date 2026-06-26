@@ -279,11 +279,25 @@ delivery, so M5's interactive `^C` path is unchanged — dash stays `JOBS=0` and
 `setpgid(0,0)` making a new leader, `kill(-pgrp)`/`killpg` delivering to the group, and the
 `tcsetpgrp`/`tcgetpgrp` wiring + `ENOTTY`) in the gate. Validated on colima and the RPi4.
 
+## M7 — job control, increment 2: stop / continue ✅
+
+The process-lifecycle half of job control: a process can now be **stopped** and **continued**, and a
+parent learns of both through `wait`. No new ABI — it reuses `KILL`/`WAIT`. A `SIGSTOP`/`SIGTSTP`
+(default action) moves the process to a new **`PS_STOPPED`** state — the kernel plants the syscall
+result and then simply does *not* resume it (the kernel already owns when each guest runs, so
+"stopped" is just "don't resume until `SIGCONT`"). `SIGCONT` resumes a stopped process immediately.
+`wait(WUNTRACED)` reports a stopped child (status `(sig<<8)|0x7f`, so `WIFSTOPPED`/`WSTOPSIG` decode
+it) and `wait(WCONTINUED)` reports a continued one (`0xffff` → `WIFCONTINUED`); `WNOHANG` polls.
+
+Still **no terminal-signal routing** — stop/continue is driven by explicit `kill` here, so M5's `^C`
+path is untouched and `ctrlc_pty` still passes. Proof: `guest/prog_stop.c` (`SIGSTOP` → `WIFSTOPPED`,
+`SIGCONT` → `WIFCONTINUED`, then terminate + reap) in the gate. Validated on colima and the RPi4.
+
 ## Next (per the design doc)
 
-**Job control, increment 2** — wire the foundation to behavior: route terminal signals (`^C`/`^Z`)
-to *only* the foreground group (today every guest shares the kernel's process group, so M5's `^C`
-works by the host pty broadcasting to it — that gets reworked), add a **STOPPED** process state
-(`SIGTSTP`/`SIGCONT`/`SIGTTOU`/`SIGTTIN`), `WUNTRACED`/`WCONTINUED` waits, and `sigprocmask` for
-dash's `sigblockall`/`sigclearmask`, then rebuild dash **`JOBS=1`**. Then **sched_ext** · the
-seL4/x86-64 replant seam (`pal_sel4.c`).
+**Job control, increment 3** — the interactive payoff: route terminal signals (`^C`/`^Z`) to *only*
+the foreground process group (today every guest shares the kernel's process group, so M5's `^C` works
+by the host pty broadcasting to it — that gets reworked: move guests off the kernel's host group and
+have the kernel forward terminal signals to `g_fg_pgrp`), add `sigprocmask` for dash's
+`sigblockall`/`sigclearmask`, then rebuild dash **`JOBS=1`** so `^Z`/`fg`/`bg` and "`^C` kills only the
+foreground job" work interactively. Then **sched_ext** · the seL4/x86-64 replant seam (`pal_sel4.c`).

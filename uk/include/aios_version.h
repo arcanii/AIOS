@@ -67,6 +67,13 @@
  * STOPPED state (^Z stop/continue) + dash JOBS=1 come next; dash stays JOBS=0, so M5 interactive ^C
  * is UNTOUCHED (zero regression). Proof: guest/prog_jobctl.c (pgid inheritance, setpgid leader,
  * kill-to-group delivery, tcsetpgrp/tcgetpgrp wiring + the ENOTTY guard).
+ * 0.5.16 = job control increment 2: STOP/CONTINUE (no new ABI -- reuses KILL/WAIT). A process can be
+ * STOPPED (SIGSTOP/SIGTSTP default action -> a new PS_STOPPED state, the kernel plants the syscall
+ * result then does NOT resume) and CONTINUED (SIGCONT resumes a stopped process immediately), and the
+ * parent learns of both via wait WUNTRACED (a stopped child, status (sig<<8)|0x7f) and WCONTINUED
+ * (a continued child, status 0xffff); WNOHANG polls. KILL to a stopped process special-cases SIGCONT.
+ * Still no terminal-signal ROUTING (that + dash JOBS=1 is increment 3), so M5 ^C stays untouched.
+ * Proof: guest/prog_stop.c (SIGSTOP -> WIFSTOPPED, SIGCONT -> WIFCONTINUED, then terminate + reap).
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -76,7 +83,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 15
+#define AIOS_VERSION_PATCH 16
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

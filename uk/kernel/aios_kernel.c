@@ -73,7 +73,8 @@ static void ofile_unref(int oi) {
 /* ---- the process table ---- */
 #define AIOS_MAX_FD 64
 #define MAX_PROCS   64
-enum { PS_FREE = 0, PS_RUNNING, PS_ZOMBIE, PS_BLOCKED_WAIT, PS_BLOCKED_READ, PS_BLOCKED_WRITE };
+enum { PS_FREE = 0, PS_RUNNING, PS_ZOMBIE, PS_BLOCKED_WAIT, PS_BLOCKED_READ, PS_BLOCKED_WRITE,
+       PS_STOPPED /* job control: stopped by SIGSTOP/SIGTSTP, not resumed until SIGCONT */ };
 typedef struct {
     int           state;
     pal_pid_t     pid;
@@ -82,7 +83,11 @@ typedef struct {
                                         * across exec. init is its own leader (pgid == pid). */
     int           exit_code;           /* valid in PS_ZOMBIE */
     unsigned long wait_for;            /* PS_BLOCKED_WAIT: AIOS_WAIT_ANY/0, or a specific pid */
+    unsigned long wait_flags;          /* PS_BLOCKED_WAIT: the wait options (WUNTRACED/WCONTINUED/...) */
     uint64_t      wait_status_gaddr;   /* PS_BLOCKED_WAIT: where to store the status (0 = none) */
+    int           stopped_sig;         /* PS_STOPPED: the signal that stopped it (for WSTOPSIG) */
+    int           report_stop;         /* a stop event awaits collection by wait(WUNTRACED) */
+    int           report_cont;         /* a continue event awaits collection by wait(WCONTINUED) */
     /* PS_BLOCKED_READ/WRITE: a pipe I/O parked because the pipe was empty/full. The kernel resumes
      * it from pipe_settle() when a peer makes the pipe ready (or closes its end -> EOF/EPIPE). */
     int           blk_fd;              /* the AIOS fd being read/written */
@@ -478,8 +483,23 @@ static long sys_sigaction(proc_t *p, uint64_t signum, uint64_t handler, uint64_t
     if (tramp) p->sig_tramp = tramp;                              /* the guest's sigreturn trampoline */
     return (long)old;
 }
-/* Post a pending signal to one process (delivered at its next syscall exit, per the M5 model). */
-static void sig_post(proc_t *t, int signum) { if (signum) t->pending_sig = signum; }
+static int wait_matches(unsigned long want, const proc_t *child);   /* defined with the wait code */
+static void proc_stop(proc_t *p, int sig);
+static void proc_cont(proc_t *p);
+
+/* SIGSTOP(19)/SIGTSTP(20)/SIGTTIN(21)/SIGTTOU(22): default action = STOP the process. */
+static int is_stop_sig(int sig) { return sig == 19 || sig == 20 || sig == 21 || sig == 22; }
+
+/* Deliver one signal to one process. SIGCONT continues a stopped process IMMEDIATELY (it is not at a
+ * syscall, so it cannot wait for the syscall-exit delivery path); otherwise the signal is POSTED as
+ * pending and acted on at the target's next syscall exit (kreturn) -- the M5 model. A signal sent to
+ * an already-stopped process is queued (delivered once it continues); a redundant stop is dropped. */
+static void deliver_signal(proc_t *t, int signum) {
+    if (!signum) return;                                         /* existence probe -- no signal */
+    if (signum == 18 /*SIGCONT*/) { if (t->state == PS_STOPPED) proc_cont(t); else t->pending_sig = 18; return; }
+    if (t->state == PS_STOPPED) { if (!is_stop_sig(signum)) t->pending_sig = signum; return; }
+    t->pending_sig = signum;
+}
 
 /* kill: pid > 0 = one process; pid == 0 = the CALLER's process group; pid < 0 = the process group
  * -pid; pid == -1 (broadcast) is not supported. Negative/zero is how killpg(pgrp,sig) reaches a whole
@@ -489,8 +509,8 @@ static long sys_kill(proc_t *p, uint64_t pid, uint64_t signum) {
     long spid = (long)pid;
     if (spid > 0) {                                               /* a single process */
         proc_t *t = proc_find((pal_pid_t)spid);
-        if (!t) return -AIOS_ESRCH;
-        sig_post(t, (int)signum);
+        if (!t || t->state == PS_ZOMBIE) return -AIOS_ESRCH;
+        deliver_signal(t, (int)signum);
         return 0;
     }
     pal_pid_t grp = (spid == 0) ? p->pgid : (pal_pid_t)(-spid);   /* the target process group */
@@ -500,7 +520,7 @@ static long sys_kill(proc_t *p, uint64_t pid, uint64_t signum) {
         if (t->state == PS_FREE || t->state == PS_ZOMBIE) continue;
         if (t->pgid != grp) continue;
         found = 1;
-        sig_post(t, (int)signum);                                /* signum 0 -> just an existence probe */
+        deliver_signal(t, (int)signum);                          /* signum 0 -> just an existence probe */
     }
     return found ? 0 : -AIOS_ESRCH;
 }
@@ -532,6 +552,44 @@ static long sys_tcgetpgrp(proc_t *p, uint64_t fd) {
     return (long)g_fg_pgrp;
 }
 
+/* Mark p STOPPED (job control). The caller has already left the tracee stopped at its current stop
+ * (kreturn plants the syscall result via setret first; the async path is already at a signal-stop).
+ * Report the stop to a parent parked in wait(WUNTRACED) now, else leave report_stop to collect later. */
+static void proc_stop(proc_t *p, int sig) {
+    p->state = PS_STOPPED;
+    p->stopped_sig = sig;
+    p->report_stop = 1;
+    proc_t *parent = (p->parent_pid != PAL_PID_NONE) ? proc_find(p->parent_pid) : NULL;
+    if (parent && parent->state == PS_BLOCKED_WAIT && (parent->wait_flags & AIOS_WUNTRACED)
+        && wait_matches(parent->wait_for, p)) {
+        int status = ((sig & 0xff) << 8) | 0x7f;                 /* WIFSTOPPED, WSTOPSIG == sig */
+        if (parent->wait_status_gaddr)
+            pal_guest_write(parent->pid, parent->wait_status_gaddr, &status, sizeof status);
+        p->report_stop = 0;
+        parent->state = PS_RUNNING;
+        pal_guest_return(parent->pid, (uint64_t)p->pid);
+    }
+}
+/* Continue a stopped process: resume it from where it stopped, and report the continue to a parent
+ * parked in wait(WCONTINUED) now (else leave report_cont to collect later). */
+static void proc_cont(proc_t *p) {
+    if (p->state != PS_STOPPED) return;
+    p->state = PS_RUNNING;
+    p->report_stop = 0;                                          /* an uncollected stop is superseded */
+    p->report_cont = 1;
+    pal_guest_resume(p->pid);                                    /* continue from the stop (result already planted) */
+    proc_t *parent = (p->parent_pid != PAL_PID_NONE) ? proc_find(p->parent_pid) : NULL;
+    if (parent && parent->state == PS_BLOCKED_WAIT && (parent->wait_flags & AIOS_WCONTINUED)
+        && wait_matches(parent->wait_for, p)) {
+        int status = 0xffff;                                     /* WIFCONTINUED */
+        if (parent->wait_status_gaddr)
+            pal_guest_write(parent->pid, parent->wait_status_gaddr, &status, sizeof status);
+        p->report_cont = 0;
+        parent->state = PS_RUNNING;
+        pal_guest_return(parent->pid, (uint64_t)p->pid);
+    }
+}
+
 /* Return a syscall result to p, then -- if p now has a pending signal -- act on it AT THE SYSCALL
  * EXIT (the syscall is fully serviced first, so its return value is intact; the handler runs next;
  * on sigreturn the guest resumes after the syscall). This is the single return path for every
@@ -545,6 +603,11 @@ static void kreturn(proc_t *p, uint64_t ret) {
     if (h == AIOS_SIG_IGN || (h == AIOS_SIG_DFL && dfl_ignore)) {
         pal_guest_return(p->pid, ret);                           /* ignored -> just return */
         return;
+    }
+    if (is_stop_sig(sig) && h == AIOS_SIG_DFL) {                  /* default action of a stop signal: STOP */
+        pal_guest_setret(p->pid, ret);                           /* finish the syscall, stay stopped at its exit */
+        proc_stop(p, sig);                                       /* PS_STOPPED + notify a WUNTRACED parent */
+        return;                                                  /* do NOT resume -- wait for SIGCONT */
     }
     if (h == AIOS_SIG_DFL) {                                      /* default action: terminate */
         pal_guest_exit(p->pid, 128 + sig);
@@ -565,6 +628,10 @@ static void handle_signal_stop(proc_t *p, int sig) {
     uint64_t h = p->sig_handler[sig];
     int dfl_ignore = (sig == 17 || sig == 18 || sig == 23 || sig == 28);   /* CHLD/CONT/URG/WINCH */
     if (h == AIOS_SIG_IGN || (h == AIOS_SIG_DFL && dfl_ignore)) { pal_guest_resume(p->pid); return; }
+    if (is_stop_sig(sig) && h == AIOS_SIG_DFL) {                  /* default action of a stop signal: STOP */
+        proc_stop(p, sig);                                       /* already at the signal-stop; just mark + notify */
+        return;                                                  /* do NOT resume -- wait for SIGCONT */
+    }
     if (h == AIOS_SIG_DFL) { pal_guest_exit(p->pid, 128 + sig); return; }   /* default: terminate */
     if (p->sig_tramp == 0) { pal_guest_exit(p->pid, 128 + sig); return; }
     p->in_handler = 1;
@@ -747,7 +814,11 @@ static void do_fork(proc_t *parent) {
     child->parent_pid = parent->pid;
     child->exit_code = 0;
     child->wait_for = 0;
+    child->wait_flags = 0;
     child->wait_status_gaddr = 0;
+    child->stopped_sig = 0;
+    child->report_stop = 0;
+    child->report_cont = 0;
     for (int i = 0; i < AIOS_NSIG; i++) child->sig_handler[i] = parent->sig_handler[i];  /* inherited */
     child->sig_tramp = parent->sig_tramp;
     child->pending_sig = 0;                            /* pending signals are NOT inherited */
@@ -764,10 +835,11 @@ static void do_fork(proc_t *parent) {
     pal_guest_resume(cpid);
 }
 
-/* wait: reap a matching zombie child now, or -- if a matching child is still alive -- PARK the
- * caller (do not resume it) until that child exits (see on_exit). -1 if it has no such child. */
-static void do_wait(proc_t *p, unsigned long want, uint64_t gstatus) {
-    for (int i = 0; i < MAX_PROCS; i++) {
+/* wait: report a matching child's state change -- an exit (reap), or (with WUNTRACED/WCONTINUED) a
+ * stop/continue (no reap). If a matching child is still alive but has no event, PARK the caller until
+ * one comes (WNOHANG -> return 0 instead). -ECHILD if it has no matching child at all. */
+static void do_wait(proc_t *p, unsigned long want, uint64_t gstatus, unsigned long flags) {
+    for (int i = 0; i < MAX_PROCS; i++) {             /* 1. an exited (zombie) child -> report + reap */
         proc_t *c = &g_proc[i];
         if (c->state == PS_ZOMBIE && c->parent_pid == p->pid && wait_matches(want, c)) {
             if (gstatus) { int status = (c->exit_code & 0xff) << 8;
@@ -778,12 +850,34 @@ static void do_wait(proc_t *p, unsigned long want, uint64_t gstatus) {
             return;
         }
     }
-    for (int i = 0; i < MAX_PROCS; i++) {
+    if (flags & AIOS_WUNTRACED) for (int i = 0; i < MAX_PROCS; i++) {   /* 2. a newly-stopped child */
         proc_t *c = &g_proc[i];
-        if ((c->state == PS_RUNNING || c->state == PS_BLOCKED_WAIT) &&
+        if (c->state == PS_STOPPED && c->report_stop && c->parent_pid == p->pid && wait_matches(want, c)) {
+            if (gstatus) { int status = ((c->stopped_sig & 0xff) << 8) | 0x7f;
+                           pal_guest_write(p->pid, gstatus, &status, sizeof status); }
+            c->report_stop = 0;                       /* reported -- NOT reaped (it stays stopped) */
+            pal_guest_return(p->pid, (uint64_t)c->pid);
+            return;
+        }
+    }
+    if (flags & AIOS_WCONTINUED) for (int i = 0; i < MAX_PROCS; i++) {  /* 3. a newly-continued child */
+        proc_t *c = &g_proc[i];
+        if (c->report_cont && c->parent_pid == p->pid && wait_matches(want, c)) {
+            if (gstatus) { int status = 0xffff;
+                           pal_guest_write(p->pid, gstatus, &status, sizeof status); }
+            c->report_cont = 0;
+            pal_guest_return(p->pid, (uint64_t)c->pid);
+            return;
+        }
+    }
+    for (int i = 0; i < MAX_PROCS; i++) {             /* 4. any matching child still alive -> park (or poll) */
+        proc_t *c = &g_proc[i];
+        if (c->state != PS_FREE && c->state != PS_ZOMBIE &&
             c->parent_pid == p->pid && wait_matches(want, c)) {
+            if (flags & AIOS_WNOHANG) { pal_guest_return(p->pid, 0); return; }   /* nothing ready yet */
             p->state = PS_BLOCKED_WAIT;               /* park: a matching child is still alive */
             p->wait_for = want;
+            p->wait_flags = flags;
             p->wait_status_gaddr = gstatus;
             return;                                   /* do NOT resume p */
         }
@@ -852,7 +946,7 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
         pal_guest_resume(p->pid); return;
     }
     case AIOS_SYS_FORK: do_fork(p);                                        return;
-    case AIOS_SYS_WAIT: do_wait(p, (unsigned long)sc->arg[0], sc->arg[1]); return;
+    case AIOS_SYS_WAIT: do_wait(p, (unsigned long)sc->arg[0], sc->arg[1], (unsigned long)sc->arg[2]); return;
     case AIOS_SYS_EXIT: pal_guest_exit(p->pid, (int)sc->arg[0]);           return;
     case AIOS_SYS_SIGRETURN: pal_guest_sigreturn(p->pid, p->sigsave); p->in_handler = 0; return;
     /* read/write/pipe own their own return/parking (pipes may block) -> dispatched specially */
@@ -915,7 +1009,11 @@ int aios_kernel_run(const char *guest_path, char *const guest_argv[]) {
     init->parent_pid = PAL_PID_NONE;
     init->exit_code = 0;
     init->wait_for = 0;
+    init->wait_flags = 0;
     init->wait_status_gaddr = 0;
+    init->stopped_sig = 0;
+    init->report_stop = 0;
+    init->report_cont = 0;
     sig_reset(init);
     /* seed init's cwd from the host (the tracer's startup dir unconfined, or "/" confined) */
     { char seed[1024]; long sn = pal_host_getcwd(seed, sizeof seed);

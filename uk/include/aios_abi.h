@@ -101,6 +101,12 @@
  * (exit_code & 0xff) << 8 -- AIOS_WEXITSTATUS decodes it (a POSIX-shaped subset; signals later). */
 #define AIOS_WAIT_ANY        ((unsigned long)-1)
 #define AIOS_WEXITSTATUS(s)  (((s) >> 8) & 0xff)
+/* wait options (match the shadow <sys/wait.h>): also report STOPPED (WUNTRACED) and CONTINUED
+ * (WCONTINUED) children, and WNOHANG = poll, do not block. A stopped status is ((sig)<<8)|0x7f, a
+ * continued status is 0xffff (so WIFSTOPPED/WSTOPSIG/WIFCONTINUED in <sys/wait.h> decode them). */
+#define AIOS_WNOHANG     1
+#define AIOS_WUNTRACED   2
+#define AIOS_WCONTINUED  8
 
 /* ---- error reporting ----
  * A syscall reports failure by returning a NEGATED error code: a value in [-4095, -1] means
