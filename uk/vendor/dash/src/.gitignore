@@ -11,3 +11,17 @@ nodes.[ch]
 signames.c
 syntax.[ch]
 token.h
+
+# --- AIOS: these generated parser tables are tracked in git (see ../../README.md). uk/Makefile
+# compiles them directly and never runs dash's mk* generators, so a fresh clone needs them present.
+# The mk* generator BINARIES and *.o stay ignored (rebuilt from the tracked mk*.c sources). ---
+!builtins.c
+!builtins.h
+!builtins.def
+!init.c
+!nodes.c
+!nodes.h
+!signames.c
+!syntax.c
+!syntax.h
+!token.h
