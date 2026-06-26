@@ -68,6 +68,8 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            ./aios-uk ./sbase-cat /etc/hostname 2>/dev/null; echo "  [sbase cat file exit $?]";
            printf "piped into real sbase cat\n" | ./aios-uk ./sbase-cat 2>/dev/null; echo "  [sbase cat stdin exit $?]";
            printf "one two three\nfour five\nsix\n" | ./aios-uk ./sbase-wc 2>/dev/null; echo "  [sbase wc (expect 3 6 28) exit $?]";
+           rm -rf /tmp/aios_mkd && ./aios-uk ./sbase-mkdir -p /tmp/aios_mkd/x/y 2>/dev/null &&
+             { test -d /tmp/aios_mkd/x/y && echo "  [sbase mkdir -p made /tmp/aios_mkd/x/y OK]"; }; rm -rf /tmp/aios_mkd;
            echo "=== M3d gate: prog_pipebig exit must be 0 ===" &&
            ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [exit $rc]";
            test "$rc" = 0'

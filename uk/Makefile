@@ -33,9 +33,11 @@ LIBC_HDRS   = $(wildcard lib/include/*.h lib/include/sys/*.h)
 # Vendored sbase (real third-party POSIX utilities, compiled UNMODIFIED against libaios). Variables
 # up here so $(SBASE_BINS) is defined before `all` references it; the build rules are below.
 SBASE        = vendor/sbase
-SBASE_CFLAGS = $(LIBC_CFLAGS) -I$(SBASE)
+# -Wno-maybe-uninitialized: we do NOT lint vendored sources (sbase's mode.c trips it upstream);
+# patching sbase is off-limits, so silence its warnings rather than touch it.
+SBASE_CFLAGS = $(LIBC_CFLAGS) -I$(SBASE) -Wno-maybe-uninitialized
 SBASE_DEPS   = $(LIBAIOS) $(LIBC_HDRS) $(SBASE)/util.h $(SBASE)/arg.h $(SBASE)/compat.h
-SBASE_BINS   = sbase-true sbase-false sbase-echo sbase-cat sbase-wc
+SBASE_BINS   = sbase-true sbase-false sbase-echo sbase-cat sbase-wc sbase-mkdir
 
 .PHONY: all run clean sbase
 all: aios-uk guest_hello guest_fileio guest_cat prog_args prog_wc prog_bigalloc prog_tail prog_exec \
@@ -129,6 +131,10 @@ sbase-wc: $(SBASE)/wc.c $(SBASE_DEPS) $(SBASE)/utf.h
 	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/fshut.c \
 	      $(SBASE)/libutf/fgetrune.c $(SBASE)/libutf/rune.c $(SBASE)/libutf/runetype.c \
 	      $(SBASE)/libutf/isspacerune.c $(LIBAIOS)
+sbase-mkdir: $(SBASE)/mkdir.c $(SBASE_DEPS)
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/mkdir.c \
+	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/mkdirp.c $(SBASE)/libutil/mode.c \
+	      $(SBASE)/libutil/strlcpy.c $(LIBAIOS)
 
 run: all
 	./aios-uk ./prog_tail -n 3 /etc/os-release

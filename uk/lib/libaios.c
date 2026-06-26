@@ -348,6 +348,12 @@ int  rmdir (const char *path)          { return (int)__ret(asys(AIOS_SYS_RMDIR, 
 int  chdir (const char *path)          { return (int)__ret(asys(AIOS_SYS_CHDIR,  (long)path, 0, 0)); }
 int  mkdir (const char *path, unsigned int mode)  { return (int)__ret(asys(AIOS_SYS_MKDIR, (long)path, (long)mode, 0)); }
 int  rename(const char *o, const char *n)         { return (int)__ret(asys(AIOS_SYS_RENAME, (long)o, (long)n, 0)); }
+/* umask: tracked in the libc (mkdir/chmod apply it in userspace before the syscall). NOTE: the
+ * kernel does NOT yet enforce a per-guest umask on create -- the host's umask still applies on the
+ * real open/mkdir -- so this is advisory for kernel-applied masking. Per-guest umask is future
+ * kernel work. */
+static unsigned int __aios_umask = 022;
+unsigned int umask(unsigned int m) { unsigned int old = __aios_umask; __aios_umask = m & 0777; return old; }
 int  remove(const char *path) {                   /* POSIX: unlink a file, or rmdir a directory */
     int r = unlink(path);
     if (r != 0 && errno == AIOS_EISDIR) r = rmdir(path);
