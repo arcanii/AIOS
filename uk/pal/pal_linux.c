@@ -222,16 +222,29 @@ uint64_t pal_guest_mmap(pal_pid_t who, size_t len) {
     return addr;
 }
 
-/* Replace `who`'s image by rewriting the trapped AIOS_SYS_EXEC svc into a Linux execve, using the
- * guest's own path/argv/envp pointers. execve has no normal return on success: PTRACE_O_TRACEEXEC
- * turns it into a PTRACE_EVENT_EXEC stop, after which the new image is live (the kernel resumes it;
- * pal_guest_next then skips the trailing execve exit and lands on the new program's first syscall).
- * On failure execve returns -errno at a normal exit; restore the guest with x0 = -1. */
+/* M4.3: confine a guest-issued exec target to the AIOS root (defined with the confinement layer
+ * below). Returns 1 (unconfined: use `gpath` unchanged), 0 (confined: *out_addr holds a guest address
+ * with the canonical in-root host path to exec instead), or -errno (target not reachable in the root). */
+static long pal_confine_exec(pal_pid_t who, uint64_t gpath, const struct user_pt_regs *regs, uint64_t *out_addr);
+
+/* Replace `who`'s image by rewriting the trapped AIOS_SYS_EXEC svc into a Linux execve. M4.3: when the
+ * PAL is confined, the path is first resolved INSIDE the AIOS root (a guest can only exec binaries in
+ * its root -- the INIT program the operator names on the command line is the trusted entry and is NOT
+ * routed here). execve has no normal return on success: PTRACE_O_TRACEEXEC turns it into a
+ * PTRACE_EVENT_EXEC stop, after which the new image is live (the kernel resumes it; pal_guest_next then
+ * skips the trailing execve exit and lands on the new program's first syscall). On failure execve
+ * returns -errno at a normal exit; restore the guest with x0 = -1 (or the confinement -errno). */
 int pal_guest_exec(pal_pid_t who, uint64_t gpath, uint64_t gargv, uint64_t genvp) {
     struct user_pt_regs saved, r;
     if (getregs(who, &saved) != 0) return -1;
+    uint64_t path_addr = gpath;
+    long c = pal_confine_exec(who, gpath, &saved, &path_addr);   /* M4.3: confine the exec target */
+    if (c < 0) {                                                 /* target not reachable in the root */
+        pal_guest_setret(who, (uint64_t)c);                      /* neutralize the exec svc + plant -errno */
+        return -1;                                               /* (so the guest sees ENOENT, not ENOSYS) */
+    }
     r = saved;
-    r.regs[0] = gpath;
+    r.regs[0] = path_addr;                                       /* confined canon path, or gpath as-is */
     r.regs[1] = gargv;
     r.regs[2] = genvp;
     if (setregs(who, &r) != 0) return -1;
@@ -463,6 +476,39 @@ static long open_parent_at(int basefd, const char *fullpath, char *dirbuf, size_
         memcpy(dirbuf, fullpath, dl); dirbuf[dl] = '\0'; dpath = dirbuf;
     }
     return openat2_in_root(basefd, dpath, (uint64_t)(O_PATH | O_DIRECTORY | O_CLOEXEC), 0);
+}
+
+/* M4.3 -- confine a guest-issued exec to the AIOS root. Resolve the guest's exec target INSIDE the
+ * root (openat2 RESOLVE_IN_ROOT, following symlinks within the root), turn the resulting O_PATH handle
+ * into a canonical real host path via /proc/self/fd, and stage that path in the guest's own stack
+ * scratch (below sp, inside the current stack page) for execve to use. The canonical path is fully
+ * resolved and provably under the root, so execve re-resolving it stays in-root. Returns 0 (use
+ * *out_addr), 1 (unconfined -> use the guest path as-is), or -errno (not reachable in the root). */
+static long pal_confine_exec(pal_pid_t who, uint64_t gpath, const struct user_pt_regs *regs, uint64_t *out_addr) {
+    if (!g_confined) return 1;
+    char gp[1024];
+    size_t n = pal_guest_read(who, gpath, gp, sizeof gp - 1);
+    if (n == 0) return -EFAULT;
+    gp[n] = '\0';
+    char eff[2048]; eff_path(gp, eff, sizeof eff);
+    long fd = openat2_in_root(g_root_fd, eff, (uint64_t)(O_PATH | O_CLOEXEC), 0);   /* in-root? */
+    if (fd < 0) return -errno;                                       /* ENOENT/.. : denied */
+    char proc[64], canon[2048];
+    snprintf(proc, sizeof proc, "/proc/self/fd/%ld", fd);
+    ssize_t cl = readlink(proc, canon, sizeof canon - 1);            /* canonical in-root host path */
+    close((int)fd);
+    if (cl <= 0) return -EACCES;
+    canon[cl] = '\0';
+    /* stage canon in the guest's current stack page, strictly below sp (dead space the active frames
+     * do not use; execve copies the path before unmapping, so on failure the bytes are harmless). */
+    uint64_t sp = regs->sp;
+    uint64_t pagestart = sp & ~(uint64_t)0xFFF;
+    uint64_t scratch   = (sp - 512) & ~(uint64_t)0xF;
+    if (scratch < pagestart) scratch = pagestart;
+    if (sp - scratch < (uint64_t)cl + 1) return -ENAMETOOLONG;
+    if (pal_guest_write(who, scratch, canon, (size_t)cl + 1) != (size_t)cl + 1) return -EFAULT;
+    *out_addr = scratch;
+    return 0;
 }
 
 pal_file_t pal_host_open(const char *path, uint64_t aios_flags, uint64_t mode) {

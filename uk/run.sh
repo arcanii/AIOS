@@ -108,7 +108,14 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            echo "  (d) CONFINED red-team proof (prog_jail): every escape vector denied, in-root access works:";
            AIOS_ROOT="$JR" ./aios-uk ./prog_jail 2>/dev/null | sed "s/^/      /";
            AIOS_ROOT="$JR" ./aios-uk ./prog_jail >/dev/null 2>&1; jrc=$?; echo "  [prog_jail exit $jrc (expect 0)]";
+           echo "=== M4.3: exec confinement -- a guest can EXEC only binaries inside the AIOS root ===" &&
+           cp sbase-true "$JR/jailtrue"; cp sbase-false "$JR/jailfalse"; chmod +x "$JR/jailtrue" "$JR/jailfalse";
+           echo "  (init = the operator-named entry, exempt; only a guests OWN exec() is confined):";
+           AIOS_ROOT="$JR" ./aios-uk ./prog_execjail 2>/dev/null | sed "s/^/      /";
+           AIOS_ROOT="$JR" ./aios-uk ./prog_execjail >/dev/null 2>&1; ejrc=$?; echo "  [prog_execjail exit $ejrc (expect 0)]";
+           echo "  confined dash drives an in-root binary, but an out-of-root one is denied:";
+           AIOS_ROOT="$JR" ./aios-uk ./dash -c "/jailtrue && echo in-root-exec-ok; /bin/echo SHOULD-NOT-PRINT" 2>&1 | grep -v aios-uk | sed "s/^/      /";
            rm -rf "$JR" "$SECRET";
-           echo "=== gate: prog_pipebig (M3d) AND prog_jail (M4.2) must exit 0 ===" &&
-           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig exit $rc, jail exit $jrc]";
-           test "$rc" = 0 && test "$jrc" = 0'
+           echo "=== gate: prog_pipebig (M3d), prog_jail (M4.2), prog_execjail (M4.3) must exit 0 ===" &&
+           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig $rc, jail $jrc, execjail $ejrc]";
+           test "$rc" = 0 && test "$jrc" = 0 && test "$ejrc" = 0'

@@ -178,9 +178,7 @@ host, behaviour unchanged (every prior milestone runs byte-identically).
 It covers the **data** boundary — `open`/`stat`/`unlink`/`mkdir`/`rmdir`/`rename`/`chdir`/`getcwd`/
 `readlink` + the `*at` family (the kernel-side `cwd` is now a confined logical path). Path ops that
 have no single confined form (unlink/mkdir/rename/readlink) open the parent dir confined and act on a
-single non-walking leaf. **Exec is still resolved in the host namespace** (the kernel injects
-`execve` into the tracee), so confining *which binary* a guest may launch is a separate, still-open
-hardening step.
+single non-walking leaf.
 
 `guest/prog_jail.c` is the red-team + positive proof (the M4.2 analogue of `guest_escape.c`): run
 under `AIOS_ROOT`, it confirms in-root open/stat/create/readdir/chdir/name-ops work while every
@@ -189,9 +187,19 @@ denied. `run.sh` also shows the *same* real `sbase cat` reading a host secret un
 denied that secret once confined, then reading an in-root file fine. Validated on colima and the
 RPi4 (kernel 6.12).
 
+### M4.3 — exec confinement
+
+The remaining boundary gap: a guest-issued **exec** (`AIOS_SYS_EXEC`) is now resolved **inside** the
+root too, so a guest can launch only binaries in its root. The PAL resolves the guest's exec target
+with `openat2(RESOLVE_IN_ROOT)`, turns the resulting `O_PATH` handle into a canonical real host path
+via `/proc/self/fd`, and execs *that* (the canonical path is fully resolved and provably under the
+root). The **init** program the operator names on the `aios-uk` command line is the trusted entry and
+is **exempt** — only a guest's *own* `exec()` is confined (like a kernel loading its init image from a
+known place, then jailing everything it spawns). `guest/prog_execjail.c` proves it: in-root binaries
+run, while out-of-root host paths (`/bin/sh`, `/etc/passwd`, …) are denied and a `..` escape is
+clamped back into the root. Validated on colima and the RPi4.
+
 ## Next (per the design doc)
 
-Exec-path confinement (resolve the injected `execve` through the AIOS root too, e.g. `execveat` on an
-`openat2`-resolved fd). More sbase utils (head/tail/cp/mv/sort; grep needs a real regex). A real
-`time()`/CLOCK syscall; per-process cwd/umask. Then **sched_ext** · the seL4/x86-64 replant seam
-(`pal_sel4.c`).
+More sbase utils (head/tail/cp/mv/sort; grep needs a real regex). A real `time()`/CLOCK syscall;
+per-process cwd/umask. Then **sched_ext** · the seL4/x86-64 replant seam (`pal_sel4.c`).
