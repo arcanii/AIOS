@@ -379,6 +379,21 @@ static void kreturn(proc_t *p, uint64_t ret) {
     pal_guest_deliver(p->pid, h, (uint64_t)sig, p->sig_tramp, p->sigsave);   /* run the handler */
 }
 
+/* A guest stopped on an ASYNCHRONOUS signal `sig` (e.g. terminal ^C -> SIGINT, delivered to the
+ * process group). Act on its disposition: run the handler (the guest is stopped at an arbitrary PC;
+ * pal_guest_deliver saves it as-is and sigreturn restores it), ignore it, or terminate. This is how
+ * a running dash catches ^C and returns to its prompt while a handler-less foreground child dies. */
+static void handle_signal_stop(proc_t *p, int sig) {
+    if (sig < 1 || sig >= AIOS_NSIG) { pal_guest_resume(p->pid); return; }
+    uint64_t h = p->sig_handler[sig];
+    int dfl_ignore = (sig == 17 || sig == 18 || sig == 23 || sig == 28);   /* CHLD/CONT/URG/WINCH */
+    if (h == AIOS_SIG_IGN || (h == AIOS_SIG_DFL && dfl_ignore)) { pal_guest_resume(p->pid); return; }
+    if (h == AIOS_SIG_DFL) { pal_guest_exit(p->pid, 128 + sig); return; }   /* default: terminate */
+    if (p->sig_tramp == 0) { pal_guest_exit(p->pid, 128 + sig); return; }
+    p->in_handler = 1;
+    pal_guest_deliver(p->pid, h, (uint64_t)sig, p->sig_tramp, p->sigsave);
+}
+
 /* ---- pipes ----
  * A pipe is two backing ends (non-blocking at the host) sharing a pipe_id. read/write to a pipe
  * never block the single-threaded kernel: an empty read / full write PARKS the calling guest and
@@ -721,6 +736,10 @@ int aios_kernel_run(const char *guest_path, char *const guest_argv[]) {
         if (r == 0) {                                 /* `who` exited */
             if (who == init_pid) init_code = code;
             if (p) on_exit(p, code);
+            continue;
+        }
+        if (r == 2) {                                 /* `who` got an async signal (code = signum) */
+            if (p) handle_signal_stop(p, code); else pal_guest_resume(who);
             continue;
         }
         if (!p) { pal_guest_resume(who); continue; }  /* unknown pid (shouldn't happen) */

@@ -76,10 +76,29 @@ static int at_syscall_entry(pal_pid_t pid) {
     return info[0] == PTRACE_SYSCALL_INFO_ENTRY;
 }
 
+/* waitpid that retries on EINTR. The kernel catches SIGINT (so ^C interrupts the blocking host read
+ * it does on a guest's behalf, see pal_guest_spawn), which would otherwise EINTR these waits-for-a-
+ * tracee-event too. The tracee event WILL come, so just retry. */
+static pid_t waitpid_r(pid_t pid, int *st, int flags) {
+    for (;;) {
+        pid_t r = waitpid(pid, st, flags);
+        if (r >= 0 || errno != EINTR) return r;
+    }
+}
+/* A no-op SIGINT handler: its only job is to EXIST (so the kernel does not die on ^C) and to lack
+ * SA_RESTART (so a blocking host read the kernel is mid-way through on a guest's behalf returns
+ * EINTR, freeing the guest to receive its own ^C). The guests get SIGINT via the process group;
+ * pal_guest_next reports it to the kernel. */
+static void pal_noop_sig(int s) { (void)s; }
+
 pal_pid_t pal_guest_spawn(const char *path, char *const argv[]) {
     /* The kernel does pipe writes on the guests' behalf; a write to a pipe with no readers must
      * surface as PAL_EPIPE, not a SIGPIPE that kills the kernel. */
     signal(SIGPIPE, SIG_IGN);
+    /* Catch SIGINT (^C) so the kernel survives it AND its blocking reads interrupt (no SA_RESTART);
+     * the guests receive their own ^C via the process group. */
+    struct sigaction sa; sa.sa_handler = pal_noop_sig; sa.sa_flags = 0; sigemptyset(&sa.sa_mask);
+    sigaction(SIGINT, &sa, NULL);
     pid_t pid = fork();
     if (pid < 0) return PAL_PID_NONE;
     if (pid == 0) {
@@ -91,7 +110,7 @@ pal_pid_t pal_guest_spawn(const char *path, char *const argv[]) {
         _exit(127);                              /* exec failed */
     }
     int st;
-    if (waitpid(pid, &st, 0) < 0) return PAL_PID_NONE;   /* initial post-execv SIGTRAP stop */
+    if (waitpid_r(pid, &st, 0) < 0) return PAL_PID_NONE;   /* initial post-execv SIGTRAP stop */
     if (!WIFSTOPPED(st)) return PAL_PID_NONE;
     ptrace(PTRACE_SETOPTIONS, pid, 0, (void *)PAL_TRACE_OPTS);
     return (pal_pid_t)pid;                        /* stopped at entry; the kernel resumes it */
@@ -104,7 +123,7 @@ int pal_guest_next(pal_pid_t *who, pal_syscall_t *sc, int *exit_code) {
     for (;;) {
         int st;
         pid_t pid = waitpid(-1, &st, 0);
-        if (pid < 0) return -1;                            /* ECHILD: nothing left to trace */
+        if (pid < 0) { if (errno == EINTR) continue; return -1; }   /* EINTR (^C): retry; ECHILD: done */
         if (WIFEXITED(st))   { *who = pid; if (exit_code) *exit_code = WEXITSTATUS(st);    return 0; }
         if (WIFSIGNALED(st)) { *who = pid; if (exit_code) *exit_code = 128 + WTERMSIG(st); return 0; }
         if (!WIFSTOPPED(st)) continue;
@@ -121,10 +140,13 @@ int pal_guest_next(pal_pid_t *who, pal_syscall_t *sc, int *exit_code) {
             ptrace(PTRACE_SYSCALL, pid, 0, 0);             /* exit / artifact -> step past it */
             continue;
         }
-        /* Non-syscall stop: a ptrace event (SIGTRAP + event byte; normally consumed by the inject
-         * primitives) or a real signal. Forward real signals; swallow trace traps + group stops. */
-        int deliver = (sig == SIGTRAP || sig == SIGSTOP) ? 0 : sig;
-        ptrace(PTRACE_SYSCALL, pid, 0, (void *)(long)deliver);
+        /* Non-syscall stop: a ptrace event (SIGTRAP + event byte; consumed by the inject primitives)
+         * or a real async signal. Swallow trace traps + group stops; REPORT a real signal to the
+         * kernel, which owns the policy (run the guest's handler, ignore, or terminate). */
+        if (sig == SIGTRAP || sig == SIGSTOP) { ptrace(PTRACE_SYSCALL, pid, 0, 0); continue; }
+        *who = pid;
+        if (exit_code) *exit_code = sig;
+        return 2;                                          /* async signal `sig` on *who */
     }
 }
 
@@ -137,7 +159,7 @@ int pal_guest_setret(pal_pid_t who, uint64_t retval) {
     set_syscall_nr(who, -1);
     if (ptrace(PTRACE_SYSCALL, who, 0, 0) != 0) return -1;
     int st;
-    if (waitpid(who, &st, 0) < 0) return -1;
+    if (waitpid_r(who, &st, 0) < 0) return -1;
     if (!WIFSTOPPED(st)) return 0;                 /* exited mid-syscall */
     struct user_pt_regs r;
     if (getregs(who, &r) != 0) return -1;
@@ -186,7 +208,7 @@ uint64_t pal_guest_mmap(pal_pid_t who, size_t len) {
 
     if (ptrace(PTRACE_SYSCALL, who, 0, 0) != 0) return 0;   /* run mmap -> EXIT */
     int st;
-    if (waitpid(who, &st, 0) < 0 || !WIFSTOPPED(st)) return 0;
+    if (waitpid_r(who, &st, 0) < 0 || !WIFSTOPPED(st)) return 0;
     if (getregs(who, &r) != 0) return 0;
     uint64_t addr = (uint64_t)r.regs[0];
     if ((int64_t)addr < 0 && (int64_t)addr >= -4095) addr = 0;  /* -errno -> failure */
@@ -213,7 +235,7 @@ int pal_guest_exec(pal_pid_t who, uint64_t gpath, uint64_t gargv, uint64_t genvp
 
     if (ptrace(PTRACE_SYSCALL, who, 0, 0) != 0) return -1;   /* run execve */
     int st;
-    if (waitpid(who, &st, 0) < 0) return -1;
+    if (waitpid_r(who, &st, 0) < 0) return -1;
 
     if (WIFSTOPPED(st) && (st >> 8) == (SIGTRAP | (PTRACE_EVENT_EXEC << 8)))
         return 0;                                            /* success: new image live */
@@ -243,7 +265,7 @@ pal_pid_t pal_guest_fork(pal_pid_t parent) {
 
     if (ptrace(PTRACE_SYSCALL, parent, 0, 0) != 0) return PAL_PID_NONE;   /* run clone */
     int st;
-    if (waitpid(parent, &st, 0) < 0) return PAL_PID_NONE;
+    if (waitpid_r(parent, &st, 0) < 0) return PAL_PID_NONE;
 
     int ev = st >> 8;
     int is_new_child = WIFSTOPPED(st) &&
@@ -260,7 +282,7 @@ pal_pid_t pal_guest_fork(pal_pid_t parent) {
     pal_pid_t cpid = (pal_pid_t)child;
 
     int cst;
-    if (waitpid(cpid, &cst, 0) < 0) return PAL_PID_NONE;       /* the child's initial stop */
+    if (waitpid_r(cpid, &cst, 0) < 0) return PAL_PID_NONE;       /* the child's initial stop */
     ptrace(PTRACE_SETOPTIONS, cpid, 0, (void *)PAL_TRACE_OPTS);
 
     struct user_pt_regs cr = saved; cr.regs[0] = 0;            /* child: fork returns 0 */
@@ -420,7 +442,7 @@ int pal_guest_sigreturn(pal_pid_t who, const void *savebuf) {
     set_syscall_nr(who, -1);
     if (ptrace(PTRACE_SYSCALL, who, 0, 0) != 0) return -1;
     int st;
-    if (waitpid(who, &st, 0) < 0 || !WIFSTOPPED(st)) return -1;
+    if (waitpid_r(who, &st, 0) < 0 || !WIFSTOPPED(st)) return -1;
     struct user_pt_regs saved;
     memcpy(&saved, savebuf, sizeof saved);
     if (setregs(who, &saved) != 0) return -1;

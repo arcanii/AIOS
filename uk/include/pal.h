@@ -45,9 +45,11 @@ typedef int pal_pid_t;
 pal_pid_t pal_guest_spawn(const char *path, char *const argv[]);
 
 /* Wait for the next event from ANY live guest. Skips internal artifacts (syscall exits, the stray
- * stops injection leaves behind) and re-injects real signals so a crashing guest dies. Returns:
+ * stops injection leaves behind). Returns:
  *   1  a syscall trapped on *who   -> *sc filled (NOT executed by the host); *who is at its entry
  *   0  *who exited                 -> *exit_code set (8-bit, POSIX-shaped)
+ *   2  *who got an async signal    -> *exit_code = signal number (the kernel owns the policy: run
+ *                                     the guest's handler, ignore it, or terminate)
  *  -1  no live guests / error                                                                   */
 int pal_guest_next(pal_pid_t *who, pal_syscall_t *sc, int *exit_code);
 
