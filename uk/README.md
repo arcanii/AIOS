@@ -177,6 +177,14 @@ path inside the root (`openat2` + `/proc/self/fd`) — a planted in-root symlink
 metadata change to a host file (proven in `prog_jail.c`: `chmod` through an escaping symlink is denied
 while the host file's mode is untouched).
 
+A **per-process cwd**: the current directory moved from a single PAL-global to the kernel's process
+table. The kernel pre-absolutes every guest path — including the exec path — against the *calling
+process's* cwd, so a subshell's `cd` no longer leaks into its siblings or parent (inherited across
+fork, preserved across exec). No new ABI; the PAL is now cwd-free (`pal_host_chdir` just verifies the
+target is a directory, and `pal_guest_exec` takes a kernel-resolved absolute path it stages into the
+guest). `prog_pcwd.c` proves a child's `chdir` leaves the parent's cwd untouched, and real dash shows
+`cd /tmp; (cd /); pwd` → `/tmp`.
+
 ## M4.2 — filesystem confinement (the other half of the boundary) ✅
 
 M4 stopped a guest *bypassing* the kernel; M4.2 stops a guest — even going *through* the kernel —
@@ -217,5 +225,6 @@ clamped back into the root. Validated on colima and the RPi4.
 
 ## Next (per the design doc)
 
-Per-process cwd/umask. `sort` (needs `strtod` + the full libutf rune layer) and `grep` (needs a real
-`<regex.h>`). Then **sched_ext** · the seL4/x86-64 replant seam (`pal_sel4.c`).
+Per-guest umask (the host umask must be neutralized + libaios apply its own). `sort` (needs `strtod` +
+the full libutf rune layer) and `grep` (needs a real `<regex.h>`). Then **sched_ext** · the
+seL4/x86-64 replant seam (`pal_sel4.c`).

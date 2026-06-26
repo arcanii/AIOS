@@ -112,6 +112,10 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            ./aios-uk ./prog_clock 2>/dev/null | sed "s/^/    /";
            ./aios-uk ./prog_clock >/dev/null 2>&1; clkrc=$?; echo "  [prog_clock exit $clkrc (expect 0)]";
            printf "  host date -u:        "; date -u "+%Y-%m-%d %H:%M:%S UTC";
+           echo "=== per-process cwd -- a child chdir does NOT leak into the parent ===" &&
+           ./aios-uk ./prog_pcwd 2>/dev/null | sed "s/^/    /";
+           ./aios-uk ./prog_pcwd >/dev/null 2>&1; pcwdrc=$?; echo "  [prog_pcwd exit $pcwdrc (expect 0)]";
+           printf "  dash subshell (cd /tmp; (cd /); pwd -> /tmp): "; ./aios-uk ./dash -c "cd /tmp; (cd /); pwd" 2>/dev/null;
            echo "=== M5: real signal delivery -- the kernel runs a guest signal handler ===" &&
            echo "--- prog_signal: install handler + raise + SIG_IGN ---" &&
            ./aios-uk ./prog_signal 2>/dev/null | sed "s/^/    /";
@@ -145,6 +149,6 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            echo "  confined dash drives an in-root binary, but an out-of-root one is denied:";
            AIOS_ROOT="$JR" ./aios-uk ./dash -c "/jailtrue && echo in-root-exec-ok; /bin/echo SHOULD-NOT-PRINT" 2>&1 | grep -v aios-uk | sed "s/^/      /";
            rm -rf "$JR" "$SECRET";
-           echo "=== gate: pipebig (M3d), jail (M4.2), execjail (M4.3), clock must exit 0 ===" &&
-           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig $rc, jail $jrc, execjail $ejrc, clock $clkrc]";
-           test "$rc" = 0 && test "$jrc" = 0 && test "$ejrc" = 0 && test "$clkrc" = 0'
+           echo "=== gate: pipebig (M3d), jail (M4.2), execjail (M4.3), clock, pcwd must exit 0 ===" &&
+           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig $rc, jail $jrc, execjail $ejrc, clock $clkrc, pcwd $pcwdrc]";
+           test "$rc" = 0 && test "$jrc" = 0 && test "$ejrc" = 0 && test "$clkrc" = 0 && test "$pcwdrc" = 0'

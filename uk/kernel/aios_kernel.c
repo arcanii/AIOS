@@ -94,6 +94,10 @@ typedef struct {
     int           pending_sig;         /* a signal awaiting delivery (0 = none) */
     int           in_handler;          /* a handler is currently running on this guest */
     unsigned char sigsave[PAL_SIGSAVE_SIZE];   /* pre-signal regs, restored by sigreturn */
+    char          cwd[1024];           /* PER-PROCESS current directory (absolute, normalized);
+                                        * inherited across fork, preserved across exec. The kernel
+                                        * pre-absolutes every guest path against it (cwd_join), so a
+                                        * subshell's cd no longer leaks into siblings/parent. */
     int           fd[AIOS_MAX_FD];     /* AIOS fd -> ofile index, or -1 */
 } proc_t;
 
@@ -147,11 +151,13 @@ static void fd_release(proc_t *p, int fd) {
 
 /* ---- AIOS file syscalls (host-agnostic; reach the host only via the PAL) ---- */
 
+/* path helpers (defined below with the per-process-cwd layer); forward-declared for sys_open above them */
+static long read_path(proc_t *p, uint64_t gpath, char *dst, size_t cap);
+static long read_abspath(proc_t *p, uint64_t gpath, char *out, size_t outsz);
+
 static long sys_open(proc_t *p, uint64_t gpath, uint64_t flags, uint64_t mode) {
-    char path[256];
-    size_t n = pal_guest_read(p->pid, gpath, path, sizeof path - 1);
-    if (n == 0) return -AIOS_EFAULT;
-    path[n] = '\0';                                  /* backstop terminator */
+    char path[1536];
+    long pe = read_abspath(p, gpath, path, sizeof path); if (pe) return pe;   /* absolute against p->cwd */
     pal_file_t f = pal_host_open(path, flags, mode);
     if (f < 0) return (long)f;                        /* -errno from the PAL (ENOENT, EACCES, ...) */
     int oi = ofile_alloc(f);
@@ -232,9 +238,58 @@ static long read_path(proc_t *p, uint64_t gpath, char *dst, size_t cap) {
     return 0;
 }
 
+/* ---- per-process cwd ----
+ * Make `in` absolute against p->cwd: absolute as-is, else cwd + "/" + in. No normalization here -- the
+ * host (or openat2 RESOLVE_IN_ROOT) resolves "."/".."; only chdir's STORED cwd is normalized. The cwd
+ * is a process attribute, so it lives in the kernel (not the host-shared PAL) -- a future seL4 PAL has
+ * no cwd of its own either. */
+static void cwd_join(proc_t *p, const char *in, char *out, size_t outsz) {
+    size_t o = 0;
+    if (in[0] != '/') {
+        for (const char *c = p->cwd; *c && o < outsz - 1; c++) out[o++] = *c;   /* p->cwd (always >= "/") */
+        if (!(o == 1 && out[0] == '/') && o < outsz - 1) out[o++] = '/';        /* separator, unless cwd == "/" */
+    }
+    for (const char *s = in; *s && o < outsz - 1; s++) out[o++] = *s;
+    out[o] = '\0';
+    if (o == 0) { out[0] = '/'; out[1] = '\0'; }
+}
+
+/* Collapse an absolute path textually ("."/empty dropped, ".." popped + clamped at "/"). Logical only
+ * (the real resolution is the host's); keeps a tidy, bounded cwd for chdir/getcwd. */
+static void path_norm(const char *in, char *out, size_t outsz) {
+    size_t olen = 0;                                  /* build "/c1/c2/..."; empty result => "/" */
+    const char *pp = in;
+    while (*pp) {
+        while (*pp == '/') pp++;
+        if (!*pp) break;
+        const char *seg = pp;
+        while (*pp && *pp != '/') pp++;
+        size_t clen = (size_t)(pp - seg);
+        if (clen == 1 && seg[0] == '.') continue;
+        if (clen == 2 && seg[0] == '.' && seg[1] == '.') {
+            while (olen > 0 && out[olen - 1] != '/') olen--;
+            if (olen > 0) olen--;
+            continue;
+        }
+        if (olen + 1 + clen >= outsz) break;
+        out[olen++] = '/';
+        for (size_t i = 0; i < clen; i++) out[olen++] = seg[i];
+    }
+    if (olen == 0) out[olen++] = '/';
+    out[olen] = '\0';
+}
+
+/* Read a guest path and make it absolute against p->cwd (for plain-path / AT_FDCWD ops). 0, or -errno. */
+static long read_abspath(proc_t *p, uint64_t gpath, char *out, size_t outsz) {
+    char rel[256];
+    long e = read_path(p, gpath, rel, sizeof rel); if (e) return e;
+    cwd_join(p, rel, out, outsz);
+    return 0;
+}
+
 static long sys_stat(proc_t *p, uint64_t gpath, uint64_t gstat, int follow) {
-    char path[256];
-    long e = read_path(p, gpath, path, sizeof path); if (e) return e;
+    char path[1536];
+    long e = read_abspath(p, gpath, path, sizeof path); if (e) return e;
     struct aios_stat s;
     int r = pal_host_stat(path, &s, follow);
     if (r != 0) return r;
@@ -242,35 +297,41 @@ static long sys_stat(proc_t *p, uint64_t gpath, uint64_t gstat, int follow) {
     return 0;
 }
 
+/* getcwd returns the PER-PROCESS cwd the kernel tracks (no longer a host/PAL-global value). */
 static long sys_getcwd(proc_t *p, uint64_t gbuf, uint64_t size) {
-    char buf[1024];
-    size_t cap = size < sizeof buf ? (size_t)size : sizeof buf;
-    long r = pal_host_getcwd(buf, cap);
-    if (r < 0) return r;
-    if (pal_guest_write(p->pid, gbuf, buf, (size_t)r + 1) != (size_t)r + 1) return -AIOS_EFAULT; /* +NUL */
-    return r;
+    size_t n = kstrlen(p->cwd);
+    if (n + 1 > size) return -AIOS_ERANGE;
+    if (pal_guest_write(p->pid, gbuf, p->cwd, n + 1) != n + 1) return -AIOS_EFAULT;   /* +NUL */
+    return (long)n;
 }
 
-static long sys_chdir (proc_t *p, uint64_t gpath) {
-    char path[256]; long e = read_path(p, gpath, path, sizeof path); if (e) return e;
-    return pal_host_chdir(path);
+/* chdir verifies the target is a reachable directory (confined or not), then stores the normalized
+ * absolute path as THIS process's cwd -- a sibling/parent's cwd is untouched. */
+static long sys_chdir(proc_t *p, uint64_t gpath) {
+    char abs[1536];
+    long e = read_abspath(p, gpath, abs, sizeof abs); if (e) return e;
+    int r = pal_host_chdir(abs);                       /* verify it is a directory */
+    if (r != 0) return r;
+    char norm[1024]; path_norm(abs, norm, sizeof norm);
+    size_t i = 0; for (; norm[i] && i < sizeof p->cwd - 1; i++) p->cwd[i] = norm[i]; p->cwd[i] = '\0';
+    return 0;
 }
 static long sys_unlink(proc_t *p, uint64_t gpath) {
-    char path[256]; long e = read_path(p, gpath, path, sizeof path); if (e) return e;
+    char path[1536]; long e = read_abspath(p, gpath, path, sizeof path); if (e) return e;
     return pal_host_unlink(path);
 }
 static long sys_mkdir (proc_t *p, uint64_t gpath, uint64_t mode) {
-    char path[256]; long e = read_path(p, gpath, path, sizeof path); if (e) return e;
+    char path[1536]; long e = read_abspath(p, gpath, path, sizeof path); if (e) return e;
     return pal_host_mkdir(path, (unsigned int)mode);
 }
 static long sys_rmdir (proc_t *p, uint64_t gpath) {
-    char path[256]; long e = read_path(p, gpath, path, sizeof path); if (e) return e;
+    char path[1536]; long e = read_abspath(p, gpath, path, sizeof path); if (e) return e;
     return pal_host_rmdir(path);
 }
 static long sys_rename(proc_t *p, uint64_t gold, uint64_t gnew) {
-    char o[256], n[256];
-    long e = read_path(p, gold, o, sizeof o); if (e) return e;
-    e = read_path(p, gnew, n, sizeof n);      if (e) return e;
+    char o[1536], n[1536];
+    long e = read_abspath(p, gold, o, sizeof o); if (e) return e;
+    e = read_abspath(p, gnew, n, sizeof n);      if (e) return e;
     return pal_host_rename(o, n);
 }
 
@@ -285,10 +346,21 @@ static long resolve_dir(proc_t *p, uint64_t dirfd, pal_file_t *out) {
     return 0;
 }
 
+/* Read a guest path for an *at op: resolve the dirfd, and -- if it is AT_FDCWD -- make the path
+ * absolute against p->cwd (so it resolves against THIS process's cwd, not a global one). A real dirfd
+ * keeps the path relative to it. Fills *outdir + `out`. 0, or -errno. */
+static long read_at(proc_t *p, uint64_t dirfd, uint64_t gpath, pal_file_t *outdir, char *out, size_t outsz) {
+    char rel[256];
+    long e = read_path(p, gpath, rel, sizeof rel); if (e) return e;
+    e = resolve_dir(p, dirfd, outdir);             if (e) return e;
+    if (*outdir == PAL_AT_FDCWD) cwd_join(p, rel, out, outsz);
+    else { size_t i = 0; for (; rel[i] && i < outsz - 1; i++) out[i] = rel[i]; out[i] = '\0'; }
+    return 0;
+}
+
 static long sys_openat(proc_t *p, uint64_t dirfd, uint64_t gpath, uint64_t flags, uint64_t mode) {
-    char path[256];
-    long e = read_path(p, gpath, path, sizeof path); if (e) return e;
-    pal_file_t dir; e = resolve_dir(p, dirfd, &dir);  if (e) return e;
+    char path[1536]; pal_file_t dir;
+    long e = read_at(p, dirfd, gpath, &dir, path, sizeof path); if (e) return e;
     pal_file_t f = pal_host_openat(dir, path, flags, mode);
     if (f < 0) return (long)f;                          /* -errno (ENOENT, ENOTDIR, ...) */
     int oi = ofile_alloc(f);
@@ -299,9 +371,8 @@ static long sys_openat(proc_t *p, uint64_t dirfd, uint64_t gpath, uint64_t flags
     return fd;
 }
 static long sys_fstatat(proc_t *p, uint64_t dirfd, uint64_t gpath, uint64_t gstat, uint64_t flags) {
-    char path[256];
-    long e = read_path(p, gpath, path, sizeof path); if (e) return e;
-    pal_file_t dir; e = resolve_dir(p, dirfd, &dir);  if (e) return e;
+    char path[1536]; pal_file_t dir;
+    long e = read_at(p, dirfd, gpath, &dir, path, sizeof path); if (e) return e;
     struct aios_stat s;
     int r = pal_host_fstatat(dir, path, &s, (flags & AIOS_AT_SYMLINK_NOFOLLOW) ? 0 : 1);
     if (r != 0) return r;
@@ -309,22 +380,20 @@ static long sys_fstatat(proc_t *p, uint64_t dirfd, uint64_t gpath, uint64_t gsta
     return 0;
 }
 static long sys_unlinkat(proc_t *p, uint64_t dirfd, uint64_t gpath, uint64_t flags) {
-    char path[256];
-    long e = read_path(p, gpath, path, sizeof path); if (e) return e;
-    pal_file_t dir; e = resolve_dir(p, dirfd, &dir);  if (e) return e;
+    char path[1536]; pal_file_t dir;
+    long e = read_at(p, dirfd, gpath, &dir, path, sizeof path); if (e) return e;
     return pal_host_unlinkat(dir, path, (flags & AIOS_AT_REMOVEDIR) ? 1 : 0);
 }
 static long sys_faccessat(proc_t *p, uint64_t dirfd, uint64_t gpath, uint64_t amode) {
-    char path[256];
-    long e = read_path(p, gpath, path, sizeof path); if (e) return e;
-    pal_file_t dir; e = resolve_dir(p, dirfd, &dir);  if (e) return e;
+    char path[1536]; pal_file_t dir;
+    long e = read_at(p, dirfd, gpath, &dir, path, sizeof path); if (e) return e;
     return pal_host_faccessat(dir, path, (int)amode);
 }
 
 /* Read a symlink target into the guest (no NUL, like POSIX readlink). */
 static long sys_readlink(proc_t *p, uint64_t gpath, uint64_t gbuf, uint64_t bufsize) {
-    char path[256], link[1024];
-    long e = read_path(p, gpath, path, sizeof path); if (e) return e;
+    char path[1536], link[1024];
+    long e = read_abspath(p, gpath, path, sizeof path); if (e) return e;
     size_t cap = bufsize < sizeof link ? (size_t)bufsize : sizeof link;
     long n = pal_host_readlink(path, link, cap);
     if (n < 0) return n;
@@ -348,34 +417,30 @@ static long sys_clock_gettime(proc_t *p, uint64_t clk_id, uint64_t gts) {
 
 /* ---- file-metadata *at family (mode / owner / symlink / hardlink / times) ---- */
 static long sys_fchmodat(proc_t *p, uint64_t dirfd, uint64_t gpath, uint64_t mode, uint64_t flags) {
-    char path[256]; long e = read_path(p, gpath, path, sizeof path); if (e) return e;
-    pal_file_t dir; e = resolve_dir(p, dirfd, &dir); if (e) return e;
+    char path[1536]; pal_file_t dir;
+    long e = read_at(p, dirfd, gpath, &dir, path, sizeof path); if (e) return e;
     return pal_host_fchmodat(dir, path, (unsigned int)mode, (flags & AIOS_AT_SYMLINK_NOFOLLOW) ? 1 : 0);
 }
 static long sys_fchownat(proc_t *p, uint64_t dirfd, uint64_t gpath, uint64_t owner, uint64_t group, uint64_t flags) {
-    char path[256]; long e = read_path(p, gpath, path, sizeof path); if (e) return e;
-    pal_file_t dir; e = resolve_dir(p, dirfd, &dir); if (e) return e;
+    char path[1536]; pal_file_t dir;
+    long e = read_at(p, dirfd, gpath, &dir, path, sizeof path); if (e) return e;
     return pal_host_fchownat(dir, path, (unsigned int)owner, (unsigned int)group, (flags & AIOS_AT_SYMLINK_NOFOLLOW) ? 1 : 0);
 }
 static long sys_symlinkat(proc_t *p, uint64_t gtarget, uint64_t newdirfd, uint64_t glinkpath) {
-    char target[1024], linkpath[256];
-    long e = read_path(p, gtarget, target, sizeof target); if (e) return e;
-    e = read_path(p, glinkpath, linkpath, sizeof linkpath); if (e) return e;
-    pal_file_t newdir; e = resolve_dir(p, newdirfd, &newdir); if (e) return e;
+    char target[1024], linkpath[1536]; pal_file_t newdir;
+    long e = read_path(p, gtarget, target, sizeof target); if (e) return e;   /* target stored verbatim */
+    e = read_at(p, newdirfd, glinkpath, &newdir, linkpath, sizeof linkpath);  if (e) return e;
     return pal_host_symlinkat(target, newdir, linkpath);
 }
 static long sys_linkat(proc_t *p, uint64_t olddirfd, uint64_t goldpath, uint64_t newdirfd, uint64_t gnewpath, uint64_t flags) {
-    char oldpath[256], newpath[256];
-    long e = read_path(p, goldpath, oldpath, sizeof oldpath); if (e) return e;
-    e = read_path(p, gnewpath, newpath, sizeof newpath);      if (e) return e;
-    pal_file_t olddir, newdir;
-    e = resolve_dir(p, olddirfd, &olddir); if (e) return e;
-    e = resolve_dir(p, newdirfd, &newdir); if (e) return e;
+    char oldpath[1536], newpath[1536]; pal_file_t olddir, newdir;
+    long e = read_at(p, olddirfd, goldpath, &olddir, oldpath, sizeof oldpath); if (e) return e;
+    e = read_at(p, newdirfd, gnewpath, &newdir, newpath, sizeof newpath);      if (e) return e;
     return pal_host_linkat(olddir, oldpath, newdir, newpath, (flags & AIOS_AT_SYMLINK_FOLLOW) ? 1 : 0);
 }
 static long sys_utimensat(proc_t *p, uint64_t dirfd, uint64_t gpath, uint64_t gtimes, uint64_t flags) {
-    char path[256]; long e = read_path(p, gpath, path, sizeof path); if (e) return e;
-    pal_file_t dir; e = resolve_dir(p, dirfd, &dir); if (e) return e;
+    char path[1536]; pal_file_t dir;
+    long e = read_at(p, dirfd, gpath, &dir, path, sizeof path); if (e) return e;
     struct aios_timespec ts[2];
     const struct aios_timespec *tp = NULL;
     if (gtimes) {                                          /* NULL = "now"; else 2 timespecs */
@@ -623,6 +688,8 @@ static void do_fork(proc_t *parent) {
     child->sig_tramp = parent->sig_tramp;
     child->pending_sig = 0;                            /* pending signals are NOT inherited */
     child->in_handler = 0;
+    { size_t i = 0; for (; parent->cwd[i] && i < sizeof child->cwd - 1; i++) child->cwd[i] = parent->cwd[i];
+      child->cwd[i] = '\0'; }                          /* cwd inherited across fork */
     for (int i = 0; i < AIOS_MAX_FD; i++) {
         child->fd[i] = parent->fd[i];
         if (parent->fd[i] >= 0) ofile_ref(parent->fd[i]);
@@ -705,11 +772,19 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
     }
     switch (sc->nr) {
     case AIOS_SYS_MMAP: pal_guest_mmap(p->pid, (size_t)sc->arg[0]); pal_guest_resume(p->pid); return;
-    case AIOS_SYS_EXEC:
-        if (pal_guest_exec(p->pid, sc->arg[0], sc->arg[1], sc->arg[2]) == 0)
-            for (int i = 1; i < AIOS_NSIG; i++)        /* caught signals reset to default across exec */
-                if (p->sig_handler[i] != AIOS_SIG_IGN) p->sig_handler[i] = AIOS_SIG_DFL;
+    case AIOS_SYS_EXEC: {                              /* resolve the program path against p->cwd first */
+        char xrel[256], xabs[1536];
+        long xe = read_path(p, sc->arg[0], xrel, sizeof xrel);
+        if (xe == 0) {
+            cwd_join(p, xrel, xabs, sizeof xabs);
+            if (pal_guest_exec(p->pid, xabs, sc->arg[1], sc->arg[2]) == 0)
+                for (int i = 1; i < AIOS_NSIG; i++)    /* caught signals reset to default across exec */
+                    if (p->sig_handler[i] != AIOS_SIG_IGN) p->sig_handler[i] = AIOS_SIG_DFL;
+        } else {
+            pal_guest_setret(p->pid, (uint64_t)xe);    /* unreadable path pointer -> -EFAULT */
+        }
         pal_guest_resume(p->pid); return;
+    }
     case AIOS_SYS_FORK: do_fork(p);                                        return;
     case AIOS_SYS_WAIT: do_wait(p, (unsigned long)sc->arg[0], sc->arg[1]); return;
     case AIOS_SYS_EXIT: pal_guest_exit(p->pid, (int)sc->arg[0]);           return;
@@ -771,6 +846,10 @@ int aios_kernel_run(const char *guest_path, char *const guest_argv[]) {
     init->wait_for = 0;
     init->wait_status_gaddr = 0;
     sig_reset(init);
+    /* seed init's cwd from the host (the tracer's startup dir unconfined, or "/" confined) */
+    { char seed[1024]; long sn = pal_host_getcwd(seed, sizeof seed);
+      size_t i = 0; if (sn > 0) for (; seed[i] && i < sizeof init->cwd - 1; i++) init->cwd[i] = seed[i];
+      if (i == 0) { init->cwd[i++] = '/'; } init->cwd[i] = '\0'; }
     fd_table_init_std(init);
 
     pal_pid_t init_pid = pid;

@@ -36,6 +36,10 @@
  * LINKAT/UTIMENSAT, ABI -> 40) turn the cp/mv stubs into real ops -- chmod/chown/symlink/link/utimes
  * work, so `cp -p` preserves mode+times and the `ln`/`chmod` utilities run. Confined single-target
  * ops resolve via openat2+/proc/self/fd so a symlink cannot redirect a metadata change to a host file.
+ * 0.5.10 = PER-PROCESS cwd: cwd moved from a single PAL-global to the kernel's process table -- the
+ * kernel pre-absolutes every guest path (incl. the exec path) against the calling process's cwd, so a
+ * subshell's `cd` no longer leaks into siblings/parent (inherited across fork, preserved across exec).
+ * No new ABI; the PAL is now cwd-free (chdir verify-only, exec takes a kernel-resolved absolute path).
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -45,7 +49,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 9
+#define AIOS_VERSION_PATCH 10
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

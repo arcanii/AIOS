@@ -77,13 +77,16 @@ size_t pal_guest_write(pal_pid_t who, uint64_t gaddr, const void *src, size_t le
  * Only valid while `who` is stopped servicing its mmap syscall. */
 uint64_t pal_guest_mmap(pal_pid_t who, size_t len);
 
-/* Replace guest `who`'s program image with the AIOS program at guest pointer `gpath` (argv/envp at
- * guest pointers, NULL-terminated arrays in `who`'s own address space). Loader work, inherently a
- * PAL concern (Linux injects execve; a future seL4 PAL parses the ELF + builds the address space).
- * Returns 0 if the new image is live (the kernel pal_guest_resume()s it -- its first syscall traps
- * as usual), or -1 on failure (the guest's result is set to -1). The kernel's fd table for `who`
- * is untouched, so AIOS fds survive exec (POSIX -- how a shell wires up redirections before exec). */
-int pal_guest_exec(pal_pid_t who, uint64_t gpath, uint64_t gargv, uint64_t genvp);
+/* Replace guest `who`'s program image with the AIOS program at `abspath` -- an ABSOLUTE path the
+ * kernel already resolved against the calling process's cwd (a KERNEL string, not a guest pointer;
+ * the PAL stages it into `who`). argv/envp stay guest pointers (NULL-terminated arrays in `who`'s own
+ * address space). Loader work, inherently a PAL concern (Linux injects execve; a future seL4 PAL
+ * parses the ELF + builds the address space). When confined (M4.3) the path is clamped to the AIOS
+ * root + canonicalized, so a guest can only launch in-root binaries. Returns 0 if the new image is
+ * live (the kernel pal_guest_resume()s it -- its first syscall traps as usual), or -1 on failure (the
+ * guest's result is set to -errno). The kernel's fd table for `who` is untouched, so AIOS fds survive
+ * exec (POSIX -- how a shell wires up redirections before exec). */
+int pal_guest_exec(pal_pid_t who, const char *abspath, uint64_t gargv, uint64_t genvp);
 
 /* Fork guest `parent` (stopped at its fork syscall): create a child guest that is a copy of the
  * parent's address space, now also traced. The Linux PAL injects a real clone; a future seL4 PAL

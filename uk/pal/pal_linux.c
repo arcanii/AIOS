@@ -94,6 +94,11 @@ static pid_t waitpid_r(pid_t pid, int *st, int flags) {
 static void pal_noop_sig(int s) { (void)s; }
 
 static void pal_fs_init_once(void);              /* M4.2: defined with the confinement layer below */
+/* M4.2 confinement state + opener, forward-declared so pal_guest_exec (above the layer) can clamp the
+ * exec path to the root. The actual definitions (with initializers) are in the confinement layer. */
+static int  g_confined;
+static int  g_root_fd;
+static long openat2_in_root(int dirfd, const char *path, uint64_t hflags, unsigned int mode);
 
 pal_pid_t pal_guest_spawn(const char *path, char *const argv[]) {
     pal_fs_init_once();                          /* M4.2: establish the AIOS root (AIOS_ROOT) once, up front */
@@ -223,29 +228,48 @@ uint64_t pal_guest_mmap(pal_pid_t who, size_t len) {
     return addr;
 }
 
-/* M4.3: confine a guest-issued exec target to the AIOS root (defined with the confinement layer
- * below). Returns 1 (unconfined: use `gpath` unchanged), 0 (confined: *out_addr holds a guest address
- * with the canonical in-root host path to exec instead), or -errno (target not reachable in the root). */
-static long pal_confine_exec(pal_pid_t who, uint64_t gpath, const struct user_pt_regs *regs, uint64_t *out_addr);
+/* Stage a kernel string `s` into guest `who`'s own stack scratch (below sp, inside the current stack
+ * page -- dead space the active frames do not use; execve copies the path before unmapping). Returns
+ * the guest address, or 0 on failure. */
+static uint64_t stage_str(pal_pid_t who, uint64_t sp, const char *s) {
+    size_t len = 0; while (s[len]) len++;
+    uint64_t pagestart = sp & ~(uint64_t)0xFFF;
+    uint64_t scratch   = (sp - 512) & ~(uint64_t)0xF;
+    if (scratch < pagestart) scratch = pagestart;
+    if (sp - scratch < (uint64_t)len + 1) return 0;
+    if (pal_guest_write(who, scratch, s, len + 1) != len + 1) return 0;
+    return scratch;
+}
 
-/* Replace `who`'s image by rewriting the trapped AIOS_SYS_EXEC svc into a Linux execve. M4.3: when the
- * PAL is confined, the path is first resolved INSIDE the AIOS root (a guest can only exec binaries in
- * its root -- the INIT program the operator names on the command line is the trusted entry and is NOT
- * routed here). execve has no normal return on success: PTRACE_O_TRACEEXEC turns it into a
- * PTRACE_EVENT_EXEC stop, after which the new image is live (the kernel resumes it; pal_guest_next then
- * skips the trailing execve exit and lands on the new program's first syscall). On failure execve
- * returns -errno at a normal exit; restore the guest with x0 = -1 (or the confinement -errno). */
-int pal_guest_exec(pal_pid_t who, uint64_t gpath, uint64_t gargv, uint64_t genvp) {
+/* Replace `who`'s image by rewriting the trapped AIOS_SYS_EXEC svc into a Linux execve of `abspath`
+ * (a kernel string the kernel resolved against the process's cwd; staged into `who`). M4.3: when the
+ * PAL is confined, abspath is clamped to the AIOS root + canonicalized via /proc/self/fd, so a guest
+ * can only launch in-root binaries (the operator's INIT spawn goes through pal_guest_spawn, not here).
+ * execve has no normal return on success: PTRACE_O_TRACEEXEC turns it into a PTRACE_EVENT_EXEC stop,
+ * after which the new image is live (the kernel resumes it; pal_guest_next then skips the trailing
+ * execve exit and lands on the new program's first syscall). On failure the guest gets -errno. */
+int pal_guest_exec(pal_pid_t who, const char *abspath, uint64_t gargv, uint64_t genvp) {
     struct user_pt_regs saved, r;
     if (getregs(who, &saved) != 0) return -1;
-    uint64_t path_addr = gpath;
-    long c = pal_confine_exec(who, gpath, &saved, &path_addr);   /* M4.3: confine the exec target */
-    if (c < 0) {                                                 /* target not reachable in the root */
-        pal_guest_setret(who, (uint64_t)c);                      /* neutralize the exec svc + plant -errno */
-        return -1;                                               /* (so the guest sees ENOENT, not ENOSYS) */
+
+    const char *hostpath = abspath;
+    char canon[2048];
+    if (g_confined) {                                            /* clamp + canonicalize to the root */
+        long fd = openat2_in_root(g_root_fd, abspath, (uint64_t)(O_PATH | O_CLOEXEC), 0);
+        if (fd < 0) { pal_guest_setret(who, (uint64_t)(long)-errno); return -1; }   /* not in root */
+        char proc[64]; snprintf(proc, sizeof proc, "/proc/self/fd/%ld", fd);
+        ssize_t cl = readlink(proc, canon, sizeof canon - 1);
+        close((int)fd);
+        if (cl <= 0) { pal_guest_setret(who, (uint64_t)(long)-EACCES); return -1; }
+        canon[cl] = '\0';
+        hostpath = canon;
     }
+
+    uint64_t addr = stage_str(who, saved.sp, hostpath);          /* path into the guest's stack scratch */
+    if (addr == 0) { pal_guest_setret(who, (uint64_t)(long)-ENAMETOOLONG); return -1; }
+
     r = saved;
-    r.regs[0] = path_addr;                                       /* confined canon path, or gpath as-is */
+    r.regs[0] = addr;
     r.regs[1] = gargv;
     r.regs[2] = genvp;
     if (setregs(who, &r) != 0) return -1;
@@ -257,7 +281,7 @@ int pal_guest_exec(pal_pid_t who, uint64_t gpath, uint64_t gargv, uint64_t genvp
 
     if (WIFSTOPPED(st) && (st >> 8) == (SIGTRAP | (PTRACE_EVENT_EXEC << 8)))
         return 0;                                            /* success: new image live */
-    if (WIFSTOPPED(st)) {                                     /* failure: restore + plant -1 */
+    if (WIFSTOPPED(st)) {                                     /* execve failed: restore + plant -1 */
         saved.regs[0] = (unsigned long long)-1;
         setregs(who, &saved);
         return -1;
@@ -420,31 +444,6 @@ static long openat2_in_root(int dirfd, const char *path, uint64_t hflags, unsign
     return syscall(__NR_openat2, dirfd, path, &how, sizeof how);
 }
 
-/* Collapse an absolute path TEXTUALLY ("."/empty dropped, ".." popped + clamped at root). Logical only:
- * the real, secure resolution is always redone by openat2(RESOLVE_IN_ROOT); this just keeps getcwd tidy. */
-static void path_norm(const char *in, char *out, size_t outsz) {
-    size_t olen = 0;                                  /* build "/c1/c2/..."; empty result => root "/" */
-    const char *p = in;
-    while (*p) {
-        while (*p == '/') p++;
-        if (!*p) break;
-        const char *seg = p;
-        while (*p && *p != '/') p++;
-        size_t clen = (size_t)(p - seg);
-        if (clen == 1 && seg[0] == '.') continue;
-        if (clen == 2 && seg[0] == '.' && seg[1] == '.') {
-            while (olen > 0 && out[olen - 1] != '/') olen--;   /* drop last segment's chars */
-            if (olen > 0) olen--;                              /* and its leading '/'        */
-            continue;
-        }
-        if (olen + 1 + clen >= outsz) break;                   /* overflow: best-effort truncate */
-        out[olen++] = '/';
-        for (size_t i = 0; i < clen; i++) out[olen++] = seg[i];
-    }
-    if (olen == 0) out[olen++] = '/';
-    out[olen] = '\0';
-}
-
 /* The logical path to hand openat2 for an AT_FDCWD / plain-path op: absolute as-is, else joined onto the
  * logical cwd. openat2(RESOLVE_IN_ROOT) does the secure resolution of any ".."/symlinks inside it. */
 static void eff_path(const char *path, char *out, size_t outsz) {
@@ -494,39 +493,6 @@ static long confined_canon(int basefd, const char *path, int nofollow, char *out
     int e = errno; close((int)fd);
     if (n < 0) { errno = e; return -1; }
     out[n] = '\0';
-    return 0;
-}
-
-/* M4.3 -- confine a guest-issued exec to the AIOS root. Resolve the guest's exec target INSIDE the
- * root (openat2 RESOLVE_IN_ROOT, following symlinks within the root), turn the resulting O_PATH handle
- * into a canonical real host path via /proc/self/fd, and stage that path in the guest's own stack
- * scratch (below sp, inside the current stack page) for execve to use. The canonical path is fully
- * resolved and provably under the root, so execve re-resolving it stays in-root. Returns 0 (use
- * *out_addr), 1 (unconfined -> use the guest path as-is), or -errno (not reachable in the root). */
-static long pal_confine_exec(pal_pid_t who, uint64_t gpath, const struct user_pt_regs *regs, uint64_t *out_addr) {
-    if (!g_confined) return 1;
-    char gp[1024];
-    size_t n = pal_guest_read(who, gpath, gp, sizeof gp - 1);
-    if (n == 0) return -EFAULT;
-    gp[n] = '\0';
-    char eff[2048]; eff_path(gp, eff, sizeof eff);
-    long fd = openat2_in_root(g_root_fd, eff, (uint64_t)(O_PATH | O_CLOEXEC), 0);   /* in-root? */
-    if (fd < 0) return -errno;                                       /* ENOENT/.. : denied */
-    char proc[64], canon[2048];
-    snprintf(proc, sizeof proc, "/proc/self/fd/%ld", fd);
-    ssize_t cl = readlink(proc, canon, sizeof canon - 1);            /* canonical in-root host path */
-    close((int)fd);
-    if (cl <= 0) return -EACCES;
-    canon[cl] = '\0';
-    /* stage canon in the guest's current stack page, strictly below sp (dead space the active frames
-     * do not use; execve copies the path before unmapping, so on failure the bytes are harmless). */
-    uint64_t sp = regs->sp;
-    uint64_t pagestart = sp & ~(uint64_t)0xFFF;
-    uint64_t scratch   = (sp - 512) & ~(uint64_t)0xF;
-    if (scratch < pagestart) scratch = pagestart;
-    if (sp - scratch < (uint64_t)cl + 1) return -ENAMETOOLONG;
-    if (pal_guest_write(who, scratch, canon, (size_t)cl + 1) != (size_t)cl + 1) return -EFAULT;
-    *out_addr = scratch;
     return 0;
 }
 
@@ -648,24 +614,24 @@ int pal_host_rename(const char *o, const char *n) {
     }
     return rename(o, n) == 0 ? 0 : (int)pal_errno();
 }
+/* chdir is now VERIFY-ONLY: the per-process cwd lives in the kernel, so the PAL just confirms `path`
+ * (an absolute path the kernel built) is a reachable directory -- it mutates no PAL state (no host
+ * chdir, so the tracer's real cwd never moves, which keeps a relative AIOS_ROOT anchored). */
 int pal_host_chdir(const char *path) {
-    if (g_confined) {
-        char eff[2048]; eff_path(path, eff, sizeof eff);
-        long fd = openat2_in_root(g_root_fd, eff, (uint64_t)(O_PATH | O_DIRECTORY | O_CLOEXEC), 0);
-        if (fd < 0) return (int)pal_errno();
-        close((int)fd);
-        char norm[1024]; path_norm(eff, norm, sizeof norm);          /* tidy logical cwd for getcwd */
-        snprintf(g_cwd, sizeof g_cwd, "%s", norm);
-        return 0;
-    }
-    return chdir(path) == 0 ? 0 : (int)pal_errno();
+    long fd = g_confined
+        ? openat2_in_root(g_root_fd, path, (uint64_t)(O_PATH | O_DIRECTORY | O_CLOEXEC), 0)
+        : (long)open(path, O_PATH | O_DIRECTORY | O_CLOEXEC);
+    if (fd < 0) return (int)pal_errno();
+    close((int)fd);
+    return 0;
 }
+/* getcwd is only used to SEED init's cwd now (the kernel owns the per-process cwd): the tracer's real
+ * dir unconfined, or "/" confined. */
 long pal_host_getcwd(char *buf, size_t size) {
     if (g_confined) {
-        size_t n = strlen(g_cwd);
-        if (n + 1 > size) { errno = ERANGE; return pal_errno(); }
-        memcpy(buf, g_cwd, n + 1);
-        return (long)n;
+        if (size < 2) { errno = ERANGE; return pal_errno(); }
+        buf[0] = '/'; buf[1] = '\0';
+        return 1;
     }
     return getcwd(buf, size) ? (long)strlen(buf) : pal_errno();
 }
