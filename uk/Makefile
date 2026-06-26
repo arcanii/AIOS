@@ -30,10 +30,17 @@ GCCINC   := $(shell $(CC) -print-file-name=include)
 LIBC_CFLAGS = $(GUEST_CFLAGS) -nostdinc -isystem $(GCCINC) -Ilib -Ilib/include
 LIBC_HDRS   = $(wildcard lib/include/*.h lib/include/sys/*.h)
 
-.PHONY: all run clean
+# Vendored sbase (real third-party POSIX utilities, compiled UNMODIFIED against libaios). Variables
+# up here so $(SBASE_BINS) is defined before `all` references it; the build rules are below.
+SBASE        = vendor/sbase
+SBASE_CFLAGS = $(LIBC_CFLAGS) -I$(SBASE)
+SBASE_DEPS   = $(LIBAIOS) $(LIBC_HDRS) $(SBASE)/util.h $(SBASE)/arg.h $(SBASE)/compat.h
+SBASE_BINS   = sbase-true sbase-false sbase-echo sbase-cat
+
+.PHONY: all run clean sbase
 all: aios-uk guest_hello guest_fileio guest_cat prog_args prog_wc prog_bigalloc prog_tail prog_exec \
      prog_fork prog_spawn prog_pipe prog_pipeline prog_pipebig prog_sh prog_libc prog_stdio prog_errno \
-     prog_fs prog_getopt prog_dir
+     prog_fs prog_getopt prog_dir $(SBASE_BINS)
 
 aios-uk: $(KERNEL_SRC) include/pal.h include/aios_abi.h include/aios_version.h
 	$(CC) $(KERNEL_CFLAGS) -o $@ $(KERNEL_SRC)
@@ -100,10 +107,28 @@ prog_getopt: guest/prog_getopt.c $(LIBAIOS) $(LIBC_HDRS) include/aios_abi.h
 prog_dir: guest/prog_dir.c $(LIBAIOS) $(LIBC_HDRS) include/aios_abi.h
 	$(CC) $(LIBC_CFLAGS) -o $@ guest/prog_dir.c $(LIBAIOS)
 
+# ---- vendored sbase build rules (vendor/sbase, suckless MIT, pinned -- see vendor/README.md) ----
+# REAL third-party POSIX utilities compiled UNMODIFIED against AIOS's libc (libaios), via the
+# libc-program class + the sbase include dir. Each utility links its source + the libutil objects
+# it needs + libaios. Missing libc features are added to libaios, NEVER patched into sbase. Outputs
+# are named sbase-<name> (gitignored via /sbase-*).
+sbase: $(SBASE_BINS)
+
+sbase-true: $(SBASE)/true.c $(LIBAIOS)
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/true.c $(LIBAIOS)
+sbase-false: $(SBASE)/false.c $(LIBAIOS)
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/false.c $(LIBAIOS)
+sbase-echo: $(SBASE)/echo.c $(SBASE_DEPS)
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/echo.c \
+	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/putword.c $(SBASE)/libutil/fshut.c $(LIBAIOS)
+sbase-cat: $(SBASE)/cat.c $(SBASE_DEPS)
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/cat.c \
+	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/concat.c $(SBASE)/libutil/writeall.c $(LIBAIOS)
+
 run: all
 	./aios-uk ./prog_tail -n 3 /etc/os-release
 
 clean:
 	rm -f aios-uk guest_hello guest_fileio guest_cat prog_args prog_wc prog_bigalloc prog_tail \
 	      prog_exec prog_fork prog_spawn prog_pipe prog_pipeline prog_pipebig prog_sh prog_libc \
-	      prog_stdio prog_errno prog_fs prog_getopt prog_dir
+	      prog_stdio prog_errno prog_fs prog_getopt prog_dir $(SBASE_BINS)

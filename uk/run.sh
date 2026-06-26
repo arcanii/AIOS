@@ -61,6 +61,12 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            ./aios-uk ./prog_getopt; echo "  [exit $?]";
            echo "=== M3e.6: prog_dir -- opendir/readdir/closedir (AIOS_SYS_GETDENTS, for ls) ===" &&
            ./aios-uk ./prog_dir; echo "  [exit $?]";
+           echo "=== M3f: REAL vendored sbase, compiled UNMODIFIED against AIOS libc ===" &&
+           ./aios-uk ./sbase-true  2>/dev/null; echo "  [sbase true  exit $? (expect 0)]";
+           ./aios-uk ./sbase-false 2>/dev/null; echo "  [sbase false exit $? (expect 1)]";
+           ./aios-uk ./sbase-echo hello from vendored sbase 2>/dev/null; echo "  [sbase echo exit $?]";
+           ./aios-uk ./sbase-cat /etc/hostname 2>/dev/null; echo "  [sbase cat file exit $?]";
+           printf "piped into real sbase cat\n" | ./aios-uk ./sbase-cat 2>/dev/null; echo "  [sbase cat stdin exit $?]";
            echo "=== M3d gate: prog_pipebig exit must be 0 ===" &&
            ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [exit $rc]";
            test "$rc" = 0'

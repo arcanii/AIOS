@@ -3,4 +3,5 @@
 /aios-uk
 /guest_*
 /prog_*
+/sbase-*
 *.o
