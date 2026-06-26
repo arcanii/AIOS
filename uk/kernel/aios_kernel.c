@@ -568,6 +568,19 @@ static void on_exit(proc_t *p, int code) {
  * the guest's result themselves and manage their own resume (or parking), so they do NOT go
  * through pal_guest_return. */
 static void dispatch(proc_t *p, const pal_syscall_t *sc) {
+    /* M4 boundary policy: every AIOS syscall number is >= AIOS_SYS_WRITE (0x1000). A lower number
+     * means the guest emitted a real host (Linux) syscall, trying to bypass the kernel -- an escape
+     * attempt. The PAL already neutralizes it (it never runs on the host); make the policy explicit
+     * and loud: the guest dies. A well-behaved AIOS program never trips this. */
+    if (sc->nr < AIOS_SYS_WRITE) {
+        kputs("[aios-uk] SECURITY: guest pid ");
+        kput_int((long)p->pid);
+        kputs(" issued a non-AIOS (host) syscall nr=");
+        kput_int((long)sc->nr);
+        kputs(" -> escape attempt; killing the guest (boundary enforced)\n");
+        pal_guest_exit(p->pid, 159);                                    /* 128 + 31 (SIGSYS-flavoured) */
+        return;
+    }
     switch (sc->nr) {
     case AIOS_SYS_MMAP: pal_guest_mmap(p->pid, (size_t)sc->arg[0]); pal_guest_resume(p->pid); return;
     case AIOS_SYS_EXEC: pal_guest_exec(p->pid, sc->arg[0], sc->arg[1], sc->arg[2]);

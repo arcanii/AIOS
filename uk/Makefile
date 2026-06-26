@@ -54,7 +54,7 @@ DASH_CFILES = $(addprefix $(DASH_SRC)/, alias.c arith_yacc.c arith_yylex.c cd.c 
               bltin/test.c bltin/times.c var.c syntax.c nodes.c builtins.c init.c signames.c)
 
 .PHONY: all run clean sbase
-all: aios-uk guest_hello guest_fileio guest_cat prog_args prog_wc prog_bigalloc prog_tail prog_exec \
+all: aios-uk guest_hello guest_fileio guest_cat guest_escape prog_args prog_wc prog_bigalloc prog_tail prog_exec \
      prog_fork prog_spawn prog_pipe prog_pipeline prog_pipebig prog_sh prog_libc prog_stdio prog_errno \
      prog_fs prog_getopt prog_dir $(SBASE_BINS) dash
 
@@ -69,6 +69,9 @@ guest_fileio: guest/guest_fileio.c include/aios_abi.h
 
 guest_cat: guest/guest_cat.c include/aios_abi.h
 	$(CC) $(GUEST_CFLAGS) -o $@ guest/guest_cat.c
+
+guest_escape: guest/guest_escape.c include/aios_abi.h
+	$(CC) $(GUEST_CFLAGS) -o $@ guest/guest_escape.c
 
 prog_args: guest/prog_args.c $(LIBAIOS) lib/libaios.h include/aios_abi.h
 	$(CC) $(PROG_CFLAGS) -o $@ guest/prog_args.c $(LIBAIOS)
@@ -168,6 +171,6 @@ run: all
 	./aios-uk ./prog_tail -n 3 /etc/os-release
 
 clean:
-	rm -f aios-uk guest_hello guest_fileio guest_cat prog_args prog_wc prog_bigalloc prog_tail \
+	rm -f aios-uk guest_hello guest_fileio guest_cat guest_escape prog_args prog_wc prog_bigalloc prog_tail \
 	      prog_exec prog_fork prog_spawn prog_pipe prog_pipeline prog_pipebig prog_sh prog_libc \
 	      prog_stdio prog_errno prog_fs prog_getopt prog_dir $(SBASE_BINS) dash

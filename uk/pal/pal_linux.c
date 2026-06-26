@@ -129,8 +129,12 @@ int pal_guest_next(pal_pid_t *who, pal_syscall_t *sc, int *exit_code) {
 }
 
 int pal_guest_return(pal_pid_t who, uint64_t retval) {
-    /* `who` is stopped at a syscall ENTRY. Let the (ENOSYS) syscall run to its EXIT, plant the AIOS
-     * result in x0, and resume it toward its next syscall (collected by a later pal_guest_next). */
+    /* `who` is stopped at a syscall ENTRY. ENFORCE THE BOUNDARY (M4): neutralize the trapped syscall
+     * number (-1) so the host SKIPS it -- the guest's chosen syscall, AIOS-numbered or a smuggled
+     * real-Linux one, NEVER executes on the host. Only the kernel's deliberate injections (mmap/exec/
+     * fork/exit, their own paths) ever run a real host syscall. Then run the now-skipped syscall to
+     * its EXIT, plant the AIOS result in x0, and resume toward the next syscall. */
+    set_syscall_nr(who, -1);
     if (ptrace(PTRACE_SYSCALL, who, 0, 0) != 0) return -1;
     int st;
     if (waitpid(who, &st, 0) < 0) return -1;

@@ -124,9 +124,27 @@ READLINK/FCNTL.
 `uk/run.sh` runs the whole suite (colima); milestones through M3e.3 are also validated natively on
 the RPi4 (M3e.4 onward is colima-verified, Pi-pending — the Pi went offline mid-s19).
 
+## M4 — the boundary is enforced ✅
+
+The gVisor trap model is now **sound**: an AIOS program *cannot* reach the host behind the kernel's
+back. Two layers, both in the existing ptrace PAL (no new ABI):
+
+- **Mechanism** — `pal_guest_return` neutralizes the trapped syscall number (sets it to `-1` so the
+  host kernel *skips* it) before running it to its exit. The guest's chosen syscall — an AIOS number
+  *or* a smuggled real-Linux number — never executes on the host; the kernel plants the result. Only
+  the kernel's own deliberate injections (mmap/exec/fork/exit) ever run a real host syscall.
+- **Policy** — the kernel treats any trapped syscall number below the AIOS range (i.e. a real Linux
+  syscall the guest emitted) as an escape attempt and **kills the guest** with a diagnostic.
+
+`guest/guest_escape.c` is the red-team proof: it issues a raw Linux `write(64)` between two AIOS
+writes. Before M4 the Linux write *executed on the host*; now it never runs and the guest is killed
+(exit 159). HW-validated on the RPi4 (kernel 6.12). The complementary half — restricting the guest's
+*view* of host resources (its fs namespace, so a serviced `open` can only reach an AIOS root) — is
+the next hardening step.
+
 ## Next (per the design doc)
 
-Real **signal delivery** (async ^C / SIGCHLD through the PAL) for interactive dash; more sbase utils
-(head/tail/cp/mv/sort; grep needs a real regex). Then **M4** enforce the boundary (seccomp/namespaces
-so a program *cannot* bypass the kernel) · **M5** `sched_ext` · **M6** the seL4/x86-64 replant seam
-(`pal_sel4.c`).
+**M4.2** fs/resource isolation (a mount namespace / sandbox root so a guest's `open` can't reach
+arbitrary host paths). Real **signal delivery** (async ^C / SIGCHLD) for interactive dash; more sbase
+utils (head/tail/cp/mv/sort; grep needs a real regex). Then **M5** `sched_ext` · **M6** the
+seL4/x86-64 replant seam (`pal_sel4.c`).
