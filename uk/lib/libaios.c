@@ -562,6 +562,21 @@ void qsort(void *base, size_t n, size_t sz, int (*cmp)(const void *, const void 
     }
 }
 
+/* bsearch: generic binary search over a sorted array (sbase's isspacerune/runetype lookups). */
+void *bsearch(const void *key, const void *base, size_t n, size_t sz,
+              int (*cmp)(const void *, const void *)) {
+    const char *b = base;
+    size_t lo = 0, hi = n;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        int c = cmp(key, b + mid * sz);
+        if (c < 0)      hi = mid;
+        else if (c > 0) lo = mid + 1;
+        else            return (void *)(b + mid * sz);
+    }
+    return 0;
+}
+
 /* --- getopt: POSIX single-shot option parsing (no GNU permutation -- stops at the first
  * non-option). sbase parses args via its own arg.h, but getopt is part of the libc surface and
  * plenty of programs lean on it. State lives in the standard globals. --- */

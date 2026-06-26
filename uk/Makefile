@@ -35,7 +35,7 @@ LIBC_HDRS   = $(wildcard lib/include/*.h lib/include/sys/*.h)
 SBASE        = vendor/sbase
 SBASE_CFLAGS = $(LIBC_CFLAGS) -I$(SBASE)
 SBASE_DEPS   = $(LIBAIOS) $(LIBC_HDRS) $(SBASE)/util.h $(SBASE)/arg.h $(SBASE)/compat.h
-SBASE_BINS   = sbase-true sbase-false sbase-echo sbase-cat
+SBASE_BINS   = sbase-true sbase-false sbase-echo sbase-cat sbase-wc
 
 .PHONY: all run clean sbase
 all: aios-uk guest_hello guest_fileio guest_cat prog_args prog_wc prog_bigalloc prog_tail prog_exec \
@@ -124,6 +124,11 @@ sbase-echo: $(SBASE)/echo.c $(SBASE_DEPS)
 sbase-cat: $(SBASE)/cat.c $(SBASE_DEPS)
 	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/cat.c \
 	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/concat.c $(SBASE)/libutil/writeall.c $(LIBAIOS)
+sbase-wc: $(SBASE)/wc.c $(SBASE_DEPS) $(SBASE)/utf.h
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/wc.c \
+	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/fshut.c \
+	      $(SBASE)/libutf/fgetrune.c $(SBASE)/libutf/rune.c $(SBASE)/libutf/runetype.c \
+	      $(SBASE)/libutf/isspacerune.c $(LIBAIOS)
 
 run: all
 	./aios-uk ./prog_tail -n 3 /etc/os-release
