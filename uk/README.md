@@ -100,15 +100,33 @@ vendored unmodified under `vendor/sbase` — see `vendor/README.md`) compiles UN
   `ls -l`: `readlink`, a real (UTC) `gmtime`/`localtime`/`strftime` time layer, numeric uid/gid (no
   passwd db yet), and a printf REWRITE with flags/width/precision so the columns align.
 
-**AIOS ABI now (29 syscalls):** WRITE/READ/OPEN/CLOSE/EXIT/MMAP/FSTAT/LSEEK/EXEC/FORK/WAIT/PIPE/DUP2/
+## M3i — dash: AIOS is operational ✅
+
+The destination of the libc retarget. Real **dash** (the Debian Almquist Shell, 0.5.11, BSD —
+Debian/Ubuntu's `/bin/sh`) compiles UNMODIFIED against `libaios` and runs on the AIOS kernel as a
+real shell: builtins, **arithmetic** with precedence, `&&`/`||` control flow, `if`/`test`,
+`for`/`while` loops, variable expansion, external **exec**, multi-stage **pipelines**, **command
+substitution**, `>` **redirection**, `$?` status, `-c`/stdin/script-file modes. It drives real sbase
+commands (`echo | wc | cat`) through the kernel's process model.
+
+One new syscall (FCNTL — `F_DUPFD` for dash's redirection bookkeeping) plus the libc dash needs,
+added to libaios (sbase + dash both stay unmodified): `setjmp`/`sigsetjmp` (aarch64 asm — dash's
+exception mechanism), a signal layer (dispositions recorded, not yet delivered — enough for `-c`),
+`fcntl`/`dup`/`execve`/`vfork`/`wait3`, `sysconf`/`strtoll`/`getrlimit`/`times`/`strsignal`, more
+string fns, and the headers `<signal.h>`/`<setjmp.h>`/`<inttypes.h>`/`<alloca.h>`/`<getopt.h>`/
+`<sys/{param,resource,time,times,ioctl}.h>`. Vendored under `vendor/dash` (config.h + the generated
+sources are AIOS build inputs; see `vendor/README.md`).
+
+**AIOS ABI now (30 syscalls):** WRITE/READ/OPEN/CLOSE/EXIT/MMAP/FSTAT/LSEEK/EXEC/FORK/WAIT/PIPE/DUP2/
 STAT/LSTAT/GETCWD/CHDIR/UNLINK/MKDIR/RMDIR/RENAME/GETPID/GETDENTS/OPENAT/FSTATAT/UNLINKAT/FACCESSAT/
-READLINK.
+READLINK/FCNTL.
 
 `uk/run.sh` runs the whole suite (colima); milestones through M3e.3 are also validated natively on
 the RPi4 (M3e.4 onward is colima-verified, Pi-pending — the Pi went offline mid-s19).
 
 ## Next (per the design doc)
 
-**dash** (vendor + compile; leans on signals + job control) = fully operational, replacing `prog_sh`.
-Then **M4** enforce the boundary (seccomp/namespaces so a program *cannot* bypass the kernel) ·
-**M5** `sched_ext` · **M6** the seL4/x86-64 replant seam (`pal_sel4.c`).
+Real **signal delivery** (async ^C / SIGCHLD through the PAL) for interactive dash; more sbase utils
+(head/tail/cp/mv/sort; grep needs a real regex). Then **M4** enforce the boundary (seccomp/namespaces
+so a program *cannot* bypass the kernel) · **M5** `sched_ext` · **M6** the seL4/x86-64 replant seam
+(`pal_sel4.c`).
