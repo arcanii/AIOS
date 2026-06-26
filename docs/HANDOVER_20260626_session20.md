@@ -1,14 +1,16 @@
-# HANDOVER -- session 20 (2026-06-26): AIOS is OPERATIONAL -- real sbase AND dash run UNMODIFIED
+# HANDOVER -- session 20 (2026-06-26): AIOS OPERATIONAL + boundary ENFORCED + signals/^C
 
 Continues the userspace-kernel work (the 2026-06-24 pivot: AIOS as a gVisor-style userspace kernel
-on Linux; verified seL4-on-x86-64 is the destination; verification is the soul). This session
-finished the libc gaps sbase needed, **vendored real suckless sbase (8 utilities compile UNMODIFIED)**,
-and then -- the operational milestone -- **vendored real dash (the Debian Almquist Shell) which
-compiles UNMODIFIED and runs as a real shell on the AIOS kernel**. All on `main` (now v0.5.2). Live
-state: memory [[project_pivot_linux_userspace_kernel]]. Design:
-docs/DESIGN_20260624_aios_userspace_kernel_on_linux.md. README: uk/README.md.
+on Linux; verified seL4-on-x86-64 is the destination; verification is the soul). A very large session:
+finished the libc gaps sbase needed and **vendored real suckless sbase (8 utilities, UNMODIFIED)**;
+**vendored real dash (Debian Almquist Shell, UNMODIFIED) -> AIOS is OPERATIONAL**; **M4 enforced the
+boundary** (the trap model is SOUND); and **M5 real signal delivery + interactive ^C**. All on `main`,
+now **v0.5.4, 34-syscall ABI**. Colima-verified AND HW-validated natively on the real RPi4 (Linux
+6.12.47/aarch64, gcc 14.2). Live demo: `uk/test/demo.sh`. Live state: memory
+[[project_pivot_linux_userspace_kernel]]. Design: docs/DESIGN_20260624_aios_userspace_kernel_on_linux.md.
+README: uk/README.md.
 
-## What shipped this session (all on `main`, 7 milestone commits + a version bump)
+## What shipped this session (all on `main`, ~18 commits)
 
 - **M3e.5 `36b6ee5`** -- `getopt` (POSIX, no permutation) + `qsort` (generic heapsort). Pure libc,
   no new ABI. Proof: prog_getopt.c.
@@ -145,8 +147,9 @@ WORKING BRANCH = **`main`** (the 0.5.x userspace kernel; commit on main, Bryan p
 tree: a host-agnostic kernel (kernel/aios_kernel.c includes ONLY aios_abi.h + aios_version.h +
 pal.h) over the ONLY host-aware file (pal/pal_linux.c, a multi-process PTRACE_SYSCALL driver) +
 libaios (a C runtime on the AIOS ABI) + shadow standard headers (lib/include, used with -nostdinc).
-DONE through **v0.5.2 -- AIOS IS OPERATIONAL**: M0..M3c, the FULL PROCESS MODEL (M3d), the libc
-retarget (M3e), **vendored suckless sbase -- true/false/echo/cat/wc/mkdir/rm/ls compile UNMODIFIED**
+DONE through **v0.5.4 -- OPERATIONAL + boundary ENFORCED + signals/^C**: M0..M3c, the FULL PROCESS
+MODEL (M3d), the libc retarget (M3e), **vendored suckless sbase -- true/false/echo/cat/wc/mkdir/rm/ls
+compile UNMODIFIED**
 (M3f/g/h: the `*at` family for `rm -r`, readlink + a UTC time/strftime layer + a printf rewrite for
 `ls -l`), and -- the milestone -- **vendored real dash (Debian Almquist Shell, BSD) compiles
 UNMODIFIED and runs as a real shell** (M3i): builtins, arithmetic, &&/||, if/test, for/while,
