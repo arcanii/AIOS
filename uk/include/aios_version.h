@@ -74,6 +74,13 @@
  * (a continued child, status 0xffff); WNOHANG polls. KILL to a stopped process special-cases SIGCONT.
  * Still no terminal-signal ROUTING (that + dash JOBS=1 is increment 3), so M5 ^C stays untouched.
  * Proof: guest/prog_stop.c (SIGSTOP -> WIFSTOPPED, SIGCONT -> WIFCONTINUED, then terminate + reap).
+ * 0.5.17 = job control increment 3 (part 1): a real SIGPROCMASK (ABI -> 46). proc_t.sig_mask (a
+ * bitmask of BLOCKED signals, inherited across fork) -- a blocked pending signal stays pending (kreturn/
+ * the async path leave it) until sigprocmask unblocks it, delivered then; SIGKILL/SIGSTOP are never
+ * blockable. dash JOBS=1 needs this for its sigblockall/sigclearmask critical sections. The pending
+ * slot is single (one masked signal at a time -- a documented simplification). Proof: guest/prog_sigmask.c
+ * (block SIGUSR1 -> raise -> handler does NOT run; unblock -> it is delivered). Terminal-signal ROUTING
+ * + dash JOBS=1 are the remaining part of increment 3, so M5 ^C is still untouched.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -83,7 +90,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 16
+#define AIOS_VERSION_PATCH 17
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

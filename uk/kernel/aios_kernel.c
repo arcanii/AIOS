@@ -98,6 +98,8 @@ typedef struct {
     /* signals: per-process dispositions + one pending signal + saved regs while a handler runs */
     uint64_t      sig_handler[AIOS_NSIG];   /* 0 = SIG_DFL, 1 = SIG_IGN, else a guest handler address */
     uint64_t      sig_tramp;           /* the guest's sigreturn trampoline (registered via sigaction) */
+    uint64_t      sig_mask;            /* BLOCKED signals (bit 1<<signum); inherited across fork. A
+                                        * masked pending signal waits until sigprocmask unblocks it. */
     int           pending_sig;         /* a signal awaiting delivery (0 = none) */
     int           in_handler;          /* a handler is currently running on this guest */
     unsigned char sigsave[PAL_SIGSAVE_SIZE];   /* pre-signal regs, restored by sigreturn */
@@ -114,6 +116,7 @@ typedef struct {
 static void sig_reset(proc_t *p) {     /* dispositions to default; no pending signal */
     for (int i = 0; i < AIOS_NSIG; i++) p->sig_handler[i] = AIOS_SIG_DFL;
     p->sig_tramp = 0;
+    p->sig_mask = 0;
     p->pending_sig = 0;
     p->in_handler = 0;
 }
@@ -483,6 +486,24 @@ static long sys_sigaction(proc_t *p, uint64_t signum, uint64_t handler, uint64_t
     if (tramp) p->sig_tramp = tramp;                              /* the guest's sigreturn trampoline */
     return (long)old;
 }
+/* sigprocmask: examine/change the BLOCKED signal set. how = BLOCK/UNBLOCK/SETMASK; SIGKILL(9) and
+ * SIGSTOP(19) can never be blocked. A signal blocked here stays pending (kreturn leaves it) until it
+ * is unblocked -- delivered then, at the unblocking syscall's own exit. */
+static long sys_sigprocmask(proc_t *p, uint64_t how, uint64_t set_gaddr, uint64_t old_gaddr) {
+    uint64_t old = p->sig_mask;
+    if (old_gaddr) pal_guest_write(p->pid, old_gaddr, &old, sizeof old);
+    if (set_gaddr) {
+        uint64_t set = 0;
+        pal_guest_read(p->pid, set_gaddr, &set, sizeof set);
+        if      (how == AIOS_SIG_BLOCK)   p->sig_mask |= set;
+        else if (how == AIOS_SIG_UNBLOCK) p->sig_mask &= ~set;
+        else if (how == AIOS_SIG_SETMASK) p->sig_mask = set;
+        else return -AIOS_EINVAL;
+        p->sig_mask &= ~((1ULL << 9) | (1ULL << 19));   /* SIGKILL / SIGSTOP are never blockable */
+    }
+    return 0;
+}
+
 static int wait_matches(unsigned long want, const proc_t *child);   /* defined with the wait code */
 static void proc_stop(proc_t *p, int sig);
 static void proc_cont(proc_t *p);
@@ -594,9 +615,13 @@ static void proc_cont(proc_t *p) {
  * EXIT (the syscall is fully serviced first, so its return value is intact; the handler runs next;
  * on sigreturn the guest resumes after the syscall). This is the single return path for every
  * dispatched syscall, so e.g. raise()'s handler runs before raise() returns, the POSIX ordering. */
+static int sig_blocked(const proc_t *p, int sig) {               /* SIGKILL/SIGSTOP are never blocked */
+    return sig != 9 && sig != 19 && (p->sig_mask & (1ULL << sig));
+}
 static void kreturn(proc_t *p, uint64_t ret) {
     int sig = p->pending_sig;
     if (!sig) { pal_guest_return(p->pid, ret); return; }         /* common case: no signal */
+    if (sig_blocked(p, sig)) { pal_guest_return(p->pid, ret); return; }   /* blocked -> stays pending */
     p->pending_sig = 0;
     uint64_t h = p->sig_handler[sig];
     int dfl_ignore = (sig == 17 || sig == 18 || sig == 23 || sig == 28);   /* CHLD/CONT/URG/WINCH */
@@ -625,6 +650,7 @@ static void kreturn(proc_t *p, uint64_t ret) {
  * a running dash catches ^C and returns to its prompt while a handler-less foreground child dies. */
 static void handle_signal_stop(proc_t *p, int sig) {
     if (sig < 1 || sig >= AIOS_NSIG) { pal_guest_resume(p->pid); return; }
+    if (sig_blocked(p, sig)) { p->pending_sig = sig; pal_guest_resume(p->pid); return; }  /* blocked -> pend it */
     uint64_t h = p->sig_handler[sig];
     int dfl_ignore = (sig == 17 || sig == 18 || sig == 23 || sig == 28);   /* CHLD/CONT/URG/WINCH */
     if (h == AIOS_SIG_IGN || (h == AIOS_SIG_DFL && dfl_ignore)) { pal_guest_resume(p->pid); return; }
@@ -821,6 +847,7 @@ static void do_fork(proc_t *parent) {
     child->report_cont = 0;
     for (int i = 0; i < AIOS_NSIG; i++) child->sig_handler[i] = parent->sig_handler[i];  /* inherited */
     child->sig_tramp = parent->sig_tramp;
+    child->sig_mask = parent->sig_mask;                /* the signal mask is inherited across fork */
     child->pending_sig = 0;                            /* pending signals are NOT inherited */
     child->in_handler = 0;
     { size_t i = 0; for (; parent->cwd[i] && i < sizeof child->cwd - 1; i++) child->cwd[i] = parent->cwd[i];
@@ -991,6 +1018,7 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
     case AIOS_SYS_GETPGID:  ret = (uint64_t)sys_getpgid(p, sc->arg[0]);                                  break;
     case AIOS_SYS_TCSETPGRP:ret = (uint64_t)sys_tcsetpgrp(p, sc->arg[0], sc->arg[1]);                    break;
     case AIOS_SYS_TCGETPGRP:ret = (uint64_t)sys_tcgetpgrp(p, sc->arg[0]);                                break;
+    case AIOS_SYS_SIGPROCMASK:ret = (uint64_t)sys_sigprocmask(p, sc->arg[0], sc->arg[1], sc->arg[2]);    break;
     default:             ret = (uint64_t)-AIOS_ENOSYS; /* unknown AIOS syscall */           break;
     }
     kreturn(p, ret);   /* return the result + deliver a pending signal (e.g. raise) at the syscall exit */

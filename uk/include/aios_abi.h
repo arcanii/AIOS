@@ -63,6 +63,12 @@
 #define AIOS_SYS_GETPGID   0x1029 /* (pid) -> pgid, or -errno; pid 0 = caller (getpgrp = getpgid(0))    */
 #define AIOS_SYS_TCSETPGRP 0x102A /* (fd, pgrp) -> 0, or -errno; sets the tty foreground process group  */
 #define AIOS_SYS_TCGETPGRP 0x102B /* (fd) -> the tty foreground process group, or -errno (ENOTTY)       */
+#define AIOS_SYS_SIGPROCMASK 0x102C /* (how, set*, old*) -> 0; blocked signals stay pending until unblocked */
+
+/* sigprocmask `how` (match the shadow <signal.h>): a sigset_t is a bitmask, bit (1<<signum). */
+#define AIOS_SIG_BLOCK   0
+#define AIOS_SIG_UNBLOCK 1
+#define AIOS_SIG_SETMASK 2
 
 /* clock ids for AIOS_SYS_CLOCK_GETTIME (AIOS-owned; the PAL maps to the host's CLOCK_*). */
 #define AIOS_CLOCK_REALTIME  0   /* wall-clock seconds since the Unix epoch (time/gettimeofday)   */

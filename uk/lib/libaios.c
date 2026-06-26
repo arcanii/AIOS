@@ -1057,7 +1057,7 @@ int sigaddset(unsigned long *set, int s) { if (set) *set |= (1UL << (s & 63)); r
 int sigdelset(unsigned long *set, int s) { if (set) *set &= ~(1UL << (s & 63)); return 0; }
 int sigismember(const unsigned long *set, int s) { return set ? (int)((*set >> (s & 63)) & 1) : 0; }
 int sigprocmask(int how, const unsigned long *set, unsigned long *old) {
-    (void)how; (void)set; if (old) *old = 0; return 0;
+    return (int)__ret(asys(AIOS_SYS_SIGPROCMASK, how, (long)set, (long)old));
 }
 int sigsuspend(const unsigned long *mask) { (void)mask; return -1; }   /* nothing to wait for */
 char *strsignal(int sig) {

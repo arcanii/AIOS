@@ -293,11 +293,21 @@ Still **no terminal-signal routing** — stop/continue is driven by explicit `ki
 path is untouched and `ctrlc_pty` still passes. Proof: `guest/prog_stop.c` (`SIGSTOP` → `WIFSTOPPED`,
 `SIGCONT` → `WIFCONTINUED`, then terminate + reap) in the gate. Validated on colima and the RPi4.
 
+## M7 — job control, increment 3 (part 1): a real `sigprocmask` ✅
+
+A real per-process **signal mask** — the masking dash `JOBS=1` needs for its `sigblockall`/
+`sigclearmask` critical sections. One new ABI syscall (`SIGPROCMASK`, ABI now 46) over a `proc_t`
+bitmask of blocked signals (inherited across fork). A signal raised while blocked stays **pending**
+(the kernel's delivery path leaves it) and is delivered the moment it's unblocked; `SIGKILL`/`SIGSTOP`
+are never blockable. (The pending slot is single — one masked signal at a time, a documented
+simplification.) Proof: `guest/prog_sigmask.c` (block `SIGUSR1` → raise → handler does *not* run;
+unblock → it's delivered) in the gate. Validated on colima and the RPi4. M5's `^C` is still untouched.
+
 ## Next (per the design doc)
 
-**Job control, increment 3** — the interactive payoff: route terminal signals (`^C`/`^Z`) to *only*
-the foreground process group (today every guest shares the kernel's process group, so M5's `^C` works
-by the host pty broadcasting to it — that gets reworked: move guests off the kernel's host group and
-have the kernel forward terminal signals to `g_fg_pgrp`), add `sigprocmask` for dash's
-`sigblockall`/`sigclearmask`, then rebuild dash **`JOBS=1`** so `^Z`/`fg`/`bg` and "`^C` kills only the
-foreground job" work interactively. Then **sched_ext** · the seL4/x86-64 replant seam (`pal_sel4.c`).
+**Job control, increment 3 (part 2)** — the interactive payoff: route terminal signals (`^C`/`^Z`) to
+*only* the foreground process group (today every guest shares the kernel's process group, so M5's `^C`
+works by the host pty broadcasting to it — that gets reworked: move guests off the kernel's host group
+and have the kernel forward terminal signals to `g_fg_pgrp`), then rebuild dash **`JOBS=1`** so `^Z`/
+`fg`/`bg` and "`^C` kills only the foreground job" work interactively. Then **sched_ext** · the
+seL4/x86-64 replant seam (`pal_sel4.c`).
