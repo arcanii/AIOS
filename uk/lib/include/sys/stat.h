@@ -57,6 +57,7 @@ struct stat {
 int    stat (const char *path, struct stat *st);
 int    lstat(const char *path, struct stat *st);
 int    fstat(int fd, struct stat *st);
+int    fstatat(int dirfd, const char *path, struct stat *st, int flags);
 int    mkdir(const char *path, mode_t mode);
 mode_t umask(mode_t mask);
 

@@ -15,8 +15,10 @@ struct dirent {
 typedef struct _AIOS_DIR DIR;       /* opaque -- the concrete struct lives in libaios.c */
 
 DIR           *opendir(const char *path);
+DIR           *fdopendir(int fd);
 struct dirent *readdir(DIR *d);
 int            closedir(DIR *d);
+int            dirfd(DIR *d);
 
 /* d_type values (BSD/Linux DT_*). */
 #define DT_UNKNOWN   0

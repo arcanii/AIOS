@@ -284,11 +284,17 @@ pal_file_t pal_host_std(int which) { return (pal_file_t)which; }   /* host fds 0
 static int xlate_open_flags(uint64_t f) {
     int acc = (int)(f & AIOS_O_ACCMODE);
     int o = (acc == AIOS_O_WRONLY) ? O_WRONLY : (acc == AIOS_O_RDWR) ? O_RDWR : O_RDONLY;
-    if (f & AIOS_O_CREAT)  o |= O_CREAT;
-    if (f & AIOS_O_TRUNC)  o |= O_TRUNC;
-    if (f & AIOS_O_APPEND) o |= O_APPEND;
+    if (f & AIOS_O_CREAT)     o |= O_CREAT;
+    if (f & AIOS_O_TRUNC)     o |= O_TRUNC;
+    if (f & AIOS_O_APPEND)    o |= O_APPEND;
+    if (f & AIOS_O_CLOEXEC)   o |= O_CLOEXEC;
+    if (f & AIOS_O_DIRECTORY) o |= O_DIRECTORY;
     return o;
 }
+
+/* Map a PAL directory handle to a host dirfd: PAL_AT_FDCWD -> the host's AT_FDCWD ("relative to
+ * cwd"), otherwise the host fd itself. Keeps the host's AT_FDCWD value out of the kernel. */
+static int hostdir(pal_file_t dir) { return dir == PAL_AT_FDCWD ? AT_FDCWD : (int)dir; }
 
 /* host errno -> a negated AIOS error code. The AIOS error numbers (aios_abi.h) are chosen to match
  * Linux, so the Linux PAL's mapping is just `-errno`; this also yields PAL_EWOULDBLOCK (-EAGAIN) and
@@ -364,6 +370,24 @@ int  pal_host_rmdir (const char *path)               { return rmdir(path) == 0 ?
 int  pal_host_rename(const char *o, const char *n)   { return rename(o, n) == 0 ? 0 : (int)pal_errno(); }
 int  pal_host_chdir (const char *path)               { return chdir(path) == 0 ? 0 : (int)pal_errno(); }
 long pal_host_getcwd(char *buf, size_t size)         { return getcwd(buf, size) ? (long)strlen(buf) : pal_errno(); }
+
+/* --- the *at family (relative to a host dirfd, or AT_FDCWD) --- */
+pal_file_t pal_host_openat(pal_file_t dir, const char *path, uint64_t aios_flags, uint64_t mode) {
+    int fd = openat(hostdir(dir), path, xlate_open_flags(aios_flags), (mode_t)mode);
+    return fd < 0 ? (pal_file_t)pal_errno() : (pal_file_t)fd;
+}
+int pal_host_fstatat(pal_file_t dir, const char *path, struct aios_stat *out, int follow) {
+    struct stat st;
+    if (fstatat(hostdir(dir), path, &st, follow ? 0 : AT_SYMLINK_NOFOLLOW) != 0) return (int)pal_errno();
+    fill_aios_stat(out, &st);
+    return 0;
+}
+int pal_host_unlinkat(pal_file_t dir, const char *path, int removedir) {
+    return unlinkat(hostdir(dir), path, removedir ? AT_REMOVEDIR : 0) == 0 ? 0 : (int)pal_errno();
+}
+int pal_host_faccessat(pal_file_t dir, const char *path, int amode) {
+    return faccessat(hostdir(dir), path, amode, 0) == 0 ? 0 : (int)pal_errno();   /* AIOS_?_OK == ?_OK */
+}
 
 /* A directory listing: getdents64 into a host temp, then translate each linux_dirent64 into an
  * EQUAL-SIZE aios_dirent record. The two record layouts are field-for-field identical (d_ino u64,

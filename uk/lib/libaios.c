@@ -18,6 +18,16 @@ static long asys(long nr, long a0, long a1, long a2) {
     __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2) : "memory", "cc");
     return x0;
 }
+/* 4-argument variant (the *at family: dirfd, path, flags/statbuf, mode/flags). */
+static long asys4(long nr, long a0, long a1, long a2, long a3) {
+    register long x8 __asm__("x8") = nr;
+    register long x0 __asm__("x0") = a0;
+    register long x1 __asm__("x1") = a1;
+    register long x2 __asm__("x2") = a2;
+    register long x3 __asm__("x3") = a3;
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2), "r"(x3) : "memory", "cc");
+    return x0;
+}
 
 int errno;   /* POSIX errno; set by the standard-named wrappers (see __ret) and read by perror */
 char *strerror(int errnum);   /* defined below; declared early so perror (stdio) can use it */
@@ -354,6 +364,25 @@ int  rename(const char *o, const char *n)         { return (int)__ret(asys(AIOS_
  * kernel work. */
 static unsigned int __aios_umask = 022;
 unsigned int umask(unsigned int m) { unsigned int old = __aios_umask; __aios_umask = m & 0777; return old; }
+
+/* the *at family (path resolved relative to a dir fd, or AT_FDCWD). The recurse-based utilities
+ * (rm, ls, cp) walk a tree through these. */
+int openat(int dirfd, const char *path, int flags, ...) {
+    int mode = 0;
+    if (flags & AIOS_O_CREAT) { va_list ap; va_start(ap, flags); mode = va_arg(ap, int); va_end(ap); }
+    return (int)__ret(asys4(AIOS_SYS_OPENAT, dirfd, (long)path, flags, mode));
+}
+int fstatat(int dirfd, const char *path, void *st, int flags) {
+    return (int)__ret(asys4(AIOS_SYS_FSTATAT, dirfd, (long)path, (long)st, flags));
+}
+int unlinkat(int dirfd, const char *path, int flags) {
+    return (int)__ret(asys(AIOS_SYS_UNLINKAT, dirfd, (long)path, flags));
+}
+int faccessat(int dirfd, const char *path, int amode, int flags) {
+    (void)flags;                                      /* AT_EACCESS not modelled */
+    return (int)__ret(asys(AIOS_SYS_FACCESSAT, dirfd, (long)path, amode));
+}
+int access(const char *path, int amode) { return faccessat(AIOS_AT_FDCWD, path, amode, 0); }
 int  remove(const char *path) {                   /* POSIX: unlink a file, or rmdir a directory */
     int r = unlink(path);
     if (r != 0 && errno == AIOS_EISDIR) r = rmdir(path);
@@ -422,6 +451,16 @@ int closedir(DIR *d) {
     free(d);                                             /* free is a no-op today; DIRs are not reclaimed */
     return aios_close(fd);
 }
+/* Wrap an already-open directory fd (from openat O_DIRECTORY) in a DIR -- recurse opens a subdir by
+ * fd, then streams it. dirfd() hands the fd back so callers can resolve names relative to it. */
+DIR *fdopendir(int fd) {
+    if (fd < 0) { errno = AIOS_EBADF; return 0; }
+    DIR *d = malloc(sizeof *d);
+    if (!d) { errno = AIOS_ENOMEM; return 0; }
+    d->fd = fd; d->pos = 0; d->len = 0;
+    return d;
+}
+int dirfd(DIR *d) { return d ? d->fd : -1; }
 
 /* sys/wait */
 int wait(int *status)                          { return (int)__ret(aios_wait(status)); }
@@ -461,6 +500,12 @@ void *memchr(const void *s, int c, size_t n) {
     return 0;
 }
 char *strdup(const char *s) { size_t n = strlen(s) + 1; char *p = malloc(n); if (p) memcpy(p, s, n); return p; }
+char *strndup(const char *s, size_t n) {                /* copy at most n bytes + a NUL */
+    size_t len = 0; while (len < n && s[len]) len++;
+    char *p = malloc(len + 1);
+    if (p) { memcpy(p, s, len); p[len] = '\0'; }
+    return p;
+}
 char *strerror(int e) {
     switch (e) {
     case 0:                   return "Success";

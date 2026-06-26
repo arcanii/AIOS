@@ -33,11 +33,12 @@ LIBC_HDRS   = $(wildcard lib/include/*.h lib/include/sys/*.h)
 # Vendored sbase (real third-party POSIX utilities, compiled UNMODIFIED against libaios). Variables
 # up here so $(SBASE_BINS) is defined before `all` references it; the build rules are below.
 SBASE        = vendor/sbase
-# -Wno-maybe-uninitialized: we do NOT lint vendored sources (sbase's mode.c trips it upstream);
-# patching sbase is off-limits, so silence its warnings rather than touch it.
-SBASE_CFLAGS = $(LIBC_CFLAGS) -I$(SBASE) -Wno-maybe-uninitialized
+# -w: we do NOT lint vendored sources (sbase trips various -Wall/-Wextra warnings upstream);
+# patching sbase is off-limits, so silence warnings rather than touch it. Errors still surface, and
+# our own libaios is linted in the prog_* builds. -I$(SBASE) resolves util.h/arg.h/fs.h/utf.h.
+SBASE_CFLAGS = $(LIBC_CFLAGS) -I$(SBASE) -w
 SBASE_DEPS   = $(LIBAIOS) $(LIBC_HDRS) $(SBASE)/util.h $(SBASE)/arg.h $(SBASE)/compat.h
-SBASE_BINS   = sbase-true sbase-false sbase-echo sbase-cat sbase-wc sbase-mkdir
+SBASE_BINS   = sbase-true sbase-false sbase-echo sbase-cat sbase-wc sbase-mkdir sbase-rm
 
 .PHONY: all run clean sbase
 all: aios-uk guest_hello guest_fileio guest_cat prog_args prog_wc prog_bigalloc prog_tail prog_exec \
@@ -135,6 +136,10 @@ sbase-mkdir: $(SBASE)/mkdir.c $(SBASE_DEPS)
 	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/mkdir.c \
 	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/mkdirp.c $(SBASE)/libutil/mode.c \
 	      $(SBASE)/libutil/strlcpy.c $(LIBAIOS)
+sbase-rm: $(SBASE)/rm.c $(SBASE_DEPS) $(SBASE)/fs.h
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/rm.c \
+	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/ealloc.c $(SBASE)/libutil/strlcpy.c \
+	      $(SBASE)/libutil/confirm.c $(SBASE)/libutil/recurse.c $(SBASE)/libutil/rm.c $(LIBAIOS)
 
 run: all
 	./aios-uk ./prog_tail -n 3 /etc/os-release

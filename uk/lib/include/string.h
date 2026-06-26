@@ -14,6 +14,7 @@ char  *strncpy(char *d, const char *s, size_t n);
 char  *strcat(char *d, const char *s);
 char  *strncat(char *d, const char *s, size_t n);
 char  *strdup(const char *s);
+char  *strndup(const char *s, size_t n);
 void  *memcpy(void *d, const void *s, size_t n);
 void  *memmove(void *d, const void *s, size_t n);
 void  *memset(void *d, int c, size_t n);

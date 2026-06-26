@@ -21,10 +21,19 @@ int     execvp(const char *file, char *const argv[]);
 pid_t   getpid(void);
 int     isatty(int fd);
 int     unlink(const char *path);
+int     unlinkat(int dirfd, const char *path, int flags);
 int     rmdir(const char *path);
 int     chdir(const char *path);
 char   *getcwd(char *buf, size_t size);
+int     access(const char *path, int amode);
+int     faccessat(int dirfd, const char *path, int amode, int flags);
 void    _exit(int code) __attribute__((noreturn));
+
+/* access() / faccessat() modes (AIOS-owned; match AIOS_?_OK in aios_abi.h) */
+#define F_OK 0
+#define X_OK 1
+#define W_OK 2
+#define R_OK 4
 
 /* getopt + its standard globals (POSIX option parsing). */
 extern char *optarg;

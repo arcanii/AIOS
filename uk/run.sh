@@ -70,6 +70,10 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            printf "one two three\nfour five\nsix\n" | ./aios-uk ./sbase-wc 2>/dev/null; echo "  [sbase wc (expect 3 6 28) exit $?]";
            rm -rf /tmp/aios_mkd && ./aios-uk ./sbase-mkdir -p /tmp/aios_mkd/x/y 2>/dev/null &&
              { test -d /tmp/aios_mkd/x/y && echo "  [sbase mkdir -p made /tmp/aios_mkd/x/y OK]"; }; rm -rf /tmp/aios_mkd;
+           echo "--- M3g: sbase rm -r a nested tree (openat/fstatat/unlinkat/faccessat + recurse) ---" &&
+           mkdir -p /tmp/aios_rmt/a/b && touch /tmp/aios_rmt/x /tmp/aios_rmt/a/y /tmp/aios_rmt/a/b/z &&
+           ./aios-uk ./sbase-rm -r /tmp/aios_rmt 2>/dev/null &&
+             { test -e /tmp/aios_rmt && echo "  [sbase rm -r FAILED -- tree survived]" || echo "  [sbase rm -r removed the tree OK]"; }; rm -rf /tmp/aios_rmt;
            echo "=== M3d gate: prog_pipebig exit must be 0 ===" &&
            ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [exit $rc]";
            test "$rc" = 0'

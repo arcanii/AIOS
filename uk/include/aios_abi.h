@@ -36,6 +36,21 @@
 #define AIOS_SYS_RENAME  0x1014   /* (oldpath, newpath)    -> 0, or -errno                         */
 #define AIOS_SYS_GETPID  0x1015   /* ()                    -> the caller's pid                     */
 #define AIOS_SYS_GETDENTS 0x1016  /* (fd, buf, len) -> bytes of aios_dirent records, 0 = end, -errno */
+#define AIOS_SYS_OPENAT   0x1017  /* (dirfd, path, flags, mode) -> aios fd, or -errno              */
+#define AIOS_SYS_FSTATAT  0x1018  /* (dirfd, path, aios_stat*, flags) -> 0, or -errno              */
+#define AIOS_SYS_UNLINKAT 0x1019  /* (dirfd, path, flags) -> 0, or -errno (AT_REMOVEDIR -> rmdir)  */
+#define AIOS_SYS_FACCESSAT 0x101A /* (dirfd, path, amode) -> 0, or -errno                          */
+
+/* The *at family resolves `path` relative to a directory fd, or -- when dirfd == AIOS_AT_FDCWD --
+ * relative to the process cwd (the recurse-based utilities: rm, ls, cp, ...). AT_* are AIOS-owned;
+ * the host PAL maps them to its own. amode for FACCESSAT is the AIOS_?_OK set. */
+#define AIOS_AT_FDCWD             (-100)   /* dirfd sentinel: "relative to cwd" (matches Linux) */
+#define AIOS_AT_SYMLINK_NOFOLLOW  0x100    /* FSTATAT: do not follow a final symlink (lstat)    */
+#define AIOS_AT_REMOVEDIR         0x200    /* UNLINKAT: remove a directory (rmdir) not a file   */
+#define AIOS_F_OK 0   /* faccessat: exists      */
+#define AIOS_X_OK 1   /* executable             */
+#define AIOS_W_OK 2   /* writable               */
+#define AIOS_R_OK 4   /* readable               */
 
 /* AIOS_SYS_WAIT: pid selector + the wait status it stores via *status. pid == -1 waits for ANY
  * child; a positive pid waits for that child. The status encodes a normal exit as
@@ -138,6 +153,8 @@ struct aios_dirent {
 #define AIOS_O_CREAT     0x0100
 #define AIOS_O_TRUNC     0x0200
 #define AIOS_O_APPEND    0x0400
+#define AIOS_O_CLOEXEC   0x0800   /* close-on-exec (advisory today: AIOS fds survive exec)        */
+#define AIOS_O_DIRECTORY 0x1000   /* fail unless the path is a directory                          */
 
 /* Reserved AIOS file descriptors (the kernel seeds these from the PAL std streams). */
 #define AIOS_FD_STDIN    0

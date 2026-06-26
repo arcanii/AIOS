@@ -152,4 +152,16 @@ int  pal_host_rename(const char *oldpath, const char *newpath);
 int  pal_host_chdir (const char *path);
 long pal_host_getcwd(char *buf, size_t size);
 
+/* --- the *at family (resolve a path relative to a directory backing object) ---
+ * `dir` is a directory backing object, or PAL_AT_FDCWD to resolve relative to the host cwd (the
+ * kernel passes this sentinel when the guest used AIOS_AT_FDCWD). The Linux PAL maps it to the
+ * host's AT_FDCWD and uses openat/fstatat/unlinkat/faccessat; a future seL4 PAL routes them to its
+ * fs server. follow selects stat (1) vs lstat (0); removedir selects rmdir; amode is the AIOS_?_OK
+ * set. All return 0 / a fd on success, or a negated AIOS error code. */
+#define PAL_AT_FDCWD ((pal_file_t)-100)
+pal_file_t pal_host_openat   (pal_file_t dir, const char *path, uint64_t aios_flags, uint64_t mode);
+int        pal_host_fstatat  (pal_file_t dir, const char *path, struct aios_stat *out, int follow);
+int        pal_host_unlinkat (pal_file_t dir, const char *path, int removedir);
+int        pal_host_faccessat(pal_file_t dir, const char *path, int amode);
+
 #endif /* AIOS_PAL_H */

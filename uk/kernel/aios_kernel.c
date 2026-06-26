@@ -240,6 +240,53 @@ static long sys_rename(proc_t *p, uint64_t gold, uint64_t gnew) {
     return pal_host_rename(o, n);
 }
 
+/* ---- the *at family (resolve a path relative to a dir fd, or AT_FDCWD) ---- */
+
+/* Resolve a guest dirfd to a PAL directory handle: AIOS_AT_FDCWD -> PAL_AT_FDCWD ("relative to the
+ * cwd"), otherwise the fd's backing object. 0, or -AIOS_EBADF for a bad fd. */
+static long resolve_dir(proc_t *p, uint64_t dirfd, pal_file_t *out) {
+    if ((int)dirfd == AIOS_AT_FDCWD) { *out = PAL_AT_FDCWD; return 0; }
+    if (!fd_valid(p, dirfd)) return -AIOS_EBADF;
+    *out = fd_backing(p, dirfd);
+    return 0;
+}
+
+static long sys_openat(proc_t *p, uint64_t dirfd, uint64_t gpath, uint64_t flags, uint64_t mode) {
+    char path[256];
+    long e = read_path(p, gpath, path, sizeof path); if (e) return e;
+    pal_file_t dir; e = resolve_dir(p, dirfd, &dir);  if (e) return e;
+    pal_file_t f = pal_host_openat(dir, path, flags, mode);
+    if (f < 0) return (long)f;                          /* -errno (ENOENT, ENOTDIR, ...) */
+    int oi = ofile_alloc(f);
+    if (oi < 0) { pal_host_close(f); return -AIOS_EMFILE; }
+    int fd = fd_alloc(p);
+    if (fd < 0) { ofile_unref(oi); return -AIOS_EMFILE; }
+    p->fd[fd] = oi;
+    return fd;
+}
+static long sys_fstatat(proc_t *p, uint64_t dirfd, uint64_t gpath, uint64_t gstat, uint64_t flags) {
+    char path[256];
+    long e = read_path(p, gpath, path, sizeof path); if (e) return e;
+    pal_file_t dir; e = resolve_dir(p, dirfd, &dir);  if (e) return e;
+    struct aios_stat s;
+    int r = pal_host_fstatat(dir, path, &s, (flags & AIOS_AT_SYMLINK_NOFOLLOW) ? 0 : 1);
+    if (r != 0) return r;
+    if (pal_guest_write(p->pid, gstat, &s, sizeof s) != sizeof s) return -AIOS_EFAULT;
+    return 0;
+}
+static long sys_unlinkat(proc_t *p, uint64_t dirfd, uint64_t gpath, uint64_t flags) {
+    char path[256];
+    long e = read_path(p, gpath, path, sizeof path); if (e) return e;
+    pal_file_t dir; e = resolve_dir(p, dirfd, &dir);  if (e) return e;
+    return pal_host_unlinkat(dir, path, (flags & AIOS_AT_REMOVEDIR) ? 1 : 0);
+}
+static long sys_faccessat(proc_t *p, uint64_t dirfd, uint64_t gpath, uint64_t amode) {
+    char path[256];
+    long e = read_path(p, gpath, path, sizeof path); if (e) return e;
+    pal_file_t dir; e = resolve_dir(p, dirfd, &dir);  if (e) return e;
+    return pal_host_faccessat(dir, path, (int)amode);
+}
+
 /* ---- pipes ----
  * A pipe is two backing ends (non-blocking at the host) sharing a pipe_id. read/write to a pipe
  * never block the single-threaded kernel: an empty read / full write PARKS the calling guest and
@@ -518,6 +565,10 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
     case AIOS_SYS_RENAME:ret = (uint64_t)sys_rename(p, sc->arg[0], sc->arg[1]);            break;
     case AIOS_SYS_GETPID:ret = (uint64_t)p->pid;                                           break;
     case AIOS_SYS_GETDENTS:ret = (uint64_t)sys_getdents(p, sc->arg[0], sc->arg[1], sc->arg[2]); break;
+    case AIOS_SYS_OPENAT:  ret = (uint64_t)sys_openat (p, sc->arg[0], sc->arg[1], sc->arg[2], sc->arg[3]); break;
+    case AIOS_SYS_FSTATAT: ret = (uint64_t)sys_fstatat(p, sc->arg[0], sc->arg[1], sc->arg[2], sc->arg[3]); break;
+    case AIOS_SYS_UNLINKAT:ret = (uint64_t)sys_unlinkat(p, sc->arg[0], sc->arg[1], sc->arg[2]);          break;
+    case AIOS_SYS_FACCESSAT:ret = (uint64_t)sys_faccessat(p, sc->arg[0], sc->arg[1], sc->arg[2]);        break;
     default:             ret = (uint64_t)-AIOS_ENOSYS; /* unknown AIOS syscall */           break;
     }
     pal_guest_return(p->pid, ret);
