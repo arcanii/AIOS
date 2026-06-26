@@ -142,9 +142,27 @@ writes. Before M4 the Linux write *executed on the host*; now it never runs and 
 *view* of host resources (its fs namespace, so a serviced `open` can only reach an AIOS root) — is
 the next hardening step.
 
+## M5 — real signal delivery + interactive ^C ✅
+
+The kernel now actually **runs a guest's signal handler** (dispositions are no longer just recorded).
+Three new ABI syscalls — `SIGACTION`, `SIGRETURN`, `KILL` — plus `ISATTY` (ABI now 34). Delivery is a
+register dance kept in the PAL: at a syscall exit (synchronous, e.g. `raise`) or a signal-stop
+(asynchronous, e.g. terminal `^C`), the kernel saves the guest's regs, jumps it to the handler with
+`x0 = signum` and `lr =` a libaios trampoline, and on `SIGRETURN` restores the saved regs so the guest
+resumes where it was. The kernel catches `^C` itself (no `SA_RESTART`, EINTR-safe waits) so a blocking
+read interrupts and the guest gets its own `^C` via the process group.
+
+Proofs: `prog_signal.c` (a handler runs on `raise`, `SIG_IGN` survives); dash `trap '...' USR1;
+kill -USR1 $$` (the trap fires, the script continues); and `test/ctrlc_pty.c` — **interactive dash on
+a pty: `^C` interrupts the prompt line and dash survives** (handler runs, line aborts, prompt
+returns) then runs the next command. A `do_read` single-read fix (POSIX semantics: return what's
+available, don't loop to fill the buffer) was what made interactive mode function. HW-validated on the
+RPi4 (kernel 6.12).
+
+**AIOS ABI now (34 syscalls):** … READLINK/FCNTL/SIGACTION/SIGRETURN/KILL/ISATTY.
+
 ## Next (per the design doc)
 
 **M4.2** fs/resource isolation (a mount namespace / sandbox root so a guest's `open` can't reach
-arbitrary host paths). Real **signal delivery** (async ^C / SIGCHLD) for interactive dash; more sbase
-utils (head/tail/cp/mv/sort; grep needs a real regex). Then **M5** `sched_ext` · **M6** the
-seL4/x86-64 replant seam (`pal_sel4.c`).
+arbitrary host paths). More sbase utils (head/tail/cp/mv/sort; grep needs a real regex). Then
+**sched_ext** · the seL4/x86-64 replant seam (`pal_sel4.c`).
