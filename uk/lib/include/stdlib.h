@@ -15,6 +15,7 @@ long   strtol(const char *s, char **end, int base);
 unsigned long strtoul(const char *s, char **end, int base);
 long long strtoll(const char *s, char **end, int base);
 unsigned long long strtoull(const char *s, char **end, int base);
+double strtod(const char *s, char **end);
 int       abs(int v);
 long      labs(long v);
 long long llabs(long long v);

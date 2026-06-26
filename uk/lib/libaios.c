@@ -751,6 +751,37 @@ int       abs  (int v)       { return v < 0 ? -v : v; }
 unsigned int sleep(unsigned int sec) { (void)sec; return 0; }
 unsigned long long strtoull(const char *s, char **end, int base) { return strtoul(s, end, base); }
 long atol(const char *s) { return strtol(s, 0, 10); }
+
+/* strtod: parse a decimal floating-point number [+-]ddd[.ddd][(e|E)[+-]ddd] (no hex/inf/nan -- enough
+ * for sbase sort -g). aarch64 has hardware FP, so this needs no soft-float runtime. */
+double strtod(const char *s, char **end) {
+    const char *p = s;
+    while (isspace((unsigned char)*p)) p++;
+    int neg = 0;
+    if (*p == '+' || *p == '-') { neg = (*p == '-'); p++; }
+    double val = 0.0; int any = 0;
+    while (*p >= '0' && *p <= '9') { val = val * 10.0 + (double)(*p - '0'); p++; any = 1; }
+    if (*p == '.') {
+        p++;
+        double frac = 0.1;
+        while (*p >= '0' && *p <= '9') { val += (double)(*p - '0') * frac; frac *= 0.1; p++; any = 1; }
+    }
+    if (any && (*p == 'e' || *p == 'E')) {
+        const char *e = p + 1; int eneg = 0;
+        if (*e == '+' || *e == '-') { eneg = (*e == '-'); e++; }
+        if (*e >= '0' && *e <= '9') {
+            int exp = 0;
+            while (*e >= '0' && *e <= '9') { exp = exp * 10 + (*e - '0'); e++; }
+            double pw = 1.0;
+            while (exp-- > 0) pw *= 10.0;
+            if (eneg) val /= pw; else val *= pw;
+            p = e;
+        }
+    }
+    if (!any) { if (end) *end = (char *)s; return 0.0; }   /* no conversion */
+    if (end) *end = (char *)p;
+    return neg ? -val : val;
+}
 char *getenv(const char *name) {
     size_t n = strlen(name);
     for (char **e = environ; e && *e; e++)

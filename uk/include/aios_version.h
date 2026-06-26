@@ -43,6 +43,9 @@
  * 0.5.11 = PER-PROCESS umask (AIOS_SYS_UMASK, ABI -> 41): a real file-creation mask the kernel tracks
  * per process and applies on open(O_CREAT)/mkdir, inherited across fork AND preserved across exec; the
  * host umask is neutralized so this single mask governs created modes (was a no-op tracker before).
+ * 0.5.12 = vendored sbase `sort` runs UNMODIFIED (no new ABI): libaios grew a real strtod (the numeric
+ * compare -n needs it; aarch64 HW FP, no soft-float runtime) + the full libutf rune chain wired in.
+ * dash config.h now sets HAVE_STRTOD so dash uses the real strtod instead of its no-op fallback.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -52,7 +55,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 11
+#define AIOS_VERSION_PATCH 12
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

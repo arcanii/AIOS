@@ -102,6 +102,11 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            ./aios-uk ./sbase-cp -p /tmp/aios_md/src /tmp/aios_md/pcopy 2>/dev/null;
            { test "$(stat -c %a%Y /tmp/aios_md/src)" = "$(stat -c %a%Y /tmp/aios_md/pcopy)" && echo "  cp -p:      mode + mtime preserved OK"; };
            rm -rf /tmp/aios_md;
+           echo "--- sbase sort, UNMODIFIED (lexical / -u / -n incl. decimals via a real strtod / -rn) ---" &&
+           printf "  lexical:  "; printf "cherry\napple\nbanana\napple\n" | ./aios-uk ./sbase-sort 2>/dev/null | tr "\n" " "; echo;
+           printf "  sort -u:  "; printf "cherry\napple\nbanana\napple\n" | ./aios-uk ./sbase-sort -u 2>/dev/null | tr "\n" " "; echo;
+           printf "  sort -n:  "; printf "1.5\n0.2\n10.25\n1.05\n2\n" | ./aios-uk ./sbase-sort -n 2>/dev/null | tr "\n" " "; echo;
+           printf "  sort -rn: "; printf "10\n2\n1\n22\n3\n" | ./aios-uk ./sbase-sort -rn 2>/dev/null | tr "\n" " "; echo;
            echo "=== M3i: dash (Debian Almquist shell) compiled UNMODIFIED -- the operational shell ===" &&
            printf "  echo arith: "; ./aios-uk ./dash -c "echo \$((2 + 3 * 4))" 2>/dev/null;
            printf "  control:    "; ./aios-uk ./dash -c "true && echo yes || echo no" 2>/dev/null;

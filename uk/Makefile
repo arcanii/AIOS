@@ -39,7 +39,7 @@ SBASE        = vendor/sbase
 SBASE_CFLAGS = $(LIBC_CFLAGS) -I$(SBASE) -w
 SBASE_DEPS   = $(LIBAIOS) $(LIBC_HDRS) $(SBASE)/util.h $(SBASE)/arg.h $(SBASE)/compat.h
 SBASE_BINS   = sbase-true sbase-false sbase-echo sbase-cat sbase-wc sbase-mkdir sbase-rm sbase-ls \
-               sbase-head sbase-tail sbase-cp sbase-mv sbase-ln sbase-chmod
+               sbase-head sbase-tail sbase-cp sbase-mv sbase-ln sbase-chmod sbase-sort
 
 # Vendored dash (the Debian Almquist shell, BSD) -- compiled UNMODIFIED against libaios. config.h +
 # the generated sources (syntax/nodes/builtins/init/signames/token.h) are AIOS build inputs (see
@@ -201,6 +201,16 @@ CP_OBJS = $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/ealloc.c $(SBASE)/libutil/
           $(SBASE)/libutil/concat.c $(SBASE)/libutil/enmasse.c $(SBASE)/libutil/strlcpy.c \
           $(SBASE)/libutil/strlcat.c $(SBASE)/libutil/confirm.c $(SBASE)/libutil/writeall.c \
           $(SBASE)/libutil/strtonum.c
+sbase-sort: $(SBASE)/sort.c $(SBASE_DEPS) $(SBASE)/text.h $(SBASE)/utf.h
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/sort.c \
+	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/ealloc.c $(SBASE)/libutil/fshut.c \
+	      $(SBASE)/libutil/getlines.c $(SBASE)/libutil/reallocarray.c $(SBASE)/libutil/strnsubst.c \
+	      $(SBASE)/libutil/linecmp.c $(SBASE)/libutil/concat.c $(SBASE)/libutil/parseoffset.c \
+	      $(SBASE)/libutil/strtonum.c $(SBASE)/libutil/memmem.c $(SBASE)/libutil/unescape.c \
+	      $(SBASE)/libutil/strlcpy.c $(SBASE)/libutil/writeall.c \
+	      $(SBASE)/libutf/rune.c $(SBASE)/libutf/runetype.c $(SBASE)/libutf/isalnumrune.c \
+	      $(SBASE)/libutf/isalpharune.c $(SBASE)/libutf/isdigitrune.c $(SBASE)/libutf/isblankrune.c \
+	      $(SBASE)/libutf/isprintrune.c $(SBASE)/libutf/iscntrlrune.c $(SBASE)/libutf/lowerrune.c $(LIBAIOS)
 sbase-cp: $(SBASE)/cp.c $(SBASE_DEPS) $(SBASE)/fs.h
 	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/cp.c $(CP_OBJS) $(LIBAIOS)
 sbase-mv: $(SBASE)/mv.c $(SBASE_DEPS) $(SBASE)/fs.h
