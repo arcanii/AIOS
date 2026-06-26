@@ -4,9 +4,11 @@
  * 0.5.x is a NEW design line: the gVisor-style userspace kernel on a commodity host (the 2026-06-24
  * pivot, docs/DESIGN_20260624_aios_userspace_kernel_on_linux.md). It deliberately departs from the
  * 0.4.x seL4/RPi4 bare-metal line (preserved on `main` as the record/fallback), so it gets its own
- * major.minor. Patch advances per milestone. 0.5.0 covers M0..M3e: Linux substrate, the trap/VFS
- * foundation, the full process model (exec/fork/wait/pipe/dup2 -- a multi-process kernel + an AIOS
- * shell), and the start of the libc retarget (-nostdinc shadow headers + FILE* stdio).
+ * major.minor. Patch advances per milestone. 0.5.0 covered M0..M3e (Linux substrate, the trap/VFS
+ * foundation, the full process model, and the start of the libc retarget). 0.5.1 adds the rest of
+ * M3e (errno, sys/stat, getopt/qsort, directory streams) + the *at family + readlink + a real
+ * printf and time layer, and -- the milestone -- VENDORED sbase whose true/false/echo/cat/wc/mkdir/
+ * rm/ls compile UNMODIFIED against AIOS's libc and run on the kernel. 29-syscall ABI.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -16,7 +18,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 0
+#define AIOS_VERSION_PATCH 1
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

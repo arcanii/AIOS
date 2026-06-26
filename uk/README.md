@@ -73,24 +73,42 @@ Real C programs run on the AIOS ABI, and the kernel is now multi-process:
 
 **AIOS ABI today:** WRITE/READ/OPEN/CLOSE/EXIT/MMAP/FSTAT/LSEEK/EXEC/FORK/WAIT/PIPE/DUP2.
 
-## M3e — the libc retarget (in progress: real C compiles unmodified)
+## M3e — the libc retarget ✅
 
-The road to "fully operational = dash" is recompiling real `sbase`/`dash` against AIOS's libc. The
-foundation is in:
+Ordinary C compiles `-nostdinc` against AIOS's **shadow standard headers** (`lib/include`:
+string/ctype/stdlib/unistd/fcntl/stdio/errno/time/dirent/sys/…) so it picks up AIOS's libc
+(implemented by `libaios` on the ABI) instead of the host's:
 
-- **M3e.1** — AIOS **shadow standard headers** under `lib/include` (string/ctype/stdlib/unistd/fcntl/
-  stdio/sys/...), compiled with **`-nostdinc -isystem <gcc-include>`** so ordinary C picks up AIOS's
-  libc (implemented by libaios on the ABI) instead of the host's. libaios grew a standard-named POSIX
-  surface (read/write/open/fork/execv/waitpid/strtol/getenv/…). Proof: `prog_libc.c` — real C, only
-  standard headers.
-- **M3e.2** — **FILE\* buffered stdio** (stdin/stdout/stderr, fopen/fgets/fprintf/fread/fwrite/…;
-  line-buffered stdout, flushed on exit). Proof: `prog_stdio.c`.
+- **M3e.1** shadow headers + a standard-named POSIX surface · **M3e.2** FILE\* buffered stdio ·
+  **M3e.3** `errno` (a real negated-`-errno` path + `strerror`/`perror`) · **M3e.4** `sys/stat.h` +
+  path ops (stat/lstat/getcwd/chdir/unlink/mkdir/rmdir/rename/getpid) · **M3e.5** `getopt` + `qsort`
+  (+`bsearch`) · **M3e.6** **directory streams** (`opendir`/`readdir`/`closedir` over a getdents-
+  backed `AIOS_SYS_GETDENTS` + `struct aios_dirent`).
 
-`uk/run.sh` runs the whole suite (colima); each milestone is also validated natively on the RPi4.
+Proofs: `prog_libc/stdio/errno/fs/getopt/dir.c` (real C, shadow headers only).
+
+## M3f / M3g / M3h — real sbase runs UNMODIFIED ✅ (the milestone)
+
+The headline proof of the retarget: genuine third-party POSIX-utility source (**suckless sbase**,
+vendored unmodified under `vendor/sbase` — see `vendor/README.md`) compiles UNMODIFIED against
+`libaios` and runs on the AIOS kernel. sbase is never patched; missing libc features are added to
+`libaios`. Working utilities: **true / false / echo / cat / wc / mkdir / rm / ls** (incl. `ls -l`).
+
+- **M3f** vendored sbase; `true/false/echo/cat` (then `wc` + the libutf rune layer, then `mkdir` +
+  `umask`/`parsemode`). **M3g** the **`*at` family** (`openat`/`fstatat`/`unlinkat`/`faccessat` +
+  `fdopendir`/`dirfd`) unlocks sbase's `recurse` → `rm -r` over real directory trees. **M3h** `ls` +
+  `ls -l`: `readlink`, a real (UTC) `gmtime`/`localtime`/`strftime` time layer, numeric uid/gid (no
+  passwd db yet), and a printf REWRITE with flags/width/precision so the columns align.
+
+**AIOS ABI now (29 syscalls):** WRITE/READ/OPEN/CLOSE/EXIT/MMAP/FSTAT/LSEEK/EXEC/FORK/WAIT/PIPE/DUP2/
+STAT/LSTAT/GETCWD/CHDIR/UNLINK/MKDIR/RMDIR/RENAME/GETPID/GETDENTS/OPENAT/FSTATAT/UNLINKAT/FACCESSAT/
+READLINK.
+
+`uk/run.sh` runs the whole suite (colima); milestones through M3e.3 are also validated natively on
+the RPi4 (M3e.4 onward is colima-verified, Pi-pending — the Pi went offline mid-s19).
 
 ## Next (per the design doc)
 
-Continue M3e: errno + a real `-errno` path, `sys/stat.h` + path stat/getcwd/chdir/unlink (new ABI
-syscalls), getopt, real getpid, signals → then **vendor + compile real `sbase`** unmodified, then
-**dash** = fully operational. Then **M4** enforce the boundary (seccomp/namespaces so a program
-*cannot* bypass the kernel) · **M5** `sched_ext` · **M6** the seL4/x86-64 replant seam.
+**dash** (vendor + compile; leans on signals + job control) = fully operational, replacing `prog_sh`.
+Then **M4** enforce the boundary (seccomp/namespaces so a program *cannot* bypass the kernel) ·
+**M5** `sched_ext` · **M6** the seL4/x86-64 replant seam (`pal_sel4.c`).
