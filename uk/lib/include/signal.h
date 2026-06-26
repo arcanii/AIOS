@@ -65,6 +65,7 @@ struct sigaction {
 __sighandler_t signal(int sig, __sighandler_t handler);
 int  sigaction(int sig, const struct sigaction *act, struct sigaction *old);
 int  kill(int pid, int sig);
+int  killpg(int pgrp, int sig);
 int  raise(int sig);
 int  sigemptyset(sigset_t *set);
 int  sigfillset(sigset_t *set);

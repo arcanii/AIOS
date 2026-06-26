@@ -38,9 +38,11 @@
 #define HAVE_STRTOUMAX 1
 #define HAVE_STRSIGNAL 1   /* libaios provides strsignal (dash's would need sys_siglist) */
 #define HAVE_STRTOD 1      /* libaios now has a real strtod -- use it, not dash's no-op fallback */
+#define HAVE_KILLPG 1      /* libaios now has a real killpg -- skip dash's static-inline fallback
+                            * (which otherwise conflicts with the <signal.h> decl; gcc 14 = hard error) */
 
 /* dash self-provides these via system.c (libaios lacks them): leave HAVE_* undefined --
- * HAVE_MEMPCPY, HAVE_STPCPY, HAVE_STRCHRNUL, HAVE_KILLPG, HAVE_STRTOD, HAVE_PATHS_H, HAVE_SIGSETMASK. */
+ * HAVE_MEMPCPY, HAVE_STPCPY, HAVE_STRCHRNUL, HAVE_PATHS_H, HAVE_SIGSETMASK. */
 
 /* 64-bit native: no _64 variants */
 #define fstat64 fstat

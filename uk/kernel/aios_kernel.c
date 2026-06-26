@@ -78,6 +78,8 @@ typedef struct {
     int           state;
     pal_pid_t     pid;
     pal_pid_t     parent_pid;          /* PAL_PID_NONE for init / orphans */
+    pal_pid_t     pgid;                /* PROCESS GROUP (job control); inherited across fork, preserved
+                                        * across exec. init is its own leader (pgid == pid). */
     int           exit_code;           /* valid in PS_ZOMBIE */
     unsigned long wait_for;            /* PS_BLOCKED_WAIT: AIOS_WAIT_ANY/0, or a specific pid */
     uint64_t      wait_status_gaddr;   /* PS_BLOCKED_WAIT: where to store the status (0 = none) */
@@ -111,6 +113,11 @@ static void sig_reset(proc_t *p) {     /* dispositions to default; no pending si
     p->in_handler = 0;
 }
 static proc_t g_proc[MAX_PROCS];
+
+/* The foreground PROCESS GROUP of the controlling terminal (job control). tcsetpgrp sets it,
+ * tcgetpgrp reads it; seeded to init's pgid (init starts in the foreground). Terminal-signal routing
+ * to this group is a later increment -- today it is faithfully tracked kernel state. */
+static pal_pid_t g_fg_pgrp;
 
 static proc_t *proc_find(pal_pid_t pid) {
     for (int i = 0; i < MAX_PROCS; i++)
@@ -471,13 +478,58 @@ static long sys_sigaction(proc_t *p, uint64_t signum, uint64_t handler, uint64_t
     if (tramp) p->sig_tramp = tramp;                              /* the guest's sigreturn trampoline */
     return (long)old;
 }
+/* Post a pending signal to one process (delivered at its next syscall exit, per the M5 model). */
+static void sig_post(proc_t *t, int signum) { if (signum) t->pending_sig = signum; }
+
+/* kill: pid > 0 = one process; pid == 0 = the CALLER's process group; pid < 0 = the process group
+ * -pid; pid == -1 (broadcast) is not supported. Negative/zero is how killpg(pgrp,sig) reaches a whole
+ * job (e.g. dash SIGCONT'ing a stopped job). signum 0 = existence check (no signal posted). */
 static long sys_kill(proc_t *p, uint64_t pid, uint64_t signum) {
     if (signum >= AIOS_NSIG) return -AIOS_EINVAL;
-    proc_t *target = ((long)pid > 0) ? proc_find((pal_pid_t)pid) : p;   /* <=0 (group/self) -> self for now */
-    if (!target) return -AIOS_ESRCH;
-    if (signum == 0) return 0;                                    /* existence check only */
-    target->pending_sig = (int)signum;                           /* delivered at its next syscall */
+    long spid = (long)pid;
+    if (spid > 0) {                                               /* a single process */
+        proc_t *t = proc_find((pal_pid_t)spid);
+        if (!t) return -AIOS_ESRCH;
+        sig_post(t, (int)signum);
+        return 0;
+    }
+    pal_pid_t grp = (spid == 0) ? p->pgid : (pal_pid_t)(-spid);   /* the target process group */
+    int found = 0;
+    for (int i = 0; i < MAX_PROCS; i++) {
+        proc_t *t = &g_proc[i];
+        if (t->state == PS_FREE || t->state == PS_ZOMBIE) continue;
+        if (t->pgid != grp) continue;
+        found = 1;
+        sig_post(t, (int)signum);                                /* signum 0 -> just an existence probe */
+    }
+    return found ? 0 : -AIOS_ESRCH;
+}
+
+/* ---- process groups + controlling-terminal foreground group (job-control foundation) ---- */
+/* setpgid(pid, pgid): pid 0 = caller; pgid 0 = pid (become a group leader). The target must be the
+ * caller or one of its children (POSIX). Kernel-tracked state; terminal-signal routing comes later. */
+static long sys_setpgid(proc_t *p, uint64_t pid, uint64_t pgid) {
+    proc_t *t = (pid == 0) ? p : proc_find((pal_pid_t)pid);
+    if (!t) return -AIOS_ESRCH;
+    if (t != p && t->parent_pid != p->pid) return -AIOS_EPERM;   /* only self or a child */
+    t->pgid = (pgid == 0) ? t->pid : (pal_pid_t)pgid;
     return 0;
+}
+static long sys_getpgid(proc_t *p, uint64_t pid) {
+    proc_t *t = (pid == 0) ? p : proc_find((pal_pid_t)pid);
+    if (!t) return -AIOS_ESRCH;
+    return (long)t->pgid;
+}
+static long sys_tcsetpgrp(proc_t *p, uint64_t fd, uint64_t pgrp) {
+    if (!fd_valid(p, fd)) return -AIOS_EBADF;
+    if (!pal_host_isatty(fd_backing(p, fd))) return -AIOS_ENOTTY;
+    g_fg_pgrp = (pal_pid_t)pgrp;
+    return 0;
+}
+static long sys_tcgetpgrp(proc_t *p, uint64_t fd) {
+    if (!fd_valid(p, fd)) return -AIOS_EBADF;
+    if (!pal_host_isatty(fd_backing(p, fd))) return -AIOS_ENOTTY;
+    return (long)g_fg_pgrp;
 }
 
 /* Return a syscall result to p, then -- if p now has a pending signal -- act on it AT THE SYSCALL
@@ -703,6 +755,7 @@ static void do_fork(proc_t *parent) {
     { size_t i = 0; for (; parent->cwd[i] && i < sizeof child->cwd - 1; i++) child->cwd[i] = parent->cwd[i];
       child->cwd[i] = '\0'; }                          /* cwd inherited across fork */
     child->umask = parent->umask;                      /* umask inherited across fork */
+    child->pgid = parent->pgid;                        /* process group inherited across fork */
     for (int i = 0; i < AIOS_MAX_FD; i++) {
         child->fd[i] = parent->fd[i];
         if (parent->fd[i] >= 0) ofile_ref(parent->fd[i]);
@@ -840,6 +893,10 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
     case AIOS_SYS_UMASK:     ret = (uint64_t)sys_umask(p, sc->arg[0]);                                                   break;
     case AIOS_SYS_SIGACTION:ret = (uint64_t)sys_sigaction(p, sc->arg[0], sc->arg[1], sc->arg[2]);        break;
     case AIOS_SYS_KILL:    ret = (uint64_t)sys_kill(p, sc->arg[0], sc->arg[1]);                          break;
+    case AIOS_SYS_SETPGID:  ret = (uint64_t)sys_setpgid(p, sc->arg[0], sc->arg[1]);                      break;
+    case AIOS_SYS_GETPGID:  ret = (uint64_t)sys_getpgid(p, sc->arg[0]);                                  break;
+    case AIOS_SYS_TCSETPGRP:ret = (uint64_t)sys_tcsetpgrp(p, sc->arg[0], sc->arg[1]);                    break;
+    case AIOS_SYS_TCGETPGRP:ret = (uint64_t)sys_tcgetpgrp(p, sc->arg[0]);                                break;
     default:             ret = (uint64_t)-AIOS_ENOSYS; /* unknown AIOS syscall */           break;
     }
     kreturn(p, ret);   /* return the result + deliver a pending signal (e.g. raise) at the syscall exit */
@@ -865,6 +922,8 @@ int aios_kernel_run(const char *guest_path, char *const guest_argv[]) {
       size_t i = 0; if (sn > 0) for (; seed[i] && i < sizeof init->cwd - 1; i++) init->cwd[i] = seed[i];
       if (i == 0) { init->cwd[i++] = '/'; } init->cwd[i] = '\0'; }
     init->umask = 022;                                /* POSIX default file-creation mask */
+    init->pgid = pid;                                 /* init is its own process-group leader */
+    g_fg_pgrp = pid;                                  /* ... and starts in the terminal foreground */
     fd_table_init_std(init);
 
     pal_pid_t init_pid = pid;

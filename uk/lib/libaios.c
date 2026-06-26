@@ -991,6 +991,14 @@ static struct group *gr_scan(unsigned int gid, const char *name, int by_key) {
 struct group *getgrgid(unsigned int gid) { return gr_scan(gid, 0, 1); }
 struct group *getgrnam(const char *name) { return name ? gr_scan(0, name, 0) : 0; }
 
+/* --- process groups + controlling-terminal foreground group (job-control foundation) --- */
+int setpgid(int pid, int pgid) { return (int)__ret(asys(AIOS_SYS_SETPGID, pid, pgid, 0)); }
+int getpgid(int pid)           { return (int)__ret(asys(AIOS_SYS_GETPGID, pid, 0, 0)); }
+int getpgrp(void)              { return getpgid(0); }                       /* own process group */
+int setpgrp(void)              { return setpgid(0, 0); }                    /* become a group leader */
+int tcsetpgrp(int fd, int pgrp){ return (int)__ret(asys(AIOS_SYS_TCSETPGRP, fd, pgrp, 0)); }
+int tcgetpgrp(int fd)          { return (int)__ret(asys(AIOS_SYS_TCGETPGRP, fd, 0, 0)); }
+
 /* --- process identity (single host-side identity for now; the kernel runs as the launching user) --- */
 int getppid(void) { return 1; }                    /* no parent-pid syscall yet; $PPID is cosmetic */
 int getuid(void)  { return 0; }
@@ -1039,6 +1047,7 @@ int sigaction(int sig, const aios_sigaction *act, aios_sigaction *old) {
     return 0;
 }
 int kill(int pid, int sig) { return (int)__ret(asys(AIOS_SYS_KILL, pid, sig, 0)); }
+int killpg(int pgrp, int sig) { return kill(-pgrp, sig); }   /* signal the whole process group */
 int raise(int sig)         { return kill(getpid(), sig); }
 unsigned int alarm(unsigned int sec) { (void)sec; return 0; }
 /* signal sets + masking are no-ops (no pending/blocked model yet). */

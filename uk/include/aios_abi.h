@@ -56,6 +56,13 @@
 #define AIOS_SYS_LINKAT    0x1025 /* (olddirfd, oldpath, newdirfd, newpath, flags) -> 0, or -errno     */
 #define AIOS_SYS_UTIMENSAT 0x1026 /* (dirfd, path, struct aios_timespec[2], flags) -> 0, or -errno     */
 #define AIOS_SYS_UMASK     0x1027 /* (mask) -> the previous mask (per-process; applied on create)      */
+/* process groups + controlling-terminal foreground group (the foundation for job control). The kernel
+ * tracks a per-process pgid (inherited across fork, preserved across exec) and one foreground process
+ * group for the controlling terminal. KILL with a pid <= 0 signals a process group (this increment). */
+#define AIOS_SYS_SETPGID   0x1028 /* (pid, pgid) -> 0, or -errno; pid 0 = caller, pgid 0 = pid (leader) */
+#define AIOS_SYS_GETPGID   0x1029 /* (pid) -> pgid, or -errno; pid 0 = caller (getpgrp = getpgid(0))    */
+#define AIOS_SYS_TCSETPGRP 0x102A /* (fd, pgrp) -> 0, or -errno; sets the tty foreground process group  */
+#define AIOS_SYS_TCGETPGRP 0x102B /* (fd) -> the tty foreground process group, or -errno (ENOTTY)       */
 
 /* clock ids for AIOS_SYS_CLOCK_GETTIME (AIOS-owned; the PAL maps to the host's CLOCK_*). */
 #define AIOS_CLOCK_REALTIME  0   /* wall-clock seconds since the Unix epoch (time/gettimeofday)   */

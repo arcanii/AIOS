@@ -59,6 +59,14 @@
  * /etc/passwd and /etc/group (they returned NULL before), so ls -l shows real user/group NAMES
  * instead of numeric ids; a missing/unreadable file still yields NULL -> the numeric fallback (a
  * confined guest whose root lacks /etc/passwd is unaffected). Proof: guest/prog_pwgrp.c.
+ * 0.5.15 = the JOB-CONTROL FOUNDATION (ABI -> 45): kernel-tracked PROCESS GROUPS + a controlling-
+ * terminal foreground group. 4 syscalls SETPGID/GETPGID/TCSETPGRP/TCGETPGRP (+ getpgrp=getpgid(0),
+ * killpg=kill(-pgrp)); proc_t.pgid is inherited across fork and preserved across exec (init is its
+ * own leader). KILL now signals a process group for pid <= 0 (the group -pid, or the caller's group
+ * for 0). This is the foundation only -- terminal-signal ROUTING to the foreground group and a
+ * STOPPED state (^Z stop/continue) + dash JOBS=1 come next; dash stays JOBS=0, so M5 interactive ^C
+ * is UNTOUCHED (zero regression). Proof: guest/prog_jobctl.c (pgid inheritance, setpgid leader,
+ * kill-to-group delivery, tcsetpgrp/tcgetpgrp wiring + the ENOTTY guard).
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -68,7 +76,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 14
+#define AIOS_VERSION_PATCH 15
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

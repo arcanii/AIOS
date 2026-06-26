@@ -127,6 +127,9 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            rm -rf /tmp/aios_pw && mkdir -p /tmp/aios_pw && echo hi >/tmp/aios_pw/f;
            printf "  ls -l owner:group now NAMED: "; ./aios-uk ./sbase-ls -l /tmp/aios_pw 2>/dev/null | tr -s " " | cut -d" " -f3-4 | head -1;
            rm -rf /tmp/aios_pw;
+           echo "=== job-control FOUNDATION -- process groups + tty foreground group + kill-to-a-group ===" &&
+           ./aios-uk ./prog_jobctl </dev/null 2>/dev/null | sed "s/^/    /";
+           ./aios-uk ./prog_jobctl </dev/null >/dev/null 2>&1; jcrc=$?; echo "  [prog_jobctl exit $jcrc (expect 0)]";
            echo "=== M3i: dash (Debian Almquist shell) compiled UNMODIFIED -- the operational shell ===" &&
            printf "  echo arith: "; ./aios-uk ./dash -c "echo \$((2 + 3 * 4))" 2>/dev/null;
            printf "  control:    "; ./aios-uk ./dash -c "true && echo yes || echo no" 2>/dev/null;
@@ -178,6 +181,6 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            echo "  confined dash drives an in-root binary, but an out-of-root one is denied:";
            AIOS_ROOT="$JR" ./aios-uk ./dash -c "/jailtrue && echo in-root-exec-ok; /bin/echo SHOULD-NOT-PRINT" 2>&1 | grep -v aios-uk | sed "s/^/      /";
            rm -rf "$JR" "$SECRET";
-           echo "=== gate: pipebig, jail (M4.2), execjail (M4.3), clock, pcwd, umask, regex, pwgrp must exit 0 ===" &&
-           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig $rc, jail $jrc, execjail $ejrc, clock $clkrc, pcwd $pcwdrc, umask $umrc, regex $rxrc, pwgrp $pwrc]";
-           test "$rc" = 0 && test "$jrc" = 0 && test "$ejrc" = 0 && test "$clkrc" = 0 && test "$pcwdrc" = 0 && test "$umrc" = 0 && test "$rxrc" = 0 && test "$pwrc" = 0'
+           echo "=== gate: pipebig, jail, execjail, clock, pcwd, umask, regex, pwgrp, jobctl must exit 0 ===" &&
+           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig $rc, jail $jrc, execjail $ejrc, clock $clkrc, pcwd $pcwdrc, umask $umrc, regex $rxrc, pwgrp $pwrc, jobctl $jcrc]";
+           test "$rc" = 0 && test "$jrc" = 0 && test "$ejrc" = 0 && test "$clkrc" = 0 && test "$pcwdrc" = 0 && test "$umrc" = 0 && test "$rxrc" = 0 && test "$pwrc" = 0 && test "$jcrc" = 0'
