@@ -107,20 +107,24 @@ AND **dash** (the operational shell).
   readlink, printf widths). The vendored build uses `-w` so upstream warnings do not clutter output;
   errors still surface, and libaios is linted in the prog_* builds.
 
-## NEXT (dash is DONE -- AIOS is operational), then enforce the boundary
+## NEXT (dash DONE = operational; M4 syscall-bypass DONE = boundary sound)
 
-1. **Real signal DELIVERY** -- an async path through the PAL/ptrace that actually delivers a signal
-   to a guest (inject the guest's handler frame / map a host signal -> the guest's recorded
-   disposition), so dash is fully INTERACTIVE (^C -> SIGINT, child death -> SIGCHLD). Today libaios
-   RECORDS dispositions but nothing fires; -c/script modes don't need it, interactive does. This is
-   the natural next milestone (a real kernel/PAL addition, not just libc).
-2. **More sbase utils** -- head/tail/cp/mv/sort (cp/mv reuse the *at + recurse already built), grep
+**M4 update (s20):** the syscall-bypass half of the boundary is DONE (commit `fcf4135`, v0.5.3) and
+HW-validated -- pal_guest_return neutralizes every trapped syscall (`set_syscall_nr(-1)`) so a
+guest-chosen syscall never runs on the host, and the kernel kills any guest that emits a non-AIOS
+(real Linux) syscall. Proof: `guest/guest_escape.c`. Open directions from here:
+
+1. **M4.2 -- fs/resource isolation** (the OTHER half of the boundary): restrict the guest's VIEW of
+   the host. Today a serviced AIOS `open` -> `pal_host_open` opens ANY host path. Give the guest a
+   mount namespace / sandbox root (or validate paths in the PAL) so it can only reach an AIOS root.
+2. **Real signal DELIVERY** -- an async path through the PAL/ptrace that actually delivers a signal
+   to a guest (^C -> SIGINT, child death -> SIGCHLD), so dash is fully INTERACTIVE. Today libaios
+   RECORDS dispositions but nothing fires; -c/script modes don't need it, interactive does.
+3. **More sbase utils** -- head/tail/cp/mv/sort (cp/mv reuse the *at + recurse already built), grep
    (needs a REAL regex -- shadow <regex.h> is declarations-only today). Each is a small add now.
-3. Smaller gaps that will surface: a real `time()`/CLOCK syscall (ls date heuristic, dash timing),
-   per-guest umask + per-process cwd, maybe job control (dash is built JOBS=0; setpgid/tcsetpgrp).
-   s15 zsh job-control lessons [[project_zsh_pty]] are background.
-4. Then **M4** enforce the boundary (seccomp/namespaces so a guest CANNOT bypass the kernel) ·
-   **M5** sched_ext (custom RPi kernel lacks CONFIG_SCHED_CLASS_EXT) · **M6** `pal_sel4.c` (the
+4. Smaller gaps: a real `time()`/CLOCK syscall (ls date heuristic, dash timing), per-guest umask +
+   per-process cwd, maybe job control (dash is built JOBS=0). s15 zsh lessons [[project_zsh_pty]].
+5. Then **M5** sched_ext (custom RPi kernel lacks CONFIG_SCHED_CLASS_EXT) · **M6** `pal_sel4.c` (the
    replant seam). The seL4 stall + lead-#3 keyboard stay MOOTED by leaving the platform (seL4 tree
    preserved on main/origin as record/fallback).
 
@@ -146,7 +150,10 @@ UNMODIFIED and runs as a real shell** (M3i): builtins, arithmetic, &&/||, if/tes
 pipelines, command substitution, `>` redirect, $?, -c/stdin/script modes, driving real sbase
 echo|wc|cat through the process model. **30-syscall ABI** (added FCNTL). To get dash: setjmp/
 sigsetjmp (aarch64 asm), a RECORD-ONLY signal layer (no async delivery yet), fcntl/execve/vfork +
-~10 new shadow headers. Both sbase + dash are vendored under uk/vendor/{sbase,dash} and are NEVER
+~10 new shadow headers. **M4 -- the boundary is now ENFORCED (v0.5.3):** the PAL neutralizes every
+trapped syscall (`set_syscall_nr(-1)`) so a guest-chosen syscall NEVER runs on the host, and the
+kernel kills any guest that emits a non-AIOS (real Linux) syscall -- the trap model is SOUND (proof:
+guest/guest_escape.c). Both sbase + dash are vendored under uk/vendor/{sbase,dash} and are NEVER
 patched -- missing libc features are added to libaios. Validated on colima AND **natively on the
 real RPi4** (Linux 6.12.47/aarch64, gcc 14.2 -- Pi-pending CLEARED; gcc 14 caught + we fixed a
 tolower-before-decl bug colima's gcc 13 missed).
@@ -165,16 +172,18 @@ GOTCHA: colima's virtiofs mount lags after a host-side edit -- the first docker 
 (or just retry once) before the real build. A ptrace hang is SILENT -> in-container `timeout N` +
 fprintf(stderr).
 
-PRIMARY TASK -> pick the next milestone (dash already operational): (1) **real signal DELIVERY** --
-an async path through the PAL/ptrace so a host signal reaches the guest's recorded disposition (^C ->
-SIGINT, SIGCHLD), making dash fully INTERACTIVE; today libaios records dispositions but nothing fires.
-This is a real kernel/PAL milestone. OR (2) **more sbase utils** -- head/tail/cp/mv/sort (cp/mv reuse
-the *at + recurse already built); grep needs a REAL regex (<regex.h> is decls-only). OR (3) smaller
-gaps: a real `time()`/CLOCK syscall, per-guest umask/cwd, job control (dash built JOBS=0). Keep
-kernel/aios_kernel.c host-agnostic + the PAL seam minimal (the future verified boundary); NEVER patch
-vendored sources -- grow libaios. Commit per milestone on `main`; validate colima (+ Pi when
-reachable); Bryan pushes.
+PRIMARY TASK -> pick the next milestone (dash operational; M4 syscall-bypass enforcement done): (1)
+**M4.2 fs/resource isolation** -- the OTHER half of the boundary: restrict the guest's VIEW of the
+host (mount namespace / sandbox root / PAL path validation) so a serviced open() can only reach an
+AIOS root, not arbitrary host paths (today pal_host_open opens ANY host path). (2) **real signal
+DELIVERY** -- an async PAL/ptrace path so a host signal reaches the guest's recorded disposition (^C
+-> SIGINT, SIGCHLD), making dash fully INTERACTIVE; today libaios records dispositions but nothing
+fires. (3) **more sbase utils** -- head/tail/cp/mv/sort (cp/mv reuse the *at + recurse); grep needs a
+REAL regex (<regex.h> is decls-only). (4) a real `time()`/CLOCK syscall, per-guest umask/cwd, job
+control (dash built JOBS=0). Keep kernel/aios_kernel.c host-agnostic + the PAL seam minimal (the
+future verified boundary); NEVER patch vendored sources -- grow libaios. Commit per milestone on
+`main`; validate colima + the Pi (`raspberrypi.local`, gcc 14 is stricter); Bryan pushes.
 
-THEN: M4 enforce the boundary (seccomp/namespaces); M5 sched_ext; M6 pal_sel4.c (the replant seam).
+THEN: M5 sched_ext (custom RPi kernel w/ CONFIG_SCHED_CLASS_EXT); M6 pal_sel4.c (the replant seam).
 The seL4 stall + lead-#3 keyboard are MOOTED by leaving the platform (seL4 tree preserved on
 main/origin as record/fallback).
