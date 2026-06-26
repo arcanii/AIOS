@@ -3,6 +3,7 @@
 #ifndef _SYS_STAT_H
 #define _SYS_STAT_H
 #include <sys/types.h>
+#include <time.h>          /* struct timespec (the st_*tim members) */
 #include "aios_abi.h"
 
 struct stat {
@@ -12,14 +13,18 @@ struct stat {
     unsigned int       st_nlink;
     unsigned int       st_uid;
     unsigned int       st_gid;
-    unsigned int       _pad;
+    unsigned long long st_rdev;
     long long          st_size;
     long long          st_blksize;
     long long          st_blocks;
-    long long          st_atime;
-    long long          st_mtime;
-    long long          st_ctime;
+    struct timespec    st_atim;
+    struct timespec    st_mtim;
+    struct timespec    st_ctim;
 };
+/* POSIX scalar names alias the timespec seconds (as in glibc). */
+#define st_atime st_atim.tv_sec
+#define st_mtime st_mtim.tv_sec
+#define st_ctime st_ctim.tv_sec
 
 #define S_IFMT   AIOS_S_IFMT
 #define S_IFREG  AIOS_S_IFREG

@@ -27,7 +27,11 @@ int     chdir(const char *path);
 char   *getcwd(char *buf, size_t size);
 int     access(const char *path, int amode);
 int     faccessat(int dirfd, const char *path, int amode, int flags);
+ssize_t readlink(const char *path, char *buf, size_t bufsize);
 void    _exit(int code) __attribute__((noreturn));
+
+/* sbase's ls uses this as a name-buffer size (normally a sysconf key). */
+#define _SC_LOGIN_NAME_MAX 256
 
 /* access() / faccessat() modes (AIOS-owned; match AIOS_?_OK in aios_abi.h) */
 #define F_OK 0

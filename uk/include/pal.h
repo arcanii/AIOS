@@ -164,4 +164,8 @@ int        pal_host_fstatat  (pal_file_t dir, const char *path, struct aios_stat
 int        pal_host_unlinkat (pal_file_t dir, const char *path, int removedir);
 int        pal_host_faccessat(pal_file_t dir, const char *path, int amode);
 
+/* Read a symlink's target into `buf` (no NUL terminator, like POSIX readlink). Returns bytes, or a
+ * negated AIOS error code. (Linux: readlink(2); a future seL4 PAL asks its fs server.) */
+long pal_host_readlink(const char *path, char *buf, size_t bufsize);
+
 #endif /* AIOS_PAL_H */

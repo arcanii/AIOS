@@ -74,6 +74,9 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            mkdir -p /tmp/aios_rmt/a/b && touch /tmp/aios_rmt/x /tmp/aios_rmt/a/y /tmp/aios_rmt/a/b/z &&
            ./aios-uk ./sbase-rm -r /tmp/aios_rmt 2>/dev/null &&
              { test -e /tmp/aios_rmt && echo "  [sbase rm -r FAILED -- tree survived]" || echo "  [sbase rm -r removed the tree OK]"; }; rm -rf /tmp/aios_rmt;
+           echo "--- M3h: sbase ls + ls -l (readdir + stat + readlink + time/strftime + printf widths) ---" &&
+           rm -rf /tmp/aios_lst && mkdir -p /tmp/aios_lst/sub && echo hi >/tmp/aios_lst/afile && ln -s afile /tmp/aios_lst/alink &&
+           { echo "  plain ls:"; ./aios-uk ./sbase-ls /tmp/aios_lst 2>/dev/null | sed "s/^/    /"; echo "  ls -l:"; ./aios-uk ./sbase-ls -l /tmp/aios_lst 2>/dev/null | sed "s/^/    /"; }; rm -rf /tmp/aios_lst;
            echo "=== M3d gate: prog_pipebig exit must be 0 ===" &&
            ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [exit $rc]";
            test "$rc" = 0'

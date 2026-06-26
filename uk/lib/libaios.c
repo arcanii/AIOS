@@ -257,38 +257,77 @@ static void sink_write(struct sink *s, const char *p, size_t n) {
     else if (s->fp && n) fwrite(p, 1, n, s->fp);
     s->len += n;
 }
-static void sink_uint(struct sink *s, unsigned long v, int base, int upper) {
-    char b[24]; int i = sizeof b;
+/* Convert an unsigned value to digits (most-significant first) in `out`; returns the digit count. */
+static size_t u2buf(char *out, unsigned long v, int base, int upper) {
+    char tmp[24]; int i = 0;
     const char *dig = upper ? "0123456789ABCDEF" : "0123456789abcdef";
-    do { b[--i] = dig[v % (unsigned)base]; v /= (unsigned)base; } while (v);
-    sink_write(s, &b[i], (size_t)(sizeof b - i));
+    do { tmp[i++] = dig[v % (unsigned)base]; v /= (unsigned)base; } while (v);
+    for (int j = 0; j < i; j++) out[j] = tmp[i - 1 - j];
+    return (size_t)i;
 }
-static void sink_int(struct sink *s, long v) {
-    if (v < 0) { sink_write(s, "-", 1); sink_uint(s, (unsigned long)(-v), 10, 0); }
-    else         sink_uint(s, (unsigned long)v, 10, 0);
-}
+static void sink_pad(struct sink *s, int n, char c) { while (n-- > 0) sink_write(s, &c, 1); }
 
-/* Minimal printf-family core: %s %d %i %u %x %X %o %c %p %% and the l/z length modifiers
- * (%ld %lu %lx %zu ...). No field width/precision yet -- grow as sbase/dash need it. */
+/* printf-family core: flags (- 0), width (incl. *), precision (incl. .*), the l/z/h length
+ * modifiers, and %s %d %i %u %x %X %o %c %p %%. Enough for sbase (ls -l columns align) + dash. */
 static void vformat(struct sink *s, const char *fmt, va_list ap) {
+    char digits[24];
     for (const char *p = fmt; *p; p++) {
         if (*p != '%') { sink_write(s, p, 1); continue; }
         p++;
-        int lng = 0;
-        while (*p == 'l' || *p == 'z') { lng = 1; p++; }   /* long / size_t width */
-        switch (*p) {
-        case 's': { const char *a = va_arg(ap, const char *); if (!a) a = "(null)"; sink_write(s, a, strlen(a)); break; }
-        case 'd': case 'i': sink_int(s, lng ? va_arg(ap, long) : (long)va_arg(ap, int)); break;
-        case 'u': sink_uint(s, lng ? va_arg(ap, unsigned long) : va_arg(ap, unsigned int), 10, 0); break;
-        case 'x': sink_uint(s, lng ? va_arg(ap, unsigned long) : va_arg(ap, unsigned int), 16, 0); break;
-        case 'X': sink_uint(s, lng ? va_arg(ap, unsigned long) : va_arg(ap, unsigned int), 16, 1); break;
-        case 'o': sink_uint(s, lng ? va_arg(ap, unsigned long) : va_arg(ap, unsigned int),  8, 0); break;
-        case 'p': sink_write(s, "0x", 2); sink_uint(s, (unsigned long)va_arg(ap, void *), 16, 0); break;
-        case 'c': { char c = (char)va_arg(ap, int); sink_write(s, &c, 1); break; }
-        case '%': sink_write(s, "%", 1); break;
-        default:  sink_write(s, "%", 1); if (*p) sink_write(s, p, 1); break;
+        int left = 0, zero = 0;
+        for (;; p++) {                                       /* flags */
+            if      (*p == '-') left = 1;
+            else if (*p == '0') zero = 1;
+            else if (*p == '+' || *p == ' ' || *p == '#') { /* accepted, ignored */ }
+            else break;
         }
-        if (!*p) break;
+        int width = 0;                                       /* field width */
+        if (*p == '*') { width = va_arg(ap, int); p++; if (width < 0) { left = 1; width = -width; } }
+        else while (*p >= '0' && *p <= '9') width = width * 10 + (*p++ - '0');
+        int prec = -1;                                       /* precision */
+        if (*p == '.') {
+            p++; prec = 0;
+            if (*p == '*') { prec = va_arg(ap, int); p++; if (prec < 0) prec = -1; }
+            else while (*p >= '0' && *p <= '9') prec = prec * 10 + (*p++ - '0');
+        }
+        int lng = 0;                                         /* length modifiers */
+        while (*p == 'l' || *p == 'z' || *p == 'h') { if (*p == 'l' || *p == 'z') lng = 1; p++; }
+
+        const char *body = digits; size_t blen = 0;          /* the value text (digits or string) */
+        char prefix[2]; int plen = 0;                        /* sign / 0x -- emitted before zero-fill */
+        int isnum = 0;
+        switch (*p) {
+        case 's': { const char *a = va_arg(ap, const char *); if (!a) a = "(null)";
+                    blen = strlen(a); if (prec >= 0 && (size_t)prec < blen) blen = (size_t)prec;
+                    body = a; break; }
+        case 'c': digits[0] = (char)va_arg(ap, int); blen = 1; break;
+        case 'd': case 'i': { long v = lng ? va_arg(ap, long) : (long)va_arg(ap, int);
+                    unsigned long uv;
+                    if (v < 0) { prefix[0] = '-'; plen = 1; uv = (unsigned long)(-v); } else uv = (unsigned long)v;
+                    blen = u2buf(digits, uv, 10, 0); isnum = 1; break; }
+        case 'u': blen = u2buf(digits, lng ? va_arg(ap, unsigned long) : va_arg(ap, unsigned int), 10, 0); isnum = 1; break;
+        case 'x': blen = u2buf(digits, lng ? va_arg(ap, unsigned long) : va_arg(ap, unsigned int), 16, 0); isnum = 1; break;
+        case 'X': blen = u2buf(digits, lng ? va_arg(ap, unsigned long) : va_arg(ap, unsigned int), 16, 1); isnum = 1; break;
+        case 'o': blen = u2buf(digits, lng ? va_arg(ap, unsigned long) : va_arg(ap, unsigned int),  8, 0); isnum = 1; break;
+        case 'p': prefix[0] = '0'; prefix[1] = 'x'; plen = 2;
+                  blen = u2buf(digits, (unsigned long)(uintptr_t)va_arg(ap, void *), 16, 0); isnum = 1; break;
+        case '%': digits[0] = '%'; blen = 1; break;
+        case '\0': p--; continue;                            /* trailing '%' -> stop cleanly */
+        default:  digits[0] = '%'; digits[1] = *p; blen = 2; break;
+        }
+
+        int zfill = 0;                                       /* numeric precision = min digit count */
+        if (isnum && prec >= 0) { if ((size_t)prec > blen) zfill = (int)((size_t)prec - blen); zero = 0; }
+        int content = plen + zfill + (int)blen;
+        int padw = width > content ? width - content : 0;
+        int usezero = zero && isnum;                         /* '0' flag never pads strings */
+
+        if (!left && !usezero) sink_pad(s, padw, ' ');       /* right-justify, space pad */
+        if (plen) sink_write(s, prefix, (size_t)plen);       /* sign / 0x before any zero-fill */
+        if (!left && usezero)  sink_pad(s, padw, '0');       /* right-justify, zero pad */
+        sink_pad(s, zfill, '0');                             /* precision zeros */
+        sink_write(s, body, blen);
+        if (left) sink_pad(s, padw, ' ');                    /* left-justify, trailing spaces */
     }
 }
 
@@ -383,6 +422,9 @@ int faccessat(int dirfd, const char *path, int amode, int flags) {
     return (int)__ret(asys(AIOS_SYS_FACCESSAT, dirfd, (long)path, amode));
 }
 int access(const char *path, int amode) { return faccessat(AIOS_AT_FDCWD, path, amode, 0); }
+long readlink(const char *path, char *buf, unsigned long bufsize) {
+    return __ret(asys(AIOS_SYS_READLINK, (long)path, (long)buf, (long)bufsize));
+}
 int  remove(const char *path) {                   /* POSIX: unlink a file, or rmdir a directory */
     int r = unlink(path);
     if (r != 0 && errno == AIOS_EISDIR) r = rmdir(path);
@@ -586,6 +628,84 @@ char *getenv(const char *name) {
         if (strncmp(*e, name, n) == 0 && (*e)[n] == '=') return *e + n + 1;
     return 0;
 }
+
+/* --- time (UTC; no timezone, no RTC) ---
+ * localtime == gmtime (no zone). gmtime converts a time_t to a broken-down struct tm via the civil-
+ * from-days algorithm; strftime formats it (the subset ls -l needs, with manual zero-padding since
+ * the printf core has no field widths yet). time() has no clock to read, so it returns a fixed 0
+ * "now" -- enough for ls's recent-vs-old date heuristic; a real clock syscall is future work.
+ * struct tm here MUST match the shadow <time.h> one (ls reads the fields). */
+struct tm { int tm_sec, tm_min, tm_hour, tm_mday, tm_mon, tm_year, tm_wday, tm_yday, tm_isdst; };
+static struct tm _tm;
+struct tm *gmtime(const long *tp) {
+    long t = *tp, days = t / 86400, rem = t % 86400;
+    if (rem < 0) { rem += 86400; days--; }
+    _tm.tm_hour = (int)(rem / 3600); rem %= 3600;
+    _tm.tm_min  = (int)(rem / 60);   _tm.tm_sec = (int)(rem % 60);
+    _tm.tm_wday = (int)(((days % 7) + 4 + 7) % 7);          /* 1970-01-01 was a Thursday (4) */
+    long z = days + 719468;                                  /* shift epoch to 0000-03-01 */
+    long era = (z >= 0 ? z : z - 146096) / 146097;
+    unsigned doe = (unsigned)(z - era * 146097);            /* day of era   [0, 146096] */
+    unsigned yoe = (doe - doe/1460 + doe/36524 - doe/146096) / 365;  /* year of era [0, 399] */
+    long y = (long)yoe + era * 400;
+    unsigned doy = doe - (365*yoe + yoe/4 - yoe/100);       /* day of year  [0, 365] */
+    unsigned mp = (5*doy + 2) / 153;                        /* month        [0, 11] (Mar=0) */
+    _tm.tm_mday = (int)(doy - (153*mp + 2)/5 + 1);          /* day of month [1, 31] */
+    _tm.tm_mon  = (int)(mp < 10 ? mp + 2 : mp - 10);        /* month        [0, 11] (Jan=0) */
+    _tm.tm_year = (int)(y + (mp >= 10) - 1900);
+    _tm.tm_yday = 0;                                         /* not computed (ls does not use it) */
+    _tm.tm_isdst = 0;
+    return &_tm;
+}
+struct tm *localtime(const long *tp) { return gmtime(tp); }
+long time(long *tp) { if (tp) *tp = 0; return 0; }          /* no RTC: a fixed "now" */
+
+static const char _mon3[12][4] = {"Jan","Feb","Mar","Apr","May","Jun",
+                                  "Jul","Aug","Sep","Oct","Nov","Dec"};
+static const char _wday3[7][4]  = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
+size_t strftime(char *s, size_t max, const char *fmt, const struct tm *tm) {
+    size_t n = 0;
+    if (!max) return 0;
+    for (; *fmt && n < max - 1; fmt++) {
+        if (*fmt != '%') { s[n++] = *fmt; continue; }
+        fmt++;
+        if (!*fmt) { s[n++] = '%'; break; }
+        const char *str = 0;
+        int two = -1, pad = '0';
+        switch (*fmt) {
+        case 'a': str = _wday3[((tm->tm_wday % 7) + 7) % 7]; break;
+        case 'b': case 'h': str = _mon3[((tm->tm_mon % 12) + 12) % 12]; break;
+        case 'd': two = tm->tm_mday; break;
+        case 'e': two = tm->tm_mday; pad = ' '; break;
+        case 'H': two = tm->tm_hour; break;
+        case 'M': two = tm->tm_min;  break;
+        case 'S': two = tm->tm_sec;  break;
+        case 'm': two = tm->tm_mon + 1; break;
+        case 'y': two = (tm->tm_year + 1900) % 100; break;
+        case 'Y': { unsigned y = (unsigned)(tm->tm_year + 1900); char b[8]; char *p = b + 7; *p = 0;
+                    do { *--p = (char)('0' + y % 10); y /= 10; } while (y);
+                    while (*p && n < max - 1) s[n++] = *p++; continue; }
+        case '%': s[n++] = '%'; continue;
+        default:  s[n++] = '%'; if (n < max - 1) s[n++] = *fmt; continue;
+        }
+        if (two >= 0) {
+            if (n < max - 1) s[n++] = (char)(two < 10 ? pad : '0' + (two / 10) % 10);
+            if (n < max - 1) s[n++] = (char)('0' + two % 10);
+        } else if (str) {
+            while (*str && n < max - 1) s[n++] = *str++;
+        }
+    }
+    s[n] = '\0';
+    return n;
+}
+
+/* --- users / groups: no passwd/group database yet, so the lookups fail (return NULL). Callers
+ * (ls -l) fall back to the numeric uid/gid -- correct minimal behaviour. --- */
+struct passwd { char *pw_name; char *pw_passwd; unsigned int pw_uid, pw_gid;
+                char *pw_gecos, *pw_dir, *pw_shell; };
+struct group  { char *gr_name; char *gr_passwd; unsigned int gr_gid; char **gr_mem; };
+struct passwd *getpwuid(unsigned int uid) { (void)uid; return 0; }
+struct group  *getgrgid(unsigned int gid) { (void)gid; return 0; }
 
 /* --- qsort: generic in-place heapsort (O(n log n) worst case, no recursion, no aux allocation).
  * sbase's sort + ls sort their lines/entries through this; heapsort keeps it allocation-free. --- */

@@ -38,7 +38,7 @@ SBASE        = vendor/sbase
 # our own libaios is linted in the prog_* builds. -I$(SBASE) resolves util.h/arg.h/fs.h/utf.h.
 SBASE_CFLAGS = $(LIBC_CFLAGS) -I$(SBASE) -w
 SBASE_DEPS   = $(LIBAIOS) $(LIBC_HDRS) $(SBASE)/util.h $(SBASE)/arg.h $(SBASE)/compat.h
-SBASE_BINS   = sbase-true sbase-false sbase-echo sbase-cat sbase-wc sbase-mkdir sbase-rm
+SBASE_BINS   = sbase-true sbase-false sbase-echo sbase-cat sbase-wc sbase-mkdir sbase-rm sbase-ls
 
 .PHONY: all run clean sbase
 all: aios-uk guest_hello guest_fileio guest_cat prog_args prog_wc prog_bigalloc prog_tail prog_exec \
@@ -140,6 +140,12 @@ sbase-rm: $(SBASE)/rm.c $(SBASE_DEPS) $(SBASE)/fs.h
 	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/rm.c \
 	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/ealloc.c $(SBASE)/libutil/strlcpy.c \
 	      $(SBASE)/libutil/confirm.c $(SBASE)/libutil/recurse.c $(SBASE)/libutil/rm.c $(LIBAIOS)
+sbase-ls: $(SBASE)/ls.c $(SBASE_DEPS) $(SBASE)/fs.h $(SBASE)/utf.h
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/ls.c \
+	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/ealloc.c $(SBASE)/libutil/reallocarray.c \
+	      $(SBASE)/libutil/human.c $(SBASE)/libutil/fshut.c \
+	      $(SBASE)/libutf/rune.c $(SBASE)/libutf/runetype.c $(SBASE)/libutf/isprintrune.c \
+	      $(SBASE)/libutf/iscntrlrune.c $(LIBAIOS)
 
 run: all
 	./aios-uk ./prog_tail -n 3 /etc/os-release

@@ -331,12 +331,8 @@ long long pal_host_lseek(pal_file_t f, long long off, int whence) {
     off_t r = lseek((int)f, (off_t)off, whence);           /* AIOS_SEEK_* == SEEK_* */
     return r < 0 ? (long long)pal_errno() : (long long)r;
 }
-/* glibc's <sys/stat.h> #defines st_atime/st_mtime/st_ctime as macros (-> st_atim.tv_sec ...). Undo
- * them so the AIOS struct can name its fields the same; the host timespec members st_atim/st_mtim/
- * st_ctim (used below) are unaffected. */
-#undef st_atime
-#undef st_mtime
-#undef st_ctime
+/* aios_stat's time fields are timespecs named st_atim/st_mtim/st_ctim -- the same names the host
+ * struct stat uses for its timespec members -- so the per-second/nsec copy below is direct. */
 static void fill_aios_stat(struct aios_stat *a, const struct stat *s) {
     a->st_dev   = (unsigned long long)s->st_dev;
     a->st_ino   = (unsigned long long)s->st_ino;
@@ -344,13 +340,13 @@ static void fill_aios_stat(struct aios_stat *a, const struct stat *s) {
     a->st_nlink = (unsigned int)s->st_nlink;
     a->st_uid   = (unsigned int)s->st_uid;
     a->st_gid   = (unsigned int)s->st_gid;
-    a->_pad     = 0;
+    a->st_rdev  = (unsigned long long)s->st_rdev;
     a->st_size    = (long long)s->st_size;
     a->st_blksize = (long long)s->st_blksize;
     a->st_blocks  = (long long)s->st_blocks;
-    a->st_atime   = (long long)s->st_atim.tv_sec;
-    a->st_mtime   = (long long)s->st_mtim.tv_sec;
-    a->st_ctime   = (long long)s->st_ctim.tv_sec;
+    a->st_atim.tv_sec  = (long long)s->st_atim.tv_sec;  a->st_atim.tv_nsec = (long long)s->st_atim.tv_nsec;
+    a->st_mtim.tv_sec  = (long long)s->st_mtim.tv_sec;  a->st_mtim.tv_nsec = (long long)s->st_mtim.tv_nsec;
+    a->st_ctim.tv_sec  = (long long)s->st_ctim.tv_sec;  a->st_ctim.tv_nsec = (long long)s->st_ctim.tv_nsec;
 }
 int pal_host_fstat(pal_file_t f, struct aios_stat *out) {
     struct stat st;
@@ -387,6 +383,10 @@ int pal_host_unlinkat(pal_file_t dir, const char *path, int removedir) {
 }
 int pal_host_faccessat(pal_file_t dir, const char *path, int amode) {
     return faccessat(hostdir(dir), path, amode, 0) == 0 ? 0 : (int)pal_errno();   /* AIOS_?_OK == ?_OK */
+}
+long pal_host_readlink(const char *path, char *buf, size_t bufsize) {
+    ssize_t n = readlink(path, buf, bufsize);
+    return n < 0 ? pal_errno() : (long)n;
 }
 
 /* A directory listing: getdents64 into a host temp, then translate each linux_dirent64 into an

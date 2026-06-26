@@ -40,6 +40,7 @@
 #define AIOS_SYS_FSTATAT  0x1018  /* (dirfd, path, aios_stat*, flags) -> 0, or -errno              */
 #define AIOS_SYS_UNLINKAT 0x1019  /* (dirfd, path, flags) -> 0, or -errno (AT_REMOVEDIR -> rmdir)  */
 #define AIOS_SYS_FACCESSAT 0x101A /* (dirfd, path, amode) -> 0, or -errno                          */
+#define AIOS_SYS_READLINK 0x101B  /* (path, buf, bufsize) -> bytes (no NUL), or -errno             */
 
 /* The *at family resolves `path` relative to a directory fd, or -- when dirfd == AIOS_AT_FDCWD --
  * relative to the process cwd (the recurse-based utilities: rm, ls, cp, ...). AT_* are AIOS-owned;
@@ -96,7 +97,10 @@
 /* File metadata returned by AIOS_SYS_FSTAT / STAT / LSTAT (the kernel fills it in the guest's
  * memory). mode bits follow the conventional layout (matches host st_mode), so AIOS_S_IF* decode
  * the type. POSIX field names so this is byte-identical to the shadow <sys/stat.h> `struct stat`
- * (THEY MUST MATCH -- the kernel writes these bytes, the program reads them as struct stat). */
+ * (THEY MUST MATCH -- the kernel writes these bytes, the program reads them as struct stat). The
+ * time fields are timespecs (sec + nsec); aios_timespec has the SAME layout as the shadow <time.h>
+ * struct timespec (two 8-byte fields on LP64), so struct stat's st_atim/st_mtim/st_ctim line up. */
+struct aios_timespec { long long tv_sec; long long tv_nsec; };
 struct aios_stat {
     unsigned long long st_dev;
     unsigned long long st_ino;
@@ -104,13 +108,13 @@ struct aios_stat {
     unsigned int       st_nlink;
     unsigned int       st_uid;
     unsigned int       st_gid;
-    unsigned int       _pad;
+    unsigned long long st_rdev;    /* device id (for special files); was padding */
     long long          st_size;    /* file size in bytes */
     long long          st_blksize;
     long long          st_blocks;
-    long long          st_atime;   /* seconds */
-    long long          st_mtime;
-    long long          st_ctime;
+    struct aios_timespec st_atim;  /* access / modify / status-change times (sec + nsec) */
+    struct aios_timespec st_mtim;
+    struct aios_timespec st_ctim;
 };
 #define AIOS_S_IFMT      0xF000
 #define AIOS_S_IFREG     0x8000

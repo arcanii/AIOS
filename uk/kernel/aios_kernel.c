@@ -287,6 +287,17 @@ static long sys_faccessat(proc_t *p, uint64_t dirfd, uint64_t gpath, uint64_t am
     return pal_host_faccessat(dir, path, (int)amode);
 }
 
+/* Read a symlink target into the guest (no NUL, like POSIX readlink). */
+static long sys_readlink(proc_t *p, uint64_t gpath, uint64_t gbuf, uint64_t bufsize) {
+    char path[256], link[1024];
+    long e = read_path(p, gpath, path, sizeof path); if (e) return e;
+    size_t cap = bufsize < sizeof link ? (size_t)bufsize : sizeof link;
+    long n = pal_host_readlink(path, link, cap);
+    if (n < 0) return n;
+    if (pal_guest_write(p->pid, gbuf, link, (size_t)n) != (size_t)n) return -AIOS_EFAULT;
+    return n;
+}
+
 /* ---- pipes ----
  * A pipe is two backing ends (non-blocking at the host) sharing a pipe_id. read/write to a pipe
  * never block the single-threaded kernel: an empty read / full write PARKS the calling guest and
@@ -569,6 +580,7 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
     case AIOS_SYS_FSTATAT: ret = (uint64_t)sys_fstatat(p, sc->arg[0], sc->arg[1], sc->arg[2], sc->arg[3]); break;
     case AIOS_SYS_UNLINKAT:ret = (uint64_t)sys_unlinkat(p, sc->arg[0], sc->arg[1], sc->arg[2]);          break;
     case AIOS_SYS_FACCESSAT:ret = (uint64_t)sys_faccessat(p, sc->arg[0], sc->arg[1], sc->arg[2]);        break;
+    case AIOS_SYS_READLINK:ret = (uint64_t)sys_readlink(p, sc->arg[0], sc->arg[1], sc->arg[2]);          break;
     default:             ret = (uint64_t)-AIOS_ENOSYS; /* unknown AIOS syscall */           break;
     }
     pal_guest_return(p->pid, ret);
