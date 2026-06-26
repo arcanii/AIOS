@@ -482,19 +482,14 @@ static void do_read(proc_t *p, uint64_t fd, uint64_t gbuf, uint64_t len) {
         pal_guest_return(p->pid, (uint64_t)n);
         return;
     }
-    char tmp[1024];
-    size_t total = 0;
-    while (total < len) {
-        size_t chunk = (size_t)len - total;
-        if (chunk > sizeof tmp) chunk = sizeof tmp;
-        long n = pal_host_read(g_ofile[oi].backing, tmp, chunk);
-        if (n < 0)  { if (!total) { pal_guest_return(p->pid, (uint64_t)n); return; } break; }  /* -errno */
-        if (n == 0) break;                           /* EOF */
-        size_t put = pal_guest_write(p->pid, gbuf + total, tmp, (size_t)n);
-        total += put;
-        if (put < (size_t)n) break;
-    }
-    pal_guest_return(p->pid, (uint64_t)total);
+    /* A single read (POSIX semantics): return what is available, do NOT loop to fill `len` -- a
+     * terminal/pipe gives one line/chunk and looping would block forever waiting for more. */
+    char tmp[4096];
+    size_t chunk = len < sizeof tmp ? (size_t)len : sizeof tmp;
+    long n = pal_host_read(g_ofile[oi].backing, tmp, chunk);
+    if (n < 0) { pal_guest_return(p->pid, (uint64_t)n); return; }    /* -errno (incl. EINTR) */
+    size_t put = (n > 0) ? pal_guest_write(p->pid, gbuf, tmp, (size_t)n) : 0;
+    pal_guest_return(p->pid, (uint64_t)put);
 }
 
 /* write: pipe write-ends are non-blocking (park on full); everything else writes up to len. */

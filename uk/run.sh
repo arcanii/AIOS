@@ -87,6 +87,9 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            echo "--- prog_signal: install handler + raise + SIG_IGN ---" &&
            ./aios-uk ./prog_signal 2>/dev/null | sed "s/^/    /";
            printf "  dash trap+kill: "; ./aios-uk ./dash -c "trap \"echo caught-it\" USR1; kill -USR1 \$\$; echo then-continued" 2>/dev/null | tr "\n" " "; echo;
+           echo "--- interactive dash + ^C over a pty (the kernel delivers SIGINT to dash) ---" &&
+           cc -O2 -o /tmp/ctrlc_pty test/ctrlc_pty.c -lutil 2>/dev/null &&
+           timeout 25 /tmp/ctrlc_pty ./aios-uk ./dash 2>/dev/null;
            echo "=== M4: boundary ENFORCED -- a guest CANNOT bypass the kernel (escape is blocked) ===" &&
            echo "  guest_escape attempts a raw Linux write(64); the [2] LINUX line must NOT appear:" &&
            ./aios-uk ./guest_escape 2>&1 | sed "s/^/    /"; ./aios-uk ./guest_escape >/dev/null 2>&1; echo "  [escape guest killed, exit $? (expect 159)]";

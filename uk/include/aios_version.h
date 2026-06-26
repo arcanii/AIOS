@@ -14,7 +14,10 @@
  * 30-syscall ABI. 0.5.3 = M4 boundary enforcement: the trap model is now SOUND -- the PAL
  * neutralizes every trapped syscall so a guest-chosen syscall NEVER executes on the host, and the
  * kernel kills any guest that emits a non-AIOS (real Linux) syscall (an escape attempt); only the
- * kernel's own injections reach Linux.
+ * kernel's own injections reach Linux. 0.5.4 = M5 real signal delivery: the kernel runs a guest's
+ * handler (sigaction/kill/sigreturn + a frame dance in the PAL), so dash trap/kill work AND
+ * INTERACTIVE dash + ^C work -- ^C interrupts the prompt and dash survives (a do_read single-read
+ * fix made interactive mode function).
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -24,7 +27,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 3
+#define AIOS_VERSION_PATCH 4
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)
