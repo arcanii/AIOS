@@ -35,6 +35,7 @@
 #define AIOS_SYS_RMDIR   0x1013   /* (path)                -> 0, or -errno                         */
 #define AIOS_SYS_RENAME  0x1014   /* (oldpath, newpath)    -> 0, or -errno                         */
 #define AIOS_SYS_GETPID  0x1015   /* ()                    -> the caller's pid                     */
+#define AIOS_SYS_GETDENTS 0x1016  /* (fd, buf, len) -> bytes of aios_dirent records, 0 = end, -errno */
 
 /* AIOS_SYS_WAIT: pid selector + the wait status it stores via *status. pid == -1 waits for ANY
  * child; a positive pid waits for that child. The status encodes a normal exit as
@@ -104,6 +105,29 @@ struct aios_stat {
 #define AIOS_S_IFBLK     0x6000
 #define AIOS_S_IFIFO     0x1000
 #define AIOS_S_IFSOCK    0xC000
+
+/* Directory entries returned by AIOS_SYS_GETDENTS: a packed stream of variable-length records in
+ * the guest's buffer, each `d_reclen` bytes (so the next record begins at this one + d_reclen).
+ * The kernel writes these bytes; libaios's readdir parses them into a fixed `struct dirent`. The
+ * layout is host-agnostic AIOS-owned: the Linux PAL translates getdents64 into it record-by-record
+ * (the two headers are field-identical, so a translated batch never outgrows its source); a future
+ * seL4 PAL fills it from its fs server. d_name is NUL-terminated within the record. */
+struct aios_dirent {
+    unsigned long long d_ino;       /* inode number                                            */
+    long long          d_off;       /* opaque cookie for the next entry (libaios iterates by reclen) */
+    unsigned short     d_reclen;    /* length of THIS record (header + name + any padding)      */
+    unsigned char      d_type;      /* AIOS_DT_*                                                */
+    char               d_name[];    /* NUL-terminated file name                                 */
+};
+/* d_type values -- the conventional DT_* layout, so the Linux PAL passes them through unchanged. */
+#define AIOS_DT_UNKNOWN   0
+#define AIOS_DT_FIFO      1
+#define AIOS_DT_CHR       2
+#define AIOS_DT_DIR       4
+#define AIOS_DT_BLK       6
+#define AIOS_DT_REG       8
+#define AIOS_DT_LNK      10
+#define AIOS_DT_SOCK     12
 
 /* AIOS open flags -- AIOS owns these values; the host PAL translates them to its native flags
  * (Linux O_*). The low 2 bits are the access mode. */

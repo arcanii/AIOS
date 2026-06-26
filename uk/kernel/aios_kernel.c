@@ -178,6 +178,18 @@ static long sys_fstat(proc_t *p, uint64_t fd, uint64_t gstat) {
     return 0;
 }
 
+/* Read directory entries: ask the PAL to fill a kernel buffer with aios_dirent records, then bounce
+ * them into the guest. fd must be a directory backing object (opened via OPEN). */
+static long sys_getdents(proc_t *p, uint64_t fd, uint64_t gbuf, uint64_t len) {
+    if (!fd_valid(p, fd)) return -AIOS_EBADF;
+    char buf[4096];
+    size_t cap = len < sizeof buf ? (size_t)len : sizeof buf;
+    long n = pal_host_getdents(fd_backing(p, fd), buf, cap);
+    if (n <= 0) return n;                              /* 0 = end of directory, -errno = error */
+    if (pal_guest_write(p->pid, gbuf, buf, (size_t)n) != (size_t)n) return -AIOS_EFAULT;
+    return n;
+}
+
 /* Bounce a path string out of the guest into `dst` (NUL-terminated). 0 on success, -errno. */
 static long read_path(proc_t *p, uint64_t gpath, char *dst, size_t cap) {
     size_t n = pal_guest_read(p->pid, gpath, dst, cap - 1);
@@ -505,6 +517,7 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
     case AIOS_SYS_RMDIR: ret = (uint64_t)sys_rmdir(p, sc->arg[0]);                         break;
     case AIOS_SYS_RENAME:ret = (uint64_t)sys_rename(p, sc->arg[0], sc->arg[1]);            break;
     case AIOS_SYS_GETPID:ret = (uint64_t)p->pid;                                           break;
+    case AIOS_SYS_GETDENTS:ret = (uint64_t)sys_getdents(p, sc->arg[0], sc->arg[1], sc->arg[2]); break;
     default:             ret = (uint64_t)-AIOS_ENOSYS; /* unknown AIOS syscall */           break;
     }
     pal_guest_return(p->pid, ret);

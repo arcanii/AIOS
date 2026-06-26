@@ -359,6 +359,64 @@ char *getcwd(char *buf, unsigned long size) {
     return buf;
 }
 
+/* --- directory streams (opendir/readdir/closedir) over AIOS_SYS_GETDENTS ---
+ * A DIR wraps a directory fd + a buffer of raw aios_dirent records; readdir refills via GETDENTS
+ * and hands back one fixed `struct dirent` at a time. `struct dirent` and `struct _AIOS_DIR` here
+ * MUST stay byte-identical to the shadow <dirent.h> copies (the program reads the bytes readdir
+ * fills) -- the same discipline as struct aios_stat <-> struct stat. */
+struct dirent {
+    unsigned long long d_ino;
+    long long          d_off;
+    unsigned short     d_reclen;
+    unsigned char      d_type;
+    char               d_name[256];
+};
+struct _AIOS_DIR {
+    int           fd;
+    int           pos;                 /* cursor into buf (bytes consumed) */
+    int           len;                 /* valid bytes in buf */
+    struct dirent de;                  /* the entry returned by the last readdir */
+    unsigned char buf[4096];           /* raw aios_dirent records from the last GETDENTS */
+};
+typedef struct _AIOS_DIR DIR;
+
+DIR *opendir(const char *path) {
+    long fd = aios_open(path, AIOS_O_RDONLY, 0);
+    if (fd < 0) { errno = (int)-fd; return 0; }
+    struct aios_stat st;                                 /* reject a non-directory up front (ENOTDIR) */
+    if (aios_fstat((int)fd, &st) == 0 && (st.st_mode & AIOS_S_IFMT) != AIOS_S_IFDIR) {
+        aios_close((int)fd); errno = AIOS_ENOTDIR; return 0;
+    }
+    DIR *d = malloc(sizeof *d);
+    if (!d) { aios_close((int)fd); errno = AIOS_ENOMEM; return 0; }
+    d->fd = (int)fd; d->pos = 0; d->len = 0;
+    return d;
+}
+struct dirent *readdir(DIR *d) {
+    if (!d) { errno = AIOS_EBADF; return 0; }
+    if (d->pos >= d->len) {                              /* buffer drained -> refill from the kernel */
+        long n = asys(AIOS_SYS_GETDENTS, d->fd, (long)d->buf, (long)sizeof d->buf);
+        if (n <= 0) { if (AIOS_IS_ERR(n)) errno = (int)-n; return 0; }   /* 0 = end, <0 = error */
+        d->len = (int)n; d->pos = 0;
+    }
+    struct aios_dirent *ad = (struct aios_dirent *)(d->buf + d->pos);
+    d->pos += ad->d_reclen;
+    d->de.d_ino    = ad->d_ino;
+    d->de.d_off    = ad->d_off;
+    d->de.d_reclen = ad->d_reclen;
+    d->de.d_type   = ad->d_type;
+    size_t i = 0;
+    while (ad->d_name[i] && i < sizeof d->de.d_name - 1) { d->de.d_name[i] = ad->d_name[i]; i++; }
+    d->de.d_name[i] = '\0';
+    return &d->de;
+}
+int closedir(DIR *d) {
+    if (!d) { errno = AIOS_EBADF; return -1; }
+    int fd = d->fd;
+    free(d);                                             /* free is a no-op today; DIRs are not reclaimed */
+    return aios_close(fd);
+}
+
 /* sys/wait */
 int wait(int *status)                          { return (int)__ret(aios_wait(status)); }
 int waitpid(int pid, int *status, int options) { return (int)__ret(aios_waitpid(pid, status, options)); }

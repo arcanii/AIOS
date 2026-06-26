@@ -59,6 +59,8 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            ./aios-uk ./prog_fs; echo "  [exit $?]";
            echo "=== M3e.5: prog_getopt -- getopt option parsing + qsort generic sort ===" &&
            ./aios-uk ./prog_getopt; echo "  [exit $?]";
+           echo "=== M3e.6: prog_dir -- opendir/readdir/closedir (AIOS_SYS_GETDENTS, for ls) ===" &&
+           ./aios-uk ./prog_dir; echo "  [exit $?]";
            echo "=== M3d gate: prog_pipebig exit must be 0 ===" &&
            ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [exit $rc]";
            test "$rc" = 0'

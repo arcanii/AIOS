@@ -364,3 +364,38 @@ int  pal_host_rmdir (const char *path)               { return rmdir(path) == 0 ?
 int  pal_host_rename(const char *o, const char *n)   { return rename(o, n) == 0 ? 0 : (int)pal_errno(); }
 int  pal_host_chdir (const char *path)               { return chdir(path) == 0 ? 0 : (int)pal_errno(); }
 long pal_host_getcwd(char *buf, size_t size)         { return getcwd(buf, size) ? (long)strlen(buf) : pal_errno(); }
+
+/* A directory listing: getdents64 into a host temp, then translate each linux_dirent64 into an
+ * EQUAL-SIZE aios_dirent record. The two record layouts are field-for-field identical (d_ino u64,
+ * d_off s64, d_reclen u16, d_type u8, then the NUL-terminated name + padding) and d_type already
+ * uses the DT_* values, so the translation is value-preserving and a translated batch never
+ * outgrows its source -- it always fits in a same-size output buffer. */
+struct pal_linux_dirent64 {
+    uint64_t       d_ino;
+    int64_t        d_off;
+    unsigned short d_reclen;
+    unsigned char  d_type;
+    char           d_name[];
+};
+long pal_host_getdents(pal_file_t f, void *buf, size_t len) {
+    char tmp[8192];
+    size_t cap = len < sizeof tmp ? len : sizeof tmp;
+    long n = syscall(SYS_getdents64, (int)f, tmp, cap);
+    if (n < 0)  return pal_errno();
+    if (n == 0) return 0;                                /* end of directory */
+    size_t in = 0, out = 0;
+    while (in < (size_t)n) {
+        struct pal_linux_dirent64 *ld = (void *)(tmp + in);
+        struct aios_dirent        *ad = (void *)((char *)buf + out);
+        unsigned short rl  = ld->d_reclen;
+        size_t         hdr = (size_t)((char *)ad->d_name - (char *)ad);   /* aios header size (==19) */
+        ad->d_ino    = ld->d_ino;
+        ad->d_off    = ld->d_off;
+        ad->d_reclen = rl;                               /* identical layout -> identical length */
+        ad->d_type   = ld->d_type;                       /* DT_* values match AIOS_DT_* */
+        memcpy(ad->d_name, ld->d_name, rl - hdr);        /* name + trailing pad (headers same size) */
+        in  += rl;
+        out += rl;
+    }
+    return (long)out;
+}

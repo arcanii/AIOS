@@ -133,6 +133,12 @@ int pal_host_pipe(pal_file_t *rd, pal_file_t *wr);
 long long pal_host_lseek(pal_file_t f, long long off, int whence);
 int       pal_host_fstat(pal_file_t f, struct aios_stat *out);
 
+/* Read directory entries from a directory backing object (opened via pal_host_open). Fills `buf`
+ * with a packed stream of `struct aios_dirent` records (aios_abi.h); returns bytes written (>0), 0
+ * at end of directory, or a negated AIOS error code. (Linux: getdents64, translated record-by-
+ * record; a future seL4 PAL lists its fs server into the same record format.) */
+long pal_host_getdents(pal_file_t f, void *buf, size_t len);
+
 /* --- filesystem namespace ops (by path) --- All return 0 (or a length, getcwd) on success, or a
  * negated AIOS error code. The Linux PAL maps to stat/lstat/unlink/mkdir/rmdir/rename/chdir/getcwd;
  * a future seL4 PAL routes them to its fs server. `follow` selects stat (1) vs lstat (0). cwd is a
