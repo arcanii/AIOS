@@ -442,12 +442,10 @@ int  rmdir (const char *path)          { return (int)__ret(asys(AIOS_SYS_RMDIR, 
 int  chdir (const char *path)          { return (int)__ret(asys(AIOS_SYS_CHDIR,  (long)path, 0, 0)); }
 int  mkdir (const char *path, unsigned int mode)  { return (int)__ret(asys(AIOS_SYS_MKDIR, (long)path, (long)mode, 0)); }
 int  rename(const char *o, const char *n)         { return (int)__ret(asys(AIOS_SYS_RENAME, (long)o, (long)n, 0)); }
-/* umask: tracked in the libc (mkdir/chmod apply it in userspace before the syscall). NOTE: the
- * kernel does NOT yet enforce a per-guest umask on create -- the host's umask still applies on the
- * real open/mkdir -- so this is advisory for kernel-applied masking. Per-guest umask is future
- * kernel work. */
-static unsigned int __aios_umask = 022;
-unsigned int umask(unsigned int m) { unsigned int old = __aios_umask; __aios_umask = m & 0777; return old; }
+/* umask: a real PER-PROCESS file-creation mask. The kernel tracks it (inherited across fork +
+ * preserved across exec) and applies it on open(O_CREAT)/mkdir; the host umask is neutralized, so
+ * this single mask governs created modes. Returns the previous mask. */
+unsigned int umask(unsigned int m) { return (unsigned int)asys(AIOS_SYS_UMASK, (long)(m & 0777), 0, 0); }
 
 /* File metadata: real, confinement-aware syscalls (the *at forms are the primitives; the plain forms
  * are them with AT_FDCWD). chmod/chown set mode/owner; symlink/link create links; utimensat sets

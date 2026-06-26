@@ -98,6 +98,9 @@ typedef struct {
                                         * inherited across fork, preserved across exec. The kernel
                                         * pre-absolutes every guest path against it (cwd_join), so a
                                         * subshell's cd no longer leaks into siblings/parent. */
+    unsigned int  umask;               /* PER-PROCESS file-creation mask; applied on open(O_CREAT)/
+                                        * mkdir, inherited across fork, preserved across exec. The
+                                        * host umask is neutralized so only this one masks. */
     int           fd[AIOS_MAX_FD];     /* AIOS fd -> ofile index, or -1 */
 } proc_t;
 
@@ -158,6 +161,7 @@ static long read_abspath(proc_t *p, uint64_t gpath, char *out, size_t outsz);
 static long sys_open(proc_t *p, uint64_t gpath, uint64_t flags, uint64_t mode) {
     char path[1536];
     long pe = read_abspath(p, gpath, path, sizeof path); if (pe) return pe;   /* absolute against p->cwd */
+    if (flags & AIOS_O_CREAT) mode &= ~(uint64_t)p->umask;                    /* per-process create mask */
     pal_file_t f = pal_host_open(path, flags, mode);
     if (f < 0) return (long)f;                        /* -errno from the PAL (ENOENT, EACCES, ...) */
     int oi = ofile_alloc(f);
@@ -322,7 +326,7 @@ static long sys_unlink(proc_t *p, uint64_t gpath) {
 }
 static long sys_mkdir (proc_t *p, uint64_t gpath, uint64_t mode) {
     char path[1536]; long e = read_abspath(p, gpath, path, sizeof path); if (e) return e;
-    return pal_host_mkdir(path, (unsigned int)mode);
+    return pal_host_mkdir(path, (unsigned int)mode & ~p->umask);              /* per-process create mask */
 }
 static long sys_rmdir (proc_t *p, uint64_t gpath) {
     char path[1536]; long e = read_abspath(p, gpath, path, sizeof path); if (e) return e;
@@ -361,6 +365,7 @@ static long read_at(proc_t *p, uint64_t dirfd, uint64_t gpath, pal_file_t *outdi
 static long sys_openat(proc_t *p, uint64_t dirfd, uint64_t gpath, uint64_t flags, uint64_t mode) {
     char path[1536]; pal_file_t dir;
     long e = read_at(p, dirfd, gpath, &dir, path, sizeof path); if (e) return e;
+    if (flags & AIOS_O_CREAT) mode &= ~(uint64_t)p->umask;                    /* per-process create mask */
     pal_file_t f = pal_host_openat(dir, path, flags, mode);
     if (f < 0) return (long)f;                          /* -errno (ENOENT, ENOTDIR, ...) */
     int oi = ofile_alloc(f);
@@ -404,6 +409,13 @@ static long sys_readlink(proc_t *p, uint64_t gpath, uint64_t gbuf, uint64_t bufs
 static long sys_isatty(proc_t *p, uint64_t fd) {
     if (!fd_valid(p, fd)) return 0;
     return pal_host_isatty(fd_backing(p, fd));
+}
+
+/* Set this process's file-creation mask; return the previous one (POSIX umask -- always succeeds). */
+static long sys_umask(proc_t *p, uint64_t mask) {
+    unsigned int old = p->umask;
+    p->umask = (unsigned int)mask & 0777;
+    return (long)old;
 }
 
 /* Read a clock (AIOS_CLOCK_*) into the guest's struct aios_timespec. The kernel's only time source. */
@@ -690,6 +702,7 @@ static void do_fork(proc_t *parent) {
     child->in_handler = 0;
     { size_t i = 0; for (; parent->cwd[i] && i < sizeof child->cwd - 1; i++) child->cwd[i] = parent->cwd[i];
       child->cwd[i] = '\0'; }                          /* cwd inherited across fork */
+    child->umask = parent->umask;                      /* umask inherited across fork */
     for (int i = 0; i < AIOS_MAX_FD; i++) {
         child->fd[i] = parent->fd[i];
         if (parent->fd[i] >= 0) ofile_ref(parent->fd[i]);
@@ -824,6 +837,7 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
     case AIOS_SYS_SYMLINKAT: ret = (uint64_t)sys_symlinkat(p, sc->arg[0], sc->arg[1], sc->arg[2]);                        break;
     case AIOS_SYS_LINKAT:    ret = (uint64_t)sys_linkat   (p, sc->arg[0], sc->arg[1], sc->arg[2], sc->arg[3], sc->arg[4]); break;
     case AIOS_SYS_UTIMENSAT: ret = (uint64_t)sys_utimensat(p, sc->arg[0], sc->arg[1], sc->arg[2], sc->arg[3]);            break;
+    case AIOS_SYS_UMASK:     ret = (uint64_t)sys_umask(p, sc->arg[0]);                                                   break;
     case AIOS_SYS_SIGACTION:ret = (uint64_t)sys_sigaction(p, sc->arg[0], sc->arg[1], sc->arg[2]);        break;
     case AIOS_SYS_KILL:    ret = (uint64_t)sys_kill(p, sc->arg[0], sc->arg[1]);                          break;
     default:             ret = (uint64_t)-AIOS_ENOSYS; /* unknown AIOS syscall */           break;
@@ -850,6 +864,7 @@ int aios_kernel_run(const char *guest_path, char *const guest_argv[]) {
     { char seed[1024]; long sn = pal_host_getcwd(seed, sizeof seed);
       size_t i = 0; if (sn > 0) for (; seed[i] && i < sizeof init->cwd - 1; i++) init->cwd[i] = seed[i];
       if (i == 0) { init->cwd[i++] = '/'; } init->cwd[i] = '\0'; }
+    init->umask = 022;                                /* POSIX default file-creation mask */
     fd_table_init_std(init);
 
     pal_pid_t init_pid = pid;

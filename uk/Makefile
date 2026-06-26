@@ -57,7 +57,7 @@ DASH_CFILES = $(addprefix $(DASH_SRC)/, alias.c arith_yacc.c arith_yylex.c cd.c 
 .PHONY: all run clean sbase
 all: aios-uk guest_hello guest_fileio guest_cat guest_escape prog_args prog_wc prog_bigalloc prog_tail prog_exec \
      prog_fork prog_spawn prog_pipe prog_pipeline prog_pipebig prog_sh prog_libc prog_stdio prog_errno \
-     prog_fs prog_getopt prog_dir prog_signal prog_jail prog_execjail prog_clock prog_pcwd $(SBASE_BINS) dash
+     prog_fs prog_getopt prog_dir prog_signal prog_jail prog_execjail prog_clock prog_pcwd prog_umask $(SBASE_BINS) dash
 
 aios-uk: $(KERNEL_SRC) include/pal.h include/aios_abi.h include/aios_version.h
 	$(CC) $(KERNEL_CFLAGS) -o $@ $(KERNEL_SRC)
@@ -146,6 +146,10 @@ prog_clock: guest/prog_clock.c $(LIBAIOS) $(LIBC_HDRS) include/aios_abi.h
 prog_pcwd: guest/prog_pcwd.c $(LIBAIOS) $(LIBC_HDRS) include/aios_abi.h
 	$(CC) $(LIBC_CFLAGS) -o $@ guest/prog_pcwd.c $(LIBAIOS)
 
+# Proves the umask is a real per-process mask applied on create (inherited across fork).
+prog_umask: guest/prog_umask.c $(LIBAIOS) $(LIBC_HDRS) include/aios_abi.h
+	$(CC) $(LIBC_CFLAGS) -o $@ guest/prog_umask.c $(LIBAIOS)
+
 # ---- vendored sbase build rules (vendor/sbase, suckless MIT, pinned -- see vendor/README.md) ----
 # REAL third-party POSIX utilities compiled UNMODIFIED against AIOS's libc (libaios), via the
 # libc-program class + the sbase include dir. Each utility links its source + the libutil objects
@@ -218,4 +222,4 @@ run: all
 clean:
 	rm -f aios-uk guest_hello guest_fileio guest_cat guest_escape prog_args prog_wc prog_bigalloc prog_tail \
 	      prog_exec prog_fork prog_spawn prog_pipe prog_pipeline prog_pipebig prog_sh prog_libc \
-	      prog_stdio prog_errno prog_fs prog_getopt prog_dir prog_signal prog_jail prog_execjail prog_clock prog_pcwd $(SBASE_BINS) dash
+	      prog_stdio prog_errno prog_fs prog_getopt prog_dir prog_signal prog_jail prog_execjail prog_clock prog_pcwd prog_umask $(SBASE_BINS) dash

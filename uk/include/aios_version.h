@@ -40,6 +40,9 @@
  * kernel pre-absolutes every guest path (incl. the exec path) against the calling process's cwd, so a
  * subshell's `cd` no longer leaks into siblings/parent (inherited across fork, preserved across exec).
  * No new ABI; the PAL is now cwd-free (chdir verify-only, exec takes a kernel-resolved absolute path).
+ * 0.5.11 = PER-PROCESS umask (AIOS_SYS_UMASK, ABI -> 41): a real file-creation mask the kernel tracks
+ * per process and applies on open(O_CREAT)/mkdir, inherited across fork AND preserved across exec; the
+ * host umask is neutralized so this single mask governs created modes (was a no-op tracker before).
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -49,7 +52,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 10
+#define AIOS_VERSION_PATCH 11
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

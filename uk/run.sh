@@ -116,6 +116,10 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            ./aios-uk ./prog_pcwd 2>/dev/null | sed "s/^/    /";
            ./aios-uk ./prog_pcwd >/dev/null 2>&1; pcwdrc=$?; echo "  [prog_pcwd exit $pcwdrc (expect 0)]";
            printf "  dash subshell (cd /tmp; (cd /); pwd -> /tmp): "; ./aios-uk ./dash -c "cd /tmp; (cd /); pwd" 2>/dev/null;
+           echo "=== per-process umask -- applied on create, inherited across fork + exec ===" &&
+           ./aios-uk ./prog_umask 2>/dev/null | sed "s/^/    /";
+           ./aios-uk ./prog_umask >/dev/null 2>&1; umrc=$?; echo "  [prog_umask exit $umrc (expect 0)]";
+           rm -rf /tmp/aios_umx; printf "  dash umask 077 survives exec into mkdir -> "; ./aios-uk ./dash -c "umask 077; ./sbase-mkdir /tmp/aios_umx" 2>/dev/null; stat -c %a /tmp/aios_umx; rm -rf /tmp/aios_umx;
            echo "=== M5: real signal delivery -- the kernel runs a guest signal handler ===" &&
            echo "--- prog_signal: install handler + raise + SIG_IGN ---" &&
            ./aios-uk ./prog_signal 2>/dev/null | sed "s/^/    /";
@@ -149,6 +153,6 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            echo "  confined dash drives an in-root binary, but an out-of-root one is denied:";
            AIOS_ROOT="$JR" ./aios-uk ./dash -c "/jailtrue && echo in-root-exec-ok; /bin/echo SHOULD-NOT-PRINT" 2>&1 | grep -v aios-uk | sed "s/^/      /";
            rm -rf "$JR" "$SECRET";
-           echo "=== gate: pipebig (M3d), jail (M4.2), execjail (M4.3), clock, pcwd must exit 0 ===" &&
-           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig $rc, jail $jrc, execjail $ejrc, clock $clkrc, pcwd $pcwdrc]";
-           test "$rc" = 0 && test "$jrc" = 0 && test "$ejrc" = 0 && test "$clkrc" = 0 && test "$pcwdrc" = 0'
+           echo "=== gate: pipebig, jail (M4.2), execjail (M4.3), clock, pcwd, umask must exit 0 ===" &&
+           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig $rc, jail $jrc, execjail $ejrc, clock $clkrc, pcwd $pcwdrc, umask $umrc]";
+           test "$rc" = 0 && test "$jrc" = 0 && test "$ejrc" = 0 && test "$clkrc" = 0 && test "$pcwdrc" = 0 && test "$umrc" = 0'

@@ -55,6 +55,7 @@
 #define AIOS_SYS_SYMLINKAT 0x1024 /* (target, newdirfd, linkpath)                -> 0, or -errno       */
 #define AIOS_SYS_LINKAT    0x1025 /* (olddirfd, oldpath, newdirfd, newpath, flags) -> 0, or -errno     */
 #define AIOS_SYS_UTIMENSAT 0x1026 /* (dirfd, path, struct aios_timespec[2], flags) -> 0, or -errno     */
+#define AIOS_SYS_UMASK     0x1027 /* (mask) -> the previous mask (per-process; applied on create)      */
 
 /* clock ids for AIOS_SYS_CLOCK_GETTIME (AIOS-owned; the PAL maps to the host's CLOCK_*). */
 #define AIOS_CLOCK_REALTIME  0   /* wall-clock seconds since the Unix epoch (time/gettimeofday)   */

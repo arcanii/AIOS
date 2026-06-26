@@ -102,6 +102,8 @@ static long openat2_in_root(int dirfd, const char *path, uint64_t hflags, unsign
 
 pal_pid_t pal_guest_spawn(const char *path, char *const argv[]) {
     pal_fs_init_once();                          /* M4.2: establish the AIOS root (AIOS_ROOT) once, up front */
+    umask(0);                                    /* the kernel owns a per-process umask now; do not let the
+                                                  * host re-mask the modes the kernel already masked */
     /* The kernel does pipe writes on the guests' behalf; a write to a pipe with no readers must
      * surface as PAL_EPIPE, not a SIGPIPE that kills the kernel. */
     signal(SIGPIPE, SIG_IGN);

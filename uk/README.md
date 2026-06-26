@@ -161,8 +161,8 @@ returns) then runs the next command. A `do_read` single-read fix (POSIX semantic
 available, don't loop to fill the buffer) was what made interactive mode function. HW-validated on the
 RPi4 (kernel 6.12).
 
-**AIOS ABI now (40 syscalls):** … READLINK/FCNTL/SIGACTION/SIGRETURN/KILL/ISATTY/CLOCK_GETTIME/
-FCHMODAT/FCHOWNAT/SYMLINKAT/LINKAT/UTIMENSAT.
+**AIOS ABI now (41 syscalls):** … READLINK/FCNTL/SIGACTION/SIGRETURN/KILL/ISATTY/CLOCK_GETTIME/
+FCHMODAT/FCHOWNAT/SYMLINKAT/LINKAT/UTIMENSAT/UMASK.
 
 A real clock: `AIOS_SYS_CLOCK_GETTIME` reads the host clock through the PAL (`pal_host_clock_gettime`
 → `clock_gettime(2)`; `AIOS_CLOCK_REALTIME`/`MONOTONIC`), so `time()`/`clock_gettime()`/`gettimeofday()`
@@ -184,6 +184,12 @@ fork, preserved across exec). No new ABI; the PAL is now cwd-free (`pal_host_chd
 target is a directory, and `pal_guest_exec` takes a kernel-resolved absolute path it stages into the
 guest). `prog_pcwd.c` proves a child's `chdir` leaves the parent's cwd untouched, and real dash shows
 `cd /tmp; (cd /); pwd` → `/tmp`.
+
+A **per-process umask** (`AIOS_SYS_UMASK`): a real file-creation mask the kernel tracks per process and
+applies on `open(O_CREAT)`/`mkdir`, inherited across fork *and* preserved across exec (the host umask is
+neutralized so this single mask governs created modes — it used to be a no-op tracker with the host's
+mask applied). `prog_umask.c` shows `0666` under `umask 077` → `0600`, the mask inherited across fork;
+real dash shows `umask 077` surviving a `dash`→`mkdir` exec (the new dir is `0700`).
 
 ## M4.2 — filesystem confinement (the other half of the boundary) ✅
 
@@ -225,6 +231,5 @@ clamped back into the root. Validated on colima and the RPi4.
 
 ## Next (per the design doc)
 
-Per-guest umask (the host umask must be neutralized + libaios apply its own). `sort` (needs `strtod` +
-the full libutf rune layer) and `grep` (needs a real `<regex.h>`). Then **sched_ext** · the
-seL4/x86-64 replant seam (`pal_sel4.c`).
+`sort` (needs `strtod` + the full libutf rune layer) and `grep` (needs a real `<regex.h>`); full job
+control (dash built `JOBS=0`). Then **sched_ext** · the seL4/x86-64 replant seam (`pal_sel4.c`).
