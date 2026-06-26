@@ -60,10 +60,20 @@ AND **dash** (the operational shell).
 - `uk/run.sh` (colima aarch64 `gcc:13` container, `--cap-add=SYS_PTRACE`; rc=0 gates the suite).
   libc-program class is `-nostdinc -isystem $(cc -print-file-name=include) -Ilib -Ilib/include`;
   the vendored-sbase class adds `-Ivendor/sbase -w`.
-- HW: `scp -r uk pi@192.168.0.8:~/ && ssh pi@192.168.0.8 'cd ~/uk && make && ./aios-uk <prog>'`
-  (pi/aios, Linux 6.12). **The Pi was still OFFLINE this session** -- everything is colima-verified,
-  Pi-pending (re-confirm when it is back; these are pure path/metadata/userspace ops, so colima is a
-  strong signal).
+- HW: the Pi came back online late in the session and **the ENTIRE session (M3e.5..M3i, incl. dash)
+  was VALIDATED natively on the real RPi4** (Linux 6.12.47/aarch64, gcc 14.2) -- Pi-pending CLEARED.
+  Deploy with `rsync -az --delete --exclude='/aios-uk' --exclude='/guest_*' --exclude='/prog_*'
+  --exclude='/sbase-*' --exclude='/dash' --exclude='*.o' uk/ pi@raspberrypi.local:~/uk/` then
+  `ssh pi@raspberrypi.local 'cd ~/uk && make clean && make -j4 all'`. aios-uk traces its own child,
+  so NO sudo/cap is needed on the Pi. run.sh's docker wrapper does NOT apply on the Pi (it IS aarch64
+  Linux) -- build + run directly.
+- **HW gotchas (s20):** (1) the Pi's DHCP lease ROTATED -- it was no longer at `.8`; use the mDNS
+  name **`raspberrypi.local`** (keyless SSH still works) and read the IP with `hostname -I`. (2) the
+  rsync artifact-excludes MUST be anchored with a leading `/` (`/prog_*`, like .gitignore) -- an
+  unanchored `prog_*` also excludes the `guest/prog_*.c` SOURCES and you ship stale sources. (3) **gcc
+  14 (the Pi) makes implicit-function-declaration a hard ERROR** where gcc 13 (colima) only warned --
+  it caught a real latent bug (tolower used before its definition; fixed `d4183af`). HW gcc is
+  stricter; build there before declaring done.
 - **GOTCHA (new): colima's virtiofs mount lags after a host-side edit.** The first `docker run`
   right after editing files on the Mac frequently fails with `make: No rule to make target 'aios-uk'`
   or `No such file or directory` (the container sees a stale/partial mount). Fix: `sync` + a tiny
@@ -137,18 +147,23 @@ pipelines, command substitution, `>` redirect, $?, -c/stdin/script modes, drivin
 echo|wc|cat through the process model. **30-syscall ABI** (added FCNTL). To get dash: setjmp/
 sigsetjmp (aarch64 asm), a RECORD-ONLY signal layer (no async delivery yet), fcntl/execve/vfork +
 ~10 new shadow headers. Both sbase + dash are vendored under uk/vendor/{sbase,dash} and are NEVER
-patched -- missing libc features are added to libaios. Validated on colima (the RPi4 has been offline
-since s19 -- Pi-pending, re-confirm when back).
+patched -- missing libc features are added to libaios. Validated on colima AND **natively on the
+real RPi4** (Linux 6.12.47/aarch64, gcc 14.2 -- Pi-pending CLEARED; gcc 14 caught + we fixed a
+tolower-before-decl bug colima's gcc 13 missed).
 
 DEV LOOP: `uk/run.sh` (colima aarch64 container, --cap-add=SYS_PTRACE; rc=0 gates the suite). The
 libc-program class is `-nostdinc -isystem $(cc -print-file-name=include) -Ilib -Ilib/include`; the
 vendored-sbase class adds `-Ivendor/sbase -w`; dash adds `-Ivendor/dash/src -include
 vendor/dash/config.h -DSHELL -DSMALL -DGLOB_BROKEN -Dalloca=__builtin_alloca -w` (the `dash` Makefile
-target). HW via `scp -r uk pi@192.168.0.8:~/ && ssh pi@... 'cd ~/uk && make && ./aios-uk <prog>'`
-(pi/aios). GOTCHA: colima's virtiofs mount lags after a host-side edit -- the first docker build can
-fail with "No rule to make target 'aios-uk'" / "No such file"; `sync` + a read-probe in a throwaway
-container (or just retry once) before the real build. A ptrace hang is SILENT -> in-container
-`timeout N` + fprintf(stderr).
+target). HW (native, no docker): `rsync -az --delete --exclude='/aios-uk' --exclude='/guest_*'
+--exclude='/prog_*' --exclude='/sbase-*' --exclude='/dash' --exclude='*.o' uk/ pi@raspberrypi.local:~/uk/`
+then `ssh pi@raspberrypi.local 'cd ~/uk && make clean && make -j4 all'` (pi/aios; the Pi's DHCP lease
+rotates -- use the mDNS name, not a fixed IP; ANCHOR the rsync excludes with `/` or you ship stale
+guest/prog_*.c sources; gcc 14 there is stricter than colima's gcc 13 -- e.g. implicit-decl = error).
+GOTCHA: colima's virtiofs mount lags after a host-side edit -- the first docker build can fail with
+"No rule to make target 'aios-uk'" / "No such file"; `sync` + a read-probe in a throwaway container
+(or just retry once) before the real build. A ptrace hang is SILENT -> in-container `timeout N` +
+fprintf(stderr).
 
 PRIMARY TASK -> pick the next milestone (dash already operational): (1) **real signal DELIVERY** --
 an async path through the PAL/ptrace so a host signal reaches the guest's recorded disposition (^C ->
