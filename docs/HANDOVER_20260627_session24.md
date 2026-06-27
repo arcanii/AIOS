@@ -10,7 +10,8 @@ not a bare shell.** v0.5.22 -> v0.5.23, **ABI UNCHANGED (48)** -- init + login a
 programs (libaios). Validated on colima: `test/login_pty.c` PASS under BOTH PAL backends, and the full
 gate's PASS 1 (linux) is green incl. the new `login` key. (The seccomp PASS 2 of that full run flaked on
 the known intermittent ptrace/pipe stall at an UNRELATED test, `prog_pwgrp` -- orthogonal to the system
-layer; a re-run clears it.) HW (Pi) validation: in progress.
+layer; a re-run clears it.) **HW-validated on the RPi4** (gcc 14.2, kernel 6.12.47): `login_pty` PASS
+under BOTH PAL backends (init -> login -> a password-checked session -> logout -> respawn).
 
 ## Why this direction
 
