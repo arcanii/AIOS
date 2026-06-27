@@ -35,11 +35,20 @@ ssh pi@raspberrypi.local 'cd ~/uk && make all && sh demo.sh'
 ```
 
 For a **live interactive** AIOS shell with full job control (`^C`/`^Z`/`fg`/`bg`), run a real terminal
-into it (note the `-t`):
+into it (note the `-t`). Use the **confined** shell so bare command names resolve to the AIOS coreutils
+(an AIOS shell can only run AIOS-ABI programs, never host binaries — `uname`/`date` etc. are real Linux
+executables and the boundary will, correctly, kill them):
 
 ```sh
-ssh -t pi@raspberrypi.local 'cd ~/uk && ./aios-uk ./dash'
-# then:  ./sbase-ls -l ;  ./sbase-grep root /etc/passwd ;  sleep 50 &  ;  jobs  ;  fg
+ssh -t pi@raspberrypi.local 'cd ~/uk && sh mkaiosroot.sh /tmp/r >/dev/null 2>&1 && \
+    AIOS_ROOT=/tmp/r PATH=/bin ./aios-uk /tmp/r/bin/sh'
+```
+
+Then (these are the vendored sbase utils that were built, plus dash builtins):
+```
+ls -l ;  cat /etc/passwd ;  grep root /etc/passwd ;  wc -l /etc/passwd ;  sort ;  echo $((6*7))
+cat            # reads stdin -> blocks; press ^Z to suspend ([1]+ Stopped), `fg` to resume, ^C to kill
+cat /etc/hostname   # a HOST file, outside the root -> DENIED (the jail)
 ```
 
 ## M1 — first light

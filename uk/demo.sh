@@ -51,6 +51,9 @@ A ./dash -c 'echo "    6 * 7 = $((6 * 7))"' 2>/dev/null
 make --no-print-directory aios-uk >/dev/null 2>&1   # restore the default (ptrace) backend
 
 say "done -- everything above ran on the AIOS userspace kernel"
-echo "  For an INTERACTIVE AIOS shell with full job control (^C / ^Z / fg / bg), run a terminal into it:"
-echo "      ssh -t pi@raspberrypi.local 'cd ~/uk && ./aios-uk ./dash'"
-echo "  ...then try:  ./sbase-ls -l ;  ./sbase-grep root /etc/passwd ;  sleep 50 &  ;  jobs  ;  fg"
+echo "  For an INTERACTIVE AIOS shell, use the CONFINED root so bare command names resolve to the AIOS"
+echo "  coreutils (an AIOS shell runs only AIOS-ABI programs -- a host binary like uname/date makes a"
+echo "  real Linux syscall and the boundary will, correctly, kill it). Run a real terminal into it:"
+echo "      ssh -t pi@raspberrypi.local 'cd ~/uk && sh mkaiosroot.sh /tmp/r >/dev/null 2>&1 && \\"
+echo "          AIOS_ROOT=/tmp/r PATH=/bin ./aios-uk /tmp/r/bin/sh'"
+echo "  ...then try:  ls -l ;  grep root /etc/passwd ;  echo \$((6*7)) ;  cat  (^Z suspends, fg resumes, ^C kills)"
