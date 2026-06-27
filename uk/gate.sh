@@ -6,6 +6,9 @@
 # inside the colima container (via run.sh) AND directly on the RPi4 ( cd ~/uk && sh gate.sh ). rc=0
 # iff BOTH backends pass. The gate body is shared verbatim with run.sh (run.sh just wraps this in
 # docker). The pty tests build with `cc ... -lutil` (forkpty); needs `timeout` + GNU coreutils.
+# The inline dash-PIPE demo lines are `timeout`-guarded too: they are illustrative output (not pass/fail
+# keys -- the aggregate keys on the prog_* exit codes + the guarded pty tests), and they can hit the
+# known intermittent ptrace/pipe stall under the seccomp backend; a guard lets the gate finish past it.
 set -u
 cd "$(dirname "$0")"
 J=$(nproc 2>/dev/null || echo 2)
@@ -84,7 +87,7 @@ gate() {
            rm -rf /tmp/aios_ct; mkdir -p /tmp/aios_ct/sub && echo x >/tmp/aios_ct/a && echo y >/tmp/aios_ct/sub/b;
            ./aios-uk ./sbase-cp -r /tmp/aios_ct /tmp/aios_ct2 2>/dev/null;
            { test -f /tmp/aios_ct2/sub/b && echo "  cp -r:      nested tree copied OK"; };
-           printf "  dash pipe (head|tail): "; ./aios-uk ./dash -c "printf \"a\nb\nc\nd\n\" | ./sbase-head -n 3 | ./sbase-tail -n 1" 2>/dev/null;
+           printf "  dash pipe (head|tail): "; timeout 30 ./aios-uk ./dash -c "printf \"a\nb\nc\nd\n\" | ./sbase-head -n 3 | ./sbase-tail -n 1" 2>/dev/null; echo;
            rm -rf /tmp/aios_u.txt /tmp/aios_mv.txt /tmp/aios_ct /tmp/aios_ct2;
            echo "--- file-metadata utils: ln / ln -s / chmod, and cp -p preserves mode+times ---" &&
            rm -rf /tmp/aios_md; mkdir -p /tmp/aios_md && echo data >/tmp/aios_md/target;
@@ -115,7 +118,7 @@ gate() {
            printf "  grep -c a (count):      "; ./aios-uk ./sbase-grep -c a /tmp/aios_fruit.txt 2>/dev/null;
            printf "  grep -n ^a (anchored):  "; ./aios-uk ./sbase-grep -n "^a" /tmp/aios_fruit.txt 2>/dev/null | tr "\n" " "; echo;
            printf "  grep -w fig (word):     "; ./aios-uk ./sbase-grep -w fig /tmp/aios_fruit.txt 2>/dev/null | tr "\n" " "; echo;
-           printf "  dash pipe grep|wc -l:   "; ./aios-uk ./dash -c "./sbase-grep a /tmp/aios_fruit.txt | ./sbase-wc -l" 2>/dev/null;
+           printf "  dash pipe grep|wc -l:   "; timeout 30 ./aios-uk ./dash -c "./sbase-grep a /tmp/aios_fruit.txt | ./sbase-wc -l" 2>/dev/null;
            rm -f /tmp/aios_fruit.txt;
            echo "=== passwd/group db -- getpwuid/getgrgid read /etc/passwd + /etc/group (ls -l shows names) ===" &&
            ./aios-uk ./prog_pwgrp 2>/dev/null | sed "s/^/    /";
@@ -142,12 +145,12 @@ gate() {
            echo "=== SIGPIPE -- writing to a pipe with no readers terminates the writer (or EPIPE if ignored) ===" &&
            ./aios-uk ./prog_sigpipe </dev/null 2>/dev/null | sed "s/^/    /";
            ./aios-uk ./prog_sigpipe </dev/null >/dev/null 2>&1; sprc=$?; echo "  [prog_sigpipe exit $sprc (expect 0)]";
-           printf "  early-close pipeline is quiet (ls -l / | head -1, no ferror line): "; ./aios-uk ./dash -c "./sbase-ls -l / | ./sbase-head -n 1" 2>&1 | tr "\n" " "; echo;
+           printf "  early-close pipeline is quiet (ls -l / | head -1, no ferror line): "; timeout 30 ./aios-uk ./dash -c "./sbase-ls -l / | ./sbase-head -n 1" 2>&1 | tr "\n" " "; echo;
            echo "=== M3i: dash (Debian Almquist shell) compiled UNMODIFIED -- the operational shell ===" &&
            printf "  echo arith: "; ./aios-uk ./dash -c "echo \$((2 + 3 * 4))" 2>/dev/null;
            printf "  control:    "; ./aios-uk ./dash -c "true && echo yes || echo no" 2>/dev/null;
            printf "  for loop:   "; ./aios-uk ./dash -c "for i in 1 2 3; do printf \"\$i \"; done; echo" 2>/dev/null;
-           printf "  pipeline:   "; ./aios-uk ./dash -c "./sbase-echo a b c d e | ./sbase-wc -w" 2>/dev/null;
+           printf "  pipeline:   "; timeout 30 ./aios-uk ./dash -c "./sbase-echo a b c d e | ./sbase-wc -w" 2>/dev/null;
            printf "  cmd subst:  "; ./aios-uk ./dash -c "echo got=\$(./sbase-echo hi)" 2>/dev/null;
            echo "=== a real clock -- AIOS_SYS_CLOCK_GETTIME (time/clock_gettime/gettimeofday are live) ===" &&
            ./aios-uk ./prog_clock 2>/dev/null | sed "s/^/    /";
