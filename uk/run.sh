@@ -136,6 +136,10 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            echo "=== sigprocmask -- a blocked signal stays pending until unblocked (job control, inc 3) ===" &&
            ./aios-uk ./prog_sigmask </dev/null 2>/dev/null | sed "s/^/    /";
            ./aios-uk ./prog_sigmask </dev/null >/dev/null 2>&1; smrc=$?; echo "  [prog_sigmask exit $smrc (expect 0)]";
+           echo "=== SIGPIPE -- writing to a pipe with no readers terminates the writer (or EPIPE if ignored) ===" &&
+           ./aios-uk ./prog_sigpipe </dev/null 2>/dev/null | sed "s/^/    /";
+           ./aios-uk ./prog_sigpipe </dev/null >/dev/null 2>&1; sprc=$?; echo "  [prog_sigpipe exit $sprc (expect 0)]";
+           printf "  early-close pipeline is quiet (ls -l / | head -1, no ferror line): "; ./aios-uk ./dash -c "./sbase-ls -l / | ./sbase-head -n 1" 2>&1 | tr "\n" " "; echo;
            echo "=== M3i: dash (Debian Almquist shell) compiled UNMODIFIED -- the operational shell ===" &&
            printf "  echo arith: "; ./aios-uk ./dash -c "echo \$((2 + 3 * 4))" 2>/dev/null;
            printf "  control:    "; ./aios-uk ./dash -c "true && echo yes || echo no" 2>/dev/null;
@@ -196,6 +200,6 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            echo "  confined dash drives an in-root binary, but an out-of-root one is denied:";
            AIOS_ROOT="$JR" ./aios-uk ./dash -c "/jailtrue && echo in-root-exec-ok; /bin/echo SHOULD-NOT-PRINT" 2>&1 | grep -v aios-uk | sed "s/^/      /";
            rm -rf "$JR" "$SECRET";
-           echo "=== gate: pipebig jail execjail clock pcwd umask regex pwgrp jobctl stop sigmask ctrlc ctrlc-job ctrlz rawkey must exit 0 ===" &&
-           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig $rc, jail $jrc, execjail $ejrc, clock $clkrc, pcwd $pcwdrc, umask $umrc, regex $rxrc, pwgrp $pwrc, jobctl $jcrc, stop $strc, sigmask $smrc, ctrlc $cprc, ctrlc-job $cjrc, ctrlz $czrc, rawkey $rkrc]";
-           test "$rc" = 0 && test "$jrc" = 0 && test "$ejrc" = 0 && test "$clkrc" = 0 && test "$pcwdrc" = 0 && test "$umrc" = 0 && test "$rxrc" = 0 && test "$pwrc" = 0 && test "$jcrc" = 0 && test "$strc" = 0 && test "$smrc" = 0 && test "$cprc" = 0 && test "$cjrc" = 0 && test "$czrc" = 0 && test "$rkrc" = 0'
+           echo "=== gate: pipebig jail execjail clock pcwd umask regex pwgrp jobctl stop sigmask sigpipe ctrlc ctrlc-job ctrlz rawkey must exit 0 ===" &&
+           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig $rc, jail $jrc, execjail $ejrc, clock $clkrc, pcwd $pcwdrc, umask $umrc, regex $rxrc, pwgrp $pwrc, jobctl $jcrc, stop $strc, sigmask $smrc, sigpipe $sprc, ctrlc $cprc, ctrlc-job $cjrc, ctrlz $czrc, rawkey $rkrc]";
+           test "$rc" = 0 && test "$jrc" = 0 && test "$ejrc" = 0 && test "$clkrc" = 0 && test "$pcwdrc" = 0 && test "$umrc" = 0 && test "$rxrc" = 0 && test "$pwrc" = 0 && test "$jcrc" = 0 && test "$strc" = 0 && test "$smrc" = 0 && test "$sprc" = 0 && test "$cprc" = 0 && test "$cjrc" = 0 && test "$czrc" = 0 && test "$rkrc" = 0'

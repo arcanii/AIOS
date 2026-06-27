@@ -69,7 +69,10 @@ Real C programs run on the AIOS ABI, and the kernel is now multi-process:
   multi-process: a process table, a `waitpid(-1)` event loop over all guests, per-process fd tables
   over a refcounted open-file table), and `pipe`/`dup2` (non-blocking pipe ends + park/wake so the
   single-threaded kernel never wedges). Capstone: **`prog_sh`**, a shell that runs real pipelines —
-  `./prog_args one two | ./prog_wc | ./prog_wc` works.
+  `./prog_args one two | ./prog_wc | ./prog_wc` works. (A write to a pipe with no readers left raises
+  **`SIGPIPE`** on the writer — default-terminating it, so `producer | head` dies quietly; a guest that
+  ignores/catches `SIGPIPE` gets `EPIPE` instead. The *kernel* keeps ignoring host `SIGPIPE`, since it
+  does the pipe writes on guests' behalf.)
 
 **AIOS ABI today:** WRITE/READ/OPEN/CLOSE/EXIT/MMAP/FSTAT/LSEEK/EXEC/FORK/WAIT/PIPE/DUP2.
 

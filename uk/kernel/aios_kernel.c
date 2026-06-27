@@ -754,12 +754,22 @@ static int try_deliver_read(proc_t *p) {
     pal_guest_return(p->pid, (uint64_t)n);           /* data (>0) or EOF (0) */
     return 1;
 }
+/* A pipe write found NO readers left. POSIX: if some bytes were already written, return that count;
+ * otherwise generate SIGPIPE on the writer. We post SIGPIPE (13) and route through kreturn, which
+ * applies the disposition for us -- default => terminate the writer (so `producer | head` dies quietly
+ * instead of seeing a write error), ignored/blocked => write returns -EPIPE, caught => the handler
+ * runs then write returns -EPIPE. (The KERNEL process keeps ignoring host SIGPIPE -- it does these
+ * writes on the guest's behalf; this is the GUEST's SIGPIPE.) */
+static void pipe_no_reader(proc_t *p, uint64_t done) {
+    if (done) { pal_guest_return(p->pid, done); return; }
+    p->pending_sig = 13;                             /* SIGPIPE */
+    kreturn(p, (uint64_t)-AIOS_EPIPE);
+}
 static int try_continue_write(proc_t *p) {
     uint64_t before = p->blk_done;
     int r = pipe_write_some(p, g_ofile[p->fd[p->blk_fd]].backing, p->blk_buf, p->blk_len, &p->blk_done);
     if (r == 1)        { p->state = PS_RUNNING; pal_guest_return(p->pid, (uint64_t)p->blk_len); return 1; }
-    if (r == PAL_EPIPE){ p->state = PS_RUNNING;
-                         pal_guest_return(p->pid, p->blk_done ? p->blk_done : (uint64_t)-AIOS_EPIPE); return 1; }
+    if (r == PAL_EPIPE){ p->state = PS_RUNNING; pipe_no_reader(p, p->blk_done); return 1; }
     return p->blk_done > before;                     /* wrote some but still blocked (full) */
 }
 
@@ -828,7 +838,7 @@ static void do_write(proc_t *p, uint64_t fd, uint64_t gbuf, uint64_t len) {
         int r = pipe_write_some(p, g_ofile[oi].backing, gbuf, len, &done);
         pipe_settle(g_ofile[oi].pipe_id);            /* wrote bytes -> wake readers */
         if (r == 1)         { pal_guest_return(p->pid, (uint64_t)len); return; }
-        if (r == PAL_EPIPE) { pal_guest_return(p->pid, done ? done : (uint64_t)-AIOS_EPIPE); return; }
+        if (r == PAL_EPIPE) { pipe_no_reader(p, done); return; }
         p->state = PS_BLOCKED_WRITE;                 /* pipe full, bytes pending -> park */
         p->blk_fd = (int)fd; p->blk_buf = gbuf; p->blk_len = len;
         p->blk_done = done; p->blk_pipe = g_ofile[oi].pipe_id;

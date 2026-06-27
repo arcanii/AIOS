@@ -108,6 +108,12 @@
  * values match the host so the PAL translation is a field copy); cfmakeraw + the cf-speed helpers are
  * inline in the header. Replaces the JOBS=1 stub <termios.h>. Proof: guest/prog_rawkey.c via
  * test/rawkey_pty.c (one byte, NO Enter -> "rawkey got: Z", unechoed -- canonical mode would block).
+ * 0.5.21 = SIGPIPE on a broken pipe (no new ABI): a guest that writes to a pipe with NO readers left
+ * now gets SIGPIPE (signal 13) routed via kreturn -- default action TERMINATES the writer (so
+ * `producer | head` dies quietly instead of printing a spurious write error), while a guest that
+ * IGNORES or catches SIGPIPE still gets -EPIPE. The kernel process keeps ignoring host SIGPIPE (it
+ * does pipe writes on guests' behalf). Proof: guest/prog_sigpipe.c (default -> writer exits 141;
+ * ignored -> write returns -1/EPIPE) + ls -l | head is now quiet.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -117,7 +123,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 20
+#define AIOS_VERSION_PATCH 21
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)
