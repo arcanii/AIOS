@@ -11,3 +11,7 @@
 # AIOS root filesystem image (built by mkaiosroot.sh)
 /aiosroot/
 /aiosroot.tar
+
+# Appliance build outputs (build_appliance.sh): static binaries, initramfs, kernel Image, kernel source
+/appliance/build/
+/appliance/out/
