@@ -572,6 +572,26 @@ static long sys_tcgetpgrp(proc_t *p, uint64_t fd) {
     if (!pal_host_isatty(fd_backing(p, fd))) return -AIOS_ENOTTY;
     return (long)g_fg_pgrp;
 }
+/* tcgetattr/tcsetattr: the line-discipline attributes of the controlling terminal. Proxied to the
+ * host tty -- when a guest sets raw mode (clears ICANON/ECHO) the host pty enters it, so the kernel's
+ * reads on its behalf then return char-at-a-time, unechoed. The struct is opaque here (the PAL
+ * translates it). */
+static long sys_tcgetattr(proc_t *p, uint64_t fd, uint64_t gaddr) {
+    if (!fd_valid(p, fd)) return -AIOS_EBADF;
+    if (!pal_host_isatty(fd_backing(p, fd))) return -AIOS_ENOTTY;
+    struct aios_termios t;
+    long r = pal_host_tcgetattr(fd_backing(p, fd), &t);
+    if (r < 0) return r;
+    pal_guest_write(p->pid, gaddr, &t, sizeof t);
+    return 0;
+}
+static long sys_tcsetattr(proc_t *p, uint64_t fd, uint64_t actions, uint64_t gaddr) {
+    if (!fd_valid(p, fd)) return -AIOS_EBADF;
+    if (!pal_host_isatty(fd_backing(p, fd))) return -AIOS_ENOTTY;
+    struct aios_termios t;
+    pal_guest_read(p->pid, gaddr, &t, sizeof t);
+    return pal_host_tcsetattr(fd_backing(p, fd), (int)actions, &t);
+}
 
 /* Mark p STOPPED (job control). The caller has already left the tracee stopped at its current stop
  * (kreturn plants the syscall result via setret first; the async path is already at a signal-stop).
@@ -1056,6 +1076,8 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
     case AIOS_SYS_TCSETPGRP:ret = (uint64_t)sys_tcsetpgrp(p, sc->arg[0], sc->arg[1]);                    break;
     case AIOS_SYS_TCGETPGRP:ret = (uint64_t)sys_tcgetpgrp(p, sc->arg[0]);                                break;
     case AIOS_SYS_SIGPROCMASK:ret = (uint64_t)sys_sigprocmask(p, sc->arg[0], sc->arg[1], sc->arg[2]);    break;
+    case AIOS_SYS_TCGETATTR:ret = (uint64_t)sys_tcgetattr(p, sc->arg[0], sc->arg[1]);                    break;
+    case AIOS_SYS_TCSETATTR:ret = (uint64_t)sys_tcsetattr(p, sc->arg[0], sc->arg[1], sc->arg[2]);        break;
     default:             ret = (uint64_t)-AIOS_ENOSYS; /* unknown AIOS syscall */           break;
     }
     kreturn(p, ret);   /* return the result + deliver a pending signal (e.g. raise) at the syscall exit */

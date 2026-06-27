@@ -195,8 +195,9 @@ returns) then runs the next command. A `do_read` single-read fix (POSIX semantic
 available, don't loop to fill the buffer) was what made interactive mode function. HW-validated on the
 RPi4 (kernel 6.12).
 
-**AIOS ABI now (45 syscalls):** … READLINK/FCNTL/SIGACTION/SIGRETURN/KILL/ISATTY/CLOCK_GETTIME/
-FCHMODAT/FCHOWNAT/SYMLINKAT/LINKAT/UTIMENSAT/UMASK/SETPGID/GETPGID/TCSETPGRP/TCGETPGRP.
+**AIOS ABI now (48 syscalls):** … READLINK/FCNTL/SIGACTION/SIGRETURN/KILL/ISATTY/CLOCK_GETTIME/
+FCHMODAT/FCHOWNAT/SYMLINKAT/LINKAT/UTIMENSAT/UMASK/SETPGID/GETPGID/TCSETPGRP/TCGETPGRP/SIGPROCMASK/
+TCGETATTR/TCSETATTR.
 
 A real clock: `AIOS_SYS_CLOCK_GETTIME` reads the host clock through the PAL (`pal_host_clock_gettime`
 → `clock_gettime(2)`; `AIOS_CLOCK_REALTIME`/`MONOTONIC`), so `time()`/`clock_gettime()`/`gettimeofday()`
@@ -337,6 +338,19 @@ line-discipline functions); the `fg`/`bg` builtins **regenerated** into `builtin
 build); and `strsignal` extended so `SIGTSTP` reads "Stopped". Proof: `test/ctrlz_pty.c` (`^Z`
 suspend → `fg` resume → `^C` kill) joins `ctrlc_pty` and `ctrlc_job_pty` in the gate. Validated on
 colima and the RPi4. **The job-control arc (increments 1–3) is complete.**
+
+## M8 — a termios line-discipline layer ✅
+
+`tcgetattr`/`tcsetattr` (two new ABI syscalls, ABI now 48) proxy to the host terminal, so a program
+can switch the tty to **raw mode** (`cfmakeraw` clears `ICANON`/`ECHO`/`ISIG`) for char-at-a-time,
+unechoed input — the foundation for full-screen interactive apps and custom line editors. Because the
+kernel already reads the pty on the guest's behalf, once the guest puts the *host* pty in raw mode the
+kernel's reads simply start returning one keypress at a time. `struct aios_termios` + a full shadow
+`<termios.h>` whose flag values match the host (so the PAL translation is a field copy; a future seL4
+PAL would remap); `cfmakeraw` and the `cf*`-speed helpers are inline in the header. Proof:
+`guest/prog_rawkey.c` driven by `test/rawkey_pty.c` — it sends a single byte with **no newline** and
+sees `rawkey got: Z` unechoed (canonical mode would block waiting for Enter). Validated on colima and
+the RPi4.
 
 ## Next (per the design doc)
 

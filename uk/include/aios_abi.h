@@ -64,6 +64,8 @@
 #define AIOS_SYS_TCSETPGRP 0x102A /* (fd, pgrp) -> 0, or -errno; sets the tty foreground process group  */
 #define AIOS_SYS_TCGETPGRP 0x102B /* (fd) -> the tty foreground process group, or -errno (ENOTTY)       */
 #define AIOS_SYS_SIGPROCMASK 0x102C /* (how, set*, old*) -> 0; blocked signals stay pending until unblocked */
+#define AIOS_SYS_TCGETATTR 0x102D  /* (fd, struct aios_termios*) -> 0, or -errno (ENOTTY if not a tty)   */
+#define AIOS_SYS_TCSETATTR 0x102E  /* (fd, actions, struct aios_termios*) -> 0, or -errno                */
 
 /* sigprocmask `how` (match the shadow <signal.h>): a sigset_t is a bitmask, bit (1<<signum). */
 #define AIOS_SIG_BLOCK   0
@@ -212,6 +214,17 @@ struct aios_dirent {
 #define AIOS_DT_REG       8
 #define AIOS_DT_LNK      10
 #define AIOS_DT_SOCK     12
+
+/* Terminal attributes (tcgetattr/tcsetattr). The flag-bit values + c_cc indices in the shadow
+ * <termios.h> match the host's, so the PAL translation is a field copy (like AIOS_E* errno); a future
+ * seL4 PAL would remap them. The kernel treats this as an opaque blob it copies guest<->PAL. */
+#define AIOS_NCCS 32
+struct aios_termios {
+    unsigned int  c_iflag, c_oflag, c_cflag, c_lflag;  /* input/output/control/local modes */
+    unsigned char c_line;                              /* line discipline */
+    unsigned char c_cc[AIOS_NCCS];                     /* control characters (indexed by AIOS_V*) */
+    unsigned int  c_ispeed, c_ospeed;                  /* input/output baud */
+};
 
 /* AIOS open flags -- AIOS owns these values; the host PAL translates them to its native flags
  * (Linux O_*). The low 2 bits are the access mode. */

@@ -998,6 +998,11 @@ int getpgrp(void)              { return getpgid(0); }                       /* o
 int setpgrp(void)              { return setpgid(0, 0); }                    /* become a group leader */
 int tcsetpgrp(int fd, int pgrp){ return (int)__ret(asys(AIOS_SYS_TCSETPGRP, fd, pgrp, 0)); }
 int tcgetpgrp(int fd)          { return (int)__ret(asys(AIOS_SYS_TCGETPGRP, fd, 0, 0)); }
+/* termios: the kernel/PAL own the struct translation, so these just hand the guest pointer across
+ * (a forward decl is enough -- cfmakeraw and the cf-speed helpers are inline in shadow termios.h). */
+struct termios;
+int tcgetattr(int fd, struct termios *t)                  { return (int)__ret(asys(AIOS_SYS_TCGETATTR, fd, (long)t, 0)); }
+int tcsetattr(int fd, int actions, const struct termios *t){ return (int)__ret(asys(AIOS_SYS_TCSETATTR, fd, actions, (long)t)); }
 
 /* --- process identity (single host-side identity for now; the kernel runs as the launching user) --- */
 int getppid(void) { return 1; }                    /* no parent-pid syscall yet; $PPID is cosmetic */

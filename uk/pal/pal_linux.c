@@ -30,6 +30,7 @@
 #include <stdlib.h>           /* getenv (AIOS_ROOT -- host-specific config; the PAL is host-aware) */
 #include <string.h>
 #include <time.h>             /* clock_gettime + CLOCK_* (the host clock source) */
+#include <termios.h>          /* host tcgetattr/tcsetattr + struct termios (line discipline) */
 #include <unistd.h>
 #include <sys/ptrace.h>
 #include <sys/stat.h>
@@ -712,6 +713,34 @@ long pal_host_readlink(const char *path, char *buf, size_t bufsize) {
     return n < 0 ? pal_errno() : (long)n;
 }
 int pal_host_isatty(pal_file_t f) { return isatty((int)f) ? 1 : 0; }
+
+/* AIOS termios <-> host termios. The shadow <termios.h> flag/c_cc values match the host's, so this is
+ * a field copy (a future seL4 PAL would remap each flag). c_cc is copied up to the smaller NCCS. */
+static void host_to_aios_termios(const struct termios *h, struct aios_termios *a) {
+    a->c_iflag = h->c_iflag; a->c_oflag = h->c_oflag; a->c_cflag = h->c_cflag; a->c_lflag = h->c_lflag;
+    a->c_line  = h->c_line;
+    for (unsigned i = 0; i < AIOS_NCCS && i < NCCS; i++) a->c_cc[i] = h->c_cc[i];
+    a->c_ispeed = cfgetispeed(h); a->c_ospeed = cfgetospeed(h);
+}
+static void aios_to_host_termios(const struct aios_termios *a, struct termios *h) {
+    h->c_iflag = a->c_iflag; h->c_oflag = a->c_oflag; h->c_cflag = a->c_cflag; h->c_lflag = a->c_lflag;
+    h->c_line  = a->c_line;
+    for (unsigned i = 0; i < AIOS_NCCS && i < NCCS; i++) h->c_cc[i] = a->c_cc[i];
+    cfsetispeed(h, a->c_ispeed); cfsetospeed(h, a->c_ospeed);
+}
+int pal_host_tcgetattr(pal_file_t f, struct aios_termios *out) {
+    struct termios h;
+    if (tcgetattr((int)f, &h) != 0) return (int)pal_errno();
+    host_to_aios_termios(&h, out);
+    return 0;
+}
+int pal_host_tcsetattr(pal_file_t f, int actions, const struct aios_termios *in) {
+    struct termios h;
+    if (tcgetattr((int)f, &h) != 0) return (int)pal_errno();   /* start from current -> preserve unmapped fields */
+    aios_to_host_termios(in, &h);
+    if (tcsetattr((int)f, actions, &h) != 0) return (int)pal_errno();
+    return 0;
+}
 
 int pal_host_clock_gettime(int clk_id, struct aios_timespec *out) {
     clockid_t c = (clk_id == AIOS_CLOCK_MONOTONIC) ? CLOCK_MONOTONIC : CLOCK_REALTIME;

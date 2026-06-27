@@ -101,6 +101,13 @@
  * libaios strsignal extended to 31 (so SIGTSTP prints "Stopped", not "Unknown signal"). Proven on a
  * pty: test/ctrlz_pty.c (^Z suspend -> fg resume -> ^C kill) joins ctrlc_pty + ctrlc_job_pty. The
  * JOB-CONTROL ARC (M7 inc 1..3) is COMPLETE.
+ * 0.5.20 = a real TERMIOS line-discipline layer (ABI -> 48): TCGETATTR/TCSETATTR proxy to the host
+ * tty, so a program can switch the terminal to RAW mode (cfmakeraw clears ICANON/ECHO/ISIG) for
+ * char-at-a-time, unechoed input -- when a guest sets raw mode the host pty enters it, so the kernel's
+ * reads then return one keypress at a time. struct aios_termios + a full shadow <termios.h> (flag
+ * values match the host so the PAL translation is a field copy); cfmakeraw + the cf-speed helpers are
+ * inline in the header. Replaces the JOBS=1 stub <termios.h>. Proof: guest/prog_rawkey.c via
+ * test/rawkey_pty.c (one byte, NO Enter -> "rawkey got: Z", unechoed -- canonical mode would block).
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -110,7 +117,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 19
+#define AIOS_VERSION_PATCH 20
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

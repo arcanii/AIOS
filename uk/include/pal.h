@@ -187,6 +187,13 @@ long pal_host_readlink(const char *path, char *buf, size_t bufsize);
 /* Is a backing object a terminal? 1 / 0 / -errno. (Linux: isatty/tcgetattr.) */
 int pal_host_isatty(pal_file_t f);
 
+/* Terminal line-discipline attributes. get fills `out`, set applies `in` (actions = TCSANOW/DRAIN/
+ * FLUSH). 0, or a negated AIOS error. The PAL translates struct aios_termios <-> the host's; when a
+ * guest sets raw mode the host tty enters it, so the kernel's reads then return char-at-a-time.
+ * (Linux: tcgetattr/tcsetattr; a future seL4 PAL talks to its terminal server.) */
+int pal_host_tcgetattr(pal_file_t f, struct aios_termios *out);
+int pal_host_tcsetattr(pal_file_t f, int actions, const struct aios_termios *in);
+
 /* Read a clock into *out (clk_id is AIOS_CLOCK_REALTIME / AIOS_CLOCK_MONOTONIC). 0, or a negated
  * AIOS error code. The Linux PAL maps to clock_gettime(2); a future seL4 PAL reads its own timer
  * source. This is the kernel's only wall-clock/monotonic time source. */
