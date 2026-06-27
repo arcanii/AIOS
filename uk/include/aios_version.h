@@ -178,6 +178,12 @@
  * AIOS clock has no set syscall, so `date -s` honestly refuses while reading works); and ttyname
  * (/dev/console on a tty -- AIOS has no /dev/pts). date is UTC-only (AIOS has no timezone). seq +
  * printf + tr + cut are deferred to the next part (they need float printf %f/%g and the libutf chain).
+ * 0.5.28 = the SYSTEM LAYER, increment 2 (part 5): sbase tr + cut run UNMODIFIED (no new ABI). tr
+ * (translate/squeeze/delete, incl. POSIX [:class:] sets) wires the full libutf rune chain (the is*rune
+ * classifiers + to{lower,upper}rune + ef{get,put}rune/utflen) -- the same machinery sort/grep use; cut
+ * (-b/-c/-f with -d) adds memmem. Both purely Makefile wiring against the existing libaios (the rune
+ * layer was already there). seq + printf (the util) still need float printf (%f/%g) -- next part; and
+ * /etc/inittab services + a clean shutdown remain for increment 2.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -187,7 +193,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 27
+#define AIOS_VERSION_PATCH 28
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

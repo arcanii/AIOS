@@ -48,7 +48,7 @@ SBASE_DEPS   = $(LIBAIOS) $(LIBC_HDRS) include/aios_version.h $(SBASE)/util.h $(
 SBASE_BINS   = sbase-true sbase-false sbase-echo sbase-cat sbase-wc sbase-mkdir sbase-rm sbase-ls \
                sbase-head sbase-tail sbase-cp sbase-mv sbase-ln sbase-chmod sbase-sort sbase-grep \
                sbase-whoami sbase-logname sbase-uname sbase-env sbase-printenv \
-               sbase-pwd sbase-tty sbase-date
+               sbase-pwd sbase-tty sbase-date sbase-tr sbase-cut
 
 # Vendored dash (the Debian Almquist shell, BSD) -- compiled UNMODIFIED against libaios. config.h +
 # the generated sources (syntax/nodes/builtins/init/signames/token.h) are AIOS build inputs (see
@@ -324,6 +324,24 @@ sbase-tty: $(SBASE)/tty.c $(SBASE_DEPS)
 sbase-date: $(SBASE)/date.c $(SBASE_DEPS)
 	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/date.c \
 	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/strtonum.c $(SBASE)/libutil/fshut.c $(LIBAIOS)
+# tr: translate/squeeze/delete characters (the libutf rune chain + unescape, like sort/grep).
+sbase-tr: $(SBASE)/tr.c $(SBASE_DEPS) $(SBASE)/utf.h
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/tr.c \
+	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/reallocarray.c $(SBASE)/libutil/fshut.c \
+	      $(SBASE)/libutil/unescape.c $(SBASE)/libutil/strlcpy.c \
+	      $(SBASE)/libutf/rune.c $(SBASE)/libutf/runetype.c $(SBASE)/libutf/utftorunestr.c \
+	      $(SBASE)/libutf/utf.c $(SBASE)/libutf/fgetrune.c $(SBASE)/libutf/fputrune.c \
+	      $(SBASE)/libutf/isalnumrune.c $(SBASE)/libutf/isalpharune.c $(SBASE)/libutf/isblankrune.c \
+	      $(SBASE)/libutf/iscntrlrune.c $(SBASE)/libutf/isdigitrune.c $(SBASE)/libutf/isgraphrune.c \
+	      $(SBASE)/libutf/isprintrune.c $(SBASE)/libutf/ispunctrune.c $(SBASE)/libutf/isspacerune.c \
+	      $(SBASE)/libutf/istitlerune.c $(SBASE)/libutf/isxdigitrune.c \
+	      $(SBASE)/libutf/lowerrune.c $(SBASE)/libutf/upperrune.c $(LIBAIOS)
+# cut: select fields/characters/bytes from each line (utf + memmem + unescape).
+sbase-cut: $(SBASE)/cut.c $(SBASE_DEPS) $(SBASE)/utf.h
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/cut.c \
+	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/reallocarray.c $(SBASE)/libutil/fshut.c \
+	      $(SBASE)/libutil/unescape.c $(SBASE)/libutil/strlcpy.c $(SBASE)/libutil/memmem.c \
+	      $(SBASE)/libutf/rune.c $(SBASE)/libutf/runetype.c $(LIBAIOS)
 
 # dash = the operational shell. One cc invocation over the dash sources + generated sources + libaios.
 dash: $(DASH_CFILES) $(LIBAIOS) $(LIBC_HDRS) $(DASH)/config.h

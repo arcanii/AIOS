@@ -140,6 +140,8 @@ gate() {
            printf "  env A=1 -> printenv A: "; ./aios-uk ./sbase-env A=1 ./sbase-printenv A 2>/dev/null;
            printf "  pwd:         "; ./aios-uk ./sbase-pwd 2>/dev/null;
            printf "  tty (pipe -> not a tty): "; ./aios-uk ./sbase-tty </dev/null 2>/dev/null;
+           printf "  tr a-z A-Z:  "; printf "hello aios\n" | ./aios-uk ./sbase-tr a-z A-Z 2>/dev/null;
+           printf "  cut -d: -f1 (passwd): "; ./aios-uk ./sbase-cut -d: -f1 /etc/passwd 2>/dev/null | tr "\n" " "; echo;
            echo "=== job-control FOUNDATION -- process groups + tty foreground group + kill-to-a-group ===" &&
            ./aios-uk ./prog_jobctl </dev/null 2>/dev/null | sed "s/^/    /";
            ./aios-uk ./prog_jobctl </dev/null >/dev/null 2>&1; jcrc=$?; echo "  [prog_jobctl exit $jcrc (expect 0)]";
