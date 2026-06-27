@@ -6,3 +6,7 @@
 /sbase-*
 /dash
 *.o
+
+# AIOS root filesystem image (built by mkaiosroot.sh)
+/aiosroot/
+/aiosroot.tar

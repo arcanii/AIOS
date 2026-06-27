@@ -352,6 +352,31 @@ PAL would remap); `cfmakeraw` and the `cf*`-speed helpers are inline in the head
 sees `rawkey got: Z` unechoed (canonical mode would block waiting for Enter). Validated on colima and
 the RPi4.
 
+## Building an AIOS root image (the "disk image")
+
+AIOS is a userspace kernel — it runs as a process on the host Linux — so there is no bootable AIOS
+*kernel* image (Linux boots; `aios-uk` runs on top). The meaningful analog is an **AIOS root
+filesystem**: the self-contained userland (the AIOS-ABI shell + coreutils + config) that the AIOS
+kernel *serves and confines*. Launched with `AIOS_ROOT` set, every guest path resolves inside that
+tree (`openat2 RESOLVE_IN_ROOT`) and a guest can exec only binaries inside it — so the shell and
+utilities see only the image, never the host.
+
+`mkaiosroot.sh` builds one from the compiled binaries: `dash` as `/bin/sh`, the sbase utilities at
+their standard names in `/bin`, and a `/etc/passwd`+`/etc/group`. It also writes `aiosroot.tar` (a
+shippable form; an ext4 image works too — the host mounts it and points `AIOS_ROOT` at the
+mountpoint, since AIOS confines via a directory fd while the host owns the actual filesystem). Run it
+as a confined AIOS system:
+
+```sh
+make all && sh mkaiosroot.sh ./aiosroot
+AIOS_ROOT="$PWD/aiosroot" PATH=/bin ./aios-uk "$PWD/aiosroot/bin/sh"
+```
+
+The shell, `ls -l /bin` (names from the image's own `/etc/passwd`), pipelines, and `grep` all run
+entirely in-image; the host filesystem (`/etc/hostname`, …) is unreachable. **Note:** the *init*
+binary is the trusted entry and is loaded by its **host** path (so name the image's shell by its real
+path); everything the shell resolves after that is confined to `AIOS_ROOT`. Verified on colima.
+
 ## Next (per the design doc)
 
 **sched_ext** — AIOS authors its own scheduling policy as a `sched_ext` BPF program (needs a custom
