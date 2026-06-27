@@ -49,8 +49,10 @@ kernel...`, then the `aios-uk` banner and a confined AIOS shell. `ls -l /bin` sh
 - **Device nodes.** The initramfs is staged on a *local* fs (not the virtiofs mount) so `mknod
   /dev/console` works; it needs root (true in the container). On a non-root host, run the staging via
   `sudo` or point `CONFIG_INITRAMFS_SOURCE` at a `gen_init_cpio` spec instead.
-- **`cpio`/`qemu`.** `build_appliance.sh` needs `cpio`; `run_qemu.sh` needs `qemu-system-aarch64`
-  (`apt-get install -y cpio qemu-system-arm` in the gcc:13 container).
+- **build deps.** Beyond `cc`/`make`, `build_appliance.sh` needs `cpio`, `xz-utils` (unpack the kernel
+  `.tar.xz`), `wget`/`curl`, and the kernel toolchain `flex bison bc libssl-dev libelf-dev`;
+  `run_qemu.sh` needs `qemu-system-aarch64`. In the gcc:13 container:
+  `apt-get install -y cpio xz-utils wget flex bison bc libssl-dev libelf-dev qemu-system-arm`.
 - **RPi4.** This targets QEMU `virt` (bootable + testable without hardware). For the real Pi, build with
   the bcm2711 DTB + RPi config deltas; the initramfs is identical. sched_ext (`CONFIG_SCHED_CLASS_EXT`,
   available in 6.18) is intentionally off here — a separate, non-minimal follow-on.
