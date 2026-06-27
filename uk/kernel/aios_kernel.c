@@ -110,6 +110,10 @@ typedef struct {
     unsigned int  umask;               /* PER-PROCESS file-creation mask; applied on open(O_CREAT)/
                                         * mkdir, inherited across fork, preserved across exec. The
                                         * host umask is neutralized so only this one masks. */
+    unsigned int  uid, gid;            /* PROCESS IDENTITY: real uid/gid (AIOS-internal, decoupled from
+                                        * the host user). Inherited across fork, preserved across exec. */
+    unsigned int  euid, egid;          /* effective ids (what whoami/access see; setuid drops them)    */
+    unsigned int  suid, sgid;          /* saved ids (POSIX: an unprivileged setuid may return to these) */
     int           fd[AIOS_MAX_FD];     /* AIOS fd -> ofile index, or -1 */
 } proc_t;
 
@@ -546,6 +550,24 @@ static long sys_kill(proc_t *p, uint64_t pid, uint64_t signum) {
     return found ? 0 : -AIOS_ESRCH;
 }
 
+/* ---- process identity (per-process uid/gid; the login program drops privilege across these) ---- */
+/* setuid/setgid follow POSIX privilege: euid 0 is privileged (sets real + effective + saved); an
+ * unprivileged caller may only switch the EFFECTIVE id to its real or saved id (so it can drop a
+ * temporary privilege and restore it) -- otherwise EPERM. AIOS identity is the kernel's own model
+ * (decoupled from the host user the kernel runs as), so this needs no host privilege. */
+static long sys_setuid(proc_t *p, uint64_t uid) {
+    unsigned int u = (unsigned int)uid;
+    if (p->euid == 0) { p->uid = p->euid = p->suid = u; return 0; }   /* privileged: set all three */
+    if (u == p->uid || u == p->suid) { p->euid = u; return 0; }       /* effective only (real/saved) */
+    return -AIOS_EPERM;
+}
+static long sys_setgid(proc_t *p, uint64_t gid) {
+    unsigned int g = (unsigned int)gid;
+    if (p->euid == 0) { p->gid = p->egid = p->sgid = g; return 0; }   /* uid 0 privilege gates setgid */
+    if (g == p->gid || g == p->sgid) { p->egid = g; return 0; }
+    return -AIOS_EPERM;
+}
+
 /* ---- process groups + controlling-terminal foreground group (job-control foundation) ---- */
 /* setpgid(pid, pgid): pid 0 = caller; pgid 0 = pid (become a group leader). The target must be the
  * caller or one of its children (POSIX). Kernel-tracked state; terminal-signal routing comes later. */
@@ -919,6 +941,9 @@ static void do_fork(proc_t *parent) {
     { size_t i = 0; for (; parent->cwd[i] && i < sizeof child->cwd - 1; i++) child->cwd[i] = parent->cwd[i];
       child->cwd[i] = '\0'; }                          /* cwd inherited across fork */
     child->umask = parent->umask;                      /* umask inherited across fork */
+    child->uid = parent->uid;   child->gid = parent->gid;     /* identity inherited across fork */
+    child->euid = parent->euid; child->egid = parent->egid;
+    child->suid = parent->suid; child->sgid = parent->sgid;
     child->pgid = parent->pgid;                        /* process group inherited across fork */
     for (int i = 0; i < AIOS_MAX_FD; i++) {
         child->fd[i] = parent->fd[i];
@@ -1064,6 +1089,12 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
     case AIOS_SYS_RMDIR: ret = (uint64_t)sys_rmdir(p, sc->arg[0]);                         break;
     case AIOS_SYS_RENAME:ret = (uint64_t)sys_rename(p, sc->arg[0], sc->arg[1]);            break;
     case AIOS_SYS_GETPID:ret = (uint64_t)p->pid;                                           break;
+    case AIOS_SYS_GETUID:  ret = (uint64_t)p->uid;                                         break;
+    case AIOS_SYS_GETEUID: ret = (uint64_t)p->euid;                                        break;
+    case AIOS_SYS_GETGID:  ret = (uint64_t)p->gid;                                         break;
+    case AIOS_SYS_GETEGID: ret = (uint64_t)p->egid;                                        break;
+    case AIOS_SYS_SETUID:  ret = (uint64_t)sys_setuid(p, sc->arg[0]);                      break;
+    case AIOS_SYS_SETGID:  ret = (uint64_t)sys_setgid(p, sc->arg[0]);                      break;
     case AIOS_SYS_GETDENTS:ret = (uint64_t)sys_getdents(p, sc->arg[0], sc->arg[1], sc->arg[2]); break;
     case AIOS_SYS_OPENAT:  ret = (uint64_t)sys_openat (p, sc->arg[0], sc->arg[1], sc->arg[2], sc->arg[3]); break;
     case AIOS_SYS_FSTATAT: ret = (uint64_t)sys_fstatat(p, sc->arg[0], sc->arg[1], sc->arg[2], sc->arg[3]); break;
@@ -1117,6 +1148,7 @@ int aios_kernel_run(const char *guest_path, char *const guest_argv[]) {
       size_t i = 0; if (sn > 0) for (; seed[i] && i < sizeof init->cwd - 1; i++) init->cwd[i] = seed[i];
       if (i == 0) { init->cwd[i++] = '/'; } init->cwd[i] = '\0'; }
     init->umask = 022;                                /* POSIX default file-creation mask */
+    init->uid = init->gid = init->euid = init->egid = init->suid = init->sgid = 0;  /* AIOS root (uid 0) */
     init->pgid = pid;                                 /* init is its own process-group leader */
     g_fg_pgrp = pid;                                  /* ... and starts in the terminal foreground */
     fd_table_init_std(init);

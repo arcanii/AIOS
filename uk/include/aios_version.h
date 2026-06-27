@@ -140,6 +140,17 @@
  * kernel's existing identity (no uid/gid switch) -- crypt() hashing + a SETUID/SETGID ABI are
  * increment 2. Proof: test/login_pty.c (a pty drives init -> login -> a password-checked session ->
  * logout -> a respawned login; PASS under BOTH PAL backends), wired into the gate.
+ * 0.5.24 = the SYSTEM LAYER, increment 2 (part 1): PROCESS IDENTITY (ABI -> 54). Six syscalls
+ * GETUID/GETEUID/GETGID/GETEGID/SETUID/SETGID give each process real/effective/saved uid+gid that the
+ * kernel tracks as its OWN model -- decoupled from the host user the kernel runs as, exactly like fs
+ * confinement is kernel-owned policy. Identity is inherited across fork and preserved across exec; the
+ * launched (init) guest is seeded as AIOS root (uid 0). setuid/setgid follow POSIX privilege: euid 0
+ * sets real+effective+saved, otherwise the new id must equal the real or saved id (EPERM else) -- so
+ * login can drop from uid 0 to the authenticated user and that drop is irreversible. Replaces the
+ * libaios stubs (getuid/geteuid/getgid/getegid returned a fixed 0). Proof: guest/prog_id.c (seeded
+ * root -> setgid/setuid drop -> EPERM on regaining root -> identity inherited across fork, no leak
+ * back to the parent) + the sbase `whoami` util (geteuid -> getpwuid) runs UNMODIFIED. login switching
+ * the user + crypt() password hashing + more utils are the next parts of increment 2.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -149,7 +160,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 23
+#define AIOS_VERSION_PATCH 24
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

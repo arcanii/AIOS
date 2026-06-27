@@ -1011,12 +1011,15 @@ struct termios;
 int tcgetattr(int fd, struct termios *t)                  { return (int)__ret(asys(AIOS_SYS_TCGETATTR, fd, (long)t, 0)); }
 int tcsetattr(int fd, int actions, const struct termios *t){ return (int)__ret(asys(AIOS_SYS_TCSETATTR, fd, actions, (long)t)); }
 
-/* --- process identity (single host-side identity for now; the kernel runs as the launching user) --- */
+/* --- process identity: per-process real/effective/saved uid+gid, tracked by the kernel (AIOS-internal,
+ *     decoupled from the host user). setuid/setgid drop/restore privilege; login uses them. --- */
 int getppid(void) { return 1; }                    /* no parent-pid syscall yet; $PPID is cosmetic */
-int getuid(void)  { return 0; }
-int geteuid(void) { return 0; }
-int getgid(void)  { return 0; }
-int getegid(void) { return 0; }
+int getuid(void)  { return (int)asys(AIOS_SYS_GETUID,  0, 0, 0); }
+int geteuid(void) { return (int)asys(AIOS_SYS_GETEUID, 0, 0, 0); }
+int getgid(void)  { return (int)asys(AIOS_SYS_GETGID,  0, 0, 0); }
+int getegid(void) { return (int)asys(AIOS_SYS_GETEGID, 0, 0, 0); }
+int setuid(unsigned int uid) { return (int)__ret(asys(AIOS_SYS_SETUID, (long)uid, 0, 0)); }
+int setgid(unsigned int gid) { return (int)__ret(asys(AIOS_SYS_SETGID, (long)gid, 0, 0)); }
 
 /* --- sysconf / rlimit / times: minimal so dash's miscbltin (ulimit/times) + paths compile + run. --- */
 long sysconf(int name) {

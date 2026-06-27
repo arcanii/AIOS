@@ -33,6 +33,8 @@ uid_t   getuid(void);
 uid_t   geteuid(void);
 gid_t   getgid(void);
 gid_t   getegid(void);
+int     setuid(uid_t uid);
+int     setgid(gid_t gid);
 long    sysconf(int name);
 int     isatty(int fd);
 int     unlink(const char *path);

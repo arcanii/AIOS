@@ -66,6 +66,17 @@
 #define AIOS_SYS_SIGPROCMASK 0x102C /* (how, set*, old*) -> 0; blocked signals stay pending until unblocked */
 #define AIOS_SYS_TCGETATTR 0x102D  /* (fd, struct aios_termios*) -> 0, or -errno (ENOTTY if not a tty)   */
 #define AIOS_SYS_TCSETATTR 0x102E  /* (fd, actions, struct aios_termios*) -> 0, or -errno                */
+/* process IDENTITY: per-process real/effective/saved uid+gid. The kernel tracks them (inherited across
+ * fork, preserved across exec) as its OWN model, decoupled from the host user the kernel runs as --
+ * exactly like fs confinement, identity is kernel-owned policy, not the host's. setuid/setgid follow
+ * POSIX privilege: a privileged caller (euid 0) sets real+effective+saved; otherwise the new id must
+ * equal the real or saved id. The login program drops from uid 0 to the authenticated user with these. */
+#define AIOS_SYS_GETUID    0x102F /* () -> the caller's real uid                                       */
+#define AIOS_SYS_GETEUID   0x1030 /* () -> the caller's effective uid                                  */
+#define AIOS_SYS_GETGID    0x1031 /* () -> the caller's real gid                                       */
+#define AIOS_SYS_GETEGID   0x1032 /* () -> the caller's effective gid                                  */
+#define AIOS_SYS_SETUID    0x1033 /* (uid) -> 0, or -errno (EPERM if unprivileged + not real/saved)    */
+#define AIOS_SYS_SETGID    0x1034 /* (gid) -> 0, or -errno (EPERM if unprivileged + not real/saved)    */
 
 /* ---- the Linux/aarch64 PAL trap convention (NOT part of the host-agnostic AIOS ABI) ----
  * AIOS owns its syscall NUMBERS (>= 0x1000, above); how a guest physically TRAPS into the kernel is a
