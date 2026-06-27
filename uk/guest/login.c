@@ -4,10 +4,11 @@
  * read with terminal ECHO off via the termios layer), authenticates against /etc/shadow, and on
  * success becomes the user's login shell (exec with argv[0] = "-sh" so dash sources /etc/profile).
  *
- * INCREMENT 2 (part 1): login now SWITCHES USER -- on success it setgid/setuid's to the authenticated
- * user (privileged drop from uid 0), so whoami/id/$LOGNAME reflect them for the whole session. Passwords
- * in /etc/shadow are still compared as PLAINTEXT here; crypt() hashing is the next part of increment 2.
- * Everything here is the AIOS ABI -- never a host call.
+ * INCREMENT 2: login SWITCHES USER -- on success it setgid/setuid's to the authenticated user
+ * (privileged drop from uid 0), so whoami/id/$LOGNAME reflect them for the whole session. Passwords in
+ * /etc/shadow are verified with crypt() (SHA-512 "$6$" hashes, byte-identical to host glibc); a non-'$'
+ * secret is still accepted as legacy plaintext (transitional). Everything here is the AIOS ABI -- never
+ * a host call.
  */
 #include "aios_version.h"
 #include <stdio.h>
@@ -36,7 +37,10 @@ static int read_line(char *buf, int size) {
     return n;
 }
 
-/* Compare `pw` to the secret in /etc/shadow field 2 for `user`. INC1: plaintext (crypt() = inc 2). */
+/* Check `pw` against the secret in /etc/shadow field 2 for `user`. A secret beginning with '$' is a
+ * crypt() hash (the $6$ SHA-512 scheme): recompute crypt(pw, stored) and compare to the stored hash
+ * (constant-form, the standard verify). A non-'$' secret is treated as legacy PLAINTEXT (transitional);
+ * an empty secret denies (no blank logins). */
 static int password_ok(const char *user, const char *pw) {
     FILE *f = fopen("/etc/shadow", "r");
     if (!f) return 0;
@@ -46,7 +50,12 @@ static int password_ok(const char *user, const char *pw) {
         char *c1 = strchr(line, ':'); if (!c1) continue; *c1 = '\0';
         if (strcmp(line, user) != 0) continue;
         char *secret = c1 + 1; char *c2 = strchr(secret, ':'); if (c2) *c2 = '\0';
-        ok = (strcmp(secret, pw) == 0);
+        if (secret[0] == '$') {                          /* a crypt() hash -> recompute + compare */
+            char *h = crypt(pw, secret);
+            ok = (h && strcmp(h, secret) == 0);
+        } else {                                         /* legacy plaintext (deny an empty secret) */
+            ok = (secret[0] != '\0' && strcmp(secret, pw) == 0);
+        }
         break;
     }
     fclose(f);

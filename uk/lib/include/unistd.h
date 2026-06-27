@@ -36,6 +36,7 @@ gid_t   getegid(void);
 int     setuid(uid_t uid);
 int     setgid(gid_t gid);
 char   *getlogin(void);
+char   *crypt(const char *key, const char *setting);   /* SHA-512 ($6$) password hashing */
 long    sysconf(int name);
 int     isatty(int fd);
 int     unlink(const char *path);

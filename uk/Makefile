@@ -65,7 +65,7 @@ DASH_CFILES = $(addprefix $(DASH_SRC)/, alias.c arith_yacc.c arith_yylex.c cd.c 
 .PHONY: all run clean sbase FORCE
 all: aios-uk guest_hello guest_fileio guest_cat guest_escape prog_args prog_wc prog_bigalloc prog_tail prog_exec \
      prog_fork prog_spawn prog_pipe prog_pipeline prog_pipebig prog_sh prog_libc prog_stdio prog_errno \
-     prog_fs prog_getopt prog_dir prog_signal prog_jail prog_execjail prog_clock prog_pcwd prog_umask prog_regex prog_pwgrp prog_jobctl prog_stop prog_sigmask prog_loop prog_rawkey prog_sigpipe prog_id init login $(SBASE_BINS) dash
+     prog_fs prog_getopt prog_dir prog_signal prog_jail prog_execjail prog_clock prog_pcwd prog_umask prog_regex prog_pwgrp prog_jobctl prog_stop prog_sigmask prog_loop prog_rawkey prog_sigpipe prog_id prog_crypt init login $(SBASE_BINS) dash
 
 # Rebuild aios-uk when the selected PAL backend changes: .pal.stamp records the current PAL and its
 # mtime only advances when PAL differs, so `make PAL=seccomp` after a default `make` recompiles the
@@ -202,6 +202,10 @@ prog_sigpipe: guest/prog_sigpipe.c $(LIBAIOS) $(LIBC_HDRS) include/aios_abi.h
 prog_id: guest/prog_id.c $(LIBAIOS) $(LIBC_HDRS) include/aios_abi.h
 	$(CC) $(LIBC_CFLAGS) -o $@ guest/prog_id.c $(LIBAIOS)
 
+# Gate for crypt() -- SHA-512 ($6$) password hashing matches host openssl passwd -6 byte-for-byte.
+prog_crypt: guest/prog_crypt.c $(LIBAIOS) $(LIBC_HDRS) include/aios_abi.h
+	$(CC) $(LIBC_CFLAGS) -o $@ guest/prog_crypt.c $(LIBAIOS)
+
 # The SYSTEM LAYER (increment 1): the AIOS init (the first guest -- respawns login) + login (prompt +
 # /etc/shadow auth -> the user's login shell). Installed by mkaiosroot.sh as /sbin/init + /bin/login;
 # the appliance launches /sbin/init instead of a bare /bin/sh, so AIOS boots into a login.
@@ -307,4 +311,4 @@ run: all
 clean:
 	rm -f .pal.stamp aios-uk guest_hello guest_fileio guest_cat guest_escape prog_args prog_wc prog_bigalloc prog_tail \
 	      prog_exec prog_fork prog_spawn prog_pipe prog_pipeline prog_pipebig prog_sh prog_libc \
-	      prog_stdio prog_errno prog_fs prog_getopt prog_dir prog_signal prog_jail prog_execjail prog_clock prog_pcwd prog_umask prog_regex prog_pwgrp prog_jobctl prog_stop prog_sigmask prog_loop prog_rawkey prog_sigpipe prog_id init login $(SBASE_BINS) dash
+	      prog_stdio prog_errno prog_fs prog_getopt prog_dir prog_signal prog_jail prog_execjail prog_clock prog_pcwd prog_umask prog_regex prog_pwgrp prog_jobctl prog_stop prog_sigmask prog_loop prog_rawkey prog_sigpipe prog_id prog_crypt init login $(SBASE_BINS) dash

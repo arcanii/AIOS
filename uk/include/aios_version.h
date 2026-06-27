@@ -160,6 +160,15 @@
  * else the real uid's passwd entry); sbase `logname` joins `whoami`, both UNMODIFIED, in the image.
  * Proof: test/login_pty.c now also asserts the session sees `whoami` == the logged-in user (aios), not
  * root, alongside the existing login -> session -> logout -> respawn loop.
+ * 0.5.26 = the SYSTEM LAYER, increment 2 (part 3): real crypt() PASSWORD HASHING (no new ABI). /etc/shadow
+ * now stores SHA-512 ("$6$") crypt HASHES, not plaintext; login recomputes crypt(typed_pw, stored_hash)
+ * and compares. libaios gained a from-scratch SHA-512 (FIPS 180-4) + the SHA-512-crypt scheme (Ulrich
+ * Drepper's spec), producing hashes BYTE-IDENTICAL to host glibc / `openssl passwd -6` -- a real,
+ * verifiable algorithm, no host call (aarch64 has native 64-bit ops, so the -nostdlib guest needs no
+ * runtime helpers). A non-'$' secret is still accepted as legacy plaintext (transitional). Proof:
+ * guest/prog_crypt.c (crypt of aios/root reproduces the host openssl reference vectors exactly; a wrong
+ * password does not match; the verify round-trip holds; an unsupported $1$ scheme -> NULL), and
+ * login_pty still authenticates aios/aios end-to-end against the hashed shadow.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -169,7 +178,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 25
+#define AIOS_VERSION_PATCH 26
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)
