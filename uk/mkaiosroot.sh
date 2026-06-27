@@ -28,7 +28,7 @@ cp "$UK/dash" "$ROOT/bin/dash"
 cp "$UK/dash" "$ROOT/bin/sh"
 
 # the coreutils (vendored sbase, built as sbase-<name>) installed at their standard names
-for u in true false echo cat wc mkdir rm ls head tail cp mv ln chmod sort grep whoami; do
+for u in true false echo cat wc mkdir rm ls head tail cp mv ln chmod sort grep whoami logname; do
 	cp "$UK/sbase-$u" "$ROOT/bin/$u"
 done
 

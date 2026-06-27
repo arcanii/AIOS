@@ -47,7 +47,7 @@ SBASE_CFLAGS = $(LIBC_CFLAGS) -I$(SBASE) -w
 SBASE_DEPS   = $(LIBAIOS) $(LIBC_HDRS) $(SBASE)/util.h $(SBASE)/arg.h $(SBASE)/compat.h
 SBASE_BINS   = sbase-true sbase-false sbase-echo sbase-cat sbase-wc sbase-mkdir sbase-rm sbase-ls \
                sbase-head sbase-tail sbase-cp sbase-mv sbase-ln sbase-chmod sbase-sort sbase-grep \
-               sbase-whoami
+               sbase-whoami sbase-logname
 
 # Vendored dash (the Debian Almquist shell, BSD) -- compiled UNMODIFIED against libaios. config.h +
 # the generated sources (syntax/nodes/builtins/init/signames/token.h) are AIOS build inputs (see
@@ -291,6 +291,10 @@ sbase-grep: $(SBASE)/grep.c $(SBASE_DEPS) $(SBASE)/queue.h
 # is real -- launched directly it is uid 0 (root); after login switches user it is the logged-in user.
 sbase-whoami: $(SBASE)/whoami.c $(SBASE_DEPS)
 	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/whoami.c \
+	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/fshut.c $(LIBAIOS)
+# logname: prints the login name (getlogin -> $LOGNAME set by login, or the real uid's passwd entry).
+sbase-logname: $(SBASE)/logname.c $(SBASE_DEPS)
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/logname.c \
 	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/fshut.c $(LIBAIOS)
 
 # dash = the operational shell. One cc invocation over the dash sources + generated sources + libaios.

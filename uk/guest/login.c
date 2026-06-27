@@ -4,9 +4,10 @@
  * read with terminal ECHO off via the termios layer), authenticates against /etc/shadow, and on
  * success becomes the user's login shell (exec with argv[0] = "-sh" so dash sources /etc/profile).
  *
- * INCREMENT 1 scope (honest): passwords in /etc/shadow are compared as PLAINTEXT, and the session
- * runs with the kernel's existing identity (no real uid/gid switch yet). crypt() hashing + a SETUID/
- * SETGID ABI come in increment 2. Everything here is the AIOS ABI -- never a host call.
+ * INCREMENT 2 (part 1): login now SWITCHES USER -- on success it setgid/setuid's to the authenticated
+ * user (privileged drop from uid 0), so whoami/id/$LOGNAME reflect them for the whole session. Passwords
+ * in /etc/shadow are still compared as PLAINTEXT here; crypt() hashing is the next part of increment 2.
+ * Everything here is the AIOS ABI -- never a host call.
  */
 #include "aios_version.h"
 #include <stdio.h>
@@ -75,6 +76,15 @@ int main(void) {
 
         struct passwd *u = getpwnam(user);
         if (u && password_ok(user, pass)) {
+            /* Become the authenticated user. login runs as init's child (AIOS root, uid 0), so it is
+             * privileged: setgid BEFORE setuid (once uid drops from 0 we lose the right to setgid).
+             * After this the whole session -- motd, the shell, every command -- runs as the user, so
+             * whoami/id/$LOGNAME reflect them. (AIOS identity is the kernel's model; the host still
+             * owns actual file ownership, so this is identity, not yet uid-based file access control.) */
+            if (setgid(u->pw_gid) != 0 || setuid(u->pw_uid) != 0) {
+                printf("login: cannot switch to uid %u\n", u->pw_uid);
+                return 1;   /* never expected (login is privileged); init respawns us */
+            }
             show_file("/etc/motd");
             const char *sh   = (u->pw_shell && u->pw_shell[0]) ? u->pw_shell : "/bin/sh";
             const char *home = (u->pw_dir   && u->pw_dir[0])   ? u->pw_dir   : "/";

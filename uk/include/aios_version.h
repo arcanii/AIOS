@@ -151,6 +151,15 @@
  * root -> setgid/setuid drop -> EPERM on regaining root -> identity inherited across fork, no leak
  * back to the parent) + the sbase `whoami` util (geteuid -> getpwuid) runs UNMODIFIED. login switching
  * the user + crypt() password hashing + more utils are the next parts of increment 2.
+ * 0.5.25 = the SYSTEM LAYER, increment 2 (part 2): login SWITCHES USER (no new ABI). On a successful
+ * auth, login -- running as init's child (AIOS root, uid 0) -- setgid's then setuid's to the
+ * authenticated user before becoming their shell, so the WHOLE session (motd, shell, every command)
+ * runs as that user: whoami/id/$LOGNAME reflect them. The drop is privileged + irreversible (the user
+ * cannot regain uid 0). AIOS identity is the kernel's model (the host still owns real file ownership),
+ * so this is identity, not yet uid-based file-access control. libaios grew getlogin() ($LOGNAME/$USER,
+ * else the real uid's passwd entry); sbase `logname` joins `whoami`, both UNMODIFIED, in the image.
+ * Proof: test/login_pty.c now also asserts the session sees `whoami` == the logged-in user (aios), not
+ * root, alongside the existing login -> session -> logout -> respawn loop.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -160,7 +169,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 24
+#define AIOS_VERSION_PATCH 25
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

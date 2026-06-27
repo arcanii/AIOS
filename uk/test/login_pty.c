@@ -35,6 +35,7 @@ int main(int argc, char **argv) {
     write(mfd, "aios\n", 5);          ms(500);   /* username */
     write(mfd, "aios\n", 5);          ms(800);   /* password (read with ECHO off) -> the user's shell */
     write(mfd, "echo LOGIN-MARKER\n", 18); ms(600);  /* the session runs a command */
+    write(mfd, "echo who=$(whoami)\n", 19); ms(700); /* inc 2: the session runs AS the user (whoami) */
     write(mfd, "exit\n", 5);          ms(900);   /* logout -> init respawns login (a 2nd prompt) */
 
     char b[16384]; int t = 0; ssize_t n;
@@ -48,10 +49,11 @@ int main(int argc, char **argv) {
 
     if (getenv("LP_DEBUG")) fprintf(stderr, "==== PTY OUTPUT (%d bytes) ====\n%s\n==== END ====\n", t, b);
     int ran     = strstr(b, "LOGIN-MARKER") != NULL;   /* the authenticated session ran our command */
+    int asuser  = strstr(b, "who=aios") != NULL;       /* inc 2: the session runs AS the user (whoami) */
     int respawn = count(b, "login:") >= 2;             /* logout -> init started a fresh login */
-    int ok = ran && respawn;
-    printf("    logged in + ran a command: %s ; logout respawned the login: %s\n",
-           ran ? "yes" : "NO", respawn ? "yes" : "NO");
+    int ok = ran && asuser && respawn;
+    printf("    logged in + ran a command: %s ; session is the user (whoami=aios): %s ; logout respawned the login: %s\n",
+           ran ? "yes" : "NO", asuser ? "yes" : "NO", respawn ? "yes" : "NO");
     printf("  login_pty: %s\n", ok ? "PASS" : "FAIL");
     close(mfd);
     waitpid(pid, 0, 0);

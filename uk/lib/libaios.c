@@ -1021,6 +1021,19 @@ int getegid(void) { return (int)asys(AIOS_SYS_GETEGID, 0, 0, 0); }
 int setuid(unsigned int uid) { return (int)__ret(asys(AIOS_SYS_SETUID, (long)uid, 0, 0)); }
 int setgid(unsigned int gid) { return (int)__ret(asys(AIOS_SYS_SETGID, (long)gid, 0, 0)); }
 
+/* getlogin: the login name. Prefer the environment login sets ($LOGNAME/$USER), else the passwd entry
+ * for the real uid. Returns a pointer to static storage (POSIX), or NULL if neither is available. */
+char *getlogin(void) {
+    char *e = getenv("LOGNAME"); if (!e || !*e) e = getenv("USER");
+    if (e && *e) {
+        static char buf[64]; size_t i = 0;
+        for (; e[i] && i < sizeof buf - 1; i++) buf[i] = e[i];
+        buf[i] = '\0'; return buf;
+    }
+    struct passwd *p = getpwuid(getuid());
+    return (p && p->pw_name) ? p->pw_name : 0;
+}
+
 /* --- sysconf / rlimit / times: minimal so dash's miscbltin (ulimit/times) + paths compile + run. --- */
 long sysconf(int name) {
     switch (name) {
