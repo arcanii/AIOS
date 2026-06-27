@@ -5,6 +5,8 @@
 /prog_*
 /sbase-*
 /dash
+/init
+/login
 *.o
 /.pal.stamp
 

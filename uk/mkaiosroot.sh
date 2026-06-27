@@ -21,7 +21,7 @@ ROOT="${1:-$UK/aiosroot}"
 test -x "$UK/dash" || { echo "build first: make all (need ./dash + ./sbase-*)" >&2; exit 1; }
 
 rm -rf "$ROOT"
-mkdir -p "$ROOT/bin" "$ROOT/etc" "$ROOT/tmp"
+mkdir -p "$ROOT/bin" "$ROOT/sbin" "$ROOT/etc" "$ROOT/tmp" "$ROOT/home/aios"
 
 # the shell: dash as /bin/sh AND /bin/dash
 cp "$UK/dash" "$ROOT/bin/dash"
@@ -31,6 +31,11 @@ cp "$UK/dash" "$ROOT/bin/sh"
 for u in true false echo cat wc mkdir rm ls head tail cp mv ln chmod sort grep; do
 	cp "$UK/sbase-$u" "$ROOT/bin/$u"
 done
+
+# the SYSTEM LAYER (increment 1): the AIOS init + login. The appliance launches /sbin/init, which
+# respawns /bin/login (prompt -> /etc/shadow auth -> the user's login shell).
+cp "$UK/init"  "$ROOT/sbin/init"
+cp "$UK/login" "$ROOT/bin/login"
 
 # a minimal passwd/group database (so ls -l and grep show real names inside the image)
 cat > "$ROOT/etc/passwd" <<'EOF'
@@ -42,8 +47,25 @@ root:x:0:
 aios:x:1000:
 EOF
 
-# a tiny motd so the image is identifiable
-echo "AIOS userspace -- a confined world served by the AIOS userspace kernel." > "$ROOT/etc/motd"
+# /etc/shadow: the login secrets. INCREMENT 1 -- PLAINTEXT (crypt() hashing is increment 2). Matches
+# the Pi convention (user/password = aios/aios, root/root).
+cat > "$ROOT/etc/shadow" <<'EOF'
+root:root:::::::
+aios:aios:::::::
+EOF
+chmod 600 "$ROOT/etc/shadow"
+
+# /etc/profile -- sourced by the login shell (dash, started with argv0 "-sh")
+cat > "$ROOT/etc/profile" <<'EOF'
+export PATH=/bin:/sbin
+export PS1='\$ '
+EOF
+
+# a motd the login shows on a successful login
+cat > "$ROOT/etc/motd" <<'EOF'
+Welcome to AIOS -- a userspace kernel. This whole world is served + confined by aios-uk;
+the host filesystem is invisible. Try: ls -l ;  grep root /etc/passwd ;  whoami-style id via getpwuid.
+EOF
 
 # a shippable archive of the image (an ext4 image is also possible: the host mounts it, then points
 # AIOS_ROOT at the mountpoint -- AIOS confines via a dir fd, the host owns the actual filesystem).

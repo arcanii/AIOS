@@ -128,6 +128,18 @@
  * over the shared core. Proof: the WHOLE 16-key run.sh gate passes a SECOND time with PAL=seccomp
  * (escape still killed under seccomp; mmap/fork/exec/pipes/signals/^C/^Z/raw-mode/confinement all
  * work), kernel/aios_kernel.c unchanged. This is the dress rehearsal for the seL4/x86-64 pal_sel4.c.
+ * 0.5.23 = the SYSTEM LAYER, increment 1 (no new ABI; pure AIOS-ABI programs + libaios): AIOS boots
+ * into a managed system, not a bare shell. A real AIOS init (guest/init.c -- the first guest) runs
+ * the console login + respawns it on logout; login (guest/login.c) prompts for a username + a password
+ * (read with terminal ECHO off via the termios layer), authenticates against /etc/shadow, and becomes
+ * the user's login shell (exec argv[0] "-sh" so dash sources /etc/profile). mkaiosroot.sh installs
+ * /sbin/init + /bin/login + /etc/shadow + /etc/profile + /home/aios; the appliance launches /sbin/init
+ * instead of /bin/sh, so the appliance boots to an AIOS LOGIN. KEY FIX: login reads stdin UNBUFFERED
+ * (buffered fgets over-reads the pipe into the FILE buffer, so the exec'd shell would lose its input).
+ * INCREMENT-1 scope (honest): /etc/shadow passwords are compared PLAINTEXT and the session keeps the
+ * kernel's existing identity (no uid/gid switch) -- crypt() hashing + a SETUID/SETGID ABI are
+ * increment 2. Proof: test/login_pty.c (a pty drives init -> login -> a password-checked session ->
+ * logout -> a respawned login; PASS under BOTH PAL backends), wired into the gate.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -137,7 +149,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 22
+#define AIOS_VERSION_PATCH 23
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

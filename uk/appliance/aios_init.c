@@ -5,8 +5,9 @@
  * only job is to stand up just enough host state for the AIOS userspace kernel and then hand the
  * machine to AIOS: it mounts /proc (aios-uk's M4.2/M4.3 confinement canonicalizes via /proc/self/fd),
  * gives the console a controlling terminal (so AIOS job control -- ^C/^Z, tcsetpgrp -- works), sets the
- * confinement env, and execs `aios-uk /aiosroot/bin/sh` with AIOS_ROOT=/aiosroot. The AIOS dash shell
- * becomes the AIOS init guest; the host filesystem is unreachable (the guest is jailed to /aiosroot).
+ * confinement env, and execs `aios-uk /aiosroot/sbin/init` with AIOS_ROOT=/aiosroot. The AIOS system
+ * init (which runs the console login) becomes the AIOS init guest; the host filesystem is unreachable
+ * (jailed to /aiosroot). So the appliance boots into an AIOS LOGIN, not a bare shell.
  *
  * Statically linked (build_appliance.sh: cc -static) so the initramfs needs no libc at all -- it holds
  * exactly three things: /init, /aios-uk, and /aiosroot (the AIOS userland). PID 1 must never return,
@@ -51,7 +52,7 @@ int main(void) {
                 dup2(tty, 0); dup2(tty, 1); dup2(tty, 2);
                 if (tty > 2) close(tty);
             }
-            char *argv[] = { "/aios-uk", "/aiosroot/bin/sh", (char *)0 };
+            char *argv[] = { "/aios-uk", "/aiosroot/sbin/init", (char *)0 };
             execv("/aios-uk", argv);
             msg("[aios-init] FATAL: cannot exec /aios-uk\n");
             _exit(127);
