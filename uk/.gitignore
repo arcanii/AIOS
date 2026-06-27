@@ -6,6 +6,7 @@
 /sbase-*
 /dash
 *.o
+/.pal.stamp
 
 # AIOS root filesystem image (built by mkaiosroot.sh)
 /aiosroot/

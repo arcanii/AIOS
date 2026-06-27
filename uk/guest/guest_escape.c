@@ -15,7 +15,22 @@
 
 #define LINUX_NR_WRITE 64   /* aarch64 __NR_write -- a REAL Linux syscall number, NOT an AIOS one */
 
-static long syscall3(long nr, long a0, long a1, long a2) {
+/* A LEGIT AIOS syscall: the Linux/aarch64 GATEWAY convention (aios_abi.h) -- x8 = AIOS_GATEWAY, the
+ * real AIOS number in x9. This is exactly what libaios + every well-behaved guest emits. */
+static long aios_syscall3(long nr, long a0, long a1, long a2) {
+    register long x8 __asm__("x8") = AIOS_GATEWAY;
+    register long x9 __asm__("x9") = nr;
+    register long x0 __asm__("x0") = a0;
+    register long x1 __asm__("x1") = a1;
+    register long x2 __asm__("x2") = a2;
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x9), "r"(x1), "r"(x2) : "memory", "cc");
+    return x0;
+}
+/* THE ESCAPE: a RAW Linux syscall -- the real number goes straight in x8 (NOT via the gateway), the
+ * way a guest would try to call the host directly. Under either PAL, x8 != AIOS_GATEWAY => the kernel
+ * sees a sub-0x1000 number = an escape attempt and kills the guest (M4). Under seccomp this also traps
+ * because write(64) is a real in-range syscall. */
+static long raw_linux_syscall3(long nr, long a0, long a1, long a2) {
     register long x8 __asm__("x8") = nr;
     register long x0 __asm__("x0") = a0;
     register long x1 __asm__("x1") = a1;
@@ -27,16 +42,16 @@ static unsigned slen(const char *s) { unsigned n = 0; while (s[n]) n++; return n
 
 void _start(void) {
     const char *before = "guest_escape: [1] legit AIOS write -- before the escape attempt\n";
-    syscall3(AIOS_SYS_WRITE, 1, (long)before, (long)slen(before));
+    aios_syscall3(AIOS_SYS_WRITE, 1, (long)before, (long)slen(before));
 
-    /* THE ESCAPE: a raw Linux write to the host's fd 1, bypassing the AIOS kernel entirely. */
+    /* THE ESCAPE: a raw Linux write to the host's fd 1, bypassing the AIOS gateway entirely. */
     const char *escape = "guest_escape: [2] *** LINUX SYSCALL EXECUTED ON HOST *** (boundary breached!)\n";
-    syscall3(LINUX_NR_WRITE, 1, (long)escape, (long)slen(escape));
+    raw_linux_syscall3(LINUX_NR_WRITE, 1, (long)escape, (long)slen(escape));
 
     /* Only reached if the kernel did NOT kill us for the escape attempt. */
     const char *after = "guest_escape: [3] legit AIOS write -- after the escape attempt\n";
-    syscall3(AIOS_SYS_WRITE, 1, (long)after, (long)slen(after));
+    aios_syscall3(AIOS_SYS_WRITE, 1, (long)after, (long)slen(after));
 
-    syscall3(AIOS_SYS_EXIT, 0, 0, 0);
+    aios_syscall3(AIOS_SYS_EXIT, 0, 0, 0);
     for (;;) { }
 }

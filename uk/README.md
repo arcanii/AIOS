@@ -355,6 +355,42 @@ PAL would remap); `cfmakeraw` and the `cf*`-speed helpers are inline in the head
 sees `rawkey got: Z` unechoed (canonical mode would block waiting for Enter). Validated on colima and
 the RPi4.
 
+## M9 — a SECOND PAL backend: seccomp (the portability proof) ✅
+
+The endgame's whole premise is that `kernel/aios_kernel.c` is host-agnostic — it runs unchanged over a
+different host trap mechanism, with only the PAL swapped. M9 **proves it**: `make PAL=seccomp` builds
+`aios-uk` over a **seccomp `SECCOMP_RET_TRACE`** trap mechanism instead of `PTRACE_SYSCALL`, and the
+**entire 16-key gate passes a second time, byte-for-byte the same kernel**.
+
+- **The split.** `pal/pal_linux.c` was refactored into a shared **`pal/pal_linux_common.c`** (the
+  Linux host-driver + the ptrace *injectors*: mmap/exec/fork/exit + the signal-frame dance — all
+  identical no matter how a syscall is trapped) and a thin **trap front-end**. The one knob the
+  injectors need is `PAL_RESUME(pid)` = "resume to the next trap" — `PTRACE_SYSCALL` (SYSEMU: stop at
+  every syscall) for `pal_linux.c`, `PTRACE_CONT` (stop only at a seccomp-filtered syscall) for
+  `pal_seccomp.c`. This *is* the structure `pal_sel4.c` will reuse: the trap mechanism varies, the
+  host driver is shared.
+- **Why injectors stay ptrace (honest).** Linux has **no** userspace-only way to inject
+  memory/processes or rewrite another process's registers, so the five injectors are necessarily
+  ptrace either way — a property of the host, not a leak in the seam. seccomp only changes how an
+  *emulated* syscall is intercepted; the injectors run at the seccomp-event stop (after the filter),
+  where rewriting the syscall number dispatches the real host syscall without re-filtering.
+- **The GATEWAY (the load-bearing discovery).** AIOS numbers its syscalls `≥ 0x1000` so a real Linux
+  syscall is unambiguously an escape. But **seccomp on arm64 does not deliver a trap for out-of-range
+  syscall numbers** — they short-circuit to `ENOSYS` *without running the filter* (proven by
+  `test/seccomp_probe.c`). ptrace traps the `svc` *instruction* and so sees them; seccomp filters the
+  syscall-table *dispatch* and does not. So AIOS guests now trap through an in-range real **gateway**
+  syscall (`AIOS_GATEWAY` = `gettid`/178) in `x8`, carrying the real AIOS number in `x9`; the PAL
+  decodes `x8 == AIOS_GATEWAY ? x9 : escape`. The gateway is wired into libaios's three syscall stubs
+  + the sigreturn trampoline and the four freestanding guests; it costs no kernel config and is
+  neutralized (`x8 = -1`) so `gettid` never actually runs. `guest_escape` keeps a **raw** `svc`
+  (`x8` = a real number, not the gateway) as the real escape vector — still killed under both backends.
+- **Proof.** `uk/run.sh` runs the whole gate **twice** — `RESULT: linux=0 seccomp=0`. Both kill the
+  raw-syscall escape (exit 159); both pass pipebig/jail/execjail/clock/…/`^C`/`^Z`/raw-mode. The Makefile
+  gained `PAL ?= linux` (default = the proven ptrace backend; zero regression) + a `.pal.stamp` so
+  switching `PAL=` actually rebuilds. The kernel banner still reads "ptrace PAL" (the kernel is
+  byte-identical and names its default backend — a cosmetic). See
+  `docs/AIOS_KERNEL_DEPENDENCIES.md` for the full host-feature manifest this exercise formalized.
+
 ## Building an AIOS root image (the "disk image")
 
 AIOS is a userspace kernel — it runs as a process on the host Linux — so there is no bootable AIOS
@@ -380,9 +416,21 @@ entirely in-image; the host filesystem (`/etc/hostname`, …) is unreachable. **
 binary is the trusted entry and is loaded by its **host** path (so name the image's shell by its real
 path); everything the shell resolves after that is confined to `AIOS_ROOT`. Verified on colima.
 
+## The minimal AIOS appliance (`appliance/`)
+
+Linux is the *substrate*, AIOS is the kernel on top — so the deliverable "Linux that exists only to
+host AIOS" is a **minimal kernel + a three-file initramfs**. `appliance/build_appliance.sh` builds a
+minimal Linux (default 6.18) for QEMU `virt` aarch64 + an initramfs holding only `/init` (a tiny
+static PID-1 launcher, `aios_init.c`), `/aios-uk` (the AIOS kernel, static), and `/aiosroot` (the AIOS
+userland from `mkaiosroot.sh`); `appliance/run_qemu.sh` boots it (TCG, no KVM) straight into a confined
+AIOS shell. The exact kernel features AIOS needs — and nothing more — are in
+`docs/AIOS_KERNEL_DEPENDENCIES.md` + `appliance/aios.config`; that manifest *is* the eventual seL4
+PAL's proof obligation, stated precisely.
+
 ## Next (per the design doc)
 
-**sched_ext** — AIOS authors its own scheduling policy as a `sched_ext` BPF program (needs a custom
-RPi kernel with `CONFIG_SCHED_CLASS_EXT`; the stock kernel lacks it). Then the endgame: the
-**seL4/x86-64 replant seam** (`pal_sel4.c`) — a second PAL backend that proves `kernel/aios_kernel.c`
-compiles and runs unchanged on a verified base.
+**sched_ext** — AIOS authors its own scheduling policy as a `sched_ext` BPF program (the 6.18 appliance
+can carry `CONFIG_SCHED_CLASS_EXT`; `appliance/aios.config` keeps it off for the strict-minimal base).
+Then the endgame: the **seL4/x86-64 replant seam** (`pal_sel4.c`) — a third PAL backend that proves
+`kernel/aios_kernel.c` runs unchanged on a verified base. M9 (the seccomp second backend) is the dress
+rehearsal: the trap-mechanism/host-driver split + `PAL_RESUME` seam are exactly what `pal_sel4.c` reuses.

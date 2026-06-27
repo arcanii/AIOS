@@ -11,8 +11,15 @@ CC      ?= cc
 WARN     = -Wall -Wextra
 INCLUDE  = -Iinclude
 
-# The kernel is an ordinary hosted program (its PAL backend uses libc + ptrace).
-KERNEL_SRC = kernel/aios_kernel.c pal/pal_linux.c
+# The kernel is an ordinary hosted program (its PAL backend uses libc + ptrace). The PAL backend is
+# SELECTABLE: `make` uses the SYSEMU-style ptrace backend (pal_linux.c, the default), `make PAL=seccomp`
+# the seccomp SECCOMP_RET_TRACE backend (pal_seccomp.c) -- a SECOND host trap mechanism over the SAME
+# host-agnostic kernel (the portability proof). Both front-ends #include the shared host-driver core
+# pal_linux_common.c (NOT compiled directly; it is a prereq so a change to it rebuilds aios-uk).
+PAL ?= linux
+PAL_SRC    = pal/pal_$(PAL).c
+PAL_COMMON = pal/pal_linux_common.c
+KERNEL_SRC = kernel/aios_kernel.c $(PAL_SRC)
 KERNEL_CFLAGS = -O2 $(WARN) $(INCLUDE)
 
 # Freestanding guests bring their own _start (no libc).
@@ -54,12 +61,20 @@ DASH_CFILES = $(addprefix $(DASH_SRC)/, alias.c arith_yacc.c arith_yylex.c cd.c 
               mystring.c options.c parser.c redir.c show.c trap.c output.c bltin/printf.c system.c \
               bltin/test.c bltin/times.c var.c syntax.c nodes.c builtins.c init.c signames.c)
 
-.PHONY: all run clean sbase
+.PHONY: all run clean sbase FORCE
 all: aios-uk guest_hello guest_fileio guest_cat guest_escape prog_args prog_wc prog_bigalloc prog_tail prog_exec \
      prog_fork prog_spawn prog_pipe prog_pipeline prog_pipebig prog_sh prog_libc prog_stdio prog_errno \
      prog_fs prog_getopt prog_dir prog_signal prog_jail prog_execjail prog_clock prog_pcwd prog_umask prog_regex prog_pwgrp prog_jobctl prog_stop prog_sigmask prog_loop prog_rawkey prog_sigpipe $(SBASE_BINS) dash
 
-aios-uk: $(KERNEL_SRC) include/pal.h include/aios_abi.h include/aios_version.h
+# Rebuild aios-uk when the selected PAL backend changes: .pal.stamp records the current PAL and its
+# mtime only advances when PAL differs, so `make PAL=seccomp` after a default `make` recompiles the
+# kernel binary instead of treating the existing (linux-built) aios-uk as up to date. Without this,
+# the mtime check would silently keep the wrong backend -- a footgun this whole milestone depends on.
+FORCE:
+.pal.stamp: FORCE
+	@[ -f $@ ] && [ "$$(cat $@)" = "$(PAL)" ] || echo "$(PAL)" > $@
+
+aios-uk: $(KERNEL_SRC) $(PAL_COMMON) .pal.stamp include/pal.h include/aios_abi.h include/aios_version.h
 	$(CC) $(KERNEL_CFLAGS) -o $@ $(KERNEL_SRC)
 
 guest_hello: guest/guest_hello.c include/aios_abi.h
@@ -268,6 +283,6 @@ run: all
 	./aios-uk ./prog_tail -n 3 /etc/os-release
 
 clean:
-	rm -f aios-uk guest_hello guest_fileio guest_cat guest_escape prog_args prog_wc prog_bigalloc prog_tail \
+	rm -f .pal.stamp aios-uk guest_hello guest_fileio guest_cat guest_escape prog_args prog_wc prog_bigalloc prog_tail \
 	      prog_exec prog_fork prog_spawn prog_pipe prog_pipeline prog_pipebig prog_sh prog_libc \
 	      prog_stdio prog_errno prog_fs prog_getopt prog_dir prog_signal prog_jail prog_execjail prog_clock prog_pcwd prog_umask prog_regex prog_pwgrp prog_jobctl prog_stop prog_sigmask prog_loop prog_rawkey prog_sigpipe $(SBASE_BINS) dash

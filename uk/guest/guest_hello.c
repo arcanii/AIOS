@@ -9,16 +9,18 @@
  */
 #include "aios_abi.h"
 
-/* Make one AIOS syscall: nr in x8, args in x0..x2, return in x0. svc #0 traps to the AIOS kernel
- * (via the host PAL). The host kernel never sees this as one of its own syscalls. */
+/* Make one AIOS syscall via the Linux/aarch64 GATEWAY convention (aios_abi.h): x8 = AIOS_GATEWAY (an
+ * in-range real syscall so seccomp traps it), the real AIOS number in x9, args in x0..x2, return in
+ * x0. svc #0 traps to the AIOS kernel (via the host PAL); the host never runs it as its own syscall. */
 static long aios_syscall3(long nr, long a0, long a1, long a2) {
-    register long x8 __asm__("x8") = nr;
+    register long x8 __asm__("x8") = AIOS_GATEWAY;
+    register long x9 __asm__("x9") = nr;
     register long x0 __asm__("x0") = a0;
     register long x1 __asm__("x1") = a1;
     register long x2 __asm__("x2") = a2;
     __asm__ volatile("svc #0"
                      : "+r"(x0)
-                     : "r"(x8), "r"(x1), "r"(x2)
+                     : "r"(x8), "r"(x9), "r"(x1), "r"(x2)
                      : "memory", "cc");
     return x0;
 }

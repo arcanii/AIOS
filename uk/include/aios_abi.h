@@ -67,6 +67,21 @@
 #define AIOS_SYS_TCGETATTR 0x102D  /* (fd, struct aios_termios*) -> 0, or -errno (ENOTTY if not a tty)   */
 #define AIOS_SYS_TCSETATTR 0x102E  /* (fd, actions, struct aios_termios*) -> 0, or -errno                */
 
+/* ---- the Linux/aarch64 PAL trap convention (NOT part of the host-agnostic AIOS ABI) ----
+ * AIOS owns its syscall NUMBERS (>= 0x1000, above); how a guest physically TRAPS into the kernel is a
+ * per-host PAL detail. On Linux/aarch64 a guest traps with `svc #0`. The original convention put the
+ * AIOS number directly in x8 -- which the ptrace PAL reads fine (ptrace traps the instruction). But
+ * seccomp (the second PAL) only delivers a trap for IN-RANGE, IMPLEMENTED Linux syscall numbers: an
+ * out-of-range number like 0x1000 is short-circuited to ENOSYS WITHOUT running the filter (proven on
+ * arm64 6.8/6.12 by test/seccomp_probe.c). So an AIOS guest cannot trap seccomp using a 0x1000+ number
+ * in x8. The fix, shared by BOTH Linux PALs: trap via an in-range real "GATEWAY" syscall in x8 (so
+ * seccomp sees it) and carry the real AIOS number in x9. The PAL decodes: x8 == AIOS_GATEWAY -> an AIOS
+ * syscall (number in x9); any other x8 -> a real Linux syscall the guest emitted = an escape attempt
+ * (M4), surfaced as-is so the kernel kills it. The gateway is gettid (178): real + stable on every
+ * arm64, side-effect-free, never issued by an AIOS guest, and the PAL always neutralizes it (x8 = -1)
+ * so it never actually runs. A future seL4 PAL traps via IPC and ignores this entirely. */
+#define AIOS_GATEWAY 178   /* __NR_gettid on aarch64 -- the in-range seccomp-trappable trap gateway */
+
 /* sigprocmask `how` (match the shadow <signal.h>): a sigset_t is a bitmask, bit (1<<signum). */
 #define AIOS_SIG_BLOCK   0
 #define AIOS_SIG_UNBLOCK 1

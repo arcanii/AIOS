@@ -114,6 +114,20 @@
  * IGNORES or catches SIGPIPE still gets -EPIPE. The kernel process keeps ignoring host SIGPIPE (it
  * does pipe writes on guests' behalf). Proof: guest/prog_sigpipe.c (default -> writer exits 141;
  * ignored -> write returns -1/EPIPE) + ls -l | head is now quiet.
+ * 0.5.22 = a SECOND PAL backend (the portability proof, no new ABI -- the kernel is BYTE-IDENTICAL):
+ * `make PAL=seccomp` builds aios-uk over a seccomp SECCOMP_RET_TRACE trap mechanism instead of
+ * PTRACE_SYSCALL. A BPF filter classifies the guest's syscalls and traps ONLY them (as a
+ * PTRACE_EVENT_SECCOMP stop); the guest runs via PTRACE_CONT in between -- the syscall-interception
+ * HOT PATH is now BPF-filtered seccomp, not blanket ptrace. The two backends share the entire Linux
+ * host-driver + ptrace INJECTOR core (pal/pal_linux_common.c): Linux has no userspace-only way to
+ * inject memory/processes or rewrite another process's registers, so mmap/exec/fork/exit + the
+ * signal-frame dance stay ptrace either way (a host property, not a seam leak) -- they run at the
+ * seccomp-event stop, AFTER the filter, so rewriting the syscall number dispatches the real host
+ * syscall without re-filtering. The one knob the injectors need is PAL_RESUME(pid) = "resume to the
+ * next trap" (PTRACE_SYSCALL vs PTRACE_CONT). pal_linux.c + pal_seccomp.c are thin trap front-ends
+ * over the shared core. Proof: the WHOLE 16-key run.sh gate passes a SECOND time with PAL=seccomp
+ * (escape still killed under seccomp; mmap/fork/exec/pipes/signals/^C/^Z/raw-mode/confinement all
+ * work), kernel/aios_kernel.c unchanged. This is the dress rehearsal for the seL4/x86-64 pal_sel4.c.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -123,7 +137,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 21
+#define AIOS_VERSION_PATCH 22
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

@@ -14,7 +14,11 @@ IMAGE=${IMAGE:-gcc:13}
 
 docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
     -v "$UK_DIR":/uk -w /uk "$IMAGE" \
-    sh -c 'make --no-print-directory clean && make --no-print-directory all &&
+    stdbuf -oL sh -c 'make --no-print-directory clean && make --no-print-directory all || exit 1;
+           # The gate is a FUNCTION so it runs TWICE -- once per PAL backend (the portability proof:
+           # the SAME host-agnostic kernel + the SAME guests, only aios-uk rebuilt with a different
+           # host trap mechanism). PASS 1 = PAL=linux (ptrace), PASS 2 = PAL=seccomp (RET_TRACE).
+           gate() {
            echo "=== M1: guest_hello (WRITE + EXIT) ===" &&
            ./aios-uk ./guest_hello; echo "  [exit $?]";
            echo "=== M2: guest_fileio (VFS: OPEN/WRITE/READ/CLOSE) ===" &&
@@ -202,4 +206,12 @@ docker run --rm --platform linux/arm64 --cap-add=SYS_PTRACE \
            rm -rf "$JR" "$SECRET";
            echo "=== gate: pipebig jail execjail clock pcwd umask regex pwgrp jobctl stop sigmask sigpipe ctrlc ctrlc-job ctrlz rawkey must exit 0 ===" &&
            ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig $rc, jail $jrc, execjail $ejrc, clock $clkrc, pcwd $pcwdrc, umask $umrc, regex $rxrc, pwgrp $pwrc, jobctl $jcrc, stop $strc, sigmask $smrc, sigpipe $sprc, ctrlc $cprc, ctrlc-job $cjrc, ctrlz $czrc, rawkey $rkrc]";
-           test "$rc" = 0 && test "$jrc" = 0 && test "$ejrc" = 0 && test "$clkrc" = 0 && test "$pcwdrc" = 0 && test "$umrc" = 0 && test "$rxrc" = 0 && test "$pwrc" = 0 && test "$jcrc" = 0 && test "$strc" = 0 && test "$smrc" = 0 && test "$sprc" = 0 && test "$cprc" = 0 && test "$cjrc" = 0 && test "$czrc" = 0 && test "$rkrc" = 0'
+           test "$rc" = 0 && test "$jrc" = 0 && test "$ejrc" = 0 && test "$clkrc" = 0 && test "$pcwdrc" = 0 && test "$umrc" = 0 && test "$rxrc" = 0 && test "$pwrc" = 0 && test "$jcrc" = 0 && test "$strc" = 0 && test "$smrc" = 0 && test "$sprc" = 0 && test "$cprc" = 0 && test "$cjrc" = 0 && test "$czrc" = 0 && test "$rkrc" = 0;
+           }
+           echo "##################### GATE PASS 1: PAL=linux (ptrace PTRACE_SYSCALL -- the default backend) #####################";
+           gate; PASS_LINUX=$?;
+           echo "##################### GATE PASS 2: PAL=seccomp (seccomp SECCOMP_RET_TRACE -- rebuild ONLY aios-uk, same kernel) #####################";
+           make --no-print-directory PAL=seccomp aios-uk || exit 1;
+           gate; PASS_SECCOMP=$?;
+           echo "##################### RESULT: linux=$PASS_LINUX seccomp=$PASS_SECCOMP -- BOTH must be 0 (one kernel, two host trap mechanisms) #####################";
+           test "$PASS_LINUX" = 0 && test "$PASS_SECCOMP" = 0'

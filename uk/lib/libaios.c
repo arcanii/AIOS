@@ -9,34 +9,41 @@
 #include "aios_abi.h"
 #include <stdarg.h>
 
-/* --- the AIOS syscall instruction --- */
+/* --- the AIOS syscall instruction ---
+ * The trap goes through the Linux/aarch64 PAL GATEWAY convention (aios_abi.h): x8 = AIOS_GATEWAY (an
+ * in-range real syscall so seccomp traps it), the real AIOS number in x9, args in x0.. as usual. The
+ * ptrace + seccomp PALs both decode (x8==AIOS_GATEWAY ? x9 : escape). x9 is a caller-saved temporary,
+ * not a syscall-argument register, so it is free to carry the number. */
 static long asys(long nr, long a0, long a1, long a2) {
-    register long x8 __asm__("x8") = nr;
+    register long x8 __asm__("x8") = AIOS_GATEWAY;
+    register long x9 __asm__("x9") = nr;
     register long x0 __asm__("x0") = a0;
     register long x1 __asm__("x1") = a1;
     register long x2 __asm__("x2") = a2;
-    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2) : "memory", "cc");
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x9), "r"(x1), "r"(x2) : "memory", "cc");
     return x0;
 }
 /* 4-argument variant (the *at family: dirfd, path, flags/statbuf, mode/flags). */
 static long asys4(long nr, long a0, long a1, long a2, long a3) {
-    register long x8 __asm__("x8") = nr;
+    register long x8 __asm__("x8") = AIOS_GATEWAY;
+    register long x9 __asm__("x9") = nr;
     register long x0 __asm__("x0") = a0;
     register long x1 __asm__("x1") = a1;
     register long x2 __asm__("x2") = a2;
     register long x3 __asm__("x3") = a3;
-    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2), "r"(x3) : "memory", "cc");
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x9), "r"(x1), "r"(x2), "r"(x3) : "memory", "cc");
     return x0;
 }
 /* 5-argument variant (fchownat: dirfd,path,owner,group,flags; linkat: olddirfd,old,newdirfd,new,flags). */
 static long asys5(long nr, long a0, long a1, long a2, long a3, long a4) {
-    register long x8 __asm__("x8") = nr;
+    register long x8 __asm__("x8") = AIOS_GATEWAY;
+    register long x9 __asm__("x9") = nr;
     register long x0 __asm__("x0") = a0;
     register long x1 __asm__("x1") = a1;
     register long x2 __asm__("x2") = a2;
     register long x3 __asm__("x3") = a3;
     register long x4 __asm__("x4") = a4;
-    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4) : "memory", "cc");
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x9), "r"(x1), "r"(x2), "r"(x3), "r"(x4) : "memory", "cc");
     return x0;
 }
 
@@ -1193,12 +1200,17 @@ __asm__(
 );
 
 /* The sigreturn trampoline: a signal handler "returns" here (the kernel set x30/lr to it), and it
- * issues AIOS_SYS_SIGRETURN so the kernel restores the pre-signal registers. #0x101e == SIGRETURN
- * (asserted in C above). It never returns -- the kernel resumes the guest elsewhere. */
+ * issues AIOS_SYS_SIGRETURN so the kernel restores the pre-signal registers. It traps via the same
+ * Linux/aarch64 GATEWAY convention as asys() above -- x8 = AIOS_GATEWAY (so seccomp traps it), the
+ * real AIOS number (SIGRETURN) in x9 -- stringified from the macros so they cannot drift. It never
+ * returns -- the kernel resumes the guest elsewhere. */
+#define _GW_STR(x)  #x
+#define _GW_XSTR(x) _GW_STR(x)
 __asm__(
     ".global __aios_sigtramp\n"
     "__aios_sigtramp:\n"
-    "  mov x8, #0x101e\n"
+    "  mov x8, #" _GW_XSTR(AIOS_GATEWAY) "\n"        /* gateway in x8 */
+    "  mov x9, #" _GW_XSTR(AIOS_SYS_SIGRETURN) "\n"  /* real AIOS number in x9 */
     "  svc #0\n"
     "  b __aios_sigtramp\n"
 );
