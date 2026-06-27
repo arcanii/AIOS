@@ -23,6 +23,25 @@ guest/guest_hello.c  a freestanding AIOS-ABI program (raw svc, AIOS syscall numb
 `kernel/aios_kernel.c` is meant to compile unchanged against a future `pal/pal_sel4.c`. Keep
 `pal.h` minimal — every primitive added there is future proof obligation.
 
+## Demo (`demo.sh`) — show AIOS running on the Pi (or colima)
+
+`uk/demo.sh` is a short, narrated, timeout-guarded tour: dash + sbase running on the AIOS kernel, the
+**boundary** (a raw-syscall escape is killed), **confinement** (the guest sees only the AIOS root; the
+host fs is invisible), and the **portability proof** (the same `6*7` under both the ptrace and seccomp
+backends). On the RPi4:
+
+```sh
+ssh pi@raspberrypi.local 'cd ~/uk && make all && sh demo.sh'
+```
+
+For a **live interactive** AIOS shell with full job control (`^C`/`^Z`/`fg`/`bg`), run a real terminal
+into it (note the `-t`):
+
+```sh
+ssh -t pi@raspberrypi.local 'cd ~/uk && ./aios-uk ./dash'
+# then:  ./sbase-ls -l ;  ./sbase-grep root /etc/passwd ;  sleep 50 &  ;  jobs  ;  fg
+```
+
 ## M1 — first light
 
 Proves the whole interception foundation: an AIOS-ABI binary runs, and its `WRITE`/`EXIT` syscalls
