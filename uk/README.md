@@ -325,11 +325,22 @@ existing `ctrlc_pty` (`^C` at the prompt); both are in the gate. Validated on co
 dash is still `JOBS=0` (so the foreground group is everything); rebuilding dash `JOBS=1` for `^Z`/
 `fg`/`bg` is the last part.
 
+## M7 — job control, increment 3 (part 3): dash `JOBS=1` — full job control ✅
+
+dash is rebuilt **`JOBS=1`**, so all the kernel job-control machinery is now driven by a real shell —
+no new ABI. dash `setpgid`s each job into its own process group and `tcsetpgrp`s the foreground, so
+**`^C` reaches only the foreground job** (not the shell), **`^Z` suspends it** (`SIGTSTP` → the
+`PS_STOPPED` state, reported to dash via `WUNTRACED` → `[1]+ Stopped`), and **`fg`/`bg` resume it**.
+Three small build-side pieces: a shadow `<termios.h>` (jobs.c includes it but calls no
+line-discipline functions); the `fg`/`bg` builtins **regenerated** into `builtins.{def,c,h}` from
+`builtins.def.in` with `JOBS=1` (dash's own `mkbuiltins` — they had been stripped for the `JOBS=0`
+build); and `strsignal` extended so `SIGTSTP` reads "Stopped". Proof: `test/ctrlz_pty.c` (`^Z`
+suspend → `fg` resume → `^C` kill) joins `ctrlc_pty` and `ctrlc_job_pty` in the gate. Validated on
+colima and the RPi4. **The job-control arc (increments 1–3) is complete.**
+
 ## Next (per the design doc)
 
-**Job control, increment 3 (part 3)** — rebuild dash **`JOBS=1`** so `^Z` suspends a foreground job
-(`SIGTSTP` → the `PS_STOPPED` state from increment 2, reported via `WUNTRACED`), `fg`/`bg` resume it,
-and `^C` reaches *only* the foreground job's group (not the shell). The kernel pieces — process groups,
-`tcsetpgrp`, stop/continue, `sigprocmask`, terminal routing — are all in place; this is the dash build
-flag + interactive `^Z`/`fg`/`bg` testing. Then **sched_ext** · the seL4/x86-64 replant seam
-(`pal_sel4.c`).
+**sched_ext** — AIOS authors its own scheduling policy as a `sched_ext` BPF program (needs a custom
+RPi kernel with `CONFIG_SCHED_CLASS_EXT`; the stock kernel lacks it). Then the endgame: the
+**seL4/x86-64 replant seam** (`pal_sel4.c`) — a second PAL backend that proves `kernel/aios_kernel.c`
+compiles and runs unchanged on a verified base.

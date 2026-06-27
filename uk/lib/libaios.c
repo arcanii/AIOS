@@ -1064,7 +1064,11 @@ char *strsignal(int sig) {
     static const char *n[] = { 0, "Hangup", "Interrupt", "Quit", "Illegal instruction",
         "Trace/breakpoint trap", "Aborted", "Bus error", "Floating point exception", "Killed",
         "User defined signal 1", "Segmentation fault", "User defined signal 2", "Broken pipe",
-        "Alarm clock", "Terminated" };
+        "Alarm clock", "Terminated", "Stack fault", "Child exited", "Continued",
+        "Stopped (signal)", "Stopped", "Stopped (tty input)", "Stopped (tty output)",
+        "Urgent I/O condition", "CPU time limit exceeded", "File size limit exceeded",
+        "Virtual timer expired", "Profiling timer expired", "Window changed", "I/O possible",
+        "Power failure", "Bad system call" };  /* index 20 = SIGTSTP -> "Stopped" (dash's job notice) */
     if (sig > 0 && sig < (int)(sizeof n / sizeof n[0])) return (char *)n[sig];
     return "Unknown signal";
 }

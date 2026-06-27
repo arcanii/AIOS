@@ -92,6 +92,15 @@
  * and the shell survives -- proven INTERACTIVELY on a pty by test/ctrlc_job_pty.c (a foreground
  * ./prog_loop, ^C, dash returns to its prompt) in addition to the existing ctrlc_pty. dash is still
  * JOBS=0 (so the fg group is everything); rebuilding dash JOBS=1 for ^Z/fg/bg is the last part.
+ * 0.5.19 = job control increment 3 (part 3, THE LAST): dash rebuilt JOBS=1 -- FULL interactive job
+ * control (no new ABI; all the kernel pieces were already in place). dash setpgid's each job into its
+ * own pgrp + tcsetpgrp's the foreground, so ^C reaches ONLY the foreground job (not the shell), ^Z
+ * suspends it (SIGTSTP -> PS_STOPPED -> WUNTRACED -> dash "[1]+ Stopped"), and fg/bg resume it. Needed
+ * a shadow <termios.h> (jobs.c includes it; dash calls no line-discipline fns), the fg/bg builtins
+ * REGENERATED into builtins.{def,c,h} from builtins.def.in with JOBS=1 (dash's own mkbuiltins), and
+ * libaios strsignal extended to 31 (so SIGTSTP prints "Stopped", not "Unknown signal"). Proven on a
+ * pty: test/ctrlz_pty.c (^Z suspend -> fg resume -> ^C kill) joins ctrlc_pty + ctrlc_job_pty. The
+ * JOB-CONTROL ARC (M7 inc 1..3) is COMPLETE.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -101,7 +110,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 18
+#define AIOS_VERSION_PATCH 19
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

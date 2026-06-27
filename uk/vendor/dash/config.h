@@ -18,8 +18,9 @@
 #define _PATH_TTY    "/dev/tty"
 #define BSD 1
 
-/* No terminal job control yet; minimize; use dash's internal glob */
-#define JOBS 0
+/* JOBS 1: full job control (^C/^Z to the fg group, fg/bg) -- the kernel has process groups,
+ * tcsetpgrp, stop/continue, sigprocmask + terminal-signal routing. SMALL; dash's internal glob. */
+#define JOBS 1
 #define SMALL 1
 #define GLOB_BROKEN 1
 
