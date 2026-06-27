@@ -44,10 +44,11 @@ SBASE        = vendor/sbase
 # patching sbase is off-limits, so silence warnings rather than touch it. Errors still surface, and
 # our own libaios is linted in the prog_* builds. -I$(SBASE) resolves util.h/arg.h/fs.h/utf.h.
 SBASE_CFLAGS = $(LIBC_CFLAGS) -I$(SBASE) -w
-SBASE_DEPS   = $(LIBAIOS) $(LIBC_HDRS) $(SBASE)/util.h $(SBASE)/arg.h $(SBASE)/compat.h
+SBASE_DEPS   = $(LIBAIOS) $(LIBC_HDRS) include/aios_version.h $(SBASE)/util.h $(SBASE)/arg.h $(SBASE)/compat.h
 SBASE_BINS   = sbase-true sbase-false sbase-echo sbase-cat sbase-wc sbase-mkdir sbase-rm sbase-ls \
                sbase-head sbase-tail sbase-cp sbase-mv sbase-ln sbase-chmod sbase-sort sbase-grep \
-               sbase-whoami sbase-logname
+               sbase-whoami sbase-logname sbase-uname sbase-env sbase-printenv \
+               sbase-pwd sbase-tty sbase-date
 
 # Vendored dash (the Debian Almquist shell, BSD) -- compiled UNMODIFIED against libaios. config.h +
 # the generated sources (syntax/nodes/builtins/init/signames/token.h) are AIOS build inputs (see
@@ -300,6 +301,29 @@ sbase-whoami: $(SBASE)/whoami.c $(SBASE_DEPS)
 sbase-logname: $(SBASE)/logname.c $(SBASE_DEPS)
 	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/logname.c \
 	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/fshut.c $(LIBAIOS)
+# uname: reports AIOS's OWN identity ("AIOS <version> ... aarch64"), proving the guest sees AIOS not Linux.
+sbase-uname: $(SBASE)/uname.c $(SBASE_DEPS)
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/uname.c \
+	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/fshut.c $(SBASE)/libutil/putword.c $(LIBAIOS)
+# env / printenv: print or modify the environment (libaios putenv/setenv/unsetenv).
+sbase-env: $(SBASE)/env.c $(SBASE_DEPS)
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/env.c \
+	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/fshut.c $(LIBAIOS)
+sbase-printenv: $(SBASE)/printenv.c $(SBASE_DEPS)
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/printenv.c \
+	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/fshut.c $(LIBAIOS)
+# pwd: print the working directory (getcwd; -P resolves, -L honors $PWD via stat).
+sbase-pwd: $(SBASE)/pwd.c $(SBASE_DEPS)
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/pwd.c \
+	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/fshut.c $(LIBAIOS)
+# tty: print the terminal name (libaios ttyname -> /dev/console on a tty, else "not a tty").
+sbase-tty: $(SBASE)/tty.c $(SBASE_DEPS)
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/tty.c \
+	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/fshut.c $(LIBAIOS)
+# date: print the date/time (UTC -- AIOS has no timezone; libaios mktime/setenv + the time layer).
+sbase-date: $(SBASE)/date.c $(SBASE_DEPS)
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/date.c \
+	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/strtonum.c $(SBASE)/libutil/fshut.c $(LIBAIOS)
 
 # dash = the operational shell. One cc invocation over the dash sources + generated sources + libaios.
 dash: $(DASH_CFILES) $(LIBAIOS) $(LIBC_HDRS) $(DASH)/config.h

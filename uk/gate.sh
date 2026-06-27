@@ -133,6 +133,13 @@ gate() {
            echo "=== crypt() -- SHA-512 (\$6\$) password hashing matches host openssl passwd -6 byte-for-byte ===" &&
            ./aios-uk ./prog_crypt </dev/null 2>/dev/null | sed "s/^/    /";
            ./aios-uk ./prog_crypt </dev/null >/dev/null 2>&1; cryrc=$?; echo "  [prog_crypt exit $cryrc (expect 0)]";
+           echo "=== more sbase utils, UNMODIFIED: uname (reports AIOS not Linux) / date / env / pwd / tty ===" &&
+           printf "  uname -srm:  "; ./aios-uk ./sbase-uname -srm 2>/dev/null;
+           printf "  date -u:     "; ./aios-uk ./sbase-date -u "+%Y-%m-%d %H:%M:%S UTC" 2>/dev/null;
+           printf "  host -u:     "; date -u "+%Y-%m-%d %H:%M:%S UTC";
+           printf "  env A=1 -> printenv A: "; ./aios-uk ./sbase-env A=1 ./sbase-printenv A 2>/dev/null;
+           printf "  pwd:         "; ./aios-uk ./sbase-pwd 2>/dev/null;
+           printf "  tty (pipe -> not a tty): "; ./aios-uk ./sbase-tty </dev/null 2>/dev/null;
            echo "=== job-control FOUNDATION -- process groups + tty foreground group + kill-to-a-group ===" &&
            ./aios-uk ./prog_jobctl </dev/null 2>/dev/null | sed "s/^/    /";
            ./aios-uk ./prog_jobctl </dev/null >/dev/null 2>&1; jcrc=$?; echo "  [prog_jobctl exit $jcrc (expect 0)]";

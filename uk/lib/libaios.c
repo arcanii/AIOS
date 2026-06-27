@@ -7,6 +7,7 @@
  */
 #include "libaios.h"
 #include "aios_abi.h"
+#include "aios_version.h"   /* AIOS_VERSION_STR / _LINE for uname() -- pure macros, no host dependency */
 #include <stdarg.h>
 
 /* --- the AIOS syscall instruction ---
@@ -828,6 +829,39 @@ char *getenv(const char *name) {
     return 0;
 }
 
+/* --- environment mutation (env/date use these). environ begins as the initial stack vector; an append
+ *     mallocs a fresh, larger NULL-terminated array (malloc never frees -- fine for a short-lived util;
+ *     an in-place replace just rewrites a slot). --- */
+static int env_n(void) { int n = 0; if (environ) while (environ[n]) n++; return n; }
+static int env_find(const char *name, size_t nl) {
+    for (int i = 0; environ && environ[i]; i++)
+        if (strncmp(environ[i], name, nl) == 0 && environ[i][nl] == '=') return i;
+    return -1;
+}
+int putenv(char *string) {                       /* takes ownership of `string` ("NAME=VALUE") */
+    char *eq = strchr(string, '='); size_t nl = eq ? (size_t)(eq - string) : strlen(string);
+    int i = env_find(string, nl);
+    if (i >= 0) { environ[i] = string; return 0; }
+    int n = env_n(); char **ne = malloc((size_t)(n + 2) * sizeof(char *)); if (!ne) return -1;
+    for (int k = 0; k < n; k++) ne[k] = environ[k];
+    ne[n] = string; ne[n + 1] = 0; environ = ne; return 0;
+}
+int setenv(const char *name, const char *value, int overwrite) {
+    size_t nl = strlen(name); int i = env_find(name, nl);
+    if (i >= 0 && !overwrite) return 0;
+    size_t vl = strlen(value); char *s = malloc(nl + 1 + vl + 1); if (!s) return -1;
+    memcpy(s, name, nl); s[nl] = '='; memcpy(s + nl + 1, value, vl); s[nl + 1 + vl] = 0;
+    if (i >= 0) { environ[i] = s; return 0; }
+    return putenv(s);
+}
+int unsetenv(const char *name) {
+    size_t nl = strlen(name); int i = env_find(name, nl);
+    if (i < 0) return 0;
+    int n = env_n();
+    for (int k = i; k < n; k++) environ[k] = environ[k + 1];   /* shift down, incl. the trailing NULL */
+    return 0;
+}
+
 /* --- time (UTC; no timezone) ---
  * localtime == gmtime (no zone). gmtime converts a time_t to a broken-down struct tm via the civil-
  * from-days algorithm; strftime formats it (the subset ls -l needs, with manual zero-padding since
@@ -857,6 +891,20 @@ struct tm *gmtime(const long *tp) {
     return &_tm;
 }
 struct tm *localtime(const long *tp) { return gmtime(tp); }
+/* mktime: the inverse of gmtime (AIOS time is UTC, so the broken-down tm is treated as UTC). Epoch
+ * seconds via days-from-civil (Howard Hinnant); normalizes an out-of-range tm_mon into tm_year. */
+long mktime(struct tm *tm) {
+    int yr = tm->tm_year + 1900, mon = tm->tm_mon;
+    yr += mon / 12; mon %= 12; if (mon < 0) { mon += 12; yr--; }
+    int m = mon + 1;                                   /* 1..12 */
+    long y = yr - (m <= 2);
+    long era = (y >= 0 ? y : y - 399) / 400;
+    long yoe = y - era * 400;                          /* [0,399] */
+    long doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + tm->tm_mday - 1;   /* [0,365] */
+    long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;  /* [0,146096] */
+    long days = era * 146097 + doe - 719468;
+    return days * 86400L + tm->tm_hour * 3600L + tm->tm_min * 60L + tm->tm_sec;
+}
 
 /* clock_gettime forwards the guest's struct timespec to the kernel, which fills it from the PAL clock
  * (struct timespec == struct aios_timespec, two 8-byte fields -- so a void* keeps libaios struct-free).
@@ -864,6 +912,10 @@ struct tm *localtime(const long *tp) { return gmtime(tp); }
 int clock_gettime(int clk_id, void *ts) {
     return (int)__ret(asys(AIOS_SYS_CLOCK_GETTIME, clk_id, (long)ts, 0));
 }
+/* The AIOS clock is READ-ONLY (the kernel's only time source is the PAL host clock; there is no AIOS
+ * syscall to set it). clock_settime fails EPERM -- so `date -s` reports it cannot set the time, while
+ * reading the date works. (void args: a forward decl of struct timespec suffices.) */
+int clock_settime(int clk_id, const void *ts) { (void)clk_id; (void)ts; errno = AIOS_EPERM; return -1; }
 long time(long *tp) {
     long long ts[2] = { 0, 0 };                             /* aios_timespec: {sec, nsec} */
     clock_gettime(AIOS_CLOCK_REALTIME, ts);
@@ -874,6 +926,9 @@ long time(long *tp) {
 static const char _mon3[12][4] = {"Jan","Feb","Mar","Apr","May","Jun",
                                   "Jul","Aug","Sep","Oct","Nov","Dec"};
 static const char _wday3[7][4]  = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
+static const char _wdayfull[7][10] = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"};
+static const char _monfull[12][10] = {"January","February","March","April","May","June",
+                                      "July","August","September","October","November","December"};
 size_t strftime(char *s, size_t max, const char *fmt, const struct tm *tm) {
     size_t n = 0;
     if (!max) return 0;
@@ -883,20 +938,38 @@ size_t strftime(char *s, size_t max, const char *fmt, const struct tm *tm) {
         if (!*fmt) { s[n++] = '%'; break; }
         const char *str = 0;
         int two = -1, pad = '0';
+        int h12;
         switch (*fmt) {
         case 'a': str = _wday3[((tm->tm_wday % 7) + 7) % 7]; break;
+        case 'A': str = _wdayfull[((tm->tm_wday % 7) + 7) % 7]; break;
         case 'b': case 'h': str = _mon3[((tm->tm_mon % 12) + 12) % 12]; break;
+        case 'B': str = _monfull[((tm->tm_mon % 12) + 12) % 12]; break;
         case 'd': two = tm->tm_mday; break;
         case 'e': two = tm->tm_mday; pad = ' '; break;
         case 'H': two = tm->tm_hour; break;
+        case 'I': h12 = tm->tm_hour % 12; two = h12 ? h12 : 12; break;
         case 'M': two = tm->tm_min;  break;
         case 'S': two = tm->tm_sec;  break;
         case 'm': two = tm->tm_mon + 1; break;
+        case 'p': str = tm->tm_hour < 12 ? "AM" : "PM"; break;
+        case 'Z': str = "UTC"; break;                  /* AIOS time is UTC (no timezone) */
+        case 'u': two = ((tm->tm_wday + 6) % 7) + 1; break;  /* 1=Mon..7=Sun */
+        case 'w': two = ((tm->tm_wday % 7) + 7) % 7; break;  /* 0=Sun..6=Sat */
+        case 'n': s[n++] = '\n'; continue;
+        case 't': s[n++] = '\t'; continue;
         case 'y': two = (tm->tm_year + 1900) % 100; break;
+        case 'C': two = ((tm->tm_year + 1900) / 100) % 100; break;
         case 'Y': { unsigned y = (unsigned)(tm->tm_year + 1900); char b[8]; char *p = b + 7; *p = 0;
                     do { *--p = (char)('0' + y % 10); y /= 10; } while (y);
                     while (*p && n < max - 1) s[n++] = *p++;
                     continue; }
+        /* combined specifiers: expand recursively (no combined spec nests another, so this terminates). */
+        case 'F': case 'T': case 'R': case 'D': {
+            const char *sub = *fmt == 'F' ? "%Y-%m-%d" : *fmt == 'T' ? "%H:%M:%S" :
+                              *fmt == 'R' ? "%H:%M" : "%m/%d/%y";
+            char t[24]; size_t k = strftime(t, sizeof t, sub, tm);
+            for (size_t j = 0; j < k && n < max - 1; j++) s[n++] = t[j];
+            continue; }
         case '%': s[n++] = '%'; continue;
         default:  s[n++] = '%'; if (n < max - 1) s[n++] = *fmt; continue;
         }
@@ -1212,6 +1285,39 @@ char *crypt(const char *key, const char *setting) {
     cp = b64_24(cp, C[62], C[20], C[41], 4); cp = b64_24(cp, 0,     0,     C[63], 2);
     *cp = '\0';
     return result;
+}
+
+/* --- system identity: uname() reports AIOS, NOT the host. A guest sees the AIOS kernel's identity
+ *     (sysname "AIOS", release = the AIOS version), proving the program runs on AIOS, not Linux. Pure
+ *     libaios (AIOS constants); no host call. struct utsname MUST match the shadow <sys/utsname.h>. --- */
+struct utsname { char sysname[65], nodename[65], release[65], version[65], machine[65], domainname[65]; };
+static void uts_set(char *d, const char *s) { size_t i = 0; for (; s[i] && i < 64; i++) d[i] = s[i]; d[i] = 0; }
+int uname(struct utsname *u) {
+    uts_set(u->sysname, "AIOS");
+    uts_set(u->nodename, "aios");                      /* /etc/hostname overrides if present */
+    { FILE *f = fopen("/etc/hostname", "r");
+      if (f) { char b[65]; if (fgets(b, sizeof b, f)) {
+          size_t n = strlen(b); while (n && (b[n-1] == '\n' || b[n-1] == '\r')) b[--n] = 0;
+          if (b[0]) uts_set(u->nodename, b); } fclose(f); } }
+    uts_set(u->release, AIOS_VERSION_STR);
+    uts_set(u->version, AIOS_VERSION_LINE);
+#if defined(__aarch64__)
+    uts_set(u->machine, "aarch64");
+#elif defined(__x86_64__)
+    uts_set(u->machine, "x86_64");
+#else
+    uts_set(u->machine, "unknown");
+#endif
+    uts_set(u->domainname, "(none)");
+    return 0;
+}
+
+/* ttyname: AIOS has no /dev/pts namespace, so a terminal fd reports the console device (a documented
+ * simplification); a non-terminal fd is ENOTTY. `tty` uses this. */
+char *ttyname(int fd) {
+    static char dev[] = "/dev/console";
+    if (isatty(fd)) return dev;
+    errno = AIOS_ENOTTY; return 0;
 }
 
 /* --- sysconf / rlimit / times: minimal so dash's miscbltin (ulimit/times) + paths compile + run. --- */

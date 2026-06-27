@@ -21,8 +21,10 @@ typedef int clockid_t;
 
 time_t     time(time_t *t);
 int        clock_gettime(clockid_t clk_id, struct timespec *ts);
+int        clock_settime(clockid_t clk_id, const struct timespec *ts);   /* AIOS clock is read-only -> EPERM */
 struct tm *gmtime(const time_t *t);
 struct tm *localtime(const time_t *t);
+time_t     mktime(struct tm *tm);
 size_t     strftime(char *s, size_t max, const char *fmt, const struct tm *tm);
 
 #endif /* _TIME_H */

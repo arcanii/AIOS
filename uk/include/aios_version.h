@@ -169,6 +169,15 @@
  * guest/prog_crypt.c (crypt of aios/root reproduces the host openssl reference vectors exactly; a wrong
  * password does not match; the verify round-trip holds; an unsupported $1$ scheme -> NULL), and
  * login_pty still authenticates aios/aios end-to-end against the hashed shadow.
+ * 0.5.27 = the SYSTEM LAYER, increment 2 (part 4): more sbase utils run UNMODIFIED -- uname / env /
+ * printenv / pwd / tty / date (no new ABI). The headline is uname: it reports AIOS's OWN identity
+ * ("AIOS <version> ... aarch64"), NOT the host's "Linux" -- proof that a guest sees the AIOS kernel.
+ * libaios grew: uname() over a new shadow <sys/utsname.h> (AIOS constants + /etc/hostname); the
+ * environment-mutation surface putenv/setenv/unsetenv (for env); mktime (the UTC inverse of gmtime,
+ * so date prints + computes time matching the host exactly); a read-only clock_settime (EPERM -- the
+ * AIOS clock has no set syscall, so `date -s` honestly refuses while reading works); and ttyname
+ * (/dev/console on a tty -- AIOS has no /dev/pts). date is UTC-only (AIOS has no timezone). seq +
+ * printf + tr + cut are deferred to the next part (they need float printf %f/%g and the libutf chain).
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -178,7 +187,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 26
+#define AIOS_VERSION_PATCH 27
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

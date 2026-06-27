@@ -28,7 +28,8 @@ cp "$UK/dash" "$ROOT/bin/dash"
 cp "$UK/dash" "$ROOT/bin/sh"
 
 # the coreutils (vendored sbase, built as sbase-<name>) installed at their standard names
-for u in true false echo cat wc mkdir rm ls head tail cp mv ln chmod sort grep whoami logname; do
+for u in true false echo cat wc mkdir rm ls head tail cp mv ln chmod sort grep \
+         whoami logname uname env printenv pwd tty date; do
 	cp "$UK/sbase-$u" "$ROOT/bin/$u"
 done
 
@@ -36,6 +37,9 @@ done
 # respawns /bin/login (prompt -> /etc/shadow auth -> the user's login shell).
 cp "$UK/init"  "$ROOT/sbin/init"
 cp "$UK/login" "$ROOT/bin/login"
+
+# the system hostname (uname -n / the login banner read this; AIOS reports its OWN identity, not the host)
+echo aios > "$ROOT/etc/hostname"
 
 # a minimal passwd/group database (so ls -l and grep show real names inside the image)
 cat > "$ROOT/etc/passwd" <<'EOF'
