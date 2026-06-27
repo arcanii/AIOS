@@ -7,7 +7,9 @@ rehearsal -- a SECOND PAL backend (seccomp `SECCOMP_RET_TRACE`), proving `kernel
 UNCHANGED over a different host trap mechanism (the whole point of the PAL seam) -- and packaged AIOS as
 a minimal Linux 6.18 appliance that boots straight into a confined AIOS shell.** All on `main`, **2
 commits, v0.5.21 -> v0.5.22, ABI UNCHANGED (48), kernel byte-identical.** Colima-validated (the full
-16-key gate passes a SECOND time, `linux=0 seccomp=0`); Pi-pending.
+16-key gate passes a SECOND time, `linux=0 seccomp=0`) AND **HW-validated on the real RPi4** (kernel
+6.12.47, gcc 14.2: both backends build + pass the full gate, `linux=0 seccomp=0`, the gateway traps on
+6.12, escape killed under both).
 
 ## What shipped this session (on `main`)
 
@@ -64,7 +66,9 @@ commits, v0.5.21 -> v0.5.22, ABI UNCHANGED (48), kernel byte-identical.** Colima
   `docs/AIOS_KERNEL_DEPENDENCIES.md` formalizes the exact host surface AIOS needs (the seL4 PAL's proof
   obligation).
 - **Proof.** `uk/run.sh` -> `RESULT: linux=0 seccomp=0`; both kill the raw-syscall escape (159); both
-  pass pipebig/jail/execjail/clock/.../`^C`/`^Z`/raw-mode. Validated on colima; Pi-pending.
+  pass pipebig/jail/execjail/clock/.../`^C`/`^Z`/raw-mode. Validated on colima AND the RPi4 (gcc 14.2,
+  kernel 6.12.47) via the new native `uk/gate.sh` (run.sh's gate factored docker-free so the Pi runs
+  the identical gate: `ssh pi 'cd ~/uk && sh gate.sh'` -> `linux=0 seccomp=0`).
 
 ### The minimal AIOS appliance (`e4e6408`, `uk/appliance/`) -- "Linux 6.18 boots into AIOS"
 
@@ -121,10 +125,13 @@ Bryan: package AIOS with the latest longterm kernel (~6.18) + a minimum package 
   a ptrace hang is SILENT (in-container `timeout N` + fprintf(stderr)); gcc 14 (Pi) stricter than gcc 13;
   NO apostrophes in run.sh's `sh -c '...'` body [[feedback_script_style]].
 
-## NEXT -- the endgame (M9 + the appliance done this session)
+## NEXT -- the endgame (M9 + the appliance done AND HW-validated this session)
 
-1. **HW (Pi) validation** of M9 (seccomp, `make PAL=seccomp`) + the appliance boot -- both
-   colima-validated, Pi-pending. (rsync + `make` per the dev loop below.)
+1. **HW (Pi) validation -- DONE.** M9 (`make PAL=seccomp`) passes the full gate on the RPi4 (gcc 14.2,
+   kernel 6.12.47) via `uk/gate.sh` (`linux=0 seccomp=0`); the appliance userland is HW-validated too
+   (the static `aios-uk` runs the confined AIOS root on the Pi -- `ls /bin` works, host `/etc/hostname`
+   denied). The from-source minimal-6.18 kernel build + a Pi "boots into AIOS" deploy (a getty/systemd
+   unit, NOT a kernel image -- Linux is under) remain.
 2. **sched_ext** -- AIOS's own scheduling policy as a sched_ext BPF program; the 6.18 appliance can
    carry `CONFIG_SCHED_CLASS_EXT` (`appliance/aios.config` keeps it off for the strict-minimal base).
 3. **the seL4/x86-64 REPLANT SEAM (`pal_sel4.c`)** -- a THIRD PAL backend proving
@@ -172,11 +179,14 @@ out-of-range syscall numbers, so guests trap via a GATEWAY (AIOS_GATEWAY=gettid/
 in x9; PAL decodes x8==gateway ? x9 : escape) -- see test/seccomp_probe.c. The PAL split (shared
 host-driver/injectors in pal_linux_common.c + a thin trap front-end parameterized by PAL_RESUME) is
 exactly what pal_sel4.c reuses. The minimal appliance (uk/appliance/) boots Linux 6.18 straight into a
-confined AIOS shell (a 3-file initramfs: /init + static /aios-uk + /aiosroot). Validated on colima;
-Pi-pending.
+confined AIOS shell (a 3-file initramfs: /init + static /aios-uk + /aiosroot). **M9 + the appliance
+userland are HW-VALIDATED on the RPi4** (gcc 14.2, kernel 6.12.47): `uk/gate.sh` (run.sh's gate factored
+docker-free) passes both backends on the Pi (`linux=0 seccomp=0`), and the static aios-uk runs the
+confined AIOS root there.
 
-PRIMARY TASK -> the endgame's remaining items: (1) **HW (Pi) validation** of `make PAL=seccomp` + the
-appliance boot. (2) **sched_ext** -- AIOS's own scheduling policy as a sched_ext BPF program (the 6.18
+PRIMARY TASK -> the endgame's remaining items (M9 + the appliance userland are HW-validated): (1) the
+from-source minimal-6.18 kernel build (a proper kernel-build env) + a Pi "boots into AIOS" deploy (a
+getty/systemd unit -- Linux is under). (2) **sched_ext** -- AIOS's own scheduling policy as a sched_ext BPF program (the 6.18
 appliance can carry CONFIG_SCHED_CLASS_EXT). (3) **the seL4/x86-64 replant seam (`pal_sel4.c`)** -- a
 THIRD PAL backend proving kernel/aios_kernel.c runs UNCHANGED on a verified base (M9 de-risked the seam;
 docs/AIOS_KERNEL_DEPENDENCIES.md is the proof obligation). Keep kernel/aios_kernel.c host-agnostic + the
