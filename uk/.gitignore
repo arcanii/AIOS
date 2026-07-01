@@ -7,8 +7,12 @@
 /dash
 /init
 /login
+/poweroff
+/reboot
+/halt
 *.o
 /.pal.stamp
+/scratch_gate.log
 
 # AIOS root filesystem image (built by mkaiosroot.sh)
 /aiosroot/
