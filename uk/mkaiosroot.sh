@@ -29,7 +29,7 @@ cp "$UK/dash" "$ROOT/bin/sh"
 
 # the coreutils (vendored sbase, built as sbase-<name>) installed at their standard names
 for u in true false echo cat wc mkdir rm ls head tail cp mv ln chmod sort grep \
-         whoami logname uname env printenv pwd tty date tr cut; do
+         whoami logname uname env printenv pwd tty date tr cut seq printf; do
 	cp "$UK/sbase-$u" "$ROOT/bin/$u"
 done
 

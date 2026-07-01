@@ -184,6 +184,17 @@
  * (-b/-c/-f with -d) adds memmem. Both purely Makefile wiring against the existing libaios (the rune
  * layer was already there). seq + printf (the util) still need float printf (%f/%g) -- next part; and
  * /etc/inittab services + a clean shutdown remain for increment 2.
+ * 0.5.29 = the SYSTEM LAYER, increment 2 (part 6): FLOAT printf (%f/%e/%g) in libaios -> sbase seq +
+ * printf run UNMODIFIED (no new ABI). libaios's printf core grew floating-point conversion: a scaled-
+ * integer digit extraction with round-half-to-EVEN (glibc's rule), honoring the + / space / # / 0 flags,
+ * width, and precision, for %f/%e/%g and their uppercase forms. It is BYTE-IDENTICAL to glibc across a
+ * 58-case battery (guest/prog_printf.c, compiled BOTH as an AIOS guest and as a host program and diffed
+ * in the gate). HONEST LIMITS (double intermediate, not bignum -- matching glibc exactly needs arbitrary
+ * precision; long double is binary128 -> needs __multf3, absent under -nostdlib): precision capped at 17;
+ * %f of a giant magnitude overflows the u64 scale (%g/%e go scientific there); and a value whose exact
+ * decimal sits within ~1 ULP of the rounding boundary (e.g. 0.005, 2.675) can round the other way. seq
+ * (incl. float steps + -w + -f FMT) and printf (the util) now run UNMODIFIED. REMAINING inc 2:
+ * /etc/inittab services + a clean shutdown.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -193,7 +204,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 28
+#define AIOS_VERSION_PATCH 29
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

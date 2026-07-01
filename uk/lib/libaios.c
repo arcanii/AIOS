@@ -333,18 +333,126 @@ static size_t u2buf(char *out, unsigned long v, int base, int upper) {
 }
 static void sink_pad(struct sink *s, int n, char c) { while (n-- > 0) sink_write(s, &c, 1); }
 
-/* printf-family core: flags (- 0), width (incl. *), precision (incl. .*), the l/z/h length
- * modifiers, and %s %d %i %u %x %X %o %c %p %%. Enough for sbase (ls -l columns align) + dash. */
+/* ---- floating-point conversion (%f/%e/%g) for printf. AIOS has HW doubles (aarch64), so this is a
+ * scaled-integer digit extraction: normalize + round `prec+1` significant digits into a u64 (round-half-
+ * to-even, glibc's rule) and emit them. Byte-identical to glibc across the normal range seq/printf use.
+ * HONEST LIMITS (all stem from using DOUBLE, not bignum, for the intermediate arithmetic -- matching
+ * glibc exactly requires arbitrary precision, which is out of scope for a minimal libc):
+ *   - precision is capped at 17 (a double's true information content; beyond that glibc emits the exact
+ *     binary expansion);
+ *   - %f of a huge magnitude (|x| * 10^prec >= ~1.8e19) exceeds the u64 range (%g/%e go scientific
+ *     there, so only an explicit %f of a giant value is affected);
+ *   - a value whose EXACT decimal sits within ~1 ULP of the rounding boundary at the requested
+ *     precision (e.g. 0.005, 2.675) can round the other way, because v*10^prec rounds in double before
+ *     we inspect the halfway bit. Real seq/printf inputs don't hit this; it is not soft-float-fixable
+ *     (long double is binary128 -> needs __multf3, absent under -nostdlib). */
+static const unsigned long long _pow10u[19] = {
+    1ULL,10ULL,100ULL,1000ULL,10000ULL,100000ULL,1000000ULL,10000000ULL,100000000ULL,1000000000ULL,
+    10000000000ULL,100000000000ULL,1000000000000ULL,10000000000000ULL,100000000000000ULL,
+    1000000000000000ULL,10000000000000000ULL,100000000000000000ULL,1000000000000000000ULL};
+
+/* Round a non-negative double to a u64 using round-half-to-EVEN (glibc's rule), so ties go to the even
+ * neighbour (0.5 -> 0, 2.5 -> 2, 1.5 -> 2) -- matching printf, not round-half-up. */
+static unsigned long long round_even(double x) {
+    unsigned long long f = (unsigned long long)x;         /* floor, since x >= 0 */
+    double r = x - (double)f;
+    if (r > 0.5) return f + 1;
+    if (r < 0.5) return f;
+    return (f & 1ULL) ? f + 1 : f;                        /* exact tie -> the even value */
+}
+/* %f: fixed-point, value >= 0 and finite. Rounds to `prec` fractional digits (half-to-even). */
+static size_t f_fixed(char *o, double v, int prec, int alt) {
+    if (prec > 17) prec = 17;
+    unsigned long long ip, fp;
+    if (prec == 0) { ip = round_even(v); fp = 0; }
+    else { unsigned long long su = _pow10u[prec];
+           unsigned long long tot = round_even(v * (double)su);
+           ip = tot / su; fp = tot % su; }
+    char ib[24]; int ni = 0; unsigned long long t = ip;
+    do { ib[ni++] = (char)('0' + (int)(t % 10)); t /= 10; } while (t);
+    size_t i = 0; while (ni > 0) o[i++] = ib[--ni];
+    if (prec > 0 || alt) {                                /* '#' keeps the point even at precision 0 */
+        o[i++] = '.';
+        if (prec > 0) {
+            char fb[24]; int nf = 0; t = fp;
+            do { fb[nf++] = (char)('0' + (int)(t % 10)); t /= 10; } while (t);
+            while (nf < prec) fb[nf++] = '0';             /* left-pad the fraction to prec digits */
+            while (nf > 0) o[i++] = fb[--nf];
+        }
+    }
+    return i;
+}
+/* %e: scientific, value >= 0 and finite. `prec` fractional (mantissa) digits; exponent >= 2 digits. */
+static size_t f_sci(char *o, double v, int prec, int alt, int up) {
+    if (prec > 17) prec = 17;
+    int E = 0;
+    if (v != 0.0) { while (v >= 10.0) { v /= 10.0; E++; } while (v < 1.0) { v *= 10.0; E--; } }
+    unsigned long long su = _pow10u[prec];
+    unsigned long long m = round_even(v * (double)su);    /* prec+1 significant digits (half-to-even) */
+    if (m >= su * 10ULL) { m /= 10; E++; }                /* rounding carried 9.99..->10 -> 1.0, E++ */
+    char ds[24]; int nd = 0; unsigned long long t = m;
+    do { ds[nd++] = (char)('0' + (int)(t % 10)); t /= 10; } while (t);
+    while (nd < prec + 1) ds[nd++] = '0';                 /* pad to prec+1 significant digits */
+    size_t i = 0; o[i++] = ds[--nd];                      /* the single integer digit */
+    if (prec > 0 || alt) { o[i++] = '.'; while (nd > 0) o[i++] = ds[--nd]; }
+    o[i++] = up ? 'E' : 'e';
+    o[i++] = (E < 0) ? '-' : '+';
+    int ae = (E < 0) ? -E : E; char eb[8]; int en = 0;
+    do { eb[en++] = (char)('0' + ae % 10); ae /= 10; } while (ae);
+    while (en < 2) eb[en++] = '0';                        /* at least two exponent digits */
+    while (en > 0) o[i++] = eb[--en];
+    return i;
+}
+/* Dispatch %f/%e/%g (any case). Writes the unsigned body (digits/point/exponent) to `out`, sets *neg
+ * (sign bit, so -0.0 prints '-') and *special (1=inf, 2=nan). */
+static size_t fmt_double(char *out, double val, int prec, char conv, int alt, int *neg, int *special) {
+    unsigned long long bits; memcpy(&bits, &val, sizeof bits);
+    *neg = (int)(bits >> 63); *special = 0;
+    double av = *neg ? -val : val;
+    unsigned long long e = (bits >> 52) & 0x7ff, f = bits & 0xfffffffffffffULL;
+    int up = (conv < 'a'); char c = up ? (char)(conv + 32) : conv;
+    if (e == 0x7ff) {                                     /* inf / nan */
+        const char *w = f ? (up ? "NAN" : "nan") : (up ? "INF" : "inf");
+        *special = f ? 2 : 1; size_t i = 0; while (w[i]) { out[i] = w[i]; i++; } return i;
+    }
+    if (prec < 0) prec = 6;
+    if (c == 'f') return f_fixed(out, av, prec, alt);
+    if (c == 'e') return f_sci(out, av, prec, alt, up);
+    /* %g: shortest of %e/%f; P significant digits; strip trailing zeros unless '#'. */
+    int P = (prec == 0) ? 1 : prec; if (P > 17) P = 17;
+    int E = 0; double t = av;
+    if (t != 0.0) { while (t >= 10.0) { t /= 10.0; E++; } while (t < 1.0) { t *= 10.0; E--; } }
+    /* the e-vs-f decision must use the exponent AFTER rounding to P sig figs: rounding can carry the
+     * mantissa across a power of 10 (e.g. 9.9 at %.1g rounds to 10 -> "1e+01", not "10"). */
+    if (av != 0.0 && round_even(t * (double)_pow10u[P - 1]) >= _pow10u[P]) E++;
+    size_t len = (E < -4 || E >= P) ? f_sci(out, av, P - 1, alt, up) : f_fixed(out, av, P - 1 - E, alt);
+    if (!alt) {                                           /* strip trailing zeros (and a bare '.') */
+        size_t ep = len; for (size_t k = 0; k < len; k++) if (out[k] == 'e' || out[k] == 'E') { ep = k; break; }
+        size_t dot = ep; for (size_t k = 0; k < ep; k++) if (out[k] == '.') { dot = k; break; }
+        if (dot < ep) {
+            size_t end = ep; while (end > dot + 1 && out[end - 1] == '0') end--;
+            if (end == dot + 1) end = dot;                /* nothing left after '.' -> drop it too */
+            size_t shift = ep - end;
+            if (shift) { for (size_t k = ep; k < len; k++) out[k - shift] = out[k]; len -= shift; }
+        }
+    }
+    return len;
+}
+
+/* printf-family core: flags (- 0 + space #), width (incl. *), precision (incl. .*), the l/z/h length
+ * modifiers, and %s %d %i %u %x %X %o %c %p %f %e %g (+ upper) %%. Enough for sbase + dash. */
 static void vformat(struct sink *s, const char *fmt, va_list ap) {
-    char digits[24];
+    char digits[24]; char fbuf[80];
     for (const char *p = fmt; *p; p++) {
         if (*p != '%') { sink_write(s, p, 1); continue; }
         p++;
-        int left = 0, zero = 0;
+        int left = 0, zero = 0, plus = 0, space = 0, alt = 0;
         for (;; p++) {                                       /* flags */
             if      (*p == '-') left = 1;
             else if (*p == '0') zero = 1;
-            else if (*p == '+' || *p == ' ' || *p == '#') { /* accepted, ignored */ }
+            else if (*p == '+') plus = 1;
+            else if (*p == ' ') space = 1;
+            else if (*p == '#') alt = 1;
             else break;
         }
         int width = 0;                                       /* field width */
@@ -361,7 +469,7 @@ static void vformat(struct sink *s, const char *fmt, va_list ap) {
 
         const char *body = digits; size_t blen = 0;          /* the value text (digits or string) */
         char prefix[2]; int plen = 0;                        /* sign / 0x -- emitted before zero-fill */
-        int isnum = 0;
+        int isnum = 0, isfloat = 0;
         switch (*p) {
         case 's': { const char *a = va_arg(ap, const char *); if (!a) a = "(null)";
                     blen = strlen(a); if (prec >= 0 && (size_t)prec < blen) blen = (size_t)prec;
@@ -377,13 +485,22 @@ static void vformat(struct sink *s, const char *fmt, va_list ap) {
         case 'o': blen = u2buf(digits, lng ? va_arg(ap, unsigned long) : va_arg(ap, unsigned int),  8, 0); isnum = 1; break;
         case 'p': prefix[0] = '0'; prefix[1] = 'x'; plen = 2;
                   blen = u2buf(digits, (unsigned long)(uintptr_t)va_arg(ap, void *), 16, 0); isnum = 1; break;
+        case 'f': case 'F': case 'e': case 'E': case 'g': case 'G': {
+                    double dv = va_arg(ap, double); int neg, special;
+                    blen = fmt_double(fbuf, dv, prec, *p, alt, &neg, &special); body = fbuf;
+                    if (neg)        { prefix[0] = '-'; plen = 1; }
+                    else if (plus)  { prefix[0] = '+'; plen = 1; }
+                    else if (space) { prefix[0] = ' '; plen = 1; }
+                    isnum = 1; isfloat = 1;                  /* isnum -> '0' flag zero-pads; isfloat -> no precision zfill */
+                    if (special) { isnum = 0; }              /* inf/nan: space-pad even with the 0 flag */
+                    break; }
         case '%': digits[0] = '%'; blen = 1; break;
         case '\0': p--; continue;                            /* trailing '%' -> stop cleanly */
         default:  digits[0] = '%'; digits[1] = *p; blen = 2; break;
         }
 
-        int zfill = 0;                                       /* numeric precision = min digit count */
-        if (isnum && prec >= 0) { if ((size_t)prec > blen) zfill = (int)((size_t)prec - blen); zero = 0; }
+        int zfill = 0;                                       /* integer precision = min digit count */
+        if (isnum && !isfloat && prec >= 0) { if ((size_t)prec > blen) zfill = (int)((size_t)prec - blen); zero = 0; }
         int content = plen + zfill + (int)blen;
         int padw = width > content ? width - content : 0;
         int usezero = zero && isnum;                         /* '0' flag never pads strings */
@@ -1222,7 +1339,8 @@ char *crypt(const char *key, const char *setting) {
     if (strncmp(s, "rounds=", 7) == 0) {
         char *endp; unsigned long r = strtoul(s + 7, &endp, 10);
         if (*endp == '$') { s = endp + 1; rounds = r; rounds_custom = 1;
-            if (rounds < 1000) rounds = 1000; if (rounds > 999999999UL) rounds = 999999999UL; }
+            if (rounds < 1000) rounds = 1000;
+            if (rounds > 999999999UL) rounds = 999999999UL; }
     }
     unsigned int salt_len = 0; while (salt_len < 16 && s[salt_len] && s[salt_len] != '$') salt_len++;
     const char *salt = s;
@@ -1266,7 +1384,8 @@ char *crypt(const char *key, const char *setting) {
         char num[16]; int ni = 0; unsigned long rr = rounds;
         char tmp[16]; int ti = 0; if (rr == 0) tmp[ti++] = '0';
         while (rr) { tmp[ti++] = (char)('0' + rr % 10); rr /= 10; }
-        while (ti) num[ni++] = tmp[--ti]; num[ni] = '\0';
+        while (ti) num[ni++] = tmp[--ti];
+        num[ni] = '\0';
         const char *rp = "rounds="; while (*rp) *cp++ = *rp++;
         for (int k = 0; k < ni; k++) *cp++ = num[k];
         *cp++ = '$';

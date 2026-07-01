@@ -48,7 +48,7 @@ SBASE_DEPS   = $(LIBAIOS) $(LIBC_HDRS) include/aios_version.h $(SBASE)/util.h $(
 SBASE_BINS   = sbase-true sbase-false sbase-echo sbase-cat sbase-wc sbase-mkdir sbase-rm sbase-ls \
                sbase-head sbase-tail sbase-cp sbase-mv sbase-ln sbase-chmod sbase-sort sbase-grep \
                sbase-whoami sbase-logname sbase-uname sbase-env sbase-printenv \
-               sbase-pwd sbase-tty sbase-date sbase-tr sbase-cut
+               sbase-pwd sbase-tty sbase-date sbase-tr sbase-cut sbase-seq sbase-printf
 
 # Vendored dash (the Debian Almquist shell, BSD) -- compiled UNMODIFIED against libaios. config.h +
 # the generated sources (syntax/nodes/builtins/init/signames/token.h) are AIOS build inputs (see
@@ -66,7 +66,7 @@ DASH_CFILES = $(addprefix $(DASH_SRC)/, alias.c arith_yacc.c arith_yylex.c cd.c 
 .PHONY: all run clean sbase FORCE
 all: aios-uk guest_hello guest_fileio guest_cat guest_escape prog_args prog_wc prog_bigalloc prog_tail prog_exec \
      prog_fork prog_spawn prog_pipe prog_pipeline prog_pipebig prog_sh prog_libc prog_stdio prog_errno \
-     prog_fs prog_getopt prog_dir prog_signal prog_jail prog_execjail prog_clock prog_pcwd prog_umask prog_regex prog_pwgrp prog_jobctl prog_stop prog_sigmask prog_loop prog_rawkey prog_sigpipe prog_id prog_crypt init login $(SBASE_BINS) dash
+     prog_fs prog_getopt prog_dir prog_signal prog_jail prog_execjail prog_clock prog_pcwd prog_umask prog_regex prog_pwgrp prog_jobctl prog_stop prog_sigmask prog_loop prog_rawkey prog_sigpipe prog_id prog_crypt prog_printf init login $(SBASE_BINS) dash
 
 # Rebuild aios-uk when the selected PAL backend changes: .pal.stamp records the current PAL and its
 # mtime only advances when PAL differs, so `make PAL=seccomp` after a default `make` recompiles the
@@ -207,6 +207,11 @@ prog_id: guest/prog_id.c $(LIBAIOS) $(LIBC_HDRS) include/aios_abi.h
 prog_crypt: guest/prog_crypt.c $(LIBAIOS) $(LIBC_HDRS) include/aios_abi.h
 	$(CC) $(LIBC_CFLAGS) -o $@ guest/prog_crypt.c $(LIBAIOS)
 
+# Float-printf battery -- the SAME source compiles as an AIOS guest AND (in the gate) as a host program;
+# the two outputs are diffed, so libaios printf %f/%e/%g must match glibc byte-for-byte.
+prog_printf: guest/prog_printf.c $(LIBAIOS) $(LIBC_HDRS) include/aios_abi.h
+	$(CC) $(LIBC_CFLAGS) -o $@ guest/prog_printf.c $(LIBAIOS)
+
 # The SYSTEM LAYER (increment 1): the AIOS init (the first guest -- respawns login) + login (prompt +
 # /etc/shadow auth -> the user's login shell). Installed by mkaiosroot.sh as /sbin/init + /bin/login;
 # the appliance launches /sbin/init instead of a bare /bin/sh, so AIOS boots into a login.
@@ -342,6 +347,19 @@ sbase-cut: $(SBASE)/cut.c $(SBASE_DEPS) $(SBASE)/utf.h
 	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/reallocarray.c $(SBASE)/libutil/fshut.c \
 	      $(SBASE)/libutil/unescape.c $(SBASE)/libutil/strlcpy.c $(SBASE)/libutil/memmem.c \
 	      $(SBASE)/libutf/rune.c $(SBASE)/libutf/runetype.c $(LIBAIOS)
+# seq: numeric sequences (estrtod over the real strtod; formats with the now-float-capable printf).
+sbase-seq: $(SBASE)/seq.c $(SBASE_DEPS)
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/seq.c \
+	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/estrtod.c $(SBASE)/libutil/strtonum.c \
+	      $(SBASE)/libutil/fshut.c $(LIBAIOS)
+# printf: interprets a format string (needs float printf %f/%e/%g -- now real in libaios).
+sbase-printf: $(SBASE)/printf.c $(SBASE_DEPS) $(SBASE)/utf.h
+	$(CC) $(SBASE_CFLAGS) -o $@ $(SBASE)/printf.c \
+	      $(SBASE)/libutil/eprintf.c $(SBASE)/libutil/ealloc.c $(SBASE)/libutil/reallocarray.c \
+	      $(SBASE)/libutil/estrtod.c $(SBASE)/libutil/strtonum.c $(SBASE)/libutil/fshut.c \
+	      $(SBASE)/libutil/unescape.c $(SBASE)/libutil/strlcpy.c \
+	      $(SBASE)/libutf/rune.c $(SBASE)/libutf/runetype.c $(SBASE)/libutf/utf.c \
+	      $(SBASE)/libutf/utftorunestr.c $(SBASE)/libutf/fputrune.c $(LIBAIOS)
 
 # dash = the operational shell. One cc invocation over the dash sources + generated sources + libaios.
 dash: $(DASH_CFILES) $(LIBAIOS) $(LIBC_HDRS) $(DASH)/config.h
@@ -353,4 +371,4 @@ run: all
 clean:
 	rm -f .pal.stamp aios-uk guest_hello guest_fileio guest_cat guest_escape prog_args prog_wc prog_bigalloc prog_tail \
 	      prog_exec prog_fork prog_spawn prog_pipe prog_pipeline prog_pipebig prog_sh prog_libc \
-	      prog_stdio prog_errno prog_fs prog_getopt prog_dir prog_signal prog_jail prog_execjail prog_clock prog_pcwd prog_umask prog_regex prog_pwgrp prog_jobctl prog_stop prog_sigmask prog_loop prog_rawkey prog_sigpipe prog_id prog_crypt init login $(SBASE_BINS) dash
+	      prog_stdio prog_errno prog_fs prog_getopt prog_dir prog_signal prog_jail prog_execjail prog_clock prog_pcwd prog_umask prog_regex prog_pwgrp prog_jobctl prog_stop prog_sigmask prog_loop prog_rawkey prog_sigpipe prog_id prog_crypt prog_printf init login $(SBASE_BINS) dash
