@@ -30,7 +30,7 @@ make -C "$UK" --no-print-directory all >/dev/null
 echo "== 2/5  static host binaries (no libc in the initramfs) =="
 # aios-uk static, with the chosen PAL backend (same source list as the Makefile's KERNEL_SRC).
 ( cd "$UK" && cc -O2 -Wall -Iinclude -static -o "$BLD/aios-uk" kernel/aios_kernel.c "pal/pal_$PAL.c" )
-cc -O2 -static -o "$BLD/aios_init" "$APP/aios_init.c"
+cc -O2 -static -I"$UK/include" -o "$BLD/aios_init" "$APP/aios_init.c"   # -Iinclude: AIOS_EXIT_* codes
 
 echo "== 3/5  build the AIOS root filesystem (mkaiosroot.sh) =="
 rm -rf "$BLD/aiosroot"

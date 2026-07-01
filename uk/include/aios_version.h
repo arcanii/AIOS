@@ -195,6 +195,17 @@
  * decimal sits within ~1 ULP of the rounding boundary (e.g. 0.005, 2.675) can round the other way. seq
  * (incl. float steps + -w + -f FMT) and printf (the util) now run UNMODIFIED. REMAINING inc 2:
  * /etc/inittab services + a clean shutdown.
+ * 0.5.30 = the SYSTEM LAYER, increment 2 (part 7): a clean SHUTDOWN (ABI 54 -> 55). One syscall REBOOT
+ * (0x1035, cmd = AIOS_RB_POWEROFF/HALT/REBOOT): a ROOT (euid 0) process asks the AIOS kernel to bring
+ * the system down -- the kernel stops its run loop and exits aios-uk with a distinguished code
+ * (AIOS_EXIT_POWEROFF/HALT/REBOOT = 200/201/202). This is the identity model's FIRST privilege gate on a
+ * kernel operation: an unprivileged reboot() -> EPERM. On the appliance, PID-1 (aios_init.c) maps the
+ * exit code to a REAL host power transition (reboot(RB_POWER_OFF/RB_AUTOBOOT)) instead of respawning --
+ * so a root `poweroff`/`halt`/`reboot` powers off the machine. libaios reboot() + a shadow <sys/reboot.h>;
+ * one guest/poweroff.c installed as /sbin/poweroff + /sbin/halt + /sbin/reboot (it picks the action from
+ * argv[0]). Proof: guest/prog_reboot.c (drop to a normal user -> reboot() denied EPERM, self-verifying
+ * since an ungated reboot would exit 200 not 0) + a gate check that poweroff/reboot exit aios-uk with
+ * 200/202. Only /etc/inittab services remain in increment 2.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -204,7 +215,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 29
+#define AIOS_VERSION_PATCH 30
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

@@ -130,6 +130,12 @@ gate() {
            ./aios-uk ./prog_id </dev/null 2>/dev/null | sed "s/^/    /";
            ./aios-uk ./prog_id </dev/null >/dev/null 2>&1; idrc=$?; echo "  [prog_id exit $idrc (expect 0)]";
            printf "  whoami (launched directly = AIOS root): "; ./aios-uk ./sbase-whoami 2>/dev/null;
+           echo "=== clean shutdown -- reboot() is ROOT-only; poweroff/halt/reboot exit aios-uk with a power code ===" &&
+           ./aios-uk ./prog_reboot </dev/null 2>/dev/null | sed "s/^/    /";
+           ./aios-uk ./prog_reboot </dev/null >/dev/null 2>&1; rbrc=$?; echo "  [prog_reboot exit $rbrc (expect 0 -- unprivileged reboot denied)]";
+           ./aios-uk ./poweroff >/dev/null 2>&1; poff=$?; echo "  [poweroff (root) -> aios-uk exit $poff (expect 200 = AIOS_EXIT_POWEROFF)]";
+           cp poweroff reboot 2>/dev/null; ./aios-uk ./reboot >/dev/null 2>&1; rbt=$?; rm -f reboot; echo "  [reboot (root)  -> aios-uk exit $rbt (expect 202 = AIOS_EXIT_REBOOT)]";
+           test "$rbrc" = 0 && test "$poff" = 200 && test "$rbt" = 202; shrc=$?;
            echo "=== crypt() -- SHA-512 (\$6\$) password hashing matches host openssl passwd -6 byte-for-byte ===" &&
            ./aios-uk ./prog_crypt </dev/null 2>/dev/null | sed "s/^/    /";
            ./aios-uk ./prog_crypt </dev/null >/dev/null 2>&1; cryrc=$?; echo "  [prog_crypt exit $cryrc (expect 0)]";
@@ -226,9 +232,9 @@ gate() {
            cc -O2 -o /tmp/login_pty test/login_pty.c -lutil 2>/dev/null &&
            AIOS_ROOT="$LR" timeout 25 /tmp/login_pty ./aios-uk "$LR/sbin/init" 2>/dev/null; lprc=$?;
            rm -rf "$LR";
-           echo "=== gate: pipebig jail execjail clock pcwd umask regex pwgrp id crypt printf jobctl stop sigmask sigpipe ctrlc ctrlc-job ctrlz rawkey login must exit 0 ===" &&
-           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig $rc, jail $jrc, execjail $ejrc, clock $clkrc, pcwd $pcwdrc, umask $umrc, regex $rxrc, pwgrp $pwrc, id $idrc, crypt $cryrc, printf $pfrc, jobctl $jcrc, stop $strc, sigmask $smrc, sigpipe $sprc, ctrlc $cprc, ctrlc-job $cjrc, ctrlz $czrc, rawkey $rkrc, login $lprc]";
-           test "$rc" = 0 && test "$jrc" = 0 && test "$ejrc" = 0 && test "$clkrc" = 0 && test "$pcwdrc" = 0 && test "$umrc" = 0 && test "$rxrc" = 0 && test "$pwrc" = 0 && test "$idrc" = 0 && test "$cryrc" = 0 && test "$pfrc" = 0 && test "$jcrc" = 0 && test "$strc" = 0 && test "$smrc" = 0 && test "$sprc" = 0 && test "$cprc" = 0 && test "$cjrc" = 0 && test "$czrc" = 0 && test "$rkrc" = 0 && test "$lprc" = 0;
+           echo "=== gate: pipebig jail execjail clock pcwd umask regex pwgrp id crypt printf shutdown jobctl stop sigmask sigpipe ctrlc ctrlc-job ctrlz rawkey login must exit 0 ===" &&
+           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig $rc, jail $jrc, execjail $ejrc, clock $clkrc, pcwd $pcwdrc, umask $umrc, regex $rxrc, pwgrp $pwrc, id $idrc, crypt $cryrc, printf $pfrc, shutdown $shrc, jobctl $jcrc, stop $strc, sigmask $smrc, sigpipe $sprc, ctrlc $cprc, ctrlc-job $cjrc, ctrlz $czrc, rawkey $rkrc, login $lprc]";
+           test "$rc" = 0 && test "$jrc" = 0 && test "$ejrc" = 0 && test "$clkrc" = 0 && test "$pcwdrc" = 0 && test "$umrc" = 0 && test "$rxrc" = 0 && test "$pwrc" = 0 && test "$idrc" = 0 && test "$cryrc" = 0 && test "$pfrc" = 0 && test "$shrc" = 0 && test "$jcrc" = 0 && test "$strc" = 0 && test "$smrc" = 0 && test "$sprc" = 0 && test "$cprc" = 0 && test "$cjrc" = 0 && test "$czrc" = 0 && test "$rkrc" = 0 && test "$lprc" = 0;
 }
 echo "##################### GATE PASS 1: PAL=linux (ptrace PTRACE_SYSCALL -- the default backend) #####################"
 gate; PASS_LINUX=$?

@@ -131,6 +131,10 @@ static proc_t g_proc[MAX_PROCS];
  * to this group is a later increment -- today it is faithfully tracked kernel state. */
 static pal_pid_t g_fg_pgrp;
 
+/* System shutdown: set by AIOS_SYS_REBOOT (root only) to an AIOS_RB_* command; the run loop then exits
+ * and aios_kernel_run returns AIOS_EXIT_POWEROFF + cmd. -1 = no shutdown requested. */
+static int g_shutdown = -1;
+
 static proc_t *proc_find(pal_pid_t pid) {
     for (int i = 0; i < MAX_PROCS; i++)
         if (g_proc[i].state != PS_FREE && g_proc[i].pid == pid) return &g_proc[i];
@@ -1067,6 +1071,11 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
     case AIOS_SYS_FORK: do_fork(p);                                        return;
     case AIOS_SYS_WAIT: do_wait(p, (unsigned long)sc->arg[0], sc->arg[1], (unsigned long)sc->arg[2]); return;
     case AIOS_SYS_EXIT: pal_guest_exit(p->pid, (int)sc->arg[0]);           return;
+    case AIOS_SYS_REBOOT:                                                  /* root-only system shutdown */
+        if (p->euid != 0) { kreturn(p, (uint64_t)-AIOS_EPERM); return; }   /* unprivileged -> EPERM */
+        { uint64_t cmd = sc->arg[0];
+          g_shutdown = (cmd <= AIOS_RB_REBOOT) ? (int)cmd : AIOS_RB_POWEROFF; }
+        return;                                          /* do not resume: the run loop will now exit */
     case AIOS_SYS_SIGRETURN: pal_guest_sigreturn(p->pid, p->sigsave); p->in_handler = 0; return;
     /* read/write/pipe own their own return/parking (pipes may block) -> dispatched specially */
     case AIOS_SYS_READ:  do_read (p, sc->arg[0], sc->arg[1], sc->arg[2]); return;
@@ -1158,6 +1167,7 @@ int aios_kernel_run(const char *guest_path, char *const guest_argv[]) {
     pal_guest_resume(pid);                            /* start init toward its first syscall */
 
     for (;;) {
+        if (g_shutdown >= 0) break;                   /* a root REBOOT was requested -> bring it down */
         pal_pid_t who; pal_syscall_t sc; int code = 0;
         int r = pal_guest_next(&who, &sc, &code);
         if (r < 0) break;                             /* no live guests left */
@@ -1178,6 +1188,7 @@ int aios_kernel_run(const char *guest_path, char *const guest_argv[]) {
         if (!p) { pal_guest_resume(who); continue; }  /* unknown pid (shouldn't happen) */
         dispatch(p, &sc);
     }
+    if (g_shutdown >= 0) return AIOS_EXIT_POWEROFF + g_shutdown;   /* poweroff/halt/reboot exit code */
     return init_code;
 }
 
@@ -1194,6 +1205,11 @@ int main(int argc, char **argv) {
 
     int code = aios_kernel_run(guest, guest_argv);
 
+    if (AIOS_EXIT_IS_SHUTDOWN(code)) {
+        kputs(code == AIOS_EXIT_REBOOT ? "[aios-uk] system reboot requested -- AIOS is going down\n"
+                                       : "[aios-uk] system halted -- AIOS is going down\n");
+        return code;
+    }
     kputs("[aios-uk] init guest exited via AIOS ABI, code=");
     kput_int(code);
     kputs("\n");

@@ -23,7 +23,9 @@
 #include <sys/wait.h>
 #include <sys/mount.h>
 #include <sys/ioctl.h>
+#include <sys/reboot.h>   /* RB_POWER_OFF / RB_AUTOBOOT -- the host power transition */
 #include <termios.h>      /* TIOCSCTTY */
+#include "aios_abi.h"     /* AIOS_EXIT_* -- the shutdown exit codes aios-uk returns (host-agnostic) */
 
 static void msg(const char *s) { (void)write(2, s, strlen(s)); }
 
@@ -59,6 +61,17 @@ int main(void) {
         }
         int st;
         while (waitpid(pid, &st, 0) < 0) { }
+        /* A clean AIOS shutdown: aios-uk exits with a distinguished code (a root `poweroff`/`halt`/
+         * `reboot` reached the AIOS kernel). Map it to a REAL host power transition instead of
+         * respawning -- this is how "shutdown AIOS" powers off the machine. */
+        if (WIFEXITED(st) && AIOS_EXIT_IS_SHUTDOWN(WEXITSTATUS(st))) {
+            int c = WEXITSTATUS(st);
+            msg(c == AIOS_EXIT_REBOOT ? "[aios-init] AIOS requested REBOOT; rebooting the host\n"
+                                      : "[aios-init] AIOS requested POWEROFF; powering off the host\n");
+            sync();
+            reboot(c == AIOS_EXIT_REBOOT ? RB_AUTOBOOT : RB_POWER_OFF);
+            /* reboot() should not return; if it does (unprivileged / no perm), fall through to respawn */
+        }
         msg("[aios-init] AIOS session ended; respawning the shell...\n");
         sleep(1);
     }

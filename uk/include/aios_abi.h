@@ -77,6 +77,12 @@
 #define AIOS_SYS_GETEGID   0x1032 /* () -> the caller's effective gid                                  */
 #define AIOS_SYS_SETUID    0x1033 /* (uid) -> 0, or -errno (EPERM if unprivileged + not real/saved)    */
 #define AIOS_SYS_SETGID    0x1034 /* (gid) -> 0, or -errno (EPERM if unprivileged + not real/saved)    */
+/* system shutdown: a ROOT (euid 0) process asks the AIOS kernel to bring the system down. The kernel
+ * stops its run loop and exits the aios-uk process with a distinguished code (AIOS_EXIT_* below); on
+ * the appliance, PID-1 maps that code to a real host power transition. On success REBOOT does NOT
+ * return (the whole system goes down -- PTRACE_O_EXITKILL reaps every guest); a non-root caller gets
+ * -EPERM (this is the identity model's first privilege gate on a kernel operation). */
+#define AIOS_SYS_REBOOT    0x1035 /* (cmd = AIOS_RB_*) -> does not return, or -EPERM (not root)        */
 
 /* ---- the Linux/aarch64 PAL trap convention (NOT part of the host-agnostic AIOS ABI) ----
  * AIOS owns its syscall NUMBERS (>= 0x1000, above); how a guest physically TRAPS into the kernel is a
@@ -92,6 +98,17 @@
  * arm64, side-effect-free, never issued by an AIOS guest, and the PAL always neutralizes it (x8 = -1)
  * so it never actually runs. A future seL4 PAL traps via IPC and ignores this entirely. */
 #define AIOS_GATEWAY 178   /* __NR_gettid on aarch64 -- the in-range seccomp-trappable trap gateway */
+
+/* AIOS_SYS_REBOOT commands + the aios-uk process EXIT codes they cause. The exit codes sit in a
+ * distinguished high range so the appliance PID-1 can tell a power transition from a normal init exit
+ * (which is < 200); both the kernel and the appliance's aios_init.c share these constants. */
+#define AIOS_RB_POWEROFF 0
+#define AIOS_RB_HALT     1
+#define AIOS_RB_REBOOT   2
+#define AIOS_EXIT_POWEROFF 200   /* = 200 + AIOS_RB_POWEROFF */
+#define AIOS_EXIT_HALT     201
+#define AIOS_EXIT_REBOOT   202
+#define AIOS_EXIT_IS_SHUTDOWN(c) ((c) >= AIOS_EXIT_POWEROFF && (c) <= AIOS_EXIT_REBOOT)
 
 /* sigprocmask `how` (match the shadow <signal.h>): a sigset_t is a bitmask, bit (1<<signum). */
 #define AIOS_SIG_BLOCK   0

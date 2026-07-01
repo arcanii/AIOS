@@ -1439,6 +1439,10 @@ char *ttyname(int fd) {
     errno = AIOS_ENOTTY; return 0;
 }
 
+/* reboot: ask the AIOS kernel to bring the system down (root only). Does NOT return on success -- the
+ * kernel exits its run loop and PTRACE_O_EXITKILL reaps this guest; returns -1/EPERM if not privileged. */
+int reboot(int cmd) { return (int)__ret(asys(AIOS_SYS_REBOOT, cmd, 0, 0)); }
+
 /* --- sysconf / rlimit / times: minimal so dash's miscbltin (ulimit/times) + paths compile + run. --- */
 long sysconf(int name) {
     switch (name) {

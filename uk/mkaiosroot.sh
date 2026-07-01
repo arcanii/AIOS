@@ -38,6 +38,10 @@ done
 cp "$UK/init"  "$ROOT/sbin/init"
 cp "$UK/login" "$ROOT/bin/login"
 
+# the shutdown command: one binary under three names in /sbin (it picks the action from argv[0]).
+# `poweroff`/`halt`/`reboot` ask the AIOS kernel to bring the system down (root only).
+for n in poweroff halt reboot; do cp "$UK/poweroff" "$ROOT/sbin/$n"; done
+
 # the system hostname (uname -n / the login banner read this; AIOS reports its OWN identity, not the host)
 echo aios > "$ROOT/etc/hostname"
 
