@@ -1,4 +1,15 @@
-# HANDOVER -- session 25 (2026-06-27): SYSTEM LAYER COMPLETE + HW-validated on the RPi5 (sched_ext ready)
+# HANDOVER -- session 25 (2026-06-27): SYSTEM LAYER COMPLETE + sched_ext (AIOS OWNS SCHEDULING) on the RPi5
+
+**LATEST (end of session): the endgame began -- `uk/sched_ext/scx_aios` is AIOS's own CPU scheduler as a
+sched_ext BPF program, HW-VALIDATED on the RPi5.** Attach -> `/sys/kernel/sched_ext` state=enabled
+ops=aios (the kernel schedules by AIOS policy, not EEVDF); the **full AIOS gate passes both PAL backends
+WHILE the AIOS scheduler owns the host**; detach -> clean revert. Committed `1d3cc43` (build) + `0cfb826`
+(HW-validated). It is a minimal global-FIFO struct_ops targeting the kernel-7.0 SCX API, self-contained
+(declares its own SCX kfuncs). Built in an `ubuntu:26.04` container (ABI-identical to the RPi5:
+clang21/bpftool7.7/libbpf1.6.3); the self-contained loader binary was copied over and run as root. See
+`uk/sched_ext/README.md`. (RPi5 access: my Mac key + passwordless sudo are now installed, Bryan-authorized.)
+The rest of this handover covers the system-layer work (inc 1+2) that preceded it.
+
 
 Continues the userspace-kernel work (the 2026-06-24 pivot: AIOS as a gVisor-style userspace kernel on
 Linux; verified seL4-on-x86-64 is the destination; verification is the soul). Session 24
@@ -113,10 +124,10 @@ ln/chmod/sort/grep + **whoami/logname/uname/env/printenv/pwd/tty/date/tr/cut/seq
 The system layer (inc 1 + inc 2) is DONE and the whole tree (through v0.5.31) is HW-validated on the
 RPi5 (see the status above). No open items remain within the system layer.
 
-The ENDGAME (Bryan's call which first):
-- **sched_ext** -- AIOS's own scheduling policy as a sched_ext BPF program ("AIOS owns scheduling").
-  NOW DIRECTLY DOABLE on the RPi5: the stock Ubuntu-26.04 kernel already has CONFIG_SCHED_CLASS_EXT=y +
-  BPF + BTF (no custom kernel build). This is the design doc's Phase-2 and the most natural next arc.
+The ENDGAME:
+- **sched_ext -- DONE (this session).** `uk/sched_ext/scx_aios` -- AIOS owns scheduling, HW-validated on
+  the RPi5 (see the LATEST note at the top). Next for it: an AIOS-AWARE policy (prioritise the AIOS
+  kernel + its guest tracees) rather than a flat global FIFO; or telemetry/latency comparison vs EEVDF.
 - **RPi5 "boots into AIOS"** -- deploy the minimal appliance (uk/appliance/, currently QEMU-only) onto
   the real RPi5: a BCM2712 kernel/DTB + the init->aios-uk->aiosroot initramfs, the Pi console instead of
   QEMU's PL011. A tangible deliverable (the new shutdown makes it satisfying -- a root `poweroff` powers
