@@ -183,31 +183,42 @@ host-driver core (pal/pal_linux_common.c) + TWO trap front-ends (pal/pal_linux.c
 pal/pal_seccomp.c = seccomp RET_TRACE; `make PAL=linux|seccomp`) + libaios + shadow standard headers
 (lib/include, -nostdinc).
 
-DONE through **v0.5.31, 55-syscall ABI**: OPERATIONAL (vendored dash + 28 sbase utils run UNMODIFIED) +
+DONE through **v0.5.32, 57-syscall ABI**: OPERATIONAL (vendored dash + 28 sbase utils run UNMODIFIED) +
 the boundary COMPLETE + FULL JOB CONTROL + raw termios + a SECOND PAL backend (seccomp via the GATEWAY)
-+ a minimal Linux-6.18 appliance + a Pi demo.sh + **the SYSTEM LAYER COMPLETE (inc 1 + inc 2)**: boots
-into init -> login -> a user session -> logout -> respawn, WITH a real IDENTITY model (per-process
-uid/gid, 6 syscalls; login SWITCHES USER), crypt() SHA-512 password hashing (byte-identical to openssl
-passwd -6), more utils (uname reports AIOS not Linux / env / printenv / pwd / tty / date / tr / cut / seq
-/ printf, incl. a real FLOAT printf byte-identical to glibc), a clean root-gated SHUTDOWN (REBOOT
-syscall -> aios-uk exits -> the appliance PID-1 does a real host poweroff), and config-driven init
-(/etc/inittab). **ENTIRE tree HW-validated: v0.5.24-0.5.28 on the RPi4, and ALL of it through v0.5.31 on
-the new RPi5** (`aios@tkrpi5.local`/192.168.0.42, Ubuntu 26.04, kernel 7.0, gcc 15; `sh gate.sh` ->
-linux=0 seccomp=0 both backends). NEVER patch vendored sources -- grow libaios.
++ a minimal Linux-6.18 appliance + **the SYSTEM LAYER COMPLETE (inc 1+2)**: init -> login -> a user
+session -> logout -> respawn, a real IDENTITY model (per-process uid/gid; login SWITCHES USER), crypt()
+SHA-512 (=openssl passwd -6), a fuller shell (uname reports AIOS / date / tr / cut / seq / a real FLOAT
+printf =glibc), a clean root-gated SHUTDOWN (REBOOT -> appliance PID-1 host poweroff), config-driven init
+(/etc/inittab). **PLUS two endgame subsystems: (1) sched_ext -- `uk/sched_ext/scx_aios` is AIOS's OWN CPU
+scheduler as a BPF struct_ops, HW-validated on the RPi5 (attach -> /sys/kernel/sched_ext ops=aios, the
+full gate passes while AIOS schedules the host, detach reverts); built in an ubuntu:26.04 container
+(clang21/bpftool7.7/libbpf1.6.3, ABI-identical to the RPi5) against its BTF, loader run as root. (2)
+NETWORKING inc 1 -- a socket ABI SOCKET/CONNECT (a TCP CLIENT; host-passthrough: a socket is an AIOS fd
+backed by a host socket, sockaddr layout matches the host so the PAL forwards bytes); guest/prog_net.c
+round-trips a host echo (test/net_client.c, gate key `net`) + fetched http://example.com over the REAL
+internet from the RPi5.** ENTIRE tree HW-validated on the RPi5 (`aios@tkrpi5.local`, Ubuntu 26.04, kernel
+7.0, gcc 15; `sh gate.sh` -> linux=0 seccomp=0 both backends) + v0.5.24-0.5.28 on the RPi4 (now offline).
+NEVER patch vendored sources -- grow libaios.
 
-PRIMARY TASK -> the SYSTEM LAYER IS COMPLETE + HW-validated; move to the ENDGAME -- ASK Bryan which
-first: (A) **sched_ext** -- AIOS's own scheduling policy as a sched_ext BPF program; NOW DIRECTLY DOABLE
-on the RPi5 (its stock Ubuntu-26.04 kernel already has CONFIG_SCHED_CLASS_EXT=y + BPF + BTF -- no custom
-kernel), the design doc's Phase 2 + the most natural next arc. (B) **RPi5 "boots into AIOS"** -- deploy
-the minimal appliance (uk/appliance/, QEMU-only today) onto the real RPi5 (BCM2712 kernel/DTB + the
-init->aios-uk->aiosroot initramfs, the Pi console); tangible, but a real kernel/boot packaging effort.
-(C) **pal_sel4.c** -- the seL4/x86-64 replant seam (a THIRD PAL backend proving kernel/aios_kernel.c runs
-UNCHANGED on a verified base; the soul; M9 de-risked it). Keep kernel/aios_kernel.c host-agnostic + the
-PAL seam minimal. Commit per milestone on `main`; validate colima + the RPi5 (`aios@tkrpi5.local`, a
-per-session password via SSH_ASKPASS -- my key is NOT installed; the auto-classifier blocked unrequested
-authorized_keys persistence, so ask Bryan to authorize a key for smoother rsync/gate) via `sh gate.sh`;
-Bryan pushes. GOTCHAS: use the ABSOLUTE .../AIOS/uk path for docker -v
-(never $PWD -- git drifts it); write the gate log INTO uk/ (colima only mounts $HOME) + run the gate
-DETACHED (docker run -d) so a turn interruption doesn't kill it; the intermittent seccomp dash-pipe stall
-(timeout-guarded now); the GATEWAY for seccomp; .pal.stamp; gcc 14 strictness; NO apostrophes in a `sh -c
-'...'` body; macOS has no `setsid` (detach on the Pi, not the Mac).
+PRIMARY TASK -> **continue NETWORKING (Bryan's pick), in the recommended order** (each a milestone:
+commit + gate + RPi5-validate): **(1) a SERVER -- BIND/LISTEN/ACCEPT + SETSOCKOPT** (SO_REUSEADDR), so
+AIOS can listen (prove with an AIOS echo/HTTP server a host client hits); mirror sys_socket -- accept()
+returns a new AIOS fd backed by the accepted host socket. **(2) NON-BLOCKING + park/wake** -- integrate
+socket readiness into the kernel's event loop (like the pipe park/wake) so network I/O no longer blocks
+other guests (removes the single-guest limit; the honest blocking limitation today). **(3) DNS** -- a
+resolver so programs use hostnames not dotted-quad IPs (getaddrinfo/gethostbyname; simplest = a PAL
+passthrough to host getaddrinfo, or a from-scratch UDP resolver -- the latter fits "grow our own").
+**(4) network-access CONFINEMENT** -- which hosts/ports a guest may reach, analogous to M4.2 fs
+confinement (a PAL policy). THEN the other endgame arcs (Bryan's call): RPi5 "boots into AIOS" appliance
+deploy (a systemd/getty unit is the light path); pal_sel4.c (BACKLOGGED by Bryan -- the eventual soul).
+Keep kernel/aios_kernel.c host-agnostic + the PAL seam minimal. Commit per milestone on `main`; Bryan
+pushes. **DEV LOOP:** colima -- `UK=.../AIOS/uk; docker run -d --platform linux/arm64 --cap-add=SYS_PTRACE
+-v "$UK":/uk -w /uk gcc:13 sh -c 'stdbuf -oL sh gate.sh > /uk/scratch_gate.log 2>&1'` then poll
+`$UK/scratch_gate.log` for `RESULT:` (rm before commit). RPi5 -- **my Mac key + passwordless sudo are
+installed** (Bryan-authorized), so `rsync -az --delete <excludes> uk/ aios@tkrpi5.local:~/uk/` then
+`ssh aios@tkrpi5.local 'cd ~/uk && rm -f gate_hw.log && nohup setsid sh -c "sh gate.sh > gate_hw.log
+2>&1" &'` + poll. GOTCHAS: ABSOLUTE .../AIOS/uk path for docker -v (git drifts $PWD); gate log INTO uk/
+(colima only mounts $HOME); the GATEWAY for seccomp; .pal.stamp forces a PAL-switch rebuild; intermittent
+seccomp dash-pipe stall (timeout-guarded); gcc 14/15 stricter than 13; NO apostrophes in a `sh -c '...'`
+body; macOS has no `setsid` (detach on the Pi, not the Mac); the single-threaded kernel must NOT block
+(park/wake) -- the crux of networking inc 2.
