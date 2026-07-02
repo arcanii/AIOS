@@ -714,13 +714,15 @@ int pal_host_sock_writable(pal_file_t f) {             /* has a non-blocking con
 #define PAL_NET_MAX_WATCH 64
 static struct { int fd; short events; } g_net_watch[PAL_NET_MAX_WATCH];
 static int g_net_nwatch;
-void pal_net_watch_reset(void) { g_net_nwatch = 0; }
+static int g_net_timeout_ms = -1;                     /* the kernel's earliest park deadline, or -1 = none */
+void pal_net_watch_reset(void) { g_net_nwatch = 0; g_net_timeout_ms = -1; }
 void pal_net_watch_add(pal_file_t f, int want_write) {
     if (g_net_nwatch >= PAL_NET_MAX_WATCH) return;
     g_net_watch[g_net_nwatch].fd = (int)f;
     g_net_watch[g_net_nwatch].events = want_write ? POLLOUT : POLLIN;
     g_net_nwatch++;
 }
+void pal_net_watch_timeout(int ms) { g_net_timeout_ms = ms; }   /* ms until the kernel's earliest deadline */
 int pal_net_have_watches(void) { return g_net_nwatch > 0; }
 static void pal_net_chld_noop(int s) { (void)s; }
 static void pal_net_init_signals(void) {              /* idempotent: SIGCHLD deliverable + blocked (ppoll unblocks it) */
@@ -735,9 +737,13 @@ int pal_net_wait_ready(void) {
         pfds[i].fd = g_net_watch[i].fd; pfds[i].events = g_net_watch[i].events; pfds[i].revents = 0;
     }
     sigset_t mask; sigprocmask(SIG_SETMASK, NULL, &mask); sigdelset(&mask, SIGCHLD);  /* deliver SIGCHLD during the wait */
-    struct timespec to = { 1, 0 };                    /* 1s safety net; SIGCHLD/readiness normally wakes us sooner */
+    /* wake by the kernel's earliest park deadline (SO_RCVTIMEO) if sooner than the 1s safety net */
+    int budget = (g_net_timeout_ms >= 0 && g_net_timeout_ms < 1000) ? g_net_timeout_ms : 1000;
+    struct timespec to = { budget / 1000, (long)(budget % 1000) * 1000000L };
     int r = ppoll(pfds, (nfds_t)g_net_nwatch, &to, &mask);
-    return r > 0 ? 1 : 0;                              /* >0: a socket is ready; EINTR/timeout: caller polls guests */
+    /* >=0 (a socket is ready OR the wait elapsed) surfaces to the kernel (code 4) so it retries parked
+     * ops AND expires any timed-out reads; <0 (EINTR: SIGCHLD/^C) -> the caller collects the guest event */
+    return r >= 0 ? 1 : 0;
 }
 
 /* AIOS termios <-> host termios. The shadow <termios.h> flag/c_cc values match the host's, so this is

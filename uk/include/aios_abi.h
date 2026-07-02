@@ -107,10 +107,14 @@
 #define AIOS_IPPROTO_TCP  6
 #define AIOS_IPPROTO_UDP 17
 
-/* setsockopt levels + option names (AIOS-owned; values match the host so the PAL forwards them). */
+/* setsockopt levels + option names (AIOS-owned). REUSEADDR/REUSEPORT values match the host so the PAL
+ * forwards them straight through; SO_RCVTIMEO is handled KERNEL-side (a receive timeout for the socket
+ * park/wake -- the host socket is non-blocking so a host SO_RCVTIMEO would be moot), so its value need
+ * only be AIOS-internally consistent. optval for SO_RCVTIMEO is a struct timeval (tv_sec, tv_usec). */
 #define AIOS_SOL_SOCKET   1
 #define AIOS_SO_REUSEADDR  2
 #define AIOS_SO_REUSEPORT 15
+#define AIOS_SO_RCVTIMEO  20   /* receive timeout (struct timeval); a parked socket read expires -> EAGAIN */
 
 struct aios_in_addr { unsigned int s_addr; };            /* IPv4 address, network byte order */
 struct aios_sockaddr_in {

@@ -46,6 +46,7 @@ typedef struct {
     int        pipe_id;     /* which pipe (the read + write ends share it) */
     int        pipe_write;  /* 1 = write end, 0 = read end */
     int        is_sock;     /* this backing is a socket (non-blocking at the host -> read/write PARK) */
+    int        rcvtimeo_ms; /* SO_RCVTIMEO: a parked socket read on this fd expires after this many ms (0 = none) */
 } ofile_t;
 static ofile_t g_ofile[MAX_OFILES];
 static int     g_next_pipe_id = 1;
@@ -104,6 +105,7 @@ typedef struct {
     uint64_t      blk_done;            /* bytes already transferred (writes) */
     int           blk_pipe;            /* pipe_id this I/O is parked on */
     int           blk_sock_op;         /* PS_BLOCKED_NET_*: the SKOP_* socket op to complete on wake */
+    long          blk_deadline_ms;     /* SO_RCVTIMEO: absolute monotonic-ms deadline for a parked read (0 = none) */
     /* signals: per-process dispositions + one pending signal + saved regs while a handler runs */
     uint64_t      sig_handler[AIOS_NSIG];   /* 0 = SIG_DFL, 1 = SIG_IGN, else a guest handler address */
     uint64_t      sig_tramp;           /* the guest's sigreturn trampoline (registered via sigaction) */
@@ -596,6 +598,16 @@ static long sys_setsockopt(proc_t *p, uint64_t fd, uint64_t level, uint64_t optn
     if (optlen > 128) return -AIOS_EINVAL;
     char optval[128];
     if (optlen && pal_guest_read(p->pid, goptval, optval, optlen) != optlen) return -AIOS_EFAULT;
+    /* SO_RCVTIMEO is honored KERNEL-side (the host socket is non-blocking, so a host SO_RCVTIMEO would be
+     * moot): store a per-fd receive-timeout in ms that the socket park/wake applies. optval is a struct
+     * timeval {tv_sec, tv_usec}, two little-endian int64 on aarch64. */
+    if ((int)level == AIOS_SOL_SOCKET && (int)optname == AIOS_SO_RCVTIMEO) {
+        if (optlen < 16) return -AIOS_EINVAL;
+        unsigned long long sec = 0, usec = 0;
+        for (int i = 7; i >= 0; i--) { sec = (sec << 8) | (unsigned char)optval[i]; usec = (usec << 8) | (unsigned char)optval[8 + i]; }
+        g_ofile[p->fd[fd]].rcvtimeo_ms = (int)(sec * 1000 + usec / 1000);
+        return 0;
+    }
     return pal_host_setsockopt(fd_backing(p, fd), (int)level, (int)optname, optlen ? optval : NULL, (unsigned int)optlen);
 }
 static long sys_getsockname(proc_t *p, uint64_t fd, uint64_t gaddr, uint64_t gaddrlen) {
@@ -885,6 +897,14 @@ static int deliver_pending(proc_t *p) {
     return 1;
 }
 
+/* Monotonic milliseconds (the kernel's only time source is the PAL clock). Used for SO_RCVTIMEO park
+ * deadlines -- host-agnostic (a seL4 PAL provides the same clock). */
+static long now_ms(void) {
+    struct aios_timespec ts;
+    if (pal_host_clock_gettime(AIOS_CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return (long)ts.tv_sec * 1000 + (long)ts.tv_nsec / 1000000;
+}
+
 /* ---- networking park/wake ----
  * Host sockets are NON-BLOCKING (the PAL sets O_NONBLOCK), so a socket read/write/accept/connect that
  * would block returns PAL_EWOULDBLOCK; the kernel PARKS the guest (PS_BLOCKED_NET_IN = wait readable,
@@ -991,6 +1011,9 @@ static void do_read(proc_t *p, uint64_t fd, uint64_t gbuf, uint64_t len) {
     if (g_ofile[oi].is_sock) {                        /* a socket: non-blocking read, park on empty (park/wake) */
         p->blk_fd = (int)fd; p->blk_buf = gbuf; p->blk_len = len; p->blk_done = 0;
         p->blk_pipe = 0; p->blk_sock_op = SKOP_READ;
+        /* SO_RCVTIMEO: set the read's deadline ONCE, here at the first park (net_attempt re-parks on
+         * retry without touching it). 0 = no timeout (park until data / EOF / ^C). */
+        p->blk_deadline_ms = g_ofile[oi].rcvtimeo_ms ? now_ms() + g_ofile[oi].rcvtimeo_ms : 0;
         net_attempt(p);                              /* returns data/EOF/-errno, or parks PS_BLOCKED_NET_IN */
         return;
     }
@@ -1076,10 +1099,17 @@ static void do_accept(proc_t *p, uint64_t fd, uint64_t gaddr, uint64_t gaddrlen)
  * waitpid (byte-identical to the pre-networking behaviour). */
 static void net_publish_watches(void) {
     pal_net_watch_reset();
+    long soonest = -1;
     for (int i = 0; i < MAX_PROCS; i++) {
         proc_t *g = &g_proc[i];
         if      (g->state == PS_BLOCKED_NET_IN)  pal_net_watch_add(fd_backing(g, g->blk_fd), 0);
         else if (g->state == PS_BLOCKED_NET_OUT) pal_net_watch_add(fd_backing(g, g->blk_fd), 1);
+        else continue;
+        if (g->blk_deadline_ms > 0 && (soonest < 0 || g->blk_deadline_ms < soonest)) soonest = g->blk_deadline_ms;
+    }
+    if (soonest >= 0) {                              /* wake the co-wait by the earliest SO_RCVTIMEO deadline */
+        long rel = soonest - now_ms();
+        pal_net_watch_timeout(rel < 0 ? 0 : (int)rel);
     }
 }
 /* A watched socket became ready (pal_guest_next returned 4). Re-try every socket-parked guest's op;
@@ -1089,6 +1119,21 @@ static void net_retry_parked(void) {
     for (int i = 0; i < MAX_PROCS; i++) {
         proc_t *g = &g_proc[i];
         if (g->state == PS_BLOCKED_NET_IN || g->state == PS_BLOCKED_NET_OUT) net_attempt(g);
+    }
+}
+/* Expire parked socket reads whose SO_RCVTIMEO deadline has passed (checked after net_retry_parked, so a
+ * socket that became ready right at the deadline completes rather than times out). A timed-out read
+ * returns -EAGAIN, POSIX-style. */
+static void net_expire_deadlines(void) {
+    long t = now_ms();
+    for (int i = 0; i < MAX_PROCS; i++) {
+        proc_t *g = &g_proc[i];
+        if ((g->state == PS_BLOCKED_NET_IN || g->state == PS_BLOCKED_NET_OUT) &&
+            g->blk_deadline_ms > 0 && t >= g->blk_deadline_ms) {
+            g->state = PS_RUNNING;
+            g->blk_deadline_ms = 0;
+            pal_guest_return(g->pid, (uint64_t)-AIOS_EAGAIN);
+        }
     }
 }
 
@@ -1386,7 +1431,7 @@ int aios_kernel_run(const char *guest_path, char *const guest_argv[]) {
         pal_pid_t who; pal_syscall_t sc; int code = 0;
         int r = pal_guest_next(&who, &sc, &code);
         if (r < 0) break;                             /* no live guests left */
-        if (r == 4) { net_retry_parked(); continue; } /* a watched socket is ready -> retry parked ops */
+        if (r == 4) { net_retry_parked(); net_expire_deadlines(); continue; } /* socket ready / deadline -> retry + expire */
         proc_t *p = proc_find(who);
         if (r == 0) {                                 /* `who` exited */
             if (who == init_pid) init_code = code;

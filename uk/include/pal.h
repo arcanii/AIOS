@@ -226,6 +226,7 @@ int        pal_host_sock_writable(pal_file_t f);
  * not a host detail (a seL4 PAL maps it to its net server's readiness notifications). */
 void pal_net_watch_reset(void);
 void pal_net_watch_add  (pal_file_t f, int want_write);
+void pal_net_watch_timeout(int ms);   /* wake the co-wait after `ms` (the kernel's earliest SO_RCVTIMEO deadline; <0 = none) */
 int  pal_net_have_watches(void);
 /* One co-wait step: block until a published socket is ready (return 1) OR a guest event / signal is
  * pending (return 0, so the caller collects it via a non-blocking waitpid). Called by pal_guest_next

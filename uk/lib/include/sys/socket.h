@@ -18,10 +18,12 @@ typedef unsigned short sa_family_t;
 #define SOCK_STREAM  AIOS_SOCK_STREAM
 #define SOCK_DGRAM   AIOS_SOCK_DGRAM
 
-/* setsockopt levels + option names (values match the host; see aios_abi.h) */
+/* setsockopt levels + option names (see aios_abi.h). SO_RCVTIMEO takes a struct timeval and is honored
+ * by the kernel's socket park/wake (a parked read expires -> EAGAIN); the rest forward to the host. */
 #define SOL_SOCKET    AIOS_SOL_SOCKET
 #define SO_REUSEADDR  AIOS_SO_REUSEADDR
 #define SO_REUSEPORT  AIOS_SO_REUSEPORT
+#define SO_RCVTIMEO   AIOS_SO_RCVTIMEO
 
 struct sockaddr { sa_family_t sa_family; char sa_data[14]; };
 

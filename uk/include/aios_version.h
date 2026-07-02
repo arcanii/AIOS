@@ -256,6 +256,16 @@
  * AIOS guests (a forked echo server + the client) round-trip over TCP INSIDE ONE aios-uk, which would
  * DEADLOCK under the old blocking accept; the existing client/server tests (net/netsrv) now also exercise
  * park/wake. Gate key `netloop`, green BOTH backends. NEXT: DNS, then network-access confinement.
+ * 0.5.35 = NETWORKING, increment 4a: a TIMED socket read via SO_RCVTIMEO (NO new ABI -- reuses
+ * SETSOCKOPT; the groundwork for a DNS resolver that must time out on packet loss). A guest sets
+ * SO_RCVTIMEO (a struct timeval) on a socket; the kernel stores it per-fd (host-side it would be moot --
+ * the socket is O_NONBLOCK) and gives a parked read a DEADLINE. The co-wait now carries the earliest
+ * deadline to ppoll (pal_net_watch_timeout), and on wake the kernel EXPIRES timed-out reads with -EAGAIN
+ * (net_expire_deadlines, run after net_retry_parked so a socket that readied exactly at the deadline
+ * still completes). pal_net_wait_ready now surfaces a ppoll TIMEOUT (not just readiness) as code 4 so the
+ * kernel gets to expire. Only receive parks get a deadline (SO_SNDTIMEO not modeled). Proof:
+ * guest/prog_rcvtimeo.c -- a bound UDP socket read with SO_RCVTIMEO 300ms returns -1/EAGAIN after ~300ms
+ * (measured via CLOCK_MONOTONIC), neither hanging nor returning early. inc 4b = the resolver on top.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -265,7 +275,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 34
+#define AIOS_VERSION_PATCH 35
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)
