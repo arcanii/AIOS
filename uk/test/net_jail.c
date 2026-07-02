@@ -58,6 +58,7 @@ int main(int argc, char **argv)
         { "AIOS_NET_ALLOW=10.0.0.0/8:*",   "deny"  },  /* different subnet */
         { "AIOS_NET_ALLOW=127.0.0.1/:80",  "deny"  },  /* malformed prefix must FAIL CLOSED (not allow-all) */
         { "AIOS_NET_ALLOW=127.0.0.1:abc",  "deny"  },  /* malformed port must FAIL CLOSED (not any-port) */
+        { "AIOS_NET_ALLOW=",               "deny"  },  /* SET but EMPTY = deny all (engaged, no endpoints) */
     };
     int n = (int)(sizeof cases / sizeof cases[0]), ok = 1;
     for (int i = 0; i < n; i++)

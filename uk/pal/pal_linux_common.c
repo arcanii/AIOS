@@ -659,47 +659,50 @@ static void set_nonblock(int fd) {
 }
 
 /* --- network-access confinement (the net analogue of M4.2 fs confinement) ---
- * When the PAL is launched with AIOS_NET_ALLOW set, a guest may CONNECT only to endpoints on the
- * allow-list; anything else is refused with -EACCES BEFORE any host connect (so a confined guest cannot
- * phone home or scan the network). Purely a PAL POLICY -- the kernel + ABI are UNCHANGED (like AIOS_ROOT).
- * Default (unset) = unrestricted, byte-identical to before. Established ONCE at spawn, fail-closed (a set
- * but empty/all-bad list = deny all). Format: comma-separated "ADDR[/prefix][:port]" rules, where ADDR is
- * a dotted quad or "*" (any) and port is a number or "*"/omitted (any) -- e.g.
- * "127.0.0.1:8080,10.0.0.0/8,*:53". IPv4 only (a confined guest cannot use other families). */
+ * Two independent PAL POLICIES, each an allow-list established ONCE at spawn, fail-closed (a set but
+ * empty/all-bad list = deny all), default (unset) = unrestricted (byte-identical to before). The kernel
+ * + ABI are UNCHANGED (like AIOS_ROOT). Both share the format: comma-separated "ADDR[/prefix][:port]"
+ * rules, ADDR a dotted quad or "*" (any), port a number or "*"/omitted (any); IPv4 only.
+ *   - AIOS_NET_ALLOW  gates outbound CONNECT (which remote endpoints a guest may REACH) -- refused with
+ *     -EACCES before any host connect, so a confined guest cannot phone home or scan the network.
+ *     e.g. "127.0.0.1:8080,10.0.0.0/8,*:53".
+ *   - AIOS_NET_BIND_ALLOW gates BIND/LISTEN (which local addr/port a guest may CLAIM) -- a disallowed
+ *     bind is refused, and listen() is refused unless the socket's current local address is allowed (so
+ *     an unbound listen() cannot auto-bind an ephemeral 0.0.0.0 port past the gate). e.g. "127.0.0.1"
+ *     (any port on loopback) or "0.0.0.0:8080". */
 struct net_rule { unsigned int addr; unsigned int mask; int port; };   /* addr/mask network order; port host order, 0 = any */
 static struct net_rule g_net_rules[64];
 static int g_net_nrules;
 static int g_net_confined_net;                                          /* AIOS_NET_ALLOW was set */
+static struct net_rule g_net_bind_rules[64];
+static int g_net_nbind_rules;
+static int g_net_confined_bind;                                         /* AIOS_NET_BIND_ALLOW was set */
 
 static int net_all_digits(const char *s) {                            /* non-empty, all 0-9 */
     if (!*s) return 0;
     for (; *s; s++) if (*s < '0' || *s > '9') return 0;
     return 1;
 }
-static void pal_net_init_once(void) {
-    static int done = 0;
-    if (done) return;
-    done = 1;
-    const char *spec = getenv("AIOS_NET_ALLOW");
-    if (!spec || !*spec) return;                                       /* unconfined (default) */
-    g_net_confined_net = 1;
+/* Parse a comma-separated "ADDR[/prefix][:port]" allow-list into `rules` (up to `max`); return the
+ * count. FAIL-CLOSED: a token with a malformed/empty prefix, port, or addr is DROPPED, never silently
+ * turned into an allow-all (atoi's 0 = mask 0 = any host, or 0 = any port). Shared by both lists. */
+static int net_parse_rules(const char *spec, struct net_rule *rules, int max) {
+    int nr = 0;
     char buf[1024];
     size_t i = 0; for (; spec[i] && i < sizeof buf - 1; i++) buf[i] = spec[i];
     buf[i] = '\0';
     char *p = buf;
-    while (*p && g_net_nrules < (int)(sizeof g_net_rules / sizeof g_net_rules[0])) {
+    while (*p && nr < max) {
         char *comma = p; while (*comma && *comma != ',') comma++;
         char save = *comma; *comma = '\0';                             /* p = one rule token */
         char *next = save ? comma + 1 : comma;                         /* where p advances to */
         int bad = 0;
-        /* split off ":port" (IPv4 has no colon, so the first colon separates the port). A non-numeric or
-         * empty port is REJECTED (fail-closed) -- never silently 0=any (which would open every port). */
+        /* split off ":port" (IPv4 has no colon, so the first colon separates the port) */
         char *colon = p; while (*colon && *colon != ':') colon++;
         int port = 0;                                                  /* 0 = any */
         if (*colon == ':') { *colon = '\0'; const char *ps = colon + 1;
             if (*ps == '*') port = 0; else if (net_all_digits(ps)) port = atoi(ps); else bad = 1; }
-        /* split off "/prefix". A non-numeric or empty prefix is REJECTED (fail-closed) -- never atoi's
-         * 0, which would compute mask 0 = match EVERY host (allow-all). */
+        /* split off "/prefix" */
         char *slash = p; while (*slash && *slash != '/') slash++;
         int prefix = 32;
         if (*slash == '/') { *slash = '\0'; const char *ps = slash + 1;
@@ -714,23 +717,44 @@ static void pal_net_init_once(void) {
             unsigned int hm = (prefix == 0) ? 0u : (0xFFFFFFFFu << (32 - prefix));
             r.addr = ia.s_addr; r.mask = htonl(hm);                   /* addr network order; mask network order */
         }
-        g_net_rules[g_net_nrules++] = r;
+        rules[nr++] = r;
         *comma = save; p = next;
     }
+    return nr;
 }
-/* Is `addr` (a guest sockaddr) an allowed CONNECT destination under the active policy? IPv4 only. */
-static int net_addr_allowed(const void *addr, unsigned int addrlen) {
-    if (!g_net_confined_net) return 1;                                /* unconfined */
+static void pal_net_init_once(void) {
+    static int done = 0;
+    if (done) return;
+    done = 1;
+    /* A SET variable engages confinement even if empty or all-bad -- fail-CLOSED: an engaged policy with
+     * no allowed endpoints denies all. Only an UNSET variable (getenv == NULL) leaves it unconfined. */
+    const char *spec = getenv("AIOS_NET_ALLOW");
+    if (spec) { g_net_confined_net = 1; if (*spec) g_net_nrules = net_parse_rules(spec, g_net_rules, 64); }
+    const char *bspec = getenv("AIOS_NET_BIND_ALLOW");
+    if (bspec) { g_net_confined_bind = 1; if (*bspec) g_net_nbind_rules = net_parse_rules(bspec, g_net_bind_rules, 64); }
+}
+/* Does `addr` (a guest sockaddr) match any rule in `rules`? IPv4 only; a non-IPv4 addr never matches. */
+static int net_match(const struct net_rule *rules, int nrules, const void *addr, unsigned int addrlen) {
     if (addrlen < sizeof(struct sockaddr_in)) return 0;
     const struct sockaddr_in *sin = (const struct sockaddr_in *)addr;
     if (sin->sin_family != AF_INET) return 0;                         /* non-IPv4 denied when confined */
     unsigned int da = sin->sin_addr.s_addr;                           /* network order */
     int dp = (int)ntohs(sin->sin_port);
-    for (int k = 0; k < g_net_nrules; k++) {
-        struct net_rule *r = &g_net_rules[k];
+    for (int k = 0; k < nrules; k++) {
+        const struct net_rule *r = &rules[k];
         if ((da & r->mask) == (r->addr & r->mask) && (r->port == 0 || r->port == dp)) return 1;
     }
     return 0;
+}
+/* Is `addr` an allowed CONNECT destination under AIOS_NET_ALLOW? (unconfined => always yes) */
+static int net_addr_allowed(const void *addr, unsigned int addrlen) {
+    if (!g_net_confined_net) return 1;
+    return net_match(g_net_rules, g_net_nrules, addr, addrlen);
+}
+/* Is `addr` an allowed local BIND address under AIOS_NET_BIND_ALLOW? (unconfined => always yes) */
+static int net_bind_allowed(const void *addr, unsigned int addrlen) {
+    if (!g_net_confined_bind) return 1;
+    return net_match(g_net_bind_rules, g_net_nbind_rules, addr, addrlen);
 }
 
 pal_file_t pal_host_socket(int domain, int type, int protocol) {
@@ -746,9 +770,20 @@ int pal_host_connect(pal_file_t f, const void *addr, unsigned int addrlen) {
     return -errno;
 }
 int pal_host_bind(pal_file_t f, const void *addr, unsigned int addrlen) {
+    if (!net_bind_allowed(addr, addrlen)) return -EACCES;             /* net confinement: refuse a disallowed local bind */
     return bind((int)f, (const struct sockaddr *)addr, (socklen_t)addrlen) == 0 ? 0 : -errno;
 }
 int pal_host_listen(pal_file_t f, int backlog) {
+    if (g_net_confined_bind) {
+        /* close the listen auto-bind hole: listen() on an UNBOUND socket lets the kernel auto-bind an
+         * ephemeral 0.0.0.0 port, bypassing the bind gate. Check the socket's CURRENT local address
+         * against the bind allow-list -- an unbound socket reads 0.0.0.0:0 and is refused unless the
+         * policy allows it; a socket already bound to an allowed addr:port passes. */
+        struct sockaddr_in local; socklen_t sl = sizeof local;
+        memset(&local, 0, sizeof local);
+        if (getsockname((int)f, (struct sockaddr *)&local, &sl) != 0) return -errno;
+        if (!net_bind_allowed(&local, (unsigned int)sl)) return -EACCES;
+    }
     return listen((int)f, backlog) == 0 ? 0 : -errno;
 }
 /* accept: fill `addr` (up to *addrlen bytes) with the peer address, set *addrlen to the ACTUAL peer

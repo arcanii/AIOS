@@ -294,6 +294,21 @@
  * round-trip to the echo server, while AIOS_NET_ALLOW="127.0.0.1:1" refuses the same connect with EACCES
  * (PORT-granular). Gate key `netjail`. THE NETWORKING ARC (client/server/non-blocking/DNS/confinement)
  * IS COMPLETE.
+ * 0.5.38 = NETWORKING confinement, the OTHER half: BIND/LISTEN confinement (NO new ABI -- a second PAL
+ * policy alongside inc-5's connect gate). Launched with AIOS_NET_BIND_ALLOW set (same rule format as
+ * AIOS_NET_ALLOW), a guest may BIND only to allow-listed LOCAL addr:port (which ports/interfaces it may
+ * CLAIM, vs AIOS_NET_ALLOW's which remote endpoints it may REACH): a disallowed bind is refused with
+ * -EACCES before the host bind, and listen() is refused unless the socket's CURRENT local address is
+ * allowed, so an unbound listen() cannot auto-bind an ephemeral 0.0.0.0 port past the gate (the auto-bind
+ * guard, via getsockname). The two lists are independent + fail-closed; default (unset) = unrestricted,
+ * byte-identical to before (netsrv/netloop unaffected). The rule parser + matcher were factored (shared
+ * by both lists) so the inc-5 fail-closed fix is not duplicated. Kernel + ABI UNCHANGED (pure PAL policy,
+ * like AIOS_ROOT). Scope: bind/listen; accept (ingress peer-filtering) is a separate future concern. A
+ * future seL4 PAL enforces the same list against its network server. Proof: test/bind_jail.c red-teams
+ * guest/prog_bindjail.c across allow (loopback any-port, exact addr:port, bind+listen) + deny (wrong
+ * port / any-interface when only loopback allowed / different subnet / malformed prefix / malformed port
+ * / unbound-listen auto-bind) + a permissive "*" that re-allows auto-bind; gate key `bindjail`. THE
+ * NETWORKING ARC's confinement is now COMPLETE for BOTH reach (connect) AND claim (bind/listen).
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -303,7 +318,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 37
+#define AIOS_VERSION_PATCH 38
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)
