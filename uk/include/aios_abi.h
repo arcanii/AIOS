@@ -83,6 +83,31 @@
  * return (the whole system goes down -- PTRACE_O_EXITKILL reaps every guest); a non-root caller gets
  * -EPERM (this is the identity model's first privilege gate on a kernel operation). */
 #define AIOS_SYS_REBOOT    0x1035 /* (cmd = AIOS_RB_*) -> does not return, or -EPERM (not root)        */
+/* --- networking (host-passthrough behind the boundary, like the VFS passes through to host files) ---
+ * A socket is an AIOS fd backed by a host socket, so READ/WRITE/CLOSE work on it. SOCKET + CONNECT are
+ * the client surface (BIND/LISTEN/ACCEPT for a server come next). The domain/type/protocol values +
+ * the struct aios_sockaddr_in layout MATCH the host's (AF_INET=2; port/addr in network byte order), so
+ * the PAL passes the address bytes straight through (like termios); a future seL4 PAL remaps them.
+ * Network ACCESS control (which hosts/ports a guest may reach) is a later confinement step, analogous
+ * to M4.2 fs confinement. Blocking socket I/O blocks the single-threaded kernel today (fine for one
+ * guest); non-blocking + park/wake is the next increment. */
+#define AIOS_SYS_SOCKET  0x1036  /* (domain, type, protocol) -> fd, or -errno                          */
+#define AIOS_SYS_CONNECT 0x1037  /* (fd, sockaddr*, addrlen) -> 0, or -errno                           */
+
+#define AIOS_AF_INET      2
+#define AIOS_SOCK_STREAM  1
+#define AIOS_SOCK_DGRAM   2
+#define AIOS_IPPROTO_TCP  6
+#define AIOS_IPPROTO_UDP 17
+
+struct aios_in_addr { unsigned int s_addr; };            /* IPv4 address, network byte order */
+struct aios_sockaddr_in {
+    unsigned short      sin_family;                      /* AIOS_AF_INET */
+    unsigned short      sin_port;                        /* port, network byte order */
+    struct aios_in_addr sin_addr;
+    unsigned char       sin_zero[8];
+};
+struct aios_sockaddr { unsigned short sa_family; char sa_data[14]; };
 
 /* ---- the Linux/aarch64 PAL trap convention (NOT part of the host-agnostic AIOS ABI) ----
  * AIOS owns its syscall NUMBERS (>= 0x1000, above); how a guest physically TRAPS into the kernel is a

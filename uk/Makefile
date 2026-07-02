@@ -66,7 +66,7 @@ DASH_CFILES = $(addprefix $(DASH_SRC)/, alias.c arith_yacc.c arith_yylex.c cd.c 
 .PHONY: all run clean sbase FORCE
 all: aios-uk guest_hello guest_fileio guest_cat guest_escape prog_args prog_wc prog_bigalloc prog_tail prog_exec \
      prog_fork prog_spawn prog_pipe prog_pipeline prog_pipebig prog_sh prog_libc prog_stdio prog_errno \
-     prog_fs prog_getopt prog_dir prog_signal prog_jail prog_execjail prog_clock prog_pcwd prog_umask prog_regex prog_pwgrp prog_jobctl prog_stop prog_sigmask prog_loop prog_rawkey prog_sigpipe prog_id prog_crypt prog_printf prog_reboot init login poweroff $(SBASE_BINS) dash
+     prog_fs prog_getopt prog_dir prog_signal prog_jail prog_execjail prog_clock prog_pcwd prog_umask prog_regex prog_pwgrp prog_jobctl prog_stop prog_sigmask prog_loop prog_rawkey prog_sigpipe prog_id prog_crypt prog_printf prog_reboot prog_net init login poweroff $(SBASE_BINS) dash
 
 # Rebuild aios-uk when the selected PAL backend changes: .pal.stamp records the current PAL and its
 # mtime only advances when PAL differs, so `make PAL=seccomp` after a default `make` recompiles the
@@ -219,6 +219,11 @@ prog_reboot: guest/prog_reboot.c $(LIBAIOS) $(LIBC_HDRS) include/aios_abi.h
 # The AIOS shutdown command: one binary run as /sbin/poweroff, /sbin/halt, /sbin/reboot (by argv[0]).
 poweroff: guest/poweroff.c $(LIBAIOS) $(LIBC_HDRS) include/aios_abi.h
 	$(CC) $(LIBC_CFLAGS) -o $@ guest/poweroff.c $(LIBAIOS)
+
+# Networking: an AIOS TCP client (socket/connect + read/write). Driven by test/net_client.c (a host echo
+# server) so it is self-contained. Proves the socket ABI + the host-passthrough PAL.
+prog_net: guest/prog_net.c $(LIBAIOS) $(LIBC_HDRS) include/aios_abi.h
+	$(CC) $(LIBC_CFLAGS) -o $@ guest/prog_net.c $(LIBAIOS)
 
 # The SYSTEM LAYER (increment 1): the AIOS init (the first guest -- respawns login) + login (prompt +
 # /etc/shadow auth -> the user's login shell). Installed by mkaiosroot.sh as /sbin/init + /bin/login;
@@ -379,4 +384,4 @@ run: all
 clean:
 	rm -f .pal.stamp aios-uk guest_hello guest_fileio guest_cat guest_escape prog_args prog_wc prog_bigalloc prog_tail \
 	      prog_exec prog_fork prog_spawn prog_pipe prog_pipeline prog_pipebig prog_sh prog_libc \
-	      prog_stdio prog_errno prog_fs prog_getopt prog_dir prog_signal prog_jail prog_execjail prog_clock prog_pcwd prog_umask prog_regex prog_pwgrp prog_jobctl prog_stop prog_sigmask prog_loop prog_rawkey prog_sigpipe prog_id prog_crypt prog_printf prog_reboot init login poweroff $(SBASE_BINS) dash
+	      prog_stdio prog_errno prog_fs prog_getopt prog_dir prog_signal prog_jail prog_execjail prog_clock prog_pcwd prog_umask prog_regex prog_pwgrp prog_jobctl prog_stop prog_sigmask prog_loop prog_rawkey prog_sigpipe prog_id prog_crypt prog_printf prog_reboot prog_net init login poweroff $(SBASE_BINS) dash

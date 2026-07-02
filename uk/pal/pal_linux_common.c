@@ -36,6 +36,7 @@
 #include <string.h>
 #include <time.h>             /* clock_gettime + CLOCK_* (the host clock source) */
 #include <termios.h>          /* host tcgetattr/tcsetattr + struct termios (line discipline) */
+#include <sys/socket.h>        /* host socket/connect (AIOS networking passes through) */
 #include <unistd.h>
 #include <sys/ptrace.h>
 #include <sys/stat.h>
@@ -641,6 +642,16 @@ long pal_host_readlink(const char *path, char *buf, size_t bufsize) {
     return n < 0 ? pal_errno() : (long)n;
 }
 int pal_host_isatty(pal_file_t f) { return isatty((int)f) ? 1 : 0; }
+
+/* --- networking (host-passthrough). AIOS domain/type/protocol + sockaddr layout match the host's, so
+ * these forward straight through; AIOS errno == host errno, so -errno is the negated AIOS code. --- */
+pal_file_t pal_host_socket(int domain, int type, int protocol) {
+    int fd = socket(domain, type, protocol);
+    return fd < 0 ? (pal_file_t)(-errno) : (pal_file_t)fd;
+}
+int pal_host_connect(pal_file_t f, const void *addr, unsigned int addrlen) {
+    return connect((int)f, (const struct sockaddr *)addr, (socklen_t)addrlen) == 0 ? 0 : -errno;
+}
 
 /* AIOS termios <-> host termios. The shadow <termios.h> flag/c_cc values match the host's, so this is
  * a field copy (a future seL4 PAL would remap each flag). c_cc is copied up to the smaller NCCS. */

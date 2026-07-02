@@ -1443,6 +1443,34 @@ char *ttyname(int fd) {
  * kernel exits its run loop and PTRACE_O_EXITKILL reaps this guest; returns -1/EPERM if not privileged. */
 int reboot(int cmd) { return (int)__ret(asys(AIOS_SYS_REBOOT, cmd, 0, 0)); }
 
+/* --- networking. socket()/connect() are thin ABI wrappers; a socket fd then read()/write()/close()s
+ *     like any other fd. Byte-order + inet_addr are pure (aarch64 is little-endian). --- */
+int socket(int domain, int type, int protocol) {
+    return (int)__ret(asys(AIOS_SYS_SOCKET, domain, type, protocol));
+}
+int connect(int fd, const void *addr, unsigned int addrlen) {
+    return (int)__ret(asys(AIOS_SYS_CONNECT, fd, (long)addr, (long)addrlen));
+}
+unsigned short htons(unsigned short x) { return (unsigned short)((x >> 8) | (x << 8)); }
+unsigned short ntohs(unsigned short x) { return htons(x); }
+unsigned int htonl(unsigned int x) {
+    return ((x >> 24) & 0xff) | ((x >> 8) & 0xff00) | ((x << 8) & 0xff0000) | ((x << 24) & 0xff000000);
+}
+unsigned int ntohl(unsigned int x) { return htonl(x); }
+/* inet_addr: dotted-quad "a.b.c.d" -> a network-order u32; 0xFFFFFFFF (INADDR_NONE) on a parse error. */
+unsigned int inet_addr(const char *s) {
+    unsigned int part[4]; int n = 0; const char *p = s;
+    while (n < 4) {
+        if (*p < '0' || *p > '9') return 0xFFFFFFFFu;
+        unsigned int v = 0;
+        while (*p >= '0' && *p <= '9') { v = v * 10 + (unsigned)(*p - '0'); if (v > 255) return 0xFFFFFFFFu; p++; }
+        part[n++] = v;
+        if (n < 4) { if (*p != '.') return 0xFFFFFFFFu; p++; }
+    }
+    if (*p != '\0') return 0xFFFFFFFFu;
+    return htonl((part[0] << 24) | (part[1] << 16) | (part[2] << 8) | part[3]);
+}
+
 /* --- sysconf / rlimit / times: minimal so dash's miscbltin (ulimit/times) + paths compile + run. --- */
 long sysconf(int name) {
     switch (name) {

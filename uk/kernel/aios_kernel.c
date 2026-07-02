@@ -554,6 +554,26 @@ static long sys_kill(proc_t *p, uint64_t pid, uint64_t signum) {
     return found ? 0 : -AIOS_ESRCH;
 }
 
+/* ---- networking (host-passthrough): a socket is an AIOS fd backed by a host socket, so READ/WRITE/
+ * CLOSE work on it via the existing fd machinery. sys_socket mirrors sys_open. ---- */
+static long sys_socket(proc_t *p, uint64_t domain, uint64_t type, uint64_t protocol) {
+    pal_file_t f = pal_host_socket((int)domain, (int)type, (int)protocol);
+    if (f < 0) return (long)f;                        /* -errno from the PAL */
+    int oi = ofile_alloc(f);
+    if (oi < 0) { pal_host_close(f); return -AIOS_EMFILE; }
+    int fd = fd_alloc(p);
+    if (fd < 0) { ofile_unref(oi); return -AIOS_EMFILE; }
+    p->fd[fd] = oi;
+    return fd;
+}
+static long sys_connect(proc_t *p, uint64_t fd, uint64_t gaddr, uint64_t addrlen) {
+    if (!fd_valid(p, fd)) return -AIOS_EBADF;
+    if (addrlen == 0 || addrlen > 128) return -AIOS_EINVAL;
+    char addr[128];                                   /* the guest's sockaddr bytes (layout = host's) */
+    if (pal_guest_read(p->pid, gaddr, addr, addrlen) != addrlen) return -AIOS_EFAULT;
+    return pal_host_connect(fd_backing(p, fd), addr, (unsigned int)addrlen);
+}
+
 /* ---- process identity (per-process uid/gid; the login program drops privilege across these) ---- */
 /* setuid/setgid follow POSIX privilege: euid 0 is privileged (sets real + effective + saved); an
  * unprivileged caller may only switch the EFFECTIVE id to its real or saved id (so it can drop a
@@ -1104,6 +1124,8 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
     case AIOS_SYS_GETEGID: ret = (uint64_t)p->egid;                                        break;
     case AIOS_SYS_SETUID:  ret = (uint64_t)sys_setuid(p, sc->arg[0]);                      break;
     case AIOS_SYS_SETGID:  ret = (uint64_t)sys_setgid(p, sc->arg[0]);                      break;
+    case AIOS_SYS_SOCKET:  ret = (uint64_t)sys_socket(p, sc->arg[0], sc->arg[1], sc->arg[2]);          break;
+    case AIOS_SYS_CONNECT: ret = (uint64_t)sys_connect(p, sc->arg[0], sc->arg[1], sc->arg[2]);         break;
     case AIOS_SYS_GETDENTS:ret = (uint64_t)sys_getdents(p, sc->arg[0], sc->arg[1], sc->arg[2]); break;
     case AIOS_SYS_OPENAT:  ret = (uint64_t)sys_openat (p, sc->arg[0], sc->arg[1], sc->arg[2], sc->arg[3]); break;
     case AIOS_SYS_FSTATAT: ret = (uint64_t)sys_fstatat(p, sc->arg[0], sc->arg[1], sc->arg[2], sc->arg[3]); break;

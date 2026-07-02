@@ -215,6 +215,17 @@
  * comes up. Proof: test/login_pty.c drives the full inittab-driven boot (sysinit banner -> login ->
  * a user session -> logout -> respawn). THE SYSTEM LAYER, INCREMENT 2 IS COMPLETE (identity + login
  * switches user + crypt() hashing + the util batch + clean shutdown + inittab).
+ * 0.5.32 = NETWORKING, increment 1 (ABI 55 -> 57): AIOS gets a socket ABI. SOCKET (0x1036) + CONNECT
+ * (0x1037) -- a socket is an AIOS fd backed by a HOST socket (host-passthrough behind the boundary, like
+ * the VFS passes through to host files), so READ/WRITE/CLOSE work on it for free. The domain/type/
+ * protocol values + struct aios_sockaddr_in layout MATCH the host's, so the PAL (pal_host_socket/connect)
+ * forwards the address bytes straight through; a future seL4 PAL remaps + talks to a net server. libaios
+ * grew socket/connect + htons/htonl/ntohs/ntohl + inet_addr, with shadow <sys/socket.h> / <netinet/in.h>
+ * / <arpa/inet.h>. This is the CLIENT surface; BIND/LISTEN/ACCEPT (a server) + non-blocking park/wake +
+ * network-access confinement (which hosts/ports, analogous to M4.2 fs confinement) come next. Honest
+ * limit: blocking socket I/O blocks the single-threaded kernel (fine for one guest). Proof: an AIOS TCP
+ * client (guest/prog_net.c) round-trips a message through a host echo server (test/net_client.c) --
+ * fully self-contained, wired into the gate.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -224,7 +235,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 31
+#define AIOS_VERSION_PATCH 32
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

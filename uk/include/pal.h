@@ -184,6 +184,15 @@ int        pal_host_faccessat(pal_file_t dir, const char *path, int amode);
  * negated AIOS error code. (Linux: readlink(2); a future seL4 PAL asks its fs server.) */
 long pal_host_readlink(const char *path, char *buf, size_t bufsize);
 
+/* --- networking (host-passthrough) --- The AIOS kernel owns the fd; the PAL provides a host socket as
+ * a backing object (so READ/WRITE/CLOSE route through pal_host_read/write/close on it). domain/type/
+ * protocol are AIOS constants that match the host's; `addr` is the guest's sockaddr bytes, whose layout
+ * matches the host's, so the PAL passes them straight to connect(2). Both return a backing/0, or a
+ * negated AIOS error. (Linux: socket/connect; a future seL4 PAL talks to its network server.) The
+ * socket is BLOCKING today -- a serviced read/connect blocks the kernel (fine for one guest). */
+pal_file_t pal_host_socket (int domain, int type, int protocol);
+int        pal_host_connect(pal_file_t f, const void *addr, unsigned int addrlen);
+
 /* Is a backing object a terminal? 1 / 0 / -errno. (Linux: isatty/tcgetattr.) */
 int pal_host_isatty(pal_file_t f);
 
