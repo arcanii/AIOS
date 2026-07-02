@@ -85,20 +85,32 @@
 #define AIOS_SYS_REBOOT    0x1035 /* (cmd = AIOS_RB_*) -> does not return, or -EPERM (not root)        */
 /* --- networking (host-passthrough behind the boundary, like the VFS passes through to host files) ---
  * A socket is an AIOS fd backed by a host socket, so READ/WRITE/CLOSE work on it. SOCKET + CONNECT are
- * the client surface (BIND/LISTEN/ACCEPT for a server come next). The domain/type/protocol values +
- * the struct aios_sockaddr_in layout MATCH the host's (AF_INET=2; port/addr in network byte order), so
- * the PAL passes the address bytes straight through (like termios); a future seL4 PAL remaps them.
- * Network ACCESS control (which hosts/ports a guest may reach) is a later confinement step, analogous
- * to M4.2 fs confinement. Blocking socket I/O blocks the single-threaded kernel today (fine for one
- * guest); non-blocking + park/wake is the next increment. */
-#define AIOS_SYS_SOCKET  0x1036  /* (domain, type, protocol) -> fd, or -errno                          */
-#define AIOS_SYS_CONNECT 0x1037  /* (fd, sockaddr*, addrlen) -> 0, or -errno                           */
+ * the CLIENT surface; BIND/LISTEN/ACCEPT + SETSOCKOPT/GETSOCKNAME are the SERVER surface (an AIOS
+ * program can now listen -- ACCEPT returns a NEW AIOS fd backed by the accepted host socket, mirroring
+ * SOCKET). The domain/type/protocol values + the struct aios_sockaddr_in layout MATCH the host's
+ * (AF_INET=2; port/addr in network byte order), so the PAL passes the address bytes straight through
+ * (like termios); a future seL4 PAL remaps them. Network ACCESS control (which hosts/ports a guest may
+ * reach) is a later confinement step, analogous to M4.2 fs confinement. Blocking socket I/O (incl. a
+ * blocking ACCEPT) blocks the single-threaded kernel today (fine for one guest); non-blocking +
+ * park/wake is the next increment. */
+#define AIOS_SYS_SOCKET      0x1036  /* (domain, type, protocol) -> fd, or -errno                       */
+#define AIOS_SYS_CONNECT     0x1037  /* (fd, sockaddr*, addrlen) -> 0, or -errno                        */
+#define AIOS_SYS_BIND        0x1038  /* (fd, sockaddr*, addrlen) -> 0, or -errno                        */
+#define AIOS_SYS_LISTEN      0x1039  /* (fd, backlog) -> 0, or -errno                                   */
+#define AIOS_SYS_ACCEPT      0x103A  /* (fd, sockaddr*, addrlen*) -> new fd, or -errno                  */
+#define AIOS_SYS_SETSOCKOPT  0x103B  /* (fd, level, optname, optval*, optlen) -> 0, or -errno           */
+#define AIOS_SYS_GETSOCKNAME 0x103C  /* (fd, sockaddr*, addrlen*) -> 0, or -errno                       */
 
 #define AIOS_AF_INET      2
 #define AIOS_SOCK_STREAM  1
 #define AIOS_SOCK_DGRAM   2
 #define AIOS_IPPROTO_TCP  6
 #define AIOS_IPPROTO_UDP 17
+
+/* setsockopt levels + option names (AIOS-owned; values match the host so the PAL forwards them). */
+#define AIOS_SOL_SOCKET   1
+#define AIOS_SO_REUSEADDR  2
+#define AIOS_SO_REUSEPORT 15
 
 struct aios_in_addr { unsigned int s_addr; };            /* IPv4 address, network byte order */
 struct aios_sockaddr_in {

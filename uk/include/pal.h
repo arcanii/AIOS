@@ -187,11 +187,19 @@ long pal_host_readlink(const char *path, char *buf, size_t bufsize);
 /* --- networking (host-passthrough) --- The AIOS kernel owns the fd; the PAL provides a host socket as
  * a backing object (so READ/WRITE/CLOSE route through pal_host_read/write/close on it). domain/type/
  * protocol are AIOS constants that match the host's; `addr` is the guest's sockaddr bytes, whose layout
- * matches the host's, so the PAL passes them straight to connect(2). Both return a backing/0, or a
- * negated AIOS error. (Linux: socket/connect; a future seL4 PAL talks to its network server.) The
- * socket is BLOCKING today -- a serviced read/connect blocks the kernel (fine for one guest). */
-pal_file_t pal_host_socket (int domain, int type, int protocol);
-int        pal_host_connect(pal_file_t f, const void *addr, unsigned int addrlen);
+ * matches the host's, so the PAL passes them straight to the host socket call. Each returns 0/backing,
+ * or a negated AIOS error. accept blocks until a connection arrives and returns a NEW host socket (the
+ * kernel wraps it in a fresh AIOS fd, like socket); `addrlen` is in/out (caller buffer size -> actual
+ * peer length). setsockopt/getsockname pass level/optname/optval bytes straight through. (Linux: the
+ * BSD socket calls; a future seL4 PAL talks to its network server.) BLOCKING today -- a serviced
+ * read/connect/accept blocks the kernel (fine for one guest). */
+pal_file_t pal_host_socket     (int domain, int type, int protocol);
+int        pal_host_connect    (pal_file_t f, const void *addr, unsigned int addrlen);
+int        pal_host_bind       (pal_file_t f, const void *addr, unsigned int addrlen);
+int        pal_host_listen     (pal_file_t f, int backlog);
+pal_file_t pal_host_accept     (pal_file_t f, void *addr, unsigned int *addrlen);
+int        pal_host_setsockopt (pal_file_t f, int level, int optname, const void *optval, unsigned int optlen);
+int        pal_host_getsockname(pal_file_t f, void *addr, unsigned int *addrlen);
 
 /* Is a backing object a terminal? 1 / 0 / -errno. (Linux: isatty/tcgetattr.) */
 int pal_host_isatty(pal_file_t f);

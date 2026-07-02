@@ -226,6 +226,20 @@
  * limit: blocking socket I/O blocks the single-threaded kernel (fine for one guest). Proof: an AIOS TCP
  * client (guest/prog_net.c) round-trips a message through a host echo server (test/net_client.c) --
  * fully self-contained, wired into the gate.
+ * 0.5.33 = NETWORKING, increment 2 (ABI 57 -> 62): AIOS gets a SERVER surface -- an AIOS program can now
+ * LISTEN and ACCEPT connections. Five syscalls BIND (0x1038) + LISTEN (0x1039) + ACCEPT (0x103A) +
+ * SETSOCKOPT (0x103B) + GETSOCKNAME (0x103C). Like the client surface these are host-passthrough behind
+ * the boundary: bind/listen/setsockopt pass the sockaddr/optval bytes straight to the host socket (the
+ * layouts + SOL_SOCKET/SO_REUSEADDR values match), and ACCEPT mirrors sys_socket -- it returns a NEW
+ * AIOS fd backed by the accepted host socket, so read()/write()/close() work on it for free. accept()
+ * and getsockname() fill the caller's sockaddr (an in/out addrlen). getsockname lets a server bind an
+ * EPHEMERAL port (:0) and learn which one it got -- the race-free way to test a server. libaios grew
+ * bind/listen/accept/setsockopt/getsockname; the shadow <sys/socket.h> grew SOL_SOCKET/SO_REUSEADDR/
+ * SO_REUSEPORT + the five decls. Honest limit: a blocking ACCEPT (like a blocking read/connect) blocks
+ * the single-threaded kernel -- fine for one guest; non-blocking + park/wake is the NEXT increment (then
+ * DNS, then network-access confinement). Proof: an AIOS TCP echo SERVER (guest/prog_netserver.c) binds
+ * 127.0.0.1:0, announces its port, and a host client (test/net_server.c) connects + round-trips a
+ * message through it -- fully self-contained, wired into the gate as `netsrv`.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -235,7 +249,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 32
+#define AIOS_VERSION_PATCH 33
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

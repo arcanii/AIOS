@@ -232,13 +232,17 @@ gate() {
            cc -O2 -o /tmp/login_pty test/login_pty.c -lutil 2>/dev/null &&
            AIOS_ROOT="$LR" timeout 25 /tmp/login_pty ./aios-uk "$LR/sbin/init" 2>/dev/null; lprc=$?;
            rm -rf "$LR";
-           echo "=== networking -- an AIOS TCP client (socket/connect + read/write) round-trips via a host echo server ===" &&
+           echo "=== networking (client) -- an AIOS TCP client (socket/connect + read/write) round-trips via a host echo server ===" &&
            cc -O2 -o /tmp/net_client test/net_client.c 2>/dev/null &&
            timeout 20 /tmp/net_client ./aios-uk ./prog_net 2>/dev/null | grep -vE "^\[aios-uk\]" | sed "s/^/  /";
            cc -O2 -o /tmp/net_client test/net_client.c 2>/dev/null; timeout 20 /tmp/net_client ./aios-uk ./prog_net >/dev/null 2>&1; netrc=$?; echo "  [net_client exit $netrc (expect 0)]";
-           echo "=== gate: pipebig jail execjail clock pcwd umask regex pwgrp id crypt printf shutdown net jobctl stop sigmask sigpipe ctrlc ctrlc-job ctrlz rawkey login must exit 0 ===" &&
-           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig $rc, jail $jrc, execjail $ejrc, clock $clkrc, pcwd $pcwdrc, umask $umrc, regex $rxrc, pwgrp $pwrc, id $idrc, crypt $cryrc, printf $pfrc, shutdown $shrc, net $netrc, jobctl $jcrc, stop $strc, sigmask $smrc, sigpipe $sprc, ctrlc $cprc, ctrlc-job $cjrc, ctrlz $czrc, rawkey $rkrc, login $lprc]";
-           test "$rc" = 0 && test "$jrc" = 0 && test "$ejrc" = 0 && test "$clkrc" = 0 && test "$pcwdrc" = 0 && test "$umrc" = 0 && test "$rxrc" = 0 && test "$pwrc" = 0 && test "$idrc" = 0 && test "$cryrc" = 0 && test "$pfrc" = 0 && test "$shrc" = 0 && test "$netrc" = 0 && test "$jcrc" = 0 && test "$strc" = 0 && test "$smrc" = 0 && test "$sprc" = 0 && test "$cprc" = 0 && test "$cjrc" = 0 && test "$czrc" = 0 && test "$rkrc" = 0 && test "$lprc" = 0;
+           echo "=== networking (server) -- an AIOS TCP SERVER (bind/listen/accept + setsockopt/getsockname) a host client connects to ===" &&
+           cc -O2 -o /tmp/net_server test/net_server.c 2>/dev/null &&
+           timeout 20 /tmp/net_server ./aios-uk ./prog_netserver 2>/dev/null | grep -vE "^\[aios-uk\]" | sed "s/^/  /";
+           cc -O2 -o /tmp/net_server test/net_server.c 2>/dev/null; timeout 20 /tmp/net_server ./aios-uk ./prog_netserver >/dev/null 2>&1; nsrc=$?; echo "  [net_server exit $nsrc (expect 0)]";
+           echo "=== gate: pipebig jail execjail clock pcwd umask regex pwgrp id crypt printf shutdown net netsrv jobctl stop sigmask sigpipe ctrlc ctrlc-job ctrlz rawkey login must exit 0 ===" &&
+           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig $rc, jail $jrc, execjail $ejrc, clock $clkrc, pcwd $pcwdrc, umask $umrc, regex $rxrc, pwgrp $pwrc, id $idrc, crypt $cryrc, printf $pfrc, shutdown $shrc, net $netrc, netsrv $nsrc, jobctl $jcrc, stop $strc, sigmask $smrc, sigpipe $sprc, ctrlc $cprc, ctrlc-job $cjrc, ctrlz $czrc, rawkey $rkrc, login $lprc]";
+           test "$rc" = 0 && test "$jrc" = 0 && test "$ejrc" = 0 && test "$clkrc" = 0 && test "$pcwdrc" = 0 && test "$umrc" = 0 && test "$rxrc" = 0 && test "$pwrc" = 0 && test "$idrc" = 0 && test "$cryrc" = 0 && test "$pfrc" = 0 && test "$shrc" = 0 && test "$netrc" = 0 && test "$nsrc" = 0 && test "$jcrc" = 0 && test "$strc" = 0 && test "$smrc" = 0 && test "$sprc" = 0 && test "$cprc" = 0 && test "$cjrc" = 0 && test "$czrc" = 0 && test "$rkrc" = 0 && test "$lprc" = 0;
 }
 echo "##################### GATE PASS 1: PAL=linux (ptrace PTRACE_SYSCALL -- the default backend) #####################"
 gate; PASS_LINUX=$?

@@ -573,6 +573,66 @@ static long sys_connect(proc_t *p, uint64_t fd, uint64_t gaddr, uint64_t addrlen
     if (pal_guest_read(p->pid, gaddr, addr, addrlen) != addrlen) return -AIOS_EFAULT;
     return pal_host_connect(fd_backing(p, fd), addr, (unsigned int)addrlen);
 }
+/* ---- the SERVER surface. bind/listen mirror connect (pass the sockaddr bytes through); accept mirrors
+ * sys_socket -- it returns a NEW AIOS fd backed by the accepted host socket. A blocking accept blocks
+ * the single-threaded kernel today (honest limit; non-blocking park/wake is the next increment). ---- */
+static long sys_bind(proc_t *p, uint64_t fd, uint64_t gaddr, uint64_t addrlen) {
+    if (!fd_valid(p, fd)) return -AIOS_EBADF;
+    if (addrlen == 0 || addrlen > 128) return -AIOS_EINVAL;
+    char addr[128];
+    if (pal_guest_read(p->pid, gaddr, addr, addrlen) != addrlen) return -AIOS_EFAULT;
+    return pal_host_bind(fd_backing(p, fd), addr, (unsigned int)addrlen);
+}
+static long sys_listen(proc_t *p, uint64_t fd, uint64_t backlog) {
+    if (!fd_valid(p, fd)) return -AIOS_EBADF;
+    return pal_host_listen(fd_backing(p, fd), (int)backlog);
+}
+static long sys_accept(proc_t *p, uint64_t fd, uint64_t gaddr, uint64_t gaddrlen) {
+    if (!fd_valid(p, fd)) return -AIOS_EBADF;
+    char addr[128];
+    unsigned int cap = 0;                             /* caller buffer size (input *addrlen) */
+    int want_addr = (gaddr && gaddrlen);
+    if (want_addr) {
+        if (pal_guest_read(p->pid, gaddrlen, &cap, sizeof cap) != sizeof cap) return -AIOS_EFAULT;
+        if (cap > sizeof addr) cap = sizeof addr;
+    }
+    unsigned int alen = cap;
+    pal_file_t c = pal_host_accept(fd_backing(p, fd), want_addr ? addr : NULL, want_addr ? &alen : NULL);
+    if (c < 0) return (long)c;                        /* -errno */
+    int oi = ofile_alloc(c);
+    if (oi < 0) { pal_host_close(c); return -AIOS_EMFILE; }
+    int nfd = fd_alloc(p);
+    if (nfd < 0) { ofile_unref(oi); return -AIOS_EMFILE; }
+    p->fd[nfd] = oi;
+    if (want_addr) {                                  /* copy back the peer addr (truncated to the buffer) + the actual length */
+        unsigned int w = alen < cap ? alen : cap;
+        if (w) pal_guest_write(p->pid, gaddr, addr, w);
+        pal_guest_write(p->pid, gaddrlen, &alen, sizeof alen);
+    }
+    return nfd;
+}
+static long sys_setsockopt(proc_t *p, uint64_t fd, uint64_t level, uint64_t optname, uint64_t goptval, uint64_t optlen) {
+    if (!fd_valid(p, fd)) return -AIOS_EBADF;
+    if (optlen > 128) return -AIOS_EINVAL;
+    char optval[128];
+    if (optlen && pal_guest_read(p->pid, goptval, optval, optlen) != optlen) return -AIOS_EFAULT;
+    return pal_host_setsockopt(fd_backing(p, fd), (int)level, (int)optname, optlen ? optval : NULL, (unsigned int)optlen);
+}
+static long sys_getsockname(proc_t *p, uint64_t fd, uint64_t gaddr, uint64_t gaddrlen) {
+    if (!fd_valid(p, fd)) return -AIOS_EBADF;
+    if (!gaddr || !gaddrlen) return -AIOS_EFAULT;
+    unsigned int cap = 0;
+    if (pal_guest_read(p->pid, gaddrlen, &cap, sizeof cap) != sizeof cap) return -AIOS_EFAULT;
+    if (cap > 128) cap = 128;
+    char addr[128];
+    unsigned int alen = cap;
+    long r = pal_host_getsockname(fd_backing(p, fd), addr, &alen);
+    if (r != 0) return r;
+    unsigned int w = alen < cap ? alen : cap;
+    if (w) pal_guest_write(p->pid, gaddr, addr, w);
+    pal_guest_write(p->pid, gaddrlen, &alen, sizeof alen);
+    return 0;
+}
 
 /* ---- process identity (per-process uid/gid; the login program drops privilege across these) ---- */
 /* setuid/setgid follow POSIX privilege: euid 0 is privileged (sets real + effective + saved); an
@@ -1126,6 +1186,11 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
     case AIOS_SYS_SETGID:  ret = (uint64_t)sys_setgid(p, sc->arg[0]);                      break;
     case AIOS_SYS_SOCKET:  ret = (uint64_t)sys_socket(p, sc->arg[0], sc->arg[1], sc->arg[2]);          break;
     case AIOS_SYS_CONNECT: ret = (uint64_t)sys_connect(p, sc->arg[0], sc->arg[1], sc->arg[2]);         break;
+    case AIOS_SYS_BIND:    ret = (uint64_t)sys_bind(p, sc->arg[0], sc->arg[1], sc->arg[2]);            break;
+    case AIOS_SYS_LISTEN:  ret = (uint64_t)sys_listen(p, sc->arg[0], sc->arg[1]);                      break;
+    case AIOS_SYS_ACCEPT:  ret = (uint64_t)sys_accept(p, sc->arg[0], sc->arg[1], sc->arg[2]);          break;
+    case AIOS_SYS_SETSOCKOPT: ret = (uint64_t)sys_setsockopt(p, sc->arg[0], sc->arg[1], sc->arg[2], sc->arg[3], sc->arg[4]); break;
+    case AIOS_SYS_GETSOCKNAME:ret = (uint64_t)sys_getsockname(p, sc->arg[0], sc->arg[1], sc->arg[2]);  break;
     case AIOS_SYS_GETDENTS:ret = (uint64_t)sys_getdents(p, sc->arg[0], sc->arg[1], sc->arg[2]); break;
     case AIOS_SYS_OPENAT:  ret = (uint64_t)sys_openat (p, sc->arg[0], sc->arg[1], sc->arg[2], sc->arg[3]); break;
     case AIOS_SYS_FSTATAT: ret = (uint64_t)sys_fstatat(p, sc->arg[0], sc->arg[1], sc->arg[2], sc->arg[3]); break;

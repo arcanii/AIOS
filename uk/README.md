@@ -419,6 +419,32 @@ different host trap mechanism, with only the PAL swapped. M9 **proves it**: `mak
   byte-identical and names its default backend — a cosmetic). See
   `docs/AIOS_KERNEL_DEPENDENCIES.md` for the full host-feature manifest this exercise formalized.
 
+## Networking — sockets behind the boundary ✅
+
+AIOS speaks TCP. Networking is **host-passthrough behind the AIOS boundary**, exactly like the VFS: a
+socket is an ordinary AIOS fd backed by a real host socket, so `read`/`write`/`close` work on it for
+free. The AIOS domain/type/protocol values, the `sockaddr` layout, and the `SOL_SOCKET`/`SO_*` option
+values all match the host, so the PAL forwards the address/option bytes straight through (a future seL4
+PAL remaps them and talks to a network server).
+
+- **Increment 1 — a TCP client.** `SOCKET`/`CONNECT` (ABI 55→57) + `htons`/`inet_addr` and the shadow
+  `<sys/socket.h>`/`<netinet/in.h>`/`<arpa/inet.h>`. `guest/prog_net.c` connects out and round-trips a
+  message; it has fetched `http://example.com` over the real internet from the Pi.
+- **Increment 2 — a TCP server.** `BIND`/`LISTEN`/`ACCEPT` + `SETSOCKOPT`/`GETSOCKNAME` (ABI 57→62), so
+  an AIOS program can **listen**. `ACCEPT` mirrors `SOCKET` — it returns a **new AIOS fd** backed by the
+  accepted host socket. `getsockname` lets a server bind an ephemeral port (`:0`) and learn which one it
+  got. `guest/prog_netserver.c` is a real AIOS echo server: it sets `SO_REUSEADDR`, binds
+  `127.0.0.1:0`, announces its port, accepts a connection, and echoes — and a host client
+  (`test/net_server.c`) connects to it and round-trips a message. Wired into the gate (`netsrv`), green
+  under **both** PAL backends.
+
+**Honest limits (the next increments):** socket I/O is **blocking** — a serviced `read`/`connect`/
+`accept` blocks the single-threaded kernel (fine for one guest; non-blocking + park/wake, integrating
+socket readiness into the kernel's event loop like the pipe park/wake, is next). IPv4 only, no DNS
+resolver yet (connect takes a dotted quad). And there is **no network-access confinement** yet — which
+hosts/ports a guest may reach, the analogue of the `AIOS_ROOT` filesystem confinement, is a later PAL
+policy step.
+
 ## Building an AIOS root image (the "disk image")
 
 AIOS is a userspace kernel — it runs as a process on the host Linux — so there is no bootable AIOS

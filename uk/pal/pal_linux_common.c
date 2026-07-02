@@ -652,6 +652,30 @@ pal_file_t pal_host_socket(int domain, int type, int protocol) {
 int pal_host_connect(pal_file_t f, const void *addr, unsigned int addrlen) {
     return connect((int)f, (const struct sockaddr *)addr, (socklen_t)addrlen) == 0 ? 0 : -errno;
 }
+int pal_host_bind(pal_file_t f, const void *addr, unsigned int addrlen) {
+    return bind((int)f, (const struct sockaddr *)addr, (socklen_t)addrlen) == 0 ? 0 : -errno;
+}
+int pal_host_listen(pal_file_t f, int backlog) {
+    return listen((int)f, backlog) == 0 ? 0 : -errno;
+}
+/* accept: fill `addr` (up to *addrlen bytes) with the peer address, set *addrlen to the ACTUAL peer
+ * length, and return a new host socket (or -errno). A NULL addr/addrlen means "don't want the peer". */
+pal_file_t pal_host_accept(pal_file_t f, void *addr, unsigned int *addrlen) {
+    socklen_t sl = addrlen ? (socklen_t)*addrlen : 0;
+    int c = accept((int)f, (struct sockaddr *)addr, addr ? &sl : NULL);
+    if (c < 0) return (pal_file_t)(-errno);
+    if (addrlen) *addrlen = (unsigned int)sl;
+    return (pal_file_t)c;
+}
+int pal_host_setsockopt(pal_file_t f, int level, int optname, const void *optval, unsigned int optlen) {
+    return setsockopt((int)f, level, optname, optval, (socklen_t)optlen) == 0 ? 0 : -errno;
+}
+int pal_host_getsockname(pal_file_t f, void *addr, unsigned int *addrlen) {
+    socklen_t sl = addrlen ? (socklen_t)*addrlen : 0;
+    if (getsockname((int)f, (struct sockaddr *)addr, &sl) != 0) return -errno;
+    if (addrlen) *addrlen = (unsigned int)sl;
+    return 0;
+}
 
 /* AIOS termios <-> host termios. The shadow <termios.h> flag/c_cc values match the host's, so this is
  * a field copy (a future seL4 PAL would remap each flag). c_cc is copied up to the smaller NCCS. */

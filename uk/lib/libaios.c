@@ -1451,6 +1451,21 @@ int socket(int domain, int type, int protocol) {
 int connect(int fd, const void *addr, unsigned int addrlen) {
     return (int)__ret(asys(AIOS_SYS_CONNECT, fd, (long)addr, (long)addrlen));
 }
+int bind(int fd, const void *addr, unsigned int addrlen) {
+    return (int)__ret(asys(AIOS_SYS_BIND, fd, (long)addr, (long)addrlen));
+}
+int listen(int fd, int backlog) {
+    return (int)__ret(asys(AIOS_SYS_LISTEN, fd, backlog, 0));
+}
+int accept(int fd, void *addr, unsigned int *addrlen) {
+    return (int)__ret(asys(AIOS_SYS_ACCEPT, fd, (long)addr, (long)addrlen));
+}
+int setsockopt(int fd, int level, int optname, const void *optval, unsigned int optlen) {
+    return (int)__ret(asys5(AIOS_SYS_SETSOCKOPT, fd, level, optname, (long)optval, (long)optlen));
+}
+int getsockname(int fd, void *addr, unsigned int *addrlen) {
+    return (int)__ret(asys(AIOS_SYS_GETSOCKNAME, fd, (long)addr, (long)addrlen));
+}
 unsigned short htons(unsigned short x) { return (unsigned short)((x >> 8) | (x << 8)); }
 unsigned short ntohs(unsigned short x) { return htons(x); }
 unsigned int htonl(unsigned int x) {
