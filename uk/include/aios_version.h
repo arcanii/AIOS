@@ -280,6 +280,20 @@
  * (pointed to via $AIOS_DNS_SERVER) with a fixed A record -- self-contained, exercising the real DNS wire
  * format. Gate key `dns`. THE NETWORKING ARC (client/server/non-blocking/DNS) IS FUNCTIONAL; next =
  * network-access confinement (which hosts/ports, analogous to M4.2 fs).
+ * 0.5.37 = NETWORKING, increment 5: NETWORK-ACCESS CONFINEMENT (NO new ABI -- a pure PAL policy, the net
+ * analogue of M4.2 fs confinement). Launched with AIOS_NET_ALLOW set, a guest may CONNECT only to
+ * endpoints on the allow-list; anything else is refused with -EACCES BEFORE any host connect (so a
+ * confined guest cannot phone home or scan the network). Established ONCE at spawn (pal_net_init_once),
+ * fail-closed (a set-but-empty list denies all). Format: comma-separated "ADDR[/prefix][:port]" rules --
+ * ADDR a dotted quad or "*", optional CIDR /prefix, port a number or "*"/omitted (any); IPv4 only. The
+ * kernel + ABI are UNCHANGED (the check is entirely in pal_host_connect, like AIOS_ROOT is a PAL policy);
+ * default (unset) = unrestricted, byte-identical to before, so every prior net test is unaffected. A
+ * future seL4 PAL enforces the same list against its network server. HONEST scope: gates outbound CONNECT
+ * (the "reach"); bind/listen are not yet confined; a confined guest that needs DNS must allow its
+ * resolver:53. Proof: test/net_jail.c red-teams it -- AIOS_NET_ALLOW="127.0.0.1:<P>" lets prog_net
+ * round-trip to the echo server, while AIOS_NET_ALLOW="127.0.0.1:1" refuses the same connect with EACCES
+ * (PORT-granular). Gate key `netjail`. THE NETWORKING ARC (client/server/non-blocking/DNS/confinement)
+ * IS COMPLETE.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -289,7 +303,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 36
+#define AIOS_VERSION_PATCH 37
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

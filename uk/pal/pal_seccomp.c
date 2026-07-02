@@ -85,6 +85,7 @@ static void install_seccomp_filter(void) {
 
 pal_pid_t pal_guest_spawn(const char *path, char *const argv[]) {
     pal_fs_init_once();                          /* M4.2: establish the AIOS root (AIOS_ROOT) once, up front */
+    pal_net_init_once();                         /* inc 5: establish the network allow-list (AIOS_NET_ALLOW) */
     umask(0);                                    /* the kernel owns the per-process umask */
     signal(SIGPIPE, SIG_IGN);                    /* a guest broken-pipe write must surface as PAL_EPIPE */
     /* Catch the terminal signals so the kernel survives ^C/^Z and forwards them to the foreground

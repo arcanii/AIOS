@@ -37,6 +37,8 @@
 #include <time.h>             /* clock_gettime + CLOCK_* (the host clock source) */
 #include <termios.h>          /* host tcgetattr/tcsetattr + struct termios (line discipline) */
 #include <sys/socket.h>        /* host socket/connect (AIOS networking passes through) */
+#include <netinet/in.h>        /* struct sockaddr_in (net-access confinement inspects the dest addr) */
+#include <arpa/inet.h>         /* inet_addr (parse the AIOS_NET_ALLOW allow-list) */
 #include <poll.h>              /* ppoll -- co-wait guest events + socket readiness (park/wake) */
 #include <unistd.h>
 #include <sys/ptrace.h>
@@ -655,6 +657,82 @@ static void set_nonblock(int fd) {
     int fl = fcntl(fd, F_GETFL, 0);
     if (fl >= 0) fcntl(fd, F_SETFL, fl | O_NONBLOCK);
 }
+
+/* --- network-access confinement (the net analogue of M4.2 fs confinement) ---
+ * When the PAL is launched with AIOS_NET_ALLOW set, a guest may CONNECT only to endpoints on the
+ * allow-list; anything else is refused with -EACCES BEFORE any host connect (so a confined guest cannot
+ * phone home or scan the network). Purely a PAL POLICY -- the kernel + ABI are UNCHANGED (like AIOS_ROOT).
+ * Default (unset) = unrestricted, byte-identical to before. Established ONCE at spawn, fail-closed (a set
+ * but empty/all-bad list = deny all). Format: comma-separated "ADDR[/prefix][:port]" rules, where ADDR is
+ * a dotted quad or "*" (any) and port is a number or "*"/omitted (any) -- e.g.
+ * "127.0.0.1:8080,10.0.0.0/8,*:53". IPv4 only (a confined guest cannot use other families). */
+struct net_rule { unsigned int addr; unsigned int mask; int port; };   /* addr/mask network order; port host order, 0 = any */
+static struct net_rule g_net_rules[64];
+static int g_net_nrules;
+static int g_net_confined_net;                                          /* AIOS_NET_ALLOW was set */
+
+static int net_all_digits(const char *s) {                            /* non-empty, all 0-9 */
+    if (!*s) return 0;
+    for (; *s; s++) if (*s < '0' || *s > '9') return 0;
+    return 1;
+}
+static void pal_net_init_once(void) {
+    static int done = 0;
+    if (done) return;
+    done = 1;
+    const char *spec = getenv("AIOS_NET_ALLOW");
+    if (!spec || !*spec) return;                                       /* unconfined (default) */
+    g_net_confined_net = 1;
+    char buf[1024];
+    size_t i = 0; for (; spec[i] && i < sizeof buf - 1; i++) buf[i] = spec[i];
+    buf[i] = '\0';
+    char *p = buf;
+    while (*p && g_net_nrules < (int)(sizeof g_net_rules / sizeof g_net_rules[0])) {
+        char *comma = p; while (*comma && *comma != ',') comma++;
+        char save = *comma; *comma = '\0';                             /* p = one rule token */
+        char *next = save ? comma + 1 : comma;                         /* where p advances to */
+        int bad = 0;
+        /* split off ":port" (IPv4 has no colon, so the first colon separates the port). A non-numeric or
+         * empty port is REJECTED (fail-closed) -- never silently 0=any (which would open every port). */
+        char *colon = p; while (*colon && *colon != ':') colon++;
+        int port = 0;                                                  /* 0 = any */
+        if (*colon == ':') { *colon = '\0'; const char *ps = colon + 1;
+            if (*ps == '*') port = 0; else if (net_all_digits(ps)) port = atoi(ps); else bad = 1; }
+        /* split off "/prefix". A non-numeric or empty prefix is REJECTED (fail-closed) -- never atoi's
+         * 0, which would compute mask 0 = match EVERY host (allow-all). */
+        char *slash = p; while (*slash && *slash != '/') slash++;
+        int prefix = 32;
+        if (*slash == '/') { *slash = '\0'; const char *ps = slash + 1;
+            if (net_all_digits(ps)) { prefix = atoi(ps); if (prefix > 32) prefix = 32; } else bad = 1; }
+        struct net_rule r;
+        r.port = port;
+        if (bad) { *comma = save; p = next; continue; }                /* fail-closed: drop the bad rule */
+        if (p[0] == '*' && p[1] == '\0') { r.addr = 0; r.mask = 0; }   /* any host (use "*" or "0.0.0.0/0") */
+        else {
+            struct in_addr ia;
+            if (inet_aton(p, &ia) == 0) { *comma = save; p = next; continue; }   /* malformed addr -> drop */
+            unsigned int hm = (prefix == 0) ? 0u : (0xFFFFFFFFu << (32 - prefix));
+            r.addr = ia.s_addr; r.mask = htonl(hm);                   /* addr network order; mask network order */
+        }
+        g_net_rules[g_net_nrules++] = r;
+        *comma = save; p = next;
+    }
+}
+/* Is `addr` (a guest sockaddr) an allowed CONNECT destination under the active policy? IPv4 only. */
+static int net_addr_allowed(const void *addr, unsigned int addrlen) {
+    if (!g_net_confined_net) return 1;                                /* unconfined */
+    if (addrlen < sizeof(struct sockaddr_in)) return 0;
+    const struct sockaddr_in *sin = (const struct sockaddr_in *)addr;
+    if (sin->sin_family != AF_INET) return 0;                         /* non-IPv4 denied when confined */
+    unsigned int da = sin->sin_addr.s_addr;                           /* network order */
+    int dp = (int)ntohs(sin->sin_port);
+    for (int k = 0; k < g_net_nrules; k++) {
+        struct net_rule *r = &g_net_rules[k];
+        if ((da & r->mask) == (r->addr & r->mask) && (r->port == 0 || r->port == dp)) return 1;
+    }
+    return 0;
+}
+
 pal_file_t pal_host_socket(int domain, int type, int protocol) {
     int fd = socket(domain, type, protocol);
     if (fd < 0) return (pal_file_t)(-errno);
@@ -662,6 +740,7 @@ pal_file_t pal_host_socket(int domain, int type, int protocol) {
     return (pal_file_t)fd;
 }
 int pal_host_connect(pal_file_t f, const void *addr, unsigned int addrlen) {
+    if (!net_addr_allowed(addr, addrlen)) return -EACCES;             /* net confinement: refuse before connecting */
     if (connect((int)f, (const struct sockaddr *)addr, (socklen_t)addrlen) == 0) return 0;
     if (errno == EINPROGRESS || errno == EALREADY) return PAL_EWOULDBLOCK;   /* in flight -> park on writable */
     return -errno;

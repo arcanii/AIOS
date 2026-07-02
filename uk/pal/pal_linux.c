@@ -51,6 +51,7 @@ static int at_syscall_entry(pal_pid_t pid) {
 
 pal_pid_t pal_guest_spawn(const char *path, char *const argv[]) {
     pal_fs_init_once();                          /* M4.2: establish the AIOS root (AIOS_ROOT) once, up front */
+    pal_net_init_once();                         /* inc 5: establish the network allow-list (AIOS_NET_ALLOW) */
     umask(0);                                    /* the kernel owns a per-process umask now; do not let the
                                                   * host re-mask the modes the kernel already masked */
     /* The kernel does pipe writes on the guests' behalf; a write to a pipe with no readers must
