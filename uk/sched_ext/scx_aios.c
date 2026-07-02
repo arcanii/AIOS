@@ -7,6 +7,11 @@
  * its default scheduler. This is HOST (Linux) code, not an AIOS-ABI program -- it is how the AIOS system
  * installs its scheduling policy on the substrate. Requires root + CONFIG_SCHED_CLASS_EXT.
  *
+ * While attached it periodically prints the BPF program's observability counters (read live from the
+ * mmap'd .bss via the skeleton) so you can SEE the AIOS-aware policy at work: how many enqueues were
+ * tagged AIOS (aios-uk + its guests) vs other, and how many dispatch cycles drained the HIGH queue vs
+ * the NORMAL queue. `aios_enq > 0` while an AIOS workload runs = the policy is tagging + prioritising it.
+ *
  * Build: `make` (needs clang + bpftool + libbpf-dev + the target kernel's vmlinux.h) -- see the Makefile.
  */
 #include <stdio.h>
@@ -24,6 +29,18 @@ static int print_fn(enum libbpf_print_level level, const char *fmt, va_list ap)
 	if (level == LIBBPF_DEBUG)
 		return 0;
 	return vfprintf(stderr, fmt, ap);
+}
+
+static void print_stats(const struct scx_aios_bpf *skel, const char *tag)
+{
+	unsigned long long a  = skel->bss->aios_enq;
+	unsigned long long o  = skel->bss->other_enq;
+	unsigned long long hi = skel->bss->hi_dispatch;
+	unsigned long long nm = skel->bss->norm_dispatch;
+
+	printf("scx_aios: %s AIOS enq=%llu (HIGH drained %llu) | other enq=%llu (NORMAL drained %llu)\n",
+	       tag, a, hi, o, nm);
+	fflush(stdout);
 }
 
 int main(void)
@@ -48,14 +65,21 @@ int main(void)
 		return 1;
 	}
 
-	printf("scx_aios: the AIOS sched_ext scheduler is ATTACHED -- the kernel now schedules by AIOS policy.\n");
+	printf("scx_aios: the AIOS-aware sched_ext scheduler is ATTACHED -- the kernel now schedules by AIOS policy.\n");
+	printf("scx_aios: AIOS tasks (aios-uk + its guests) -> HIGH queue, drained before every other host task.\n");
 	printf("scx_aios: (check: cat /sys/kernel/sched_ext/root/ops -> \"aios\"). Ctrl-C to detach.\n");
 	fflush(stdout);
 
-	while (!exit_req)
-		sleep(1);
+	while (!exit_req) {
+		sleep(2);
+		if (exit_req)
+			break;
+		print_stats(skel, "[live]");
+	}
 
-	printf("\nscx_aios: detaching -- the kernel reverts to its default scheduler.\n");
+	printf("\n");
+	print_stats(skel, "[totals]");
+	printf("scx_aios: detaching -- the kernel reverts to its default scheduler.\n");
 	bpf_link__destroy(link);
 	scx_aios_bpf__destroy(skel);
 	return 0;
