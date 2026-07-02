@@ -437,13 +437,21 @@ PAL remaps them and talks to a network server).
   `127.0.0.1:0`, announces its port, accepts a connection, and echoes — and a host client
   (`test/net_server.c`) connects to it and round-trips a message. Wired into the gate (`netsrv`), green
   under **both** PAL backends.
+- **Increment 3 — non-blocking + park/wake** (no new ABI). Socket I/O no longer **blocks** the
+  single-threaded kernel. Sockets are `O_NONBLOCK` at the host; a `read`/`write`/`accept`/`connect` that
+  would block **parks** the guest (`PS_BLOCKED_NET_IN`/`OUT`, the socket analogue of the pipe park) and
+  the kernel services others. `pal_guest_next` now **co-waits** guest events *and* socket readiness —
+  it `ppoll`s the kernel-published watch set (`pal_net_watch_*`) with `SIGCHLD` atomically unblocked
+  (race-free) and returns a new event when a socket is ready, then the kernel re-tries the parked op.
+  The guest still sees ordinary **blocking** socket semantics; `^C` still interrupts a parked guest.
+  When no guest is socket-parked the wait is the original blocking `waitpid` — so every non-network path
+  is byte-identical (zero regression). Proof: `guest/prog_netloop.c` — **two AIOS guests** (a forked
+  echo server + the client) round-trip TCP inside **one** `aios-uk`, which would *deadlock* under the
+  old blocking `accept` (gate key `netloop`, both backends).
 
-**Honest limits (the next increments):** socket I/O is **blocking** — a serviced `read`/`connect`/
-`accept` blocks the single-threaded kernel (fine for one guest; non-blocking + park/wake, integrating
-socket readiness into the kernel's event loop like the pipe park/wake, is next). IPv4 only, no DNS
-resolver yet (connect takes a dotted quad). And there is **no network-access confinement** yet — which
-hosts/ports a guest may reach, the analogue of the `AIOS_ROOT` filesystem confinement, is a later PAL
-policy step.
+**Honest limits (the next increments):** IPv4 only, **no DNS** resolver yet (connect takes a dotted
+quad). And there is **no network-access confinement** yet — which hosts/ports a guest may reach, the
+analogue of the `AIOS_ROOT` filesystem confinement, is a later PAL policy step.
 
 ## Building an AIOS root image (the "disk image")
 
