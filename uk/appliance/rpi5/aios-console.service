@@ -1,0 +1,39 @@
+# aios-console.service -- boot the machine into the AIOS userspace kernel on a console.
+#
+# The "boots into AIOS" LIGHT PATH: a systemd service that runs the AIOS system layer
+# (aios-uk /sbin/init -> login -> a user session) on a dedicated Linux virtual terminal, so the machine
+# presents AIOS on that console at boot -- WITHOUT touching the host boot chain, the primary getty, or
+# ssh. Fully reversible (`systemctl disable --now aios-console`). This is the "userspace kernel over a
+# commodity host" idea (the 2026-06-24 pivot) deployed on real hardware: the host Linux boots, then
+# hands a console to AIOS.
+#
+# The AIOS root + kernel are staged under /opt/aios by install.sh. The service command is byte-identical
+# to the HW-proven `login` gate path: AIOS_ROOT=<root> aios-uk <root>/sbin/init, given a controlling tty
+# (for AIOS job control -- ^C/^Z, tcsetpgrp) the same way getty gives one to login.
+[Unit]
+Description=AIOS userspace kernel -- boot into AIOS on a console
+Documentation=file:/opt/aios/README.rpi5.md
+After=systemd-user-sessions.service getty.target
+
+[Service]
+Type=idle
+Environment=AIOS_ROOT=/opt/aios/aiosroot
+Environment=PATH=/bin:/sbin
+Environment=HOME=/
+Environment=TERM=linux
+ExecStart=/opt/aios/aios-uk /opt/aios/aiosroot/sbin/init
+Restart=always
+RestartSec=1
+# Give the AIOS session a real controlling terminal (the getty pattern). On a clean AIOS shutdown
+# (root poweroff/halt/reboot) aios-uk exits with a distinguished code; here we simply respawn the login
+# (a kiosk) -- deliberately NOT powering off the host, since this is one console on a shared machine.
+UtmpIdentifier=tty8
+TTYPath=/dev/tty8
+TTYReset=yes
+TTYVHangup=yes
+StandardInput=tty
+StandardOutput=tty
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
