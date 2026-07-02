@@ -1,0 +1,6 @@
+# Build artifacts + per-kernel BTF (regenerated at build time)
+vmlinux.h
+vmlinux.btf
+*.bpf.o
+*.bpf.skel.h
+scx_aios
