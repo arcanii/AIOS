@@ -1,6 +1,18 @@
-# HANDOVER -- session 25 (2026-06-27): SYSTEM LAYER COMPLETE + sched_ext (AIOS OWNS SCHEDULING) on the RPi5
+# HANDOVER -- session 25 (2026-06-27): SYSTEM LAYER COMPLETE + sched_ext + NETWORKING, all on the RPi5
 
-**LATEST (end of session): the endgame began -- `uk/sched_ext/scx_aios` is AIOS's own CPU scheduler as a
+**LATEST-2 (end of session): AIOS has NETWORKING (v0.5.32, ABI 55->57).** A socket ABI --
+`SOCKET`/`CONNECT` (a TCP CLIENT) -- host-passthrough behind the boundary (a socket is an AIOS fd backed
+by a host socket, so READ/WRITE/CLOSE work on it; the sockaddr layout matches the host so the PAL
+forwards bytes straight through). libaios socket/connect + htons/inet_addr + shadow <sys/socket.h>/
+<netinet/in.h>/<arpa/inet.h>. Proof: `guest/prog_net.c` round-trips through a host echo server
+(`test/net_client.c`, gate key `net`), green BOTH backends on colima AND the RPi5; and it **fetched
+http://example.com over the REAL internet from the RPi5 (HTTP GET -> 200 OK)**. Committed `adeb2e7`.
+Honest limits: CLIENT only (BIND/LISTEN/ACCEPT = a server, next); IPv4-only (no DNS -- inet_addr needs a
+dotted quad); blocking socket I/O blocks the single-threaded kernel (fine for 1 guest; non-blocking
+park/wake is next); no network-access confinement yet (which hosts/ports, analogous to M4.2 fs
+confinement). See the 0.5.32 note in `uk/include/aios_version.h`.
+
+**LATEST-1: the endgame began -- `uk/sched_ext/scx_aios` is AIOS's own CPU scheduler as a
 sched_ext BPF program, HW-VALIDATED on the RPi5.** Attach -> `/sys/kernel/sched_ext` state=enabled
 ops=aios (the kernel schedules by AIOS policy, not EEVDF); the **full AIOS gate passes both PAL backends
 WHILE the AIOS scheduler owns the host**; detach -> clean revert. Committed `1d3cc43` (build) + `0cfb826`
