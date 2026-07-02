@@ -262,16 +262,46 @@ http://example.com over the REAL internet from the RPi5. ENTIRE tree HW-validate
 vendored sources -- grow libaios. Each milestone was adversarially reviewed by a Workflow (3-lens
 find->verify) BEFORE commit -- real bugs got caught (incl. the inc-5 fail-open); KEEP DOING THIS.
 
-PRIMARY TASK -> **pick the next endgame arc -- ASK Bryan, no default (the networking arc is done).**
-Options: (a) **scx_aios AIOS-AWARE scheduling policy** -- evolve uk/sched_ext/scx_aios from a flat
-global-FIFO into a policy that prioritises the AIOS kernel + its guest tracees (and/or telemetry vs
-EEVDF); builds on the HW-validated sched_ext subsystem. (b) **a "boots into AIOS" RPi5 appliance
-deploy** -- put the minimal appliance (uk/appliance/, currently QEMU-only) on the real RPi5: a BCM2712
-kernel/DTB + the init->aios-uk->aiosroot initramfs, the Pi console instead of QEMU's PL011; a tangible
-end-to-end deliverable (a root `poweroff` powers the board off), heavier (bootloader/kernel packaging).
-(c) **finish net confinement** -- confine bind/listen too (inbound), the one remaining networking scope
-gap. (d) **pal_sel4.c** -- the seL4/x86-64 replant seam (BACKLOGGED, the eventual soul; M9 de-risked it).
-Keep kernel/aios_kernel.c host-agnostic; commit + gate (both backends) + RPi5-validate + adversarial-
+PRIMARY TASK -> **Bryan's pick: an AIOS-AWARE scx_aios scheduling policy.** Evolve
+`uk/sched_ext/scx_aios` (AIOS's own sched_ext BPF scheduler) from its current flat global-FIFO into a
+policy that PRIORITISES the AIOS kernel (`aios-uk`) + its guest tracees over other host tasks -- AIOS is
+a userspace kernel, so the host's CPU scheduler should favour the AIOS workload. NOT STARTED this
+session (only surveyed). Current state (read these): `uk/sched_ext/scx_aios.bpf.c` (a
+`struct sched_ext_ops` with init/enqueue/dispatch/exit; ONE shared DSQ served FIFO; kernel-7.0 SCX API;
+self-contained kfunc decls; no vendored scx headers), `uk/sched_ext/scx_aios.c` (the userspace loader --
+open+load+attach the struct_ops, hold until Ctrl-C, detach), `uk/sched_ext/Makefile` + `README.md`.
+HW-validated on the RPi5 (attach -> ops=aios/state=enabled, the full AIOS gate passes BOTH backends
+while it schedules the host, detach reverts).
+
+**PROPOSED DESIGN (refine as you build):** (1) Identify AIOS tasks IN BPF by comm-ancestry -- a task is
+"AIOS" if it OR an ancestor within ~8 `real_parent` hops has `comm == "aios-uk"` (the kernel's comm is
+"aios-uk"; guests are its fork children, so a guest's parent chain reaches it). Use CO-RE reads
+(`#include <bpf/bpf_core_read.h>`, `BPF_CORE_READ(t, real_parent)`, read `comm[16]`, byte-compare to
+"aios-uk\0"); a bounded (unrolled) 8-iteration loop keeps the verifier happy. (2) Give AIOS tasks
+PRIORITY via a second HIGH DSQ: enqueue -> AIOS tasks to `AIOS_DSQ_HI`, others to `AIOS_DSQ_NORMAL`;
+dispatch -> drain HI first, then NORMAL. Keep the DEFAULT slice (AIOS is bursty/blocks on I/O + ptrace
+stops, so strict priority does NOT starve sshd in practice -- note this honestly; a weighted/budgeted
+policy is a further refinement). (3) Make it OBSERVABLE: global counters (`__u64 aios_enq, other_enq`
+bumped with `__sync_fetch_and_add`) the loader reads via the skeleton (`skel->bss->...`) + prints -- so
+you can SHOW the policy tags + prioritises AIOS tasks (aios_enq >> 0 while the gate runs).
+
+**DEV LOOP (sched_ext is DIFFERENT from the ptrace kernel -- colima's 6.8 kernel CANNOT load sched_ext,
+so NO colima load-test):** build the BPF in an `ubuntu:26.04` container (clang21/bpftool7.7/libbpf1.6.3,
+ABI-identical to the RPi5) against the RPi5's BTF, OR build on the RPi5 -- BUT the RPi5 is MISSING
+`libbpf-dev` headers (`/usr/include/bpf/bpf_core_read.h` absent), so either `sudo apt install libbpf-dev`
+on the RPi5 (ASK Bryan first -- installing a package) or cross-build in the container (`make BTF=<rpi5
+vmlinux.btf>` after `bpftool btf dump file /sys/kernel/btf/vmlinux format raw`... actually dump the
+RPi5's `/sys/kernel/btf/vmlinux` and build the skeleton against it). The RPi5 HAS
+`/sys/kernel/btf/vmlinux` + `clang` + `CONFIG_SCHED_CLASS_EXT` (sched_ext state currently `disabled`).
+The loader binary is self-contained (embeds the BPF via the skeleton) -> build in the container, copy
+the binary to the RPi5, `sudo ./scx_aios` (root; Bryan authorized passwordless sudo). VALIDATE: attach
+-> `/sys/kernel/sched_ext/root/ops`=aios + `state`=enabled; run the FULL AIOS gate WHILE attached (must
+stay `linux=0 seccomp=0`); confirm `aios_enq >> 0` (AIOS tasks tagged + prioritised); detach ->
+`state`=disabled, reverts cleanly. Adversarially REVIEW the BPF (verifier-safety of the ancestry loop +
+CO-RE reads; a starvation analysis of strict priority).
+
+OTHER arcs still open (Bryan's later call): a "boots into AIOS" RPi5 appliance deploy; finish net
+confinement (bind/listen); `pal_sel4.c` (the eventual soul). Commit + gate + RPi5-validate + adversarial-
 review each milestone. (A pre-existing flaky test, test/login_pty.c whoami-capture, is being hardened in
 a dedicated session -- re-run the gate if ONLY `login`/`execjail` flakes on loaded colima; the RPi5 is
 authoritative.)
