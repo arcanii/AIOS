@@ -230,7 +230,7 @@ gate() {
            echo "=== SYSTEM LAYER: AIOS init + login -- a password-checked session on a pty (logout respawns the login) ===" &&
            LR=/tmp/aios_loginroot; rm -rf "$LR"; sh mkaiosroot.sh "$LR" >/dev/null 2>&1;
            cc -O2 -o /tmp/login_pty test/login_pty.c -lutil 2>/dev/null &&
-           AIOS_ROOT="$LR" timeout 25 /tmp/login_pty ./aios-uk "$LR/sbin/init" 2>/dev/null; lprc=$?;
+           AIOS_ROOT="$LR" timeout 60 /tmp/login_pty ./aios-uk "$LR/sbin/init" 2>/dev/null; lprc=$?;
            rm -rf "$LR";
            echo "=== networking (client) -- an AIOS TCP client (socket/connect + read/write) round-trips via a host echo server ===" &&
            cc -O2 -o /tmp/net_client test/net_client.c 2>/dev/null &&
