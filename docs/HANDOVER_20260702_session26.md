@@ -1,6 +1,40 @@
-# HANDOVER -- session 26 (2026-07-02): NETWORKING inc 2 (a socket SERVER) + inc 3 (non-blocking park/wake)
+# HANDOVER -- session 26 (2026-07-02): NETWORKING inc 2 (server) + inc 3 (non-blocking) + inc 4 (DNS)
 
-**LATEST (inc 3): socket I/O no longer BLOCKS the single-threaded kernel.** Networking increment 3
+**LATEST (inc 4): AIOS programs use HOSTNAMES, not just dotted-quad IPs -- the networking arc
+(client / server / non-blocking / DNS) is FUNCTIONAL.** Bryan picked the "from-scratch + timed wait"
+path. Two sub-milestones, both NO new ABI, both HW-validated on the RPi5 (`sh gate.sh` -> linux=0
+seccomp=0):
+- **inc 4a (v0.5.35, commit `8edeb48`): a TIMED socket read via `SO_RCVTIMEO`** (reuses `setsockopt`).
+  A guest sets `SO_RCVTIMEO` (a struct timeval); the kernel stores it per-fd and gives a parked read a
+  deadline (`proc.blk_deadline_ms`); `net_publish_watches` carries the earliest deadline to the `ppoll`,
+  and `net_expire_deadlines` returns `-EAGAIN` to a timed-out read (run AFTER `net_retry_parked` so a
+  read that readied exactly at the deadline still completes). `pal_net_wait_ready` now surfaces a `ppoll`
+  TIMEOUT (not just readiness) as code 4. Proof: `guest/prog_rcvtimeo.c` (`SO_RCVTIMEO 300ms` ->
+  `EAGAIN ~303ms`, an already-queued datagram read returns immediately). Gate key `rcvtimeo`.
+- **inc 4b (v0.5.36, commit `9486417`): a FROM-SCRATCH UDP DNS resolver in libaios.** `gethostbyname` +
+  `getaddrinfo`/`freeaddrinfo`/`gai_strerror` + `inet_ntoa`, built ENTIRELY on the AIOS socket ABI
+  (`SOCK_DGRAM` + `connect` + `read`/`write`) with `SO_RCVTIMEO` for a 2s×3 timeout on packet loss -- so
+  a seL4 PAL gets DNS for free and the kernel stays host-agnostic. It builds a type-A query and parses
+  the response (header/question skip + answer records WITH name-compression pointers, bounds-checked
+  untrusted input). Nameserver from `$AIOS_DNS_SERVER` ("ip[:port]") else `/etc/resolv.conf`. `struct
+  hostent`/`addrinfo` live in `include/aios_abi.h` (so `libaios.c` sees the same layout under every build
+  flag); shadow `<netdb.h>`. Scope: A/IPv4 only, no search domains, first answer wins, numeric
+  `getaddrinfo` service. Proof: `guest/prog_dns.c` resolves a name via BOTH APIs through a host DNS stub
+  (`test/dns_server.c`, `$AIOS_DNS_SERVER` -> 127.0.0.1) with a fixed A record. Gate key `dns`.
+
+An **adversarial-review Workflow** (3-lens find->verify) ran on the diff: the response parser survived
+(no OOB reads), and it caught + we FIXED one real bug pre-commit -- a stale `SO_RCVTIMEO` deadline: a
+completed timed read left `blk_deadline_ms` set, so a later non-read socket park (write/connect/accept)
+could inherit it and be spuriously aborted with `-EAGAIN` (a partial write would discard already-sent
+bytes). Fix: every socket-park entry now sets `blk_deadline_ms` (read -> deadline; write/connect/accept
+-> 0), plus a defensive `SKOP_READ` guard in `net_expire_deadlines`. Re-gated green (colima + RPi5).
+
+**Remaining networking limits:** IPv4-only; **no network-access confinement** (which hosts/ports a guest
+may reach) -- that is inc 5, the natural next step (a PAL policy analogous to M4.2 fs confinement).
+
+---
+
+**inc 3: socket I/O no longer BLOCKS the single-threaded kernel.** Networking increment 3
 makes host sockets NON-BLOCKING and adds PARK/WAKE, so a socket read/write/accept/connect that would
 block PARKS the guest (the socket analogue of the pipe park) and the kernel services others -- removing
 the honest single-guest limit of inc 1/2. **NO new ABI** (a pure kernel+PAL mechanism; ABI stays 62;
@@ -189,39 +223,40 @@ host-driver core (pal/pal_linux_common.c) + TWO trap front-ends (pal/pal_linux.c
 pal/pal_seccomp.c = seccomp RET_TRACE; `make PAL=linux|seccomp`) + libaios + shadow standard headers
 (lib/include, -nostdinc).
 
-DONE through **v0.5.34, 62-syscall ABI**: OPERATIONAL (vendored dash + 28 sbase utils UNMODIFIED) +
+DONE through **v0.5.36, 62-syscall ABI**: OPERATIONAL (vendored dash + 28 sbase utils UNMODIFIED) +
 the boundary COMPLETE + FULL JOB CONTROL + raw termios + a SECOND PAL backend (seccomp via the
 GATEWAY) + a minimal Linux-6.18 appliance + the SYSTEM LAYER COMPLETE (inc 1+2: init->login->session->
 logout->respawn, per-process uid/gid identity + login SWITCHES USER, crypt() SHA-512 =openssl passwd
 -6, a fuller shell incl. uname reports AIOS / a real FLOAT printf =glibc / date / tr / cut / seq, a
 root-gated clean SHUTDOWN, config-driven init /etc/inittab) + two endgame subsystems: (1) sched_ext --
-uk/sched_ext/scx_aios is AIOS's OWN CPU scheduler as a BPF struct_ops, HW-validated on the RPi5; (2)
-NETWORKING inc 1 (a TCP CLIENT: SOCKET/CONNECT) + inc 2 (a TCP SERVER: BIND/LISTEN/ACCEPT +
-SETSOCKOPT/GETSOCKNAME) + **inc 3 (NON-BLOCKING sockets + PARK/WAKE -- socket I/O no longer blocks the
-single-threaded kernel; NO new ABI)** -- all host-passthrough behind the boundary (a socket is an AIOS
-fd backed by a host socket; ACCEPT returns a NEW AIOS fd). inc 3: the PAL makes sockets O_NONBLOCK +
-the guest PARKS on would-block (PS_BLOCKED_NET_IN/OUT); pal_guest_next co-waits guest events AND socket
-readiness (ppoll with SIGCHLD atomically unblocked, event code 4) and net_retry_parked re-runs the
-parked op; when no guest is socket-parked the wait is the ORIGINAL blocking waitpid (zero regression).
-Proven by an AIOS client round-tripping a host echo (`net`), an AIOS echo server a host client hits
-(`netsrv`), + fetched http://example.com over the REAL internet from the RPi5, AND `prog_netloop`
-(`netloop`) -- TWO AIOS guests round-trip TCP inside ONE aios-uk (would DEADLOCK if blocking). ENTIRE
-tree HW-validated on the RPi5 (`aios@tkrpi5.local`, Ubuntu 26.04, kernel 7.0, gcc 15; `sh gate.sh` ->
-linux=0 seccomp=0). NEVER patch vendored sources -- grow libaios.
+uk/sched_ext/scx_aios is AIOS's OWN CPU scheduler as a BPF struct_ops, HW-validated on the RPi5; (2) the
+**NETWORKING ARC is FUNCTIONAL** -- inc 1 (a TCP CLIENT: SOCKET/CONNECT) + inc 2 (a TCP SERVER: BIND/
+LISTEN/ACCEPT + SETSOCKOPT/GETSOCKNAME) + inc 3 (NON-BLOCKING sockets + PARK/WAKE, no new ABI: sockets
+O_NONBLOCK, the guest PARKS on would-block PS_BLOCKED_NET_IN/OUT, pal_guest_next co-waits guest events
+AND socket readiness via ppoll with SIGCHLD atomically unblocked -> event code 4 -> net_retry; no-socket
+path = the ORIGINAL blocking waitpid, zero regression) + inc 4 (DNS: 4a SO_RCVTIMEO timed read, 4b a
+FROM-SCRATCH UDP DNS resolver in libaios -- gethostbyname/getaddrinfo -- over the AIOS socket ABI, no
+new ABI). All host-passthrough behind the boundary (a socket is an AIOS fd backed by a host socket;
+ACCEPT returns a NEW AIOS fd). Proven: gate keys `net` `netsrv` `netloop` (2 AIOS guests round-trip TCP
+in one aios-uk) `rcvtimeo` `dns`, + fetched http://example.com over the REAL internet from the RPi5.
+ENTIRE tree HW-validated on the RPi5 (`aios@tkrpi5.local`, Ubuntu 26.04, kernel 7.0, gcc 15; `sh
+gate.sh` -> linux=0 seccomp=0). NEVER patch vendored sources -- grow libaios. Each milestone was
+adversarially reviewed by a Workflow (3-lens find->verify) BEFORE commit -- real bugs got caught; KEEP
+DOING THIS.
 
-PRIMARY TASK -> **continue NETWORKING, in the recommended order** (each a milestone: commit + gate +
-RPi5-validate): **(4) DNS -- a resolver so programs use hostnames not dotted-quad IPs.** Simplest = a
-PAL passthrough to the host `getaddrinfo` (a `pal_host_getaddrinfo`/`gethostbyname` behind the seam) --
-but it BLOCKS (synchronous resolver I/O), so either accept a brief block or route it through the inc-3
-park/wake path over a non-blocking UDP socket; the "grow our own" path = a from-scratch UDP resolver in
-libaios/the kernel over the now-non-blocking socket layer (fits "programs see only the AIOS ABI" +
-reuses inc 3). Decide the split with Bryan. **THEN (5) network-access CONFINEMENT** (which hosts/ports a
-guest may reach -- a PAL policy analogous to M4.2 fs confinement, e.g. an allow-list in
-pal_host_connect/bind; zero/minimal ABI). Keep kernel/aios_kernel.c host-agnostic (resolver + policy
-are PAL concerns). THEN other endgame arcs (Bryan's call): scx_aios AIOS-AWARE policy; the RPi5 "boots
-into AIOS" appliance deploy; pal_sel4.c (BACKLOGGED -- the eventual soul). (A pre-existing flaky test,
-test/login_pty.c whoami-capture, is being hardened in a dedicated session -- re-run the gate if ONLY
-`login`/`execjail` flakes on loaded colima; the RPi5 is authoritative.)
+PRIMARY TASK -> **continue the endgame (Bryan's call at the fork).** The recommended next networking
+step is **(5) network-access CONFINEMENT** -- which hosts/ports a guest may reach, the analogue of M4.2
+fs confinement (`AIOS_ROOT`): a PAL POLICY (an allow-list checked in pal_host_connect/pal_host_bind,
+sourced e.g. from an `AIOS_NET_ALLOW` env like AIOS_ROOT), so the kernel + ABI stay UNCHANGED (zero/
+minimal ABI) -- prove it with a red-team guest (an allowed host connects, a denied host/port is
+refused), analogous to prog_jail. Keep kernel/aios_kernel.c host-agnostic (policy is a PAL concern).
+OTHER endgame arcs to offer Bryan: scx_aios AIOS-AWARE policy (prioritise the AIOS kernel + its guests
+vs a flat global FIFO); a "boots into AIOS" RPi5 appliance deploy (a BCM2712 kernel/DTB + the init->
+aios-uk->aiosroot initramfs, Pi console instead of QEMU PL011 -- a tangible deliverable); pal_sel4.c
+(BACKLOGGED -- the eventual soul). ASK Bryan which arc (net confinement is the natural continuation, but
+he may want the appliance or an AIOS-aware scheduler). (A pre-existing flaky test, test/login_pty.c
+whoami-capture, is being hardened in a dedicated session -- re-run the gate if ONLY `login`/`execjail`
+flakes on loaded colima; the RPi5 is authoritative.)
 
 DEV LOOP: colima -- `UK=/Users/bryan/Desktop/github_repos/AIOS/uk; docker run -d --platform
 linux/arm64 --cap-add=SYS_PTRACE -v "$UK":/uk -w /uk gcc:13 sh -c 'stdbuf -oL sh gate.sh >

@@ -448,10 +448,21 @@ PAL remaps them and talks to a network server).
   is byte-identical (zero regression). Proof: `guest/prog_netloop.c` — **two AIOS guests** (a forked
   echo server + the client) round-trip TCP inside **one** `aios-uk`, which would *deadlock* under the
   old blocking `accept` (gate key `netloop`, both backends).
+- **Increment 4 — DNS** (no new ABI). AIOS programs resolve **hostnames**, not just dotted quads.
+  *4a — a timed read:* `SO_RCVTIMEO` (via the existing `setsockopt`) gives a parked socket read a
+  deadline — it returns `-EAGAIN` after the timeout instead of parking forever (`prog_rcvtimeo.c`:
+  `SO_RCVTIMEO 300ms` → `EAGAIN ~303ms`). *4b — a from-scratch resolver:* `gethostbyname` /
+  `getaddrinfo` / `inet_ntoa`, a UDP DNS client implemented **entirely in libaios** over the AIOS socket
+  ABI (`SOCK_DGRAM` + `connect` + `read`/`write`) with `SO_RCVTIMEO` for a 2s×3 timeout — it builds a
+  type-A query and parses the response (including DNS name-compression pointers, bounds-checked as
+  untrusted input). The nameserver comes from `$AIOS_DNS_SERVER` or `/etc/resolv.conf`. So a future seL4
+  PAL gets DNS **for free** (it implements the socket ABI). Proof: `guest/prog_dns.c` resolves a name
+  through a host DNS stub (`test/dns_server.c`) — gate key `dns`, both backends. Scope: A/IPv4 only, no
+  search domains, first answer wins.
 
-**Honest limits (the next increments):** IPv4 only, **no DNS** resolver yet (connect takes a dotted
-quad). And there is **no network-access confinement** yet — which hosts/ports a guest may reach, the
-analogue of the `AIOS_ROOT` filesystem confinement, is a later PAL policy step.
+**Honest limits (the next increment):** IPv4 only, and there is **no network-access confinement** yet —
+which hosts/ports a guest may reach, the analogue of the `AIOS_ROOT` filesystem confinement, is a later
+PAL policy step.
 
 ## Building an AIOS root image (the "disk image")
 
