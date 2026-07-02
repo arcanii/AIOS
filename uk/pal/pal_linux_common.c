@@ -174,16 +174,28 @@ uint64_t pal_guest_mmap(pal_pid_t who, size_t len) {
     return addr;
 }
 
-/* Stage a kernel string `s` into guest `who`'s own stack scratch (below sp, inside the current stack
- * page -- dead space the active frames do not use; execve copies the path before unmapping). Returns
- * the guest address, or 0 on failure. */
-static uint64_t stage_str(pal_pid_t who, uint64_t sp, const char *s) {
-    size_t len = 0; while (s[len]) len++;
-    uint64_t pagestart = sp & ~(uint64_t)0xFFF;
-    uint64_t scratch   = (sp - 512) & ~(uint64_t)0xF;
-    if (scratch < pagestart) scratch = pagestart;
-    if (sp - scratch < (uint64_t)len + 1) return 0;
-    if (pal_guest_write(who, scratch, s, len + 1) != len + 1) return 0;
+/* Stage a kernel string `s` into guest `who`'s memory so an injected execve can read it. It writes into
+ * the guest's CURRENT stack page -- which is always mapped and (a path being short) always has room --
+ * and SAVES the bytes it overwrites so pal_guest_exec can restore them if the execve FAILS (on success
+ * the image is replaced, so the overwrite is moot). It prefers free space below sp; only when sp sits
+ * near the page bottom does it fall back to the page start, which may overlap a live frame -- hence the
+ * save/restore. Fills *save (the original bytes), *saveat, *savelen. Returns the guest address, or 0.
+ *
+ * FIXES an intermittent -ENAMETOOLONG: the old code clamped the scratch to the page start and then bailed
+ * when `sp - scratch < len+1`, so whenever a guest's sp happened to sit within a path-length of a stack
+ * page boundary at exec time, staging failed and the exec returned ENAMETOOLONG. That is random per exec
+ * (stack depth/layout), so ~a few percent of execs under load flaked -- e.g. login could not exec its
+ * shell, init could not exec /bin/login, a shell could not exec whoami. */
+static uint64_t stage_str(pal_pid_t who, uint64_t sp, const char *s,
+                          unsigned char *save, uint64_t *saveat, size_t *savelen) {
+    size_t len = 0; while (s[len]) len++; len++;               /* include the NUL terminator */
+    if (len > 256) return 0;                                   /* a path this long is bogus (keeps save[] small) */
+    uint64_t pagestart = sp & ~(uint64_t)0xFFF;                /* the page containing sp is mapped */
+    uint64_t scratch = (sp >= pagestart + len) ? ((sp - len) & ~(uint64_t)0xF) : pagestart;
+    if (scratch < pagestart) scratch = pagestart;              /* never leave the mapped page */
+    if (pal_guest_read(who, scratch, save, len) != len) return 0;    /* save originals for restore-on-failure */
+    if (pal_guest_write(who, scratch, s, len) != len) return 0;
+    *saveat = scratch; *savelen = len;
     return scratch;
 }
 
@@ -211,7 +223,8 @@ int pal_guest_exec(pal_pid_t who, const char *abspath, uint64_t gargv, uint64_t 
         hostpath = canon;
     }
 
-    uint64_t addr = stage_str(who, saved.sp, hostpath);          /* path into the guest's stack scratch */
+    unsigned char save[256]; uint64_t saveat = 0; size_t savelen = 0;
+    uint64_t addr = stage_str(who, saved.sp, hostpath, save, &saveat, &savelen);   /* path into guest memory */
     if (addr == 0) { pal_guest_setret(who, (uint64_t)(long)-ENAMETOOLONG); return -1; }
 
     r = saved;
@@ -226,8 +239,9 @@ int pal_guest_exec(pal_pid_t who, const char *abspath, uint64_t gargv, uint64_t 
     if (waitpid_r(who, &st, 0) < 0) return -1;
 
     if (WIFSTOPPED(st) && (st >> 8) == (SIGTRAP | (PTRACE_EVENT_EXEC << 8)))
-        return 0;                                            /* success: new image live */
-    if (WIFSTOPPED(st)) {                                     /* execve failed: restore + plant -1 */
+        return 0;                                            /* success: new image live (the stage is moot) */
+    if (WIFSTOPPED(st)) {                                     /* execve failed: restore staged-over bytes + regs */
+        pal_guest_write(who, saveat, save, savelen);
         saved.regs[0] = (unsigned long long)-1;
         setregs(who, &saved);
         return -1;

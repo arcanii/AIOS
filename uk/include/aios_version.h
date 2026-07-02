@@ -323,6 +323,18 @@
  * exit-signal, not CLONE_PARENT). Proven: a pty stress (login + 7 forking commands) leaves 0 host zombies
  * and the RPi5 boots-into-AIOS console no longer shows the lingering sysinit-echo zombie; full gate green
  * both PAL backends.
+ * 0.5.40 = an EXEC path-staging fix (no ABI change): under load ~a few percent of guest execs failed
+ * with ENAMETOOLONG (login could not exec its shell, init could not exec /bin/login, a shell could not
+ * exec whoami). Root cause: pal_guest_exec stages the exec target PATH into the guest's own memory then
+ * injects a Linux execve pointing at it; the old stage_str wrote it below sp clamped to the stack page
+ * start, and BAILED (-> the kernel planted -ENAMETOOLONG) whenever the guest's sp happened to sit within
+ * a path-length of a stack-page BOTTOM at exec time -- random per exec (stack depth/layout), hence the
+ * intermittent flake. Fix: stage into the current (always-mapped) stack page with room -- below sp when
+ * there is space, else the page start -- and SAVE the overwritten bytes so pal_guest_exec restores them
+ * if the execve fails (on success the image is replaced, so the overwrite is moot; the guest is stopped
+ * throughout). This was the true root cause behind the intermittent login_pty flake (a test that was
+ * correctly detecting a real kernel bug). Proven: 200/200 login pty runs across both PAL backends on
+ * colima AND the RPi5 under CPU load with ZERO ENAMETOOLONG (pre-fix ~2-4% flaked); full gate green.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -332,7 +344,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 39
+#define AIOS_VERSION_PATCH 40
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)
