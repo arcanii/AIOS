@@ -206,6 +206,15 @@
  * argv[0]). Proof: guest/prog_reboot.c (drop to a normal user -> reboot() denied EPERM, self-verifying
  * since an ungated reboot would exit 200 not 0) + a gate check that poweroff/reboot exit aios-uk with
  * 200/202. Only /etc/inittab services remain in increment 2.
+ * 0.5.31 = the SYSTEM LAYER, increment 2 (part 8, THE LAST): init is CONFIG-DRIVEN via /etc/inittab
+ * (no new ABI). init (guest/init.c) now parses /etc/inittab ("id:runlevels:action:process"; runlevels
+ * ignored) supporting sysinit/wait (run once, block), once/boot (run once), and respawn (keep alive) --
+ * so it runs boot-time setup steps and then supervises the console getty, restarting it on logout.
+ * mkaiosroot writes a default inittab (a sysinit banner + `console::respawn:/bin/login`); a missing or
+ * respawn-less inittab falls back to respawning /bin/login (increment-1 behaviour), so the system always
+ * comes up. Proof: test/login_pty.c drives the full inittab-driven boot (sysinit banner -> login ->
+ * a user session -> logout -> respawn). THE SYSTEM LAYER, INCREMENT 2 IS COMPLETE (identity + login
+ * switches user + crypt() hashing + the util batch + clean shutdown + inittab).
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -215,7 +224,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 30
+#define AIOS_VERSION_PATCH 31
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

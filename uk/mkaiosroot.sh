@@ -65,6 +65,15 @@ aios:$6$aiossalt$RniFLmVGV7vaoLmNnMHSgLxQ0nTG4iNL61yVU3c6W09Df0xuSmUaFvd1PVx9YAX
 EOF
 chmod 600 "$ROOT/etc/shadow"
 
+# /etc/inittab -- the AIOS init configuration (init is config-driven). Format:
+#   id:runlevels:action:process   (runlevels ignored; actions: sysinit, wait, once, respawn)
+# A sysinit banner runs once at boot; the console login is a respawn entry (restarted on logout).
+cat > "$ROOT/etc/inittab" <<'EOF'
+# AIOS /etc/inittab
+::sysinit:/bin/echo AIOS system starting
+console::respawn:/bin/login
+EOF
+
 # /etc/profile -- sourced by the login shell (dash, started with argv0 "-sh")
 cat > "$ROOT/etc/profile" <<'EOF'
 export PATH=/bin:/sbin
