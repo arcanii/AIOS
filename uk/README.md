@@ -459,10 +459,20 @@ PAL remaps them and talks to a network server).
   PAL gets DNS **for free** (it implements the socket ABI). Proof: `guest/prog_dns.c` resolves a name
   through a host DNS stub (`test/dns_server.c`) — gate key `dns`, both backends. Scope: A/IPv4 only, no
   search domains, first answer wins.
+- **Increment 5 — network-access confinement** (no new ABI). The net analogue of M4.2 fs confinement:
+  which hosts/ports a guest may **reach**. Launched with `AIOS_NET_ALLOW` set, a guest may `connect` only
+  to allow-listed endpoints; any other destination is refused with `EACCES` *before* any host connect —
+  so a confined guest cannot phone home or scan the network. Purely a **PAL policy** (checked in
+  `pal_host_connect`, like `AIOS_ROOT`) — the kernel and ABI are unchanged, and unset = unrestricted. The
+  list is comma-separated `ADDR[/prefix][:port]` rules (a dotted quad or `*`, optional CIDR, a port or
+  `*`/omitted = any; IPv4). The parser **fails closed** — a malformed prefix/port drops the rule rather
+  than silently widening it. Proof: `test/net_jail.c` red-teams `guest/prog_netjail.c` (which checks
+  `connect` is refused with `EACCES` specifically) across exact-host + CIDR allows and wrong-port,
+  different-subnet, *and malformed-rule* denies — gate key `netjail`, both backends. Scope: outbound
+  `connect` only (bind/listen not yet confined; a confined guest must allow its resolver `:53`).
 
-**Honest limits (the next increment):** IPv4 only, and there is **no network-access confinement** yet —
-which hosts/ports a guest may reach, the analogue of the `AIOS_ROOT` filesystem confinement, is a later
-PAL policy step.
+The **networking arc — client / server / non-blocking / DNS / confinement — is complete.** Remaining
+scope: IPv4 only, and `bind`/`listen` confinement is a later refinement.
 
 ## Building an AIOS root image (the "disk image")
 

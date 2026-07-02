@@ -1,6 +1,23 @@
-# HANDOVER -- session 26 (2026-07-02): NETWORKING inc 2 (server) + inc 3 (non-blocking) + inc 4 (DNS)
+# HANDOVER -- session 26 (2026-07-02): NETWORKING arc COMPLETE (server + non-blocking + DNS + confinement)
 
-**LATEST (inc 4): AIOS programs use HOSTNAMES, not just dotted-quad IPs -- the networking arc
+**LATEST (inc 5): NETWORK-ACCESS CONFINEMENT -- the networking arc (client / server / non-blocking /
+DNS / confinement) is COMPLETE.** The net analogue of M4.2 fs confinement, a pure PAL policy (NO new
+kernel/ABI; commit `9f49b4d`, v0.5.37; HW-validated on the RPi5). Launched with `AIOS_NET_ALLOW` set, a
+guest may `connect` only to allow-listed endpoints; anything else is refused with `-EACCES` before any
+host connect (a confined guest cannot phone home or scan). `pal_net_init_once` (both front-ends) parses
+`AIOS_NET_ALLOW="ADDR[/prefix][:port],..."` (dotted quad or `*`, optional CIDR, port number or
+`*`/omitted = any; IPv4) into a rule table; `net_addr_allowed` gates `pal_host_connect`. Default (unset)
+= unrestricted (byte-identical to before). Scope: outbound `connect` only (bind/listen not yet confined;
+a confined guest must allow its resolver `:53`). **An adversarial review caught a FAIL-OPEN** (`atoi`
+returns 0 on junk, and 0 is the "any" sentinel -> a malformed `/prefix` = mask 0 = allow-all, a
+non-numeric `:port` = any-port) -- FIXED: a prefix/port must be non-empty all-digits, else the rule is
+dropped (fail-**closed**). Proof: `test/net_jail.c` red-teams `guest/prog_netjail.c` (checks `connect`
+fails with `EACCES` specifically) across allow (exact + CIDR) and deny (wrong-port / different-subnet /
+malformed-prefix / malformed-port) cases; gate key `netjail`, green both backends.
+
+---
+
+**inc 4: AIOS programs use HOSTNAMES, not just dotted-quad IPs -- the networking arc
 (client / server / non-blocking / DNS) is FUNCTIONAL.** Bryan picked the "from-scratch + timed wait"
 path. Two sub-milestones, both NO new ABI, both HW-validated on the RPi5 (`sh gate.sh` -> linux=0
 seccomp=0):
@@ -223,40 +240,41 @@ host-driver core (pal/pal_linux_common.c) + TWO trap front-ends (pal/pal_linux.c
 pal/pal_seccomp.c = seccomp RET_TRACE; `make PAL=linux|seccomp`) + libaios + shadow standard headers
 (lib/include, -nostdinc).
 
-DONE through **v0.5.36, 62-syscall ABI**: OPERATIONAL (vendored dash + 28 sbase utils UNMODIFIED) +
+DONE through **v0.5.37, 62-syscall ABI**: OPERATIONAL (vendored dash + 28 sbase utils UNMODIFIED) +
 the boundary COMPLETE + FULL JOB CONTROL + raw termios + a SECOND PAL backend (seccomp via the
 GATEWAY) + a minimal Linux-6.18 appliance + the SYSTEM LAYER COMPLETE (inc 1+2: init->login->session->
 logout->respawn, per-process uid/gid identity + login SWITCHES USER, crypt() SHA-512 =openssl passwd
 -6, a fuller shell incl. uname reports AIOS / a real FLOAT printf =glibc / date / tr / cut / seq, a
 root-gated clean SHUTDOWN, config-driven init /etc/inittab) + two endgame subsystems: (1) sched_ext --
 uk/sched_ext/scx_aios is AIOS's OWN CPU scheduler as a BPF struct_ops, HW-validated on the RPi5; (2) the
-**NETWORKING ARC is FUNCTIONAL** -- inc 1 (a TCP CLIENT: SOCKET/CONNECT) + inc 2 (a TCP SERVER: BIND/
+**NETWORKING ARC is COMPLETE** -- inc 1 (a TCP CLIENT: SOCKET/CONNECT) + inc 2 (a TCP SERVER: BIND/
 LISTEN/ACCEPT + SETSOCKOPT/GETSOCKNAME) + inc 3 (NON-BLOCKING sockets + PARK/WAKE, no new ABI: sockets
 O_NONBLOCK, the guest PARKS on would-block PS_BLOCKED_NET_IN/OUT, pal_guest_next co-waits guest events
 AND socket readiness via ppoll with SIGCHLD atomically unblocked -> event code 4 -> net_retry; no-socket
 path = the ORIGINAL blocking waitpid, zero regression) + inc 4 (DNS: 4a SO_RCVTIMEO timed read, 4b a
-FROM-SCRATCH UDP DNS resolver in libaios -- gethostbyname/getaddrinfo -- over the AIOS socket ABI, no
-new ABI). All host-passthrough behind the boundary (a socket is an AIOS fd backed by a host socket;
-ACCEPT returns a NEW AIOS fd). Proven: gate keys `net` `netsrv` `netloop` (2 AIOS guests round-trip TCP
-in one aios-uk) `rcvtimeo` `dns`, + fetched http://example.com over the REAL internet from the RPi5.
-ENTIRE tree HW-validated on the RPi5 (`aios@tkrpi5.local`, Ubuntu 26.04, kernel 7.0, gcc 15; `sh
-gate.sh` -> linux=0 seccomp=0). NEVER patch vendored sources -- grow libaios. Each milestone was
-adversarially reviewed by a Workflow (3-lens find->verify) BEFORE commit -- real bugs got caught; KEEP
-DOING THIS.
+FROM-SCRATCH UDP DNS resolver in libaios -- gethostbyname/getaddrinfo -- over the AIOS socket ABI) +
+inc 5 (NET-ACCESS CONFINEMENT: AIOS_NET_ALLOW allow-list checked in pal_host_connect, out-of-list ->
+EACCES, fail-closed parser -- a PAL policy, no new ABI). All host-passthrough behind the boundary (a
+socket is an AIOS fd backed by a host socket; ACCEPT returns a NEW AIOS fd). Proven: gate keys `net`
+`netsrv` `netloop` (2 AIOS guests round-trip TCP in one aios-uk) `rcvtimeo` `dns` `netjail`, + fetched
+http://example.com over the REAL internet from the RPi5. ENTIRE tree HW-validated on the RPi5
+(`aios@tkrpi5.local`, Ubuntu 26.04, kernel 7.0, gcc 15; `sh gate.sh` -> linux=0 seccomp=0). NEVER patch
+vendored sources -- grow libaios. Each milestone was adversarially reviewed by a Workflow (3-lens
+find->verify) BEFORE commit -- real bugs got caught (incl. the inc-5 fail-open); KEEP DOING THIS.
 
-PRIMARY TASK -> **continue the endgame (Bryan's call at the fork).** The recommended next networking
-step is **(5) network-access CONFINEMENT** -- which hosts/ports a guest may reach, the analogue of M4.2
-fs confinement (`AIOS_ROOT`): a PAL POLICY (an allow-list checked in pal_host_connect/pal_host_bind,
-sourced e.g. from an `AIOS_NET_ALLOW` env like AIOS_ROOT), so the kernel + ABI stay UNCHANGED (zero/
-minimal ABI) -- prove it with a red-team guest (an allowed host connects, a denied host/port is
-refused), analogous to prog_jail. Keep kernel/aios_kernel.c host-agnostic (policy is a PAL concern).
-OTHER endgame arcs to offer Bryan: scx_aios AIOS-AWARE policy (prioritise the AIOS kernel + its guests
-vs a flat global FIFO); a "boots into AIOS" RPi5 appliance deploy (a BCM2712 kernel/DTB + the init->
-aios-uk->aiosroot initramfs, Pi console instead of QEMU PL011 -- a tangible deliverable); pal_sel4.c
-(BACKLOGGED -- the eventual soul). ASK Bryan which arc (net confinement is the natural continuation, but
-he may want the appliance or an AIOS-aware scheduler). (A pre-existing flaky test, test/login_pty.c
-whoami-capture, is being hardened in a dedicated session -- re-run the gate if ONLY `login`/`execjail`
-flakes on loaded colima; the RPi5 is authoritative.)
+PRIMARY TASK -> **pick the next endgame arc -- ASK Bryan, no default (the networking arc is done).**
+Options: (a) **scx_aios AIOS-AWARE scheduling policy** -- evolve uk/sched_ext/scx_aios from a flat
+global-FIFO into a policy that prioritises the AIOS kernel + its guest tracees (and/or telemetry vs
+EEVDF); builds on the HW-validated sched_ext subsystem. (b) **a "boots into AIOS" RPi5 appliance
+deploy** -- put the minimal appliance (uk/appliance/, currently QEMU-only) on the real RPi5: a BCM2712
+kernel/DTB + the init->aios-uk->aiosroot initramfs, the Pi console instead of QEMU's PL011; a tangible
+end-to-end deliverable (a root `poweroff` powers the board off), heavier (bootloader/kernel packaging).
+(c) **finish net confinement** -- confine bind/listen too (inbound), the one remaining networking scope
+gap. (d) **pal_sel4.c** -- the seL4/x86-64 replant seam (BACKLOGGED, the eventual soul; M9 de-risked it).
+Keep kernel/aios_kernel.c host-agnostic; commit + gate (both backends) + RPi5-validate + adversarial-
+review each milestone. (A pre-existing flaky test, test/login_pty.c whoami-capture, is being hardened in
+a dedicated session -- re-run the gate if ONLY `login`/`execjail` flakes on loaded colima; the RPi5 is
+authoritative.)
 
 DEV LOOP: colima -- `UK=/Users/bryan/Desktop/github_repos/AIOS/uk; docker run -d --platform
 linux/arm64 --cap-add=SYS_PTRACE -v "$UK":/uk -w /uk gcc:13 sh -c 'stdbuf -oL sh gate.sh >
