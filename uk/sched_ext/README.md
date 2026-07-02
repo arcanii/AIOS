@@ -9,7 +9,7 @@ kernel schedules every task by **AIOS's policy**, not the default EEVDF/CFS.
 
 Because AIOS *is* a userspace kernel, the host's CPU scheduler should **favour the AIOS workload** — the
 `aios-uk` kernel process and every guest it runs — over unrelated host tasks. `scx_aios` does that in
-three steps (see `scx_aios.bpf.c`):
+four layers (see `scx_aios.bpf.c`):
 
 1. **Tag AIOS tasks by comm-ancestry.** The AIOS kernel process runs as comm `aios-uk`; every guest is
    one of its `fork` descendants (`aios-uk` forks+execs the init guest; guests fork further). So a task
@@ -25,10 +25,28 @@ three steps (see `scx_aios.bpf.c`):
    still keeps the overwhelming majority of the CPU. (This is a liveness *valve*, not a fair-share
    scheduler: an individual NORMAL task's worst-case wait is bounded and finite — ~*N* × 50 ms for *N*
    runnable NORMAL tasks — never infinite.)
-3. **Make it observable.** Five global counters (mmap'd `.bss`, read live by the loader) show the policy
+3. **Be fair + weighted *within* each class — virtual-time (vtime) scheduling.** Inside a DSQ, tasks are
+   ordered by a per-task virtual time (`scx_bpf_dsq_insert_vtime`) rather than plain FIFO, and each task's
+   vtime advances by the CPU it uses **scaled by its weight** (`.stopping` charges `used × 100 / weight`;
+   a heavier task advances vtime slower → is picked sooner → gets more CPU). So among AIOS guests (and
+   among NORMAL tasks) CPU is shared **fairly** — no guest starves another — and **per-guest weights**
+   work: the ordinary `nice` value sets `p->scx.weight` (inherited across `fork`), so `nice`-ing a guest
+   changes its share. Layer 2 decides HIGH-vs-NORMAL; layer 3 decides who-within-a-class. A lagging vtime
+   is clamped to one slice behind the global clock on every enqueue, so neither a returning sleeper nor a
+   brand-new task (vtime 0) can bank credit and monopolise — and the clamp does *not* flatten weighting
+   (the weight advantage comes from a light task's vtime racing *ahead*, verified on HW).
+4. **Make it observable.** Five global counters (mmap'd `.bss`, read live by the loader) show the policy
    at work: `aios_enq` / `other_enq` (enqueues tagged AIOS vs not), `hi_dispatch` / `norm_dispatch`
    (dispatch cycles that drained HIGH vs NORMAL), and `valve_fires` (times the valve served NORMAL ahead
    of a non-empty HIGH — i.e. AIOS was saturating the box).
+
+**Weighting — what to expect.** vtime discriminates by weight whenever tasks *yield between slices*, which
+AIOS guests do constantly (every syscall traps to `aios-uk`). Measured on the RPi5, two AIOS guests
+sharing one CPU split it by `nice`: nice 0 vs nice +5 ≈ **3:1**, nice 0 vs nice +15 ≈ **25:1** — matching
+the kernel weight ratios (FIFO would give 1:1). The one case weighting is *weak* (~1.3:1 regardless of
+`nice`) is two **pure** CPU-bound hogs co-scheduled on one CPU: they ping-pong at each slice boundary and
+are never co-queued for vtime to compare — a known vtime/slice interaction, and not the AIOS norm (guests
+are bursty).
 
 ### Does it starve everything else? — no; the valve guarantees it
 
@@ -133,6 +151,11 @@ an ABI-matching environment can simply be copied to the target and run as root �
   progress (~2.5 M loop iterations, *not* starved) while `valve_fires` climbed into the hundreds — the
   scheduler served ~2900 HIGH dispatches to ~320 valve-relieved NORMAL dispatches (AIOS ~90%, NORMAL a
   ~10% keep-alive share). Strict HIGH-first would have left NORMAL unserved;
+- the **vtime weighted fairness** works: equal-weight AIOS guests share a CPU **1:1** (as FIFO does), but
+  `nice` now *biases* the share — two bursty AIOS guests sharing one CPU split it **≈3:1** at nice 0 vs +5
+  and **≈25:1** at nice 0 vs +15, matching the kernel weight ratios (the FIFO scheduler ignores `nice` →
+  1:1). The `p->scx.weight` values (100 for nice 0, 4 for nice +15) and the vtime charging were confirmed
+  on-device via `bpf_printk`;
 - detach (SIGTERM) → `state` = `disabled`, the kernel reverts to its default scheduler, clean exit.
 
 Built in an `ubuntu:26.04` container (ABI-identical to the RPi5); the self-contained loader binary was

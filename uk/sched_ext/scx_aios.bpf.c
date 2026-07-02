@@ -9,7 +9,7 @@
  *
  * This policy is AIOS-AWARE: because AIOS is a userspace kernel, the host's CPU scheduler should FAVOUR
  * the AIOS workload (the aios-uk kernel process + every guest it runs) over unrelated host tasks. It
- * does that in two steps:
+ * does that in three layers:
  *
  *   (1) TAG AIOS tasks by comm-ancestry. The AIOS kernel process runs as comm "aios-uk"; every guest is
  *       one of its fork descendants (aios-uk forks+execs the init guest; guests fork further). So a task
@@ -29,7 +29,16 @@
  *       share that GUARANTEES no NORMAL task is starved (each waits at most ~N*window for N runnable
  *       NORMAL tasks: bounded + finite, never infinite), while AIOS keeps the overwhelming majority of
  *       the CPU. Under ordinary load the valve NEVER fires (behaviour identical to strict priority). It
- *       is a liveness valve, not a fair-share scheduler; a finer weighted/vtime policy is a refinement.
+ *       is a liveness valve for cross-class (HIGH-vs-NORMAL) contention.
+ *
+ *   (3) Be FAIR + WEIGHTED *within* each class -- virtual-time (vtime) scheduling. Rather than plain
+ *       FIFO inside a DSQ, each task carries a per-task virtual time; a DSQ is drained lowest-vtime-first
+ *       (scx_bpf_dsq_insert_vtime), and a task's vtime advances by the CPU it uses SCALED BY ITS WEIGHT
+ *       (a higher weight advances vtime slower -> more CPU). So among AIOS guests (and among NORMAL
+ *       tasks) CPU is shared FAIRLY -- no guest starves another -- and PER-GUEST WEIGHTS work: the
+ *       ordinary `nice` value sets p->scx.weight, so `nice`-ing a guest (inherited across fork) makes it
+ *       get proportionally more/less of the AIOS CPU budget. Layer (2) still decides HIGH-vs-NORMAL;
+ *       layer (3) decides who-within-a-class. This is the "finer weighted/vtime policy" (2) foretold.
  *
  * OBSERVABLE: five global counters (mmap'd .bss) let the userspace loader SHOW the policy at work -- how
  * many enqueues were tagged AIOS vs other, how many dispatch cycles drained HIGH vs NORMAL, and how many
@@ -70,9 +79,20 @@ __u64 valve_fires;   /* times the anti-starvation valve served NORMAL ahead of a
 /* last_norm_ns: monotonic time (ns) NORMAL was last dispatched; drives the valve. 0 until first set. */
 static __u64 last_norm_ns;
 
+/* vtime_now: the global virtual-time clock (max vtime of any task that has run) -- the reference the
+ * enqueue clamp uses so a long-sleeping task cannot bank unlimited vtime credit and then monopolise. */
+static __u64 vtime_now;
+
+/* WEIGHT_DFL: the nice-0 weight (Linux sched_prio_to_weight[20]); a task's vtime advances by
+ * used_slice * WEIGHT_DFL / p->scx.weight, so weight WEIGHT_DFL runs vtime at real rate. */
+#define AIOS_WEIGHT_DFL 100
+
+/* Signed, wraparound-safe "is virtual time a before b?" (the standard vtime comparison). */
+static __always_inline bool vtime_before(__u64 a, __u64 b) { return (__s64)(a - b) < 0; }
+
 /* SCX kfuncs (kernel 7.0). Declared here so we need no external scx header. */
 extern s32  scx_bpf_create_dsq(u64 dsq_id, s32 node) __ksym;
-extern void scx_bpf_dsq_insert(struct task_struct *p, u64 dsq_id, u64 slice, u64 enq_flags) __ksym;
+extern void scx_bpf_dsq_insert_vtime(struct task_struct *p, u64 dsq_id, u64 slice, u64 vtime, u64 enq_flags) __ksym;
 extern bool scx_bpf_dsq_move_to_local(u64 dsq_id) __ksym;
 extern s32  scx_bpf_dsq_nr_queued(u64 dsq_id) __ksym;   /* queued-task count -- does NORMAL have work? */
 
@@ -126,17 +146,41 @@ s32 BPF_PROG(aios_init)
 	return scx_bpf_create_dsq(AIOS_DSQ_NORMAL, -1);
 }
 
-/* .enqueue: a task became runnable -> HIGH DSQ if it is AIOS, else NORMAL (both FIFO, default slice). */
+/* .enqueue: a task became runnable -> HIGH DSQ if it is AIOS, else NORMAL. Insert ordered by the task's
+ * virtual time (layer 3) so each queue is drained lowest-vtime-first = weighted-fair among its tasks. */
 SEC("struct_ops/aios_enqueue")
 void BPF_PROG(aios_enqueue, struct task_struct *p, u64 enq_flags)
 {
+	u64 dsq = AIOS_DSQ_NORMAL;
+	u64 vtime = p->scx.dsq_vtime;
+
 	if (task_is_aios(p)) {
 		__sync_fetch_and_add(&aios_enq, 1);
-		scx_bpf_dsq_insert(p, AIOS_DSQ_HI, SCX_SLICE_DFL, enq_flags);
+		dsq = AIOS_DSQ_HI;
 	} else {
 		__sync_fetch_and_add(&other_enq, 1);
-		scx_bpf_dsq_insert(p, AIOS_DSQ_NORMAL, SCX_SLICE_DFL, enq_flags);
 	}
+
+	/* Clamp a lagging vtime to at most one slice behind the global clock, on EVERY enqueue. This stops
+	 * (a) a long sleeper banking unlimited credit while asleep and monopolising on wake, and (b) a
+	 * BRAND-NEW task (dsq_vtime starts 0, far "before" a long-running clock) monopolising until it
+	 * catches up. It does NOT flatten the weighting: the weight advantage comes from a LIGHT task's
+	 * vtime racing AHEAD of the clock (charged used*100/weight with a small weight), not from the heavy
+	 * task falling behind -- measured on HW, bursty guests split ~3:1 (nice 0 vs +5) and ~25:1 (nice 0
+	 * vs +15) with this clamp, identical to a wakeup-only clamp but with the new-task hole closed.
+	 *
+	 * The clamp MUST be unconditional (not wakeup-gated) for a subtler reason too: with no ops.select_cpu,
+	 * the kernel's default select-cpu DIRECT-DISPATCHES a wake-to-idle-CPU task to SCX_DSQ_LOCAL WITHOUT
+	 * calling ops.enqueue at all (the common wake path on a lightly loaded box) -- so a wakeup-gated clamp
+	 * would never see that wake, and the task would carry its ancient banked vtime into its NEXT enqueue.
+	 * That next enqueue is the slice-expiry re-enqueue (enq_flags == 0, not a wakeup): exactly the path a
+	 * WAKEUP-gated clamp skips, but this unconditional clamp catches -- so banked sleep credit is wiped at
+	 * the task's first CONTENDED enqueue, bounding any advantage to one slice. (While the CPU was idle,
+	 * running immediately with stale vtime starves no one.) */
+	if (vtime_before(vtime, vtime_now - SCX_SLICE_DFL))
+		vtime = vtime_now - SCX_SLICE_DFL;
+
+	scx_bpf_dsq_insert_vtime(p, dsq, SCX_SLICE_DFL, vtime, enq_flags);
 }
 
 /* .dispatch: a CPU needs work. Normally drain HIGH first, then NORMAL (strict AIOS priority). But if a
@@ -178,6 +222,29 @@ void BPF_PROG(aios_dispatch, s32 cpu, struct task_struct *prev)
 	}
 }
 
+/* .running: a task is about to run -> advance the global vtime clock to it if we are behind, so vtime
+ * tracks real progress and the enqueue clamp stays meaningful. */
+SEC("struct_ops/aios_running")
+void BPF_PROG(aios_running, struct task_struct *p)
+{
+	if (vtime_before(vtime_now, p->scx.dsq_vtime))
+		vtime_now = p->scx.dsq_vtime;
+}
+
+/* .stopping: a task stopped running -> charge its virtual time by the CPU it just used, SCALED BY ITS
+ * WEIGHT. p->scx.slice is the slice LEFT, so (SCX_SLICE_DFL - slice) is what it used; dividing by weight
+ * (relative to the nice-0 default) makes a heavier task's vtime advance slower -> it is picked sooner ->
+ * it gets proportionally more CPU. This is where per-guest `nice` weights take effect. */
+SEC("struct_ops/aios_stopping")
+void BPF_PROG(aios_stopping, struct task_struct *p, bool runnable)
+{
+	u32 weight = p->scx.weight ?: AIOS_WEIGHT_DFL;   /* weight is >= 1 in practice; guard anyway */
+	u64 used = SCX_SLICE_DFL - p->scx.slice;
+
+
+	p->scx.dsq_vtime += used * AIOS_WEIGHT_DFL / weight;
+}
+
 /* .exit: the scheduler is being unloaded (or the kernel ejected it). Nothing to tear down. */
 SEC("struct_ops/aios_exit")
 void BPF_PROG(aios_exit, struct scx_exit_info *ei)
@@ -189,6 +256,8 @@ struct sched_ext_ops aios_ops = {
 	.init     = (void *)aios_init,
 	.enqueue  = (void *)aios_enqueue,
 	.dispatch = (void *)aios_dispatch,
+	.running  = (void *)aios_running,
+	.stopping = (void *)aios_stopping,
 	.exit     = (void *)aios_exit,
 	.flags    = 0,
 	.name     = "aios",
