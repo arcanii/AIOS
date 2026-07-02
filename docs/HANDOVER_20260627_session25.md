@@ -1,12 +1,19 @@
-# HANDOVER -- session 25 (2026-06-27): SYSTEM LAYER increment 2 -- AIOS is a system you log into AS A USER
+# HANDOVER -- session 25 (2026-06-27): SYSTEM LAYER COMPLETE -- AIOS is a system you log into AS A USER + shut down
 
 Continues the userspace-kernel work (the 2026-06-24 pivot: AIOS as a gVisor-style userspace kernel on
 Linux; verified seL4-on-x86-64 is the destination; verification is the soul). Session 24
 (docs/HANDOVER_20260627_session24.md) delivered the **system layer increment 1**: AIOS boots into
-init -> login -> a password-checked session -> shell -> logout -> respawn. **Session 25 delivers the
-core of increment 2: a real IDENTITY model -- login now switches to the authenticated user, passwords
-are crypt()-hashed, and the logged-in shell is fuller.** v0.5.23 -> **v0.5.28**, ABI 48 -> **54**.
-ALL HW-validated on the real RPi4 (gcc 14.2, kernel 6.12.47): `sh gate.sh` -> **linux=0 seccomp=0**.
+init -> login -> a password-checked session -> shell -> logout -> respawn. **Session 25 delivers ALL of
+increment 2 and COMPLETES the system layer: a real IDENTITY model (login switches to the authenticated
+user, crypt()-hashed passwords), a fuller shell (uname/env/date/tr/cut/seq/printf + float printf), a
+clean root-gated SHUTDOWN, and a config-driven init (/etc/inittab).** v0.5.23 -> **v0.5.31**,
+ABI 48 -> **55**.
+
+HW-VALIDATION STATUS (honest): **v0.5.24-0.5.28 are HW-validated on the real RPi4** (gcc 14.2, kernel
+6.12.47, both PAL backends: `sh gate.sh` -> linux=0 seccomp=0). **v0.5.29-0.5.31 (float printf,
+shutdown, inittab) are colima-BOTH-backend green but Pi-PENDING** -- the RPi4 went OFFLINE late in the
+session (mDNS + .8 both stopped resolving) and the new **RPi5 (tkrpi5.local / 192.168.0.42) is up but
+has SSH not-yet-enabled** (all ports refuse). Re-run `sh gate.sh` on a reachable Pi to clear the gap.
 
 ## What shipped (6 commits on `main`; Bryan pushes)
 
@@ -50,8 +57,27 @@ ALL HW-validated on the real RPi4 (gcc 14.2, kernel 6.12.47): `sh gate.sh` -> **
    [:class:] sets -> the full is*rune classifiers + to{lower,upper}rune + ef{get,put}rune/utflen); cut
    (-b/-c/-f -d -s + memmem).
 
+7. **`04c14ac` -- inc 2 part 6: FLOAT printf -> seq + printf (v0.5.29, no new ABI).** libaios's printf
+   core gained %f/%e/%g (+ upper): a scaled-integer digit extraction with round-half-to-EVEN, honoring
+   +/space/#/0 flags, width, precision. BYTE-IDENTICAL to glibc across a 58-case battery
+   (guest/prog_printf.c compiled BOTH as an AIOS guest AND a host program + diffed in the gate = a new
+   pass/fail key). HONEST LIMIT: double intermediate (not bignum), so near-boundary values (0.005, 2.675)
+   can round the other way; long double is binary128 -> needs __multf3, absent under -nostdlib. sbase
+   **seq** + **printf** now run UNMODIFIED.
+8. **`b416596` -- inc 2 part 7: a clean SHUTDOWN (v0.5.30, ABI 54->55).** One syscall REBOOT (0x1035),
+   root-gated on euid == 0 (the identity model's FIRST privilege gate on a KERNEL op -- unprivileged ->
+   EPERM). A root poweroff/halt/reboot makes the kernel exit its run loop + return AIOS_EXIT_* (200/201/
+   202); the appliance PID-1 (aios_init.c) maps that to a REAL host reboot() instead of respawning.
+   libaios reboot() + shadow <sys/reboot.h>; one guest/poweroff.c installed as /sbin/{poweroff,halt,
+   reboot} (picks the action from argv[0]). Proof: guest/prog_reboot.c (unprivileged reboot -> EPERM,
+   self-verifying). (`2e555b1` gitignores the poweroff/reboot/halt binaries.)
+9. **`de6fbc9` -- inc 2 part 8 (LAST): config-driven init via /etc/inittab (v0.5.31, no new ABI).** init
+   parses /etc/inittab (sysinit/wait/once/respawn; runlevels ignored), runs boot-time setup, then
+   supervises the console getty; falls back to /bin/login if the file is missing. login_pty drives the
+   full inittab boot. **THE SYSTEM LAYER (inc 1 + inc 2) IS COMPLETE.**
+
 **Vendored, running UNMODIFIED now:** dash + sbase true/false/echo/cat/wc/mkdir/rm/ls/head/tail/cp/mv/
-ln/chmod/sort/grep + **whoami/logname/uname/env/printenv/pwd/tty/date/tr/cut**.
+ln/chmod/sort/grep + **whoami/logname/uname/env/printenv/pwd/tty/date/tr/cut/seq/printf** (28 utils).
 
 ## KEY LESSONS (carry forward)
 
@@ -78,26 +104,28 @@ ln/chmod/sort/grep + **whoami/logname/uname/env/printenv/pwd/tty/date/tr/cut**.
 - macOS has **no `setsid`** (a Linux util) -- a `nohup setsid` detach on the Mac fails instantly; it
   works on the Pi.
 
-## INCREMENT-2 REMAINING (the honest scope line)
+## INCREMENT 2 IS COMPLETE -- what's next
 
-The CORE of increment 2 (identity + login-switch + crypt + the util batch) is DONE + HW-validated.
-What is left:
+The system layer (inc 1 + inc 2) is DONE. The only open item within it is **HW re-validation of
+v0.5.29-0.5.31** (float printf, shutdown, inittab) on a reachable Pi -- they are colima-both-backend
+green but the RPi4 went offline late-session. Do this first when a Pi is up (`sh gate.sh` ->
+linux=0 seccomp=0). The last Pi-validated version is v0.5.28.
 
-1. **seq + printf (the util)** -- both need **float printf (`%f`/`%g`/`%e`)** in libaios (the printf
-   core has flags/width/precision but no floating point yet). seq also defaults to a float format. Once
-   libaios printf grows %f/%g, both build (the Makefile rules + utf/estrtod wiring are already scoped:
-   seq = eprintf+estrtod+strtonum+fshut; printf = the utf chain + estrtod/unescape).
-2. **/etc/inittab services + clean shutdown.** init currently hardcodes one getty (respawn /bin/login).
-   Next: init reads an /etc/inittab-style config to start services, and a clean `halt`/`poweroff`/
-   `reboot`. NEEDS A DESIGN CHOICE: AIOS shutdown = the AIOS kernel (aios-uk) exits cleanly. Likeliest
-   shape: a new ABI syscall (REBOOT/SHUTDOWN) the kernel handles by stopping its run loop with a
-   poweroff/reboot exit code; the appliance's PID-1 (/init, aios_init.c) maps that code to a real Linux
-   poweroff/reboot. (Or: init exiting => aios_kernel_run returns => aios-uk exits.) A small halt util or
-   an init signal triggers it. Worth a quick check with Bryan before building.
+**The new RPi5 (tkrpi5.local / 192.168.0.42)** is up but has **SSH not enabled** -- all ports refuse.
+To use it (as a validation target AND/OR the deploy target below) it needs the RPi4's headless prep: an
+empty `ssh` file + `userconf.txt` (user/pass) on the boot FAT partition (see [[project_pivot_linux_userspace_kernel]]'s M0 note). That is a physical-SD step on Bryan's end.
 
-Also still pending from the broader roadmap (unchanged): ls -l OWNERSHIP reflecting an AIOS uid (file
-ownership is host-backed today -- a bigger metadata-overlay change, NOT done); the endgame (sched_ext /
-pal_sel4.c / the from-source 6.18 kernel build).
+Then the ENDGAME (Bryan's call which first):
+- **RPi5 "boots into AIOS"** -- deploy the minimal-6.18 appliance (uk/appliance/, currently QEMU-only)
+  onto the real RPi5: a BCM2712 kernel/DTB + the init->aios-uk->aiosroot initramfs, swapping QEMU's
+  PL011 console for the Pi's. A tangible deliverable + the enabler for sched_ext. (The new shutdown
+  makes this satisfying: a root `poweroff` on the RPi5 actually powers the board off.)
+- **sched_ext** -- AIOS's own scheduling policy as a BPF program; needs a kernel with
+  CONFIG_SCHED_CLASS_EXT (a custom RPi5/6.18 kernel can carry it; the stock RPi kernel can't).
+- **pal_sel4.c** -- the seL4/x86-64 replant seam (a THIRD PAL backend; the soul; M9 de-risked it).
+
+Also still pending from the broader roadmap: ls -l OWNERSHIP reflecting an AIOS uid (file ownership is
+host-backed today -- a bigger metadata-overlay change, NOT done); the from-source minimal-6.18 build.
 
 ## Dev loop (carry forward)
 
@@ -128,26 +156,29 @@ host-driver core (pal/pal_linux_common.c) + TWO trap front-ends (pal/pal_linux.c
 pal/pal_seccomp.c = seccomp RET_TRACE; `make PAL=linux|seccomp`) + libaios + shadow standard headers
 (lib/include, -nostdinc).
 
-DONE through **v0.5.28, 54-syscall ABI**: OPERATIONAL (vendored dash + 26 sbase utils run UNMODIFIED) +
+DONE through **v0.5.31, 55-syscall ABI**: OPERATIONAL (vendored dash + 28 sbase utils run UNMODIFIED) +
 the boundary COMPLETE + FULL JOB CONTROL + raw termios + a SECOND PAL backend (seccomp via the GATEWAY)
-+ a minimal Linux-6.18 appliance + a Pi demo.sh + the SYSTEM LAYER: inc 1 (init -> login -> session ->
-logout -> respawn) AND **the core of inc 2 -- a real IDENTITY model (per-process uid/gid, 6 new
-syscalls), login SWITCHES USER, crypt() SHA-512 password hashing (byte-identical to openssl passwd -6),
-and more utils (uname reports AIOS not Linux / env / printenv / pwd / tty / date / tr / cut)**. ALL
-HW-validated on the RPi4 (gcc 14.2, kernel 6.12.47; `sh gate.sh` -> linux=0 seccomp=0). NEVER patch
-vendored sources -- grow libaios.
++ a minimal Linux-6.18 appliance + a Pi demo.sh + **the SYSTEM LAYER COMPLETE (inc 1 + inc 2)**: boots
+into init -> login -> a user session -> logout -> respawn, WITH a real IDENTITY model (per-process
+uid/gid, 6 syscalls; login SWITCHES USER), crypt() SHA-512 password hashing (byte-identical to openssl
+passwd -6), more utils (uname reports AIOS not Linux / env / printenv / pwd / tty / date / tr / cut / seq
+/ printf, incl. a real FLOAT printf byte-identical to glibc), a clean root-gated SHUTDOWN (REBOOT
+syscall -> aios-uk exits -> the appliance PID-1 does a real host poweroff), and config-driven init
+(/etc/inittab). v0.5.24-0.5.28 HW-validated on the RPi4; **v0.5.29-0.5.31 colima-both-backend green but
+Pi-PENDING** (RPi4 offline late-s25; RPi5 tkrpi5.local SSH not-yet-enabled). NEVER patch vendored
+sources -- grow libaios.
 
-PRIMARY TASK -> finish the SYSTEM LAYER (increment 2) then the endgame -- ASK Bryan which first:
-(A) **inc 2 remainder**: float printf (%f/%g/%e) in libaios -> then sbase seq + printf run UNMODIFIED;
-AND /etc/inittab services + a clean shutdown (NEEDS a small design choice -- a REBOOT/SHUTDOWN ABI the
-kernel handles by exiting its run loop with a poweroff/reboot code that the appliance PID-1 maps to a
-real Linux poweroff; confirm the shape with Bryan first). (B) **the endgame**: sched_ext (the 6.18
-appliance can carry CONFIG_SCHED_CLASS_EXT) / the seL4/x86-64 replant seam (pal_sel4.c -- a THIRD PAL
-backend proving kernel/aios_kernel.c runs UNCHANGED on a verified base; M9's PAL_RESUME/host-driver
-split de-risked it) / the from-source minimal-6.18 kernel build + a Pi "boots into AIOS" deploy. Keep
+PRIMARY TASK -> the SYSTEM LAYER IS COMPLETE; move to the endgame -- ASK Bryan which first (and FIRST
+re-run `sh gate.sh` on a reachable Pi to clear the v0.5.29-0.5.31 HW gap): (A) **RPi5 "boots into AIOS"**
+-- deploy the minimal-6.18 appliance (uk/appliance/, QEMU-only today) onto the real RPi5 (BCM2712 kernel
++ DTB + the init->aios-uk->aiosroot initramfs, PL011->the Pi console); a tangible deliverable + the
+sched_ext enabler; REQUIRES SSH enabled on the RPi5 first (empty `ssh` + userconf.txt on the boot FAT).
+(B) **sched_ext** -- AIOS's own scheduling policy as a BPF program (needs CONFIG_SCHED_CLASS_EXT, which a
+custom RPi5/6.18 kernel can carry). (C) **pal_sel4.c** -- the seL4/x86-64 replant seam (a THIRD PAL
+backend proving kernel/aios_kernel.c runs UNCHANGED on a verified base; the soul; M9 de-risked it). Keep
 kernel/aios_kernel.c host-agnostic + the PAL seam minimal. Commit per milestone on `main`; validate
-colima + the Pi (`raspberrypi.local`, pi/aios) via `sh gate.sh`; Bryan pushes. GOTCHAS: use the ABSOLUTE
-.../AIOS/uk path for docker -v (never $PWD -- git drifts it); write the gate log INTO uk/ (colima only
-mounts $HOME) + run the gate DETACHED (docker run -d) so a turn interruption doesn't kill it; the
-intermittent seccomp dash-pipe stall (timeout-guarded now); the GATEWAY for seccomp; .pal.stamp; gcc 14
-strictness; NO apostrophes in a `sh -c '...'` body.
+colima + the Pi via `sh gate.sh`; Bryan pushes. GOTCHAS: use the ABSOLUTE .../AIOS/uk path for docker -v
+(never $PWD -- git drifts it); write the gate log INTO uk/ (colima only mounts $HOME) + run the gate
+DETACHED (docker run -d) so a turn interruption doesn't kill it; the intermittent seccomp dash-pipe stall
+(timeout-guarded now); the GATEWAY for seccomp; .pal.stamp; gcc 14 strictness; NO apostrophes in a `sh -c
+'...'` body; macOS has no `setsid` (detach on the Pi, not the Mac).
