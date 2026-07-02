@@ -37,9 +37,10 @@ static void print_stats(const struct scx_aios_bpf *skel, const char *tag)
 	unsigned long long o  = skel->bss->other_enq;
 	unsigned long long hi = skel->bss->hi_dispatch;
 	unsigned long long nm = skel->bss->norm_dispatch;
+	unsigned long long v  = skel->bss->valve_fires;
 
-	printf("scx_aios: %s AIOS enq=%llu (HIGH drained %llu) | other enq=%llu (NORMAL drained %llu)\n",
-	       tag, a, hi, o, nm);
+	printf("scx_aios: %s AIOS enq=%llu (HIGH drained %llu) | other enq=%llu (NORMAL drained %llu) | anti-starve valve fired %llu\n",
+	       tag, a, hi, o, nm, v);
 	fflush(stdout);
 }
 
@@ -66,7 +67,8 @@ int main(void)
 	}
 
 	printf("scx_aios: the AIOS-aware sched_ext scheduler is ATTACHED -- the kernel now schedules by AIOS policy.\n");
-	printf("scx_aios: AIOS tasks (aios-uk + its guests) -> HIGH queue, drained before every other host task.\n");
+	printf("scx_aios: AIOS tasks (aios-uk + its guests) -> HIGH queue, drained before other host tasks;\n");
+	printf("scx_aios: an anti-starvation valve keeps NORMAL tasks (e.g. sshd) responsive even under full AIOS load.\n");
 	printf("scx_aios: (check: cat /sys/kernel/sched_ext/root/ops -> \"aios\"). Ctrl-C to detach.\n");
 	fflush(stdout);
 

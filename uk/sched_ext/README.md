@@ -16,28 +16,43 @@ three steps (see `scx_aios.bpf.c`):
    is *AIOS* if it — or an ancestor within **8 `real_parent` hops** — has comm `aios-uk`. We read `comm`
    and walk `real_parent` with **CO-RE** (`BPF_CORE_READ` / `BPF_CORE_READ_STR_INTO`) in a fully-unrolled,
    bounded loop, so the verifier can prove termination and every read is fault-safe (`bpf_probe_read`).
-2. **Prioritise via two dispatch queues.** AIOS tasks are enqueued onto a **HIGH** DSQ; everything else
-   onto a **NORMAL** DSQ. `dispatch` drains HIGH first, then NORMAL — **strict priority**, both with the
-   default time slice.
-3. **Make it observable.** Four global counters (mmap'd `.bss`, read live by the loader) show the policy
-   at work: `aios_enq` / `other_enq` (enqueues tagged AIOS vs not) and `hi_dispatch` / `norm_dispatch`
-   (dispatch cycles that drained HIGH vs NORMAL).
+2. **Prioritise via two dispatch queues, with an anti-starvation valve.** AIOS tasks are enqueued onto a
+   **HIGH** DSQ; everything else onto a **NORMAL** DSQ. `dispatch` normally drains HIGH first, then NORMAL
+   (AIOS wins). But while HIGH *and* NORMAL both have work, if NORMAL has gone unserved for longer than
+   **`AIOS_NORMAL_STARVE_NS`** (50 ms), the next dispatch serves NORMAL *first* — even though HIGH is
+   non-empty — then resets the timer. So under sustained saturation the NORMAL group gets a **keep-alive
+   share** (served at least once per window): no host task (e.g. sshd) can be **starved**, while AIOS
+   still keeps the overwhelming majority of the CPU. (This is a liveness *valve*, not a fair-share
+   scheduler: an individual NORMAL task's worst-case wait is bounded and finite — ~*N* × 50 ms for *N*
+   runnable NORMAL tasks — never infinite.)
+3. **Make it observable.** Five global counters (mmap'd `.bss`, read live by the loader) show the policy
+   at work: `aios_enq` / `other_enq` (enqueues tagged AIOS vs not), `hi_dispatch` / `norm_dispatch`
+   (dispatch cycles that drained HIGH vs NORMAL), and `valve_fires` (times the valve served NORMAL ahead
+   of a non-empty HIGH — i.e. AIOS was saturating the box).
 
-### Does strict priority starve everything else? — no, in practice
+### Does it starve everything else? — no; the valve guarantees it
 
-The strict-priority choice is deliberate, and it does **not** starve ordinary host tasks (e.g. sshd) in
-practice, for two reasons:
+Priority favours AIOS strongly, and the **anti-starvation valve** makes "NORMAL never starves" a
+*guarantee*, not just a practical observation:
 
-- **AIOS blocks constantly.** `aios-uk` sits in `waitpid`/`ppoll` waiting for guest events and socket
-  readiness; guests block on I/O, pipes, waits, and ptrace stops. So the HIGH DSQ drains to empty
-  frequently, and NORMAL is served whenever it does.
-- **SMP.** On the 4-CPU RPi5, a single CPU-bound AIOS task occupies one CPU; the other CPUs, finding HIGH
-  empty, serve NORMAL. `scx_bpf_dsq_move_to_local` also skips tasks that can't run on the calling CPU, so
-  per-CPU kthreads in NORMAL are still dispatched correctly.
+- **Under ordinary load the valve never fires.** `aios-uk` sits in `waitpid`/`ppoll` and guests block on
+  I/O, pipes, waits, and ptrace stops, so the HIGH DSQ drains to empty frequently and NORMAL is served in
+  the normal fall-through — `last_norm_ns` stays fresh, so the behaviour is identical to strict priority.
+  On the 4-CPU RPi5 a single CPU-bound AIOS task occupies one CPU while the others serve NORMAL.
+  (`scx_bpf_dsq_move_to_local` also skips tasks that can't run on the calling CPU, so per-CPU kthreads in
+  NORMAL are still dispatched correctly.)
+- **Under full AIOS saturation the valve engages.** If every CPU is busy with HIGH while a NORMAL task
+  waits, `last_norm_ns` ages, and within ~50 ms the next dispatch on some CPU serves a NORMAL task and
+  resets the timer. So the NORMAL group is served at least once per ~50 ms window: it can't be starved
+  (an individual NORMAL task's wait is bounded ~*N* × 50 ms, finite), while AIOS keeps the rest.
+  `valve_fires > 0` is the visible signature that AIOS is saturating the box and the valve is relieving
+  NORMAL.
 
-Only if AIOS genuinely saturates **every** CPU would NORMAL wait — which is the intent (AIOS is the
-workload the box exists to run). The empirical proof: the full AIOS acceptance gate passes **both** PAL
-backends while this scheduler owns the host, and an interactive ssh session stays responsive throughout.
+The empirical proof (on the RPi5): the full AIOS acceptance gate passes **both** PAL backends while this
+scheduler owns the host; and under a saturation stress (6 CPU-bound AIOS guests on 4 CPUs) a competing
+NORMAL probe keeps **making progress** with `valve_fires` climbing into the hundreds — where strict HIGH-
+first priority would leave NORMAL unserved. `valve_fires` stays **0** on an idle or uncontended box (the
+timer only ages while HIGH *and* NORMAL are both runnable), so the counter is a true saturation signature.
 
 **Honest limits** (documented, not hidden — all in the *under*-prioritise / safe direction):
 
@@ -49,8 +64,9 @@ backends while this scheduler owns the host, and an interactive ssh session stay
   the AIOS workload). The one way to fake it is a host process that sets its own comm to `aios-uk` via
   `prctl` — a cooperative-scheduler gaming concern, out of scope here.
 
-A weighted/budgeted policy (vtime fairness, a NORMAL-starvation valve, per-guest weights) is the natural
-**later refinement**; this is the honest, obviously-correct *first* AIOS-aware policy.
+A finer policy still — vtime fairness or per-guest weights (kernel 7.0 exposes `scx_bpf_dsq_insert_vtime`)
+— is the natural **later refinement**; the current design is the honest, obviously-correct AIOS-aware
+policy with a starvation guarantee.
 
 ## Files
 
@@ -112,6 +128,11 @@ an ABI-matching environment can simply be copied to the target and run as root �
 - the policy **tags + prioritises** the AIOS workload: over one gate run `aios_enq` reached ~200 (with
   `hi_dispatch` == `aios_enq` — every AIOS task drained from HIGH) while ~23 800 other host enqueues went
   to NORMAL;
+- the **anti-starvation valve** works: `valve_fires` stays **0** on an idle/uncontended box, and under a
+  saturation stress (6 CPU-bound AIOS guests on 4 CPUs, load ~3.3) a competing NORMAL probe kept making
+  progress (~2.5 M loop iterations, *not* starved) while `valve_fires` climbed into the hundreds — the
+  scheduler served ~2900 HIGH dispatches to ~320 valve-relieved NORMAL dispatches (AIOS ~90%, NORMAL a
+  ~10% keep-alive share). Strict HIGH-first would have left NORMAL unserved;
 - detach (SIGTERM) → `state` = `disabled`, the kernel reverts to its default scheduler, clean exit.
 
 Built in an `ubuntu:26.04` container (ABI-identical to the RPi5); the self-contained loader binary was
