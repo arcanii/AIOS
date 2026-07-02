@@ -235,18 +235,34 @@ int pal_guest_exec(pal_pid_t who, const char *abspath, uint64_t gargv, uint64_t 
     return -1;                                               /* died during execve */
 }
 
-/* Fork `parent` (stopped at its AIOS_SYS_FORK svc) by rewriting it into a Linux clone(SIGCHLD):
- * a fork-equivalent (all clone args but the exit-signal are 0, so the aarch64 arg order is moot).
- * PTRACE_O_TRACEFORK makes the child auto-traced + reports a fork/vfork/clone event stop on the
- * parent; the child's pid comes from PTRACE_GETEVENTMSG. We restore BOTH register files to the
- * guest's saved state (clone clobbered x0..x5) with x0 = child pid in the parent, 0 in the child --
- * exactly POSIX fork's two return values. The kernel registers the child and resumes both. Returns
- * the child handle, or PAL_PID_NONE on failure (parent restored with x0 = -1). */
+/* CLONE_PARENT (a stable UAPI clone flag; declared here so we need no extra header) makes a forked
+ * guest a direct child of AIOS-UK -- see pal_guest_fork. */
+#ifndef CLONE_PARENT
+#define CLONE_PARENT 0x00008000
+#endif
+
+/* Fork `parent` (stopped at its AIOS_SYS_FORK svc) by rewriting it into a Linux clone(SIGCHLD |
+ * CLONE_PARENT): a fork-equivalent (all clone args but the flags word are 0, so the aarch64 arg order is
+ * moot). CLONE_PARENT makes the new child a real-child of the FORKER'S parent -- which is always aios-uk
+ * (init is aios-uk's fork child; every deeper guest inherits CLONE_PARENT transitively) -- so aios-uk is
+ * the child's REAL PARENT as well as its ptrace tracer. That matters for REAPING: when a tracer is NOT
+ * the real parent, a tracee's exit is reported to the tracer, but after the tracer waits it the process
+ * LINGERS as a zombie for the real parent (a guest, e.g. init) to reap -- and a guest's wait() is a
+ * virtualized AIOS syscall, never a host waitpid, so that host zombie never got collected. With
+ * CLONE_PARENT tracer == real parent, so aios-uk's single waitpid(-1) in the event loop fully reaps the
+ * host tracee -- no lingering zombies. It does NOT change AIOS semantics: the kernel still records the
+ * AIOS parent (proc_t.parent_pid) as the forking guest, so getppid()/wait() at the AIOS level are
+ * unchanged; only the HOST real-parent (invisible to guests) moves to aios-uk. The clone still reports a
+ * PTRACE_EVENT_FORK (CLONE_PARENT does not change the event type -- that is set by the exit-signal), so
+ * the child's pid still comes from PTRACE_GETEVENTMSG. We restore BOTH register files to the guest's
+ * saved state (clone clobbered x0..x5) with x0 = child pid in the parent, 0 in the child -- exactly
+ * POSIX fork's two return values. Returns the child handle, or PAL_PID_NONE on failure (parent restored
+ * with x0 = -1). */
 pal_pid_t pal_guest_fork(pal_pid_t parent) {
     struct user_pt_regs saved, r;
     if (getregs(parent, &saved) != 0) return PAL_PID_NONE;
     r = saved;
-    r.regs[0] = (unsigned long long)SIGCHLD;   /* clone flags = exit-signal only => fork-like */
+    r.regs[0] = (unsigned long long)(SIGCHLD | CLONE_PARENT);   /* fork-like, but reparent to aios-uk (reaping) */
     r.regs[1] = 0; r.regs[2] = 0; r.regs[3] = 0; r.regs[4] = 0; r.regs[5] = 0;
     if (setregs(parent, &r) != 0) return PAL_PID_NONE;
     if (set_syscall_nr(parent, __NR_clone) != 0) return PAL_PID_NONE;

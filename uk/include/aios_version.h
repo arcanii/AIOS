@@ -309,6 +309,20 @@
  * port / any-interface when only loopback allowed / different subnet / malformed prefix / malformed port
  * / unbound-listen auto-bind) + a permissive "*" that re-allows auto-bind; gate key `bindjail`. THE
  * NETWORKING ARC's confinement is now COMPLETE for BOTH reach (connect) AND claim (bind/listen).
+ * 0.5.39 = a host-tracee REAPING fix (no ABI change): a guest that forked a child which EXITED while the
+ * forking guest was still alive left a lingering HOST ZOMBIE. Root cause (empirically confirmed): the
+ * child's ptrace TRACER is aios-uk but its REAL PARENT was the forking guest; under ptrace, when tracer
+ * != real parent, the tracer's waitpid reaps only the trace notification and the process then LINGERS as
+ * a zombie for the REAL PARENT to reap -- but a guest's wait() is a virtualized AIOS syscall (never a
+ * host waitpid), so it was never collected. Fix: pal_guest_fork injects clone(SIGCHLD | CLONE_PARENT), so
+ * every forked guest is a real-child of aios-uk (transitively -- init is aios-uk's own fork child) as
+ * well as its tracer; tracer == real parent, so aios-uk's single waitpid(-1) in the event loop fully
+ * reaps the tracee. AIOS semantics are UNCHANGED (the kernel still records proc_t.parent_pid = the
+ * forking guest, so a guest's getppid()/wait() are unaffected; only the host real-parent -- invisible to
+ * guests -- moves to aios-uk), and the clone still reports PTRACE_EVENT_FORK (the event type is set by the
+ * exit-signal, not CLONE_PARENT). Proven: a pty stress (login + 7 forking commands) leaves 0 host zombies
+ * and the RPi5 boots-into-AIOS console no longer shows the lingering sysinit-echo zombie; full gate green
+ * both PAL backends.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -318,7 +332,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 38
+#define AIOS_VERSION_PATCH 39
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)
