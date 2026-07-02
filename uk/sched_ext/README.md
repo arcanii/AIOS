@@ -44,6 +44,13 @@ an ABI-matching environment can simply be copied to the target and run as root �
 
 ## Status
 
-Written + **build-verified** against the RPi5's exact kernel-7.0 BTF and libbpf 1.6.3 (compiles, skeleton
-generates, loader links). The runtime **load + attach** is validated on the RPi5 (needs root) — see the
-session handover for the result.
+**HW-VALIDATED end-to-end on the RPi5** (Ubuntu 26.04, kernel 7.0):
+
+- attach → `/sys/kernel/sched_ext/state` = `enabled`, `/sys/kernel/sched_ext/root/ops` = `aios` (the
+  kernel is now scheduling every task by AIOS's policy);
+- **the full AIOS gate passes both PAL backends (`linux=0 seccomp=0`) while the AIOS scheduler owns the
+  host** — AIOS running correctly on a machine it schedules;
+- detach (SIGTERM) → `state` = `disabled`, the kernel reverts to its default scheduler, clean exit.
+
+Built in an `ubuntu:26.04` container (ABI-identical to the RPi5); the self-contained loader binary was
+copied over and run as root. "AIOS owns scheduling" (design-doc Phase 2) is real on hardware.
