@@ -240,6 +240,22 @@
  * DNS, then network-access confinement). Proof: an AIOS TCP echo SERVER (guest/prog_netserver.c) binds
  * 127.0.0.1:0, announces its port, and a host client (test/net_server.c) connects + round-trips a
  * message through it -- fully self-contained, wired into the gate as `netsrv`.
+ * 0.5.34 = NETWORKING, increment 3: NON-BLOCKING sockets + park/wake (NO new ABI -- a pure kernel+PAL
+ * mechanism; ABI stays 62). Socket I/O no longer blocks the single-threaded kernel: the PAL makes every
+ * socket O_NONBLOCK, so a read/write/accept/connect that would block returns PAL_EWOULDBLOCK; the kernel
+ * PARKS the guest (PS_BLOCKED_NET_IN/OUT, the socket analogue of the pipe park) and services others. The
+ * trap front-ends' pal_guest_next now CO-WAITS guest events AND socket readiness: while the kernel has
+ * published socket waits (pal_net_watch_reset/add each loop), it ppoll()s the watched fds with SIGCHLD
+ * atomically unblocked (so a guest stop OR a ready socket wakes it, race-free) and returns a new code 4;
+ * the kernel then re-tries every socket-parked guest (net_attempt) -- level-triggered, so a spurious wake
+ * is harmless. connect completes via SO_ERROR (pal_host_sock_error) after the socket becomes writable.
+ * The guest still sees ordinary BLOCKING semantics (the non-blocking + park/wake is entirely a host-side
+ * kernel detail); ^C still interrupts a socket-parked guest (EINTR). When NO guest is socket-parked the
+ * wait is the original blocking waitpid -- byte-identical to before, so every non-network test is
+ * unaffected. This removes the honest single-guest limit of inc 1/2. Proof: guest/prog_netloop.c -- TWO
+ * AIOS guests (a forked echo server + the client) round-trip over TCP INSIDE ONE aios-uk, which would
+ * DEADLOCK under the old blocking accept; the existing client/server tests (net/netsrv) now also exercise
+ * park/wake. Gate key `netloop`, green BOTH backends. NEXT: DNS, then network-access confinement.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -249,7 +265,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 33
+#define AIOS_VERSION_PATCH 34
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

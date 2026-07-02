@@ -63,6 +63,7 @@ pal_pid_t pal_guest_spawn(const char *path, char *const argv[]) {
     struct sigaction sa; sa.sa_handler = pal_term_handler; sa.sa_flags = 0; sigemptyset(&sa.sa_mask);
     sigaction(SIGINT,  &sa, NULL);
     sigaction(SIGTSTP, &sa, NULL);
+    pal_net_init_signals();                      /* SIGCHLD plumbing for the socket-readiness co-wait */
     pid_t pid = fork();
     if (pid < 0) return PAL_PID_NONE;
     if (pid == 0) {
@@ -89,9 +90,18 @@ pal_pid_t pal_guest_spawn(const char *path, char *const argv[]) {
 int pal_guest_next(pal_pid_t *who, pal_syscall_t *sc, int *exit_code) {
     for (;;) {
         if (g_term_sig) { *who = PAL_PID_NONE; if (exit_code) *exit_code = pal_take_term_signal(); return 3; }
-        int st;
-        pid_t pid = waitpid(-1, &st, 0);
-        if (pid < 0) { if (errno == EINTR) continue; return -1; }   /* EINTR (^C): loop -> the g_term_sig check returns 3 */
+        int st; pid_t pid;
+        if (pal_net_have_watches()) {                  /* a guest is parked on a socket: co-wait events + readiness */
+            pid = waitpid(-1, &st, WNOHANG);           /* collect a pending guest event without blocking... */
+            if (pid == 0) {                            /* ...none pending -> block until a socket is ready or a guest stops */
+                if (pal_net_wait_ready()) { *who = PAL_PID_NONE; return 4; }
+                continue;                              /* woke on SIGCHLD/^C/timeout -> re-check term + guest events */
+            }
+            if (pid < 0) { if (errno == EINTR) continue; return -1; }   /* ECHILD (no guests) / error */
+        } else {
+            pid = waitpid(-1, &st, 0);
+            if (pid < 0) { if (errno == EINTR) continue; return -1; }   /* EINTR (^C): loop -> the g_term_sig check returns 3 */
+        }
         if (WIFEXITED(st))   { *who = pid; if (exit_code) *exit_code = WEXITSTATUS(st);    return 0; }
         if (WIFSIGNALED(st)) { *who = pid; if (exit_code) *exit_code = 128 + WTERMSIG(st); return 0; }
         if (!WIFSTOPPED(st)) continue;

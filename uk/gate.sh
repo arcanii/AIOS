@@ -240,9 +240,12 @@ gate() {
            cc -O2 -o /tmp/net_server test/net_server.c 2>/dev/null &&
            timeout 20 /tmp/net_server ./aios-uk ./prog_netserver 2>/dev/null | grep -vE "^\[aios-uk\]" | sed "s/^/  /";
            cc -O2 -o /tmp/net_server test/net_server.c 2>/dev/null; timeout 20 /tmp/net_server ./aios-uk ./prog_netserver >/dev/null 2>&1; nsrc=$?; echo "  [net_server exit $nsrc (expect 0)]";
-           echo "=== gate: pipebig jail execjail clock pcwd umask regex pwgrp id crypt printf shutdown net netsrv jobctl stop sigmask sigpipe ctrlc ctrlc-job ctrlz rawkey login must exit 0 ===" &&
-           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig $rc, jail $jrc, execjail $ejrc, clock $clkrc, pcwd $pcwdrc, umask $umrc, regex $rxrc, pwgrp $pwrc, id $idrc, crypt $cryrc, printf $pfrc, shutdown $shrc, net $netrc, netsrv $nsrc, jobctl $jcrc, stop $strc, sigmask $smrc, sigpipe $sprc, ctrlc $cprc, ctrlc-job $cjrc, ctrlz $czrc, rawkey $rkrc, login $lprc]";
-           test "$rc" = 0 && test "$jrc" = 0 && test "$ejrc" = 0 && test "$clkrc" = 0 && test "$pcwdrc" = 0 && test "$umrc" = 0 && test "$rxrc" = 0 && test "$pwrc" = 0 && test "$idrc" = 0 && test "$cryrc" = 0 && test "$pfrc" = 0 && test "$shrc" = 0 && test "$netrc" = 0 && test "$nsrc" = 0 && test "$jcrc" = 0 && test "$strc" = 0 && test "$smrc" = 0 && test "$sprc" = 0 && test "$cprc" = 0 && test "$cjrc" = 0 && test "$czrc" = 0 && test "$rkrc" = 0 && test "$lprc" = 0;
+           echo "=== networking (non-blocking park/wake) -- TWO AIOS guests round-trip over TCP inside one kernel (would DEADLOCK if blocking) ===" &&
+           timeout 20 ./aios-uk ./prog_netloop 2>/dev/null | grep -vE "^\[aios-uk\]" | sed "s/^/  /";
+           timeout 20 ./aios-uk ./prog_netloop >/dev/null 2>&1; nlrc=$?; echo "  [prog_netloop exit $nlrc (expect 0)]";
+           echo "=== gate: pipebig jail execjail clock pcwd umask regex pwgrp id crypt printf shutdown net netsrv netloop jobctl stop sigmask sigpipe ctrlc ctrlc-job ctrlz rawkey login must exit 0 ===" &&
+           ./aios-uk ./prog_pipebig >/dev/null 2>&1; rc=$?; echo "  [pipebig $rc, jail $jrc, execjail $ejrc, clock $clkrc, pcwd $pcwdrc, umask $umrc, regex $rxrc, pwgrp $pwrc, id $idrc, crypt $cryrc, printf $pfrc, shutdown $shrc, net $netrc, netsrv $nsrc, netloop $nlrc, jobctl $jcrc, stop $strc, sigmask $smrc, sigpipe $sprc, ctrlc $cprc, ctrlc-job $cjrc, ctrlz $czrc, rawkey $rkrc, login $lprc]";
+           test "$rc" = 0 && test "$jrc" = 0 && test "$ejrc" = 0 && test "$clkrc" = 0 && test "$pcwdrc" = 0 && test "$umrc" = 0 && test "$rxrc" = 0 && test "$pwrc" = 0 && test "$idrc" = 0 && test "$cryrc" = 0 && test "$pfrc" = 0 && test "$shrc" = 0 && test "$netrc" = 0 && test "$nsrc" = 0 && test "$nlrc" = 0 && test "$jcrc" = 0 && test "$strc" = 0 && test "$smrc" = 0 && test "$sprc" = 0 && test "$cprc" = 0 && test "$cjrc" = 0 && test "$czrc" = 0 && test "$rkrc" = 0 && test "$lprc" = 0;
 }
 echo "##################### GATE PASS 1: PAL=linux (ptrace PTRACE_SYSCALL -- the default backend) #####################"
 gate; PASS_LINUX=$?

@@ -45,6 +45,7 @@ typedef struct {
     int        is_pipe;     /* this backing is a pipe end */
     int        pipe_id;     /* which pipe (the read + write ends share it) */
     int        pipe_write;  /* 1 = write end, 0 = read end */
+    int        is_sock;     /* this backing is a socket (non-blocking at the host -> read/write PARK) */
 } ofile_t;
 static ofile_t g_ofile[MAX_OFILES];
 static int     g_next_pipe_id = 1;
@@ -74,7 +75,14 @@ static void ofile_unref(int oi) {
 #define AIOS_MAX_FD 64
 #define MAX_PROCS   64
 enum { PS_FREE = 0, PS_RUNNING, PS_ZOMBIE, PS_BLOCKED_WAIT, PS_BLOCKED_READ, PS_BLOCKED_WRITE,
-       PS_STOPPED /* job control: stopped by SIGSTOP/SIGTSTP, not resumed until SIGCONT */ };
+       PS_STOPPED, /* job control: stopped by SIGSTOP/SIGTSTP, not resumed until SIGCONT */
+       /* networking park/wake: blocked on a socket, waiting for it to become READABLE / WRITABLE.
+        * The kernel publishes the backing to the PAL (pal_net_watch_add) and re-tries the parked op
+        * (net_retry) when pal_guest_next reports readiness (code 4), so socket I/O never blocks the
+        * single-threaded kernel. blk_sock_op says which op to complete on wake. */
+       PS_BLOCKED_NET_IN, PS_BLOCKED_NET_OUT };
+/* the parked socket operation (blk_sock_op), completed by net_retry when the socket is ready */
+enum { SKOP_NONE = 0, SKOP_READ, SKOP_WRITE, SKOP_ACCEPT, SKOP_CONNECT };
 typedef struct {
     int           state;
     pal_pid_t     pid;
@@ -91,10 +99,11 @@ typedef struct {
     /* PS_BLOCKED_READ/WRITE: a pipe I/O parked because the pipe was empty/full. The kernel resumes
      * it from pipe_settle() when a peer makes the pipe ready (or closes its end -> EOF/EPIPE). */
     int           blk_fd;              /* the AIOS fd being read/written */
-    uint64_t      blk_buf;             /* guest buffer */
-    uint64_t      blk_len;             /* total bytes requested */
+    uint64_t      blk_buf;             /* guest buffer (for a parked ACCEPT: the guest sockaddr* ) */
+    uint64_t      blk_len;             /* total bytes requested (for a parked ACCEPT: the guest addrlen* ) */
     uint64_t      blk_done;            /* bytes already transferred (writes) */
     int           blk_pipe;            /* pipe_id this I/O is parked on */
+    int           blk_sock_op;         /* PS_BLOCKED_NET_*: the SKOP_* socket op to complete on wake */
     /* signals: per-process dispositions + one pending signal + saved regs while a handler runs */
     uint64_t      sig_handler[AIOS_NSIG];   /* 0 = SIG_DFL, 1 = SIG_IGN, else a guest handler address */
     uint64_t      sig_tramp;           /* the guest's sigreturn trampoline (registered via sigaction) */
@@ -561,21 +570,16 @@ static long sys_socket(proc_t *p, uint64_t domain, uint64_t type, uint64_t proto
     if (f < 0) return (long)f;                        /* -errno from the PAL */
     int oi = ofile_alloc(f);
     if (oi < 0) { pal_host_close(f); return -AIOS_EMFILE; }
+    g_ofile[oi].is_sock = 1;                          /* non-blocking at the host -> read/write/accept/connect PARK */
     int fd = fd_alloc(p);
     if (fd < 0) { ofile_unref(oi); return -AIOS_EMFILE; }
     p->fd[fd] = oi;
     return fd;
 }
-static long sys_connect(proc_t *p, uint64_t fd, uint64_t gaddr, uint64_t addrlen) {
-    if (!fd_valid(p, fd)) return -AIOS_EBADF;
-    if (addrlen == 0 || addrlen > 128) return -AIOS_EINVAL;
-    char addr[128];                                   /* the guest's sockaddr bytes (layout = host's) */
-    if (pal_guest_read(p->pid, gaddr, addr, addrlen) != addrlen) return -AIOS_EFAULT;
-    return pal_host_connect(fd_backing(p, fd), addr, (unsigned int)addrlen);
-}
 /* ---- the SERVER surface. bind/listen mirror connect (pass the sockaddr bytes through); accept mirrors
- * sys_socket -- it returns a NEW AIOS fd backed by the accepted host socket. A blocking accept blocks
- * the single-threaded kernel today (honest limit; non-blocking park/wake is the next increment). ---- */
+ * sys_socket -- it returns a NEW AIOS fd backed by the accepted host socket. connect + accept can BLOCK,
+ * so they are dispatched SPECIALLY (do_connect/do_accept, below) and PARK the guest via the socket
+ * park/wake path; bind/listen/setsockopt/getsockname never block, so they stay ordinary handlers. ---- */
 static long sys_bind(proc_t *p, uint64_t fd, uint64_t gaddr, uint64_t addrlen) {
     if (!fd_valid(p, fd)) return -AIOS_EBADF;
     if (addrlen == 0 || addrlen > 128) return -AIOS_EINVAL;
@@ -586,30 +590,6 @@ static long sys_bind(proc_t *p, uint64_t fd, uint64_t gaddr, uint64_t addrlen) {
 static long sys_listen(proc_t *p, uint64_t fd, uint64_t backlog) {
     if (!fd_valid(p, fd)) return -AIOS_EBADF;
     return pal_host_listen(fd_backing(p, fd), (int)backlog);
-}
-static long sys_accept(proc_t *p, uint64_t fd, uint64_t gaddr, uint64_t gaddrlen) {
-    if (!fd_valid(p, fd)) return -AIOS_EBADF;
-    char addr[128];
-    unsigned int cap = 0;                             /* caller buffer size (input *addrlen) */
-    int want_addr = (gaddr && gaddrlen);
-    if (want_addr) {
-        if (pal_guest_read(p->pid, gaddrlen, &cap, sizeof cap) != sizeof cap) return -AIOS_EFAULT;
-        if (cap > sizeof addr) cap = sizeof addr;
-    }
-    unsigned int alen = cap;
-    pal_file_t c = pal_host_accept(fd_backing(p, fd), want_addr ? addr : NULL, want_addr ? &alen : NULL);
-    if (c < 0) return (long)c;                        /* -errno */
-    int oi = ofile_alloc(c);
-    if (oi < 0) { pal_host_close(c); return -AIOS_EMFILE; }
-    int nfd = fd_alloc(p);
-    if (nfd < 0) { ofile_unref(oi); return -AIOS_EMFILE; }
-    p->fd[nfd] = oi;
-    if (want_addr) {                                  /* copy back the peer addr (truncated to the buffer) + the actual length */
-        unsigned int w = alen < cap ? alen : cap;
-        if (w) pal_guest_write(p->pid, gaddr, addr, w);
-        pal_guest_write(p->pid, gaddrlen, &alen, sizeof alen);
-    }
-    return nfd;
 }
 static long sys_setsockopt(proc_t *p, uint64_t fd, uint64_t level, uint64_t optname, uint64_t goptval, uint64_t optlen) {
     if (!fd_valid(p, fd)) return -AIOS_EBADF;
@@ -807,8 +787,9 @@ static void forward_terminal_signal(int sig) {
          * syscall (kreturn, or the do_read/do_write/do_wait entry check); a guest parked in a blocked
          * syscall has that syscall return EINTR with the signal delivered right now. */
         g->pending_sig = sig;
-        if (g->state == PS_BLOCKED_WAIT || g->state == PS_BLOCKED_READ || g->state == PS_BLOCKED_WRITE) {
-            g->state = PS_RUNNING;
+        if (g->state == PS_BLOCKED_WAIT || g->state == PS_BLOCKED_READ || g->state == PS_BLOCKED_WRITE ||
+            g->state == PS_BLOCKED_NET_IN || g->state == PS_BLOCKED_NET_OUT) {
+            g->state = PS_RUNNING;                    /* a socket read/accept/connect returns EINTR too */
             kreturn(g, (uint64_t)-AIOS_EINTR);
         }
     }
@@ -904,6 +885,90 @@ static int deliver_pending(proc_t *p) {
     return 1;
 }
 
+/* ---- networking park/wake ----
+ * Host sockets are NON-BLOCKING (the PAL sets O_NONBLOCK), so a socket read/write/accept/connect that
+ * would block returns PAL_EWOULDBLOCK; the kernel PARKS the guest (PS_BLOCKED_NET_IN = wait readable,
+ * PS_BLOCKED_NET_OUT = wait writable) instead of stalling. Each event-loop iteration the kernel
+ * publishes the parked backings to the PAL (net_publish_watches); pal_guest_next co-waits guest events
+ * AND socket readiness and returns code 4 when a socket is ready, at which point net_retry_parked
+ * re-runs net_attempt for each parked guest. net_attempt does ONE non-blocking attempt and either
+ * COMPLETES the op (pal_guest_return + PS_RUNNING) or leaves the guest parked -- so it serves both the
+ * first attempt (from do_read/do_write/do_accept/do_connect) and every wake retry. The parked op is in
+ * p->blk_sock_op with p->blk_fd/blk_buf/blk_len/blk_done as for pipes (ACCEPT reuses blk_buf/blk_len as
+ * the guest sockaddr + addrlen pointers). The guest still sees ordinary BLOCKING semantics. */
+static void net_attempt(proc_t *p) {
+    pal_file_t b = fd_backing(p, p->blk_fd);
+    switch (p->blk_sock_op) {
+    case SKOP_READ: {
+        char tmp[4096];
+        size_t chunk = p->blk_len < sizeof tmp ? (size_t)p->blk_len : sizeof tmp;
+        long n = pal_host_read(b, tmp, chunk);
+        if (n == PAL_EWOULDBLOCK) { p->state = PS_BLOCKED_NET_IN; return; }
+        p->state = PS_RUNNING;
+        if (n < 0) { pal_guest_return(p->pid, (uint64_t)n); return; }    /* -errno (peer reset, ...) */
+        size_t put = n > 0 ? pal_guest_write(p->pid, p->blk_buf, tmp, (size_t)n) : 0;   /* 0 = orderly EOF */
+        pal_guest_return(p->pid, (uint64_t)put);
+        return;
+    }
+    case SKOP_WRITE: {
+        char tmp[1024];
+        while (p->blk_done < p->blk_len) {                              /* keep the guest parked until all `len` sent */
+            size_t chunk = (size_t)(p->blk_len - p->blk_done);
+            if (chunk > sizeof tmp) chunk = sizeof tmp;
+            size_t got = pal_guest_read(p->pid, p->blk_buf + p->blk_done, tmp, chunk);
+            if (got == 0) break;                                                  /* guest buffer unreadable -> stop */
+            long w = pal_host_write(b, tmp, got);
+            if (w == PAL_EWOULDBLOCK) { p->state = PS_BLOCKED_NET_OUT; return; }   /* send buffer full -> park */
+            if (w < 0) { p->state = PS_RUNNING;
+                         pal_guest_return(p->pid, p->blk_done ? (uint64_t)p->blk_done : (uint64_t)w); return; }
+            p->blk_done += (uint64_t)w;
+            if ((size_t)w < got) { p->state = PS_BLOCKED_NET_OUT; return; }        /* partial -> buffer full, park */
+        }
+        p->state = PS_RUNNING;
+        /* return bytes actually sent (== len on full success); if the guest buffer was unreadable with
+         * nothing sent, -EFAULT (a 0-length write returns 0) -- matches the host-file write path. */
+        pal_guest_return(p->pid, p->blk_len == 0 ? 0 :
+                         (p->blk_done ? (uint64_t)p->blk_done : (uint64_t)-AIOS_EFAULT));
+        return;
+    }
+    case SKOP_ACCEPT: {
+        char addr[128];
+        uint64_t gaddr = p->blk_buf, gaddrlen = p->blk_len;
+        unsigned int cap = 0; int want = (gaddr && gaddrlen);
+        if (want) { if (pal_guest_read(p->pid, gaddrlen, &cap, sizeof cap) != sizeof cap) cap = 0;
+                    if (cap > sizeof addr) cap = sizeof addr; }
+        unsigned int alen = cap;
+        pal_file_t c = pal_host_accept(b, want ? addr : NULL, want ? &alen : NULL);
+        if (c == PAL_EWOULDBLOCK) { p->state = PS_BLOCKED_NET_IN; return; }
+        p->state = PS_RUNNING;
+        if (c < 0) { pal_guest_return(p->pid, (uint64_t)c); return; }
+        int oi = ofile_alloc(c);
+        if (oi < 0) { pal_host_close(c); pal_guest_return(p->pid, (uint64_t)-AIOS_EMFILE); return; }
+        g_ofile[oi].is_sock = 1;
+        int nfd = fd_alloc(p);
+        if (nfd < 0) { ofile_unref(oi); pal_guest_return(p->pid, (uint64_t)-AIOS_EMFILE); return; }
+        p->fd[nfd] = oi;
+        if (want) { unsigned int wl = alen < cap ? alen : cap;
+                    if (wl) pal_guest_write(p->pid, gaddr, addr, wl);
+                    pal_guest_write(p->pid, gaddrlen, &alen, sizeof alen); }
+        pal_guest_return(p->pid, (uint64_t)nfd);
+        return;
+    }
+    case SKOP_CONNECT: {                              /* complete only when THIS socket is actually writable */
+        int wr = pal_host_sock_writable(b);          /* retry-all wakes every parked guest; a connect must */
+        if (wr == 0) { p->state = PS_BLOCKED_NET_OUT; return; }   /* not this fd -> still connecting, re-park */
+        long e = wr < 0 ? (long)wr : pal_host_sock_error(b);      /* writable: 0 = connected, else -errno */
+        p->state = PS_RUNNING;
+        pal_guest_return(p->pid, (uint64_t)e);
+        return;
+    }
+    default:
+        p->state = PS_RUNNING;
+        pal_guest_return(p->pid, (uint64_t)-AIOS_EINVAL);
+        return;
+    }
+}
+
 /* read: pipe read-ends are non-blocking (park on empty); everything else fills up to len. Owns its
  * own pal_guest_return / parking, so it is dispatched specially. */
 static void do_read(proc_t *p, uint64_t fd, uint64_t gbuf, uint64_t len) {
@@ -921,6 +986,12 @@ static void do_read(proc_t *p, uint64_t fd, uint64_t gbuf, uint64_t len) {
         }
         if (n > 0) pipe_settle(g_ofile[oi].pipe_id); /* freed buffer space -> wake writers */
         pal_guest_return(p->pid, (uint64_t)n);
+        return;
+    }
+    if (g_ofile[oi].is_sock) {                        /* a socket: non-blocking read, park on empty (park/wake) */
+        p->blk_fd = (int)fd; p->blk_buf = gbuf; p->blk_len = len; p->blk_done = 0;
+        p->blk_pipe = 0; p->blk_sock_op = SKOP_READ;
+        net_attempt(p);                              /* returns data/EOF/-errno, or parks PS_BLOCKED_NET_IN */
         return;
     }
     /* A single read (POSIX semantics): return what is available, do NOT loop to fill `len` -- a
@@ -950,6 +1021,12 @@ static void do_write(proc_t *p, uint64_t fd, uint64_t gbuf, uint64_t len) {
         p->blk_done = done; p->blk_pipe = g_ofile[oi].pipe_id;
         return;
     }
+    if (g_ofile[oi].is_sock) {                        /* a socket: non-blocking write, park on full (park/wake) */
+        p->blk_fd = (int)fd; p->blk_buf = gbuf; p->blk_len = len; p->blk_done = 0;
+        p->blk_pipe = 0; p->blk_sock_op = SKOP_WRITE;
+        net_attempt(p);                              /* sends all len (parking as needed), or -errno */
+        return;
+    }
     char tmp[1024];
     size_t total = 0;
     while (total < len) {
@@ -963,6 +1040,56 @@ static void do_write(proc_t *p, uint64_t fd, uint64_t gbuf, uint64_t len) {
         if ((size_t)w < got) break;
     }
     pal_guest_return(p->pid, (uint64_t)total);
+}
+
+/* connect: attempt it non-blocking; if it is in progress (PAL_EWOULDBLOCK) PARK the guest on the
+ * socket becoming WRITABLE, then complete via SO_ERROR (net_attempt SKOP_CONNECT). Dispatched
+ * specially (it can block). The guest sees ordinary blocking connect() semantics. */
+static void do_connect(proc_t *p, uint64_t fd, uint64_t gaddr, uint64_t addrlen) {
+    p->state = PS_RUNNING;
+    if (deliver_pending(p)) return;                  /* a forwarded ^C/^Z interrupts the connect */
+    if (!fd_valid(p, fd)) { pal_guest_return(p->pid, (uint64_t)-AIOS_EBADF); return; }
+    if (addrlen == 0 || addrlen > 128) { pal_guest_return(p->pid, (uint64_t)-AIOS_EINVAL); return; }
+    char addr[128];                                   /* the guest's sockaddr bytes (layout = host's) */
+    if (pal_guest_read(p->pid, gaddr, addr, addrlen) != addrlen) { pal_guest_return(p->pid, (uint64_t)-AIOS_EFAULT); return; }
+    long r = pal_host_connect(fd_backing(p, fd), addr, (unsigned int)addrlen);
+    if (r == PAL_EWOULDBLOCK) {                       /* in flight -> park until writable, then SO_ERROR */
+        p->blk_fd = (int)fd; p->blk_pipe = 0; p->blk_sock_op = SKOP_CONNECT;
+        p->state = PS_BLOCKED_NET_OUT;
+        return;
+    }
+    pal_guest_return(p->pid, (uint64_t)r);            /* connected immediately (0) or -errno */
+}
+
+/* accept: return a NEW AIOS fd backed by the accepted host socket; if none is pending, PARK on the
+ * listener becoming READABLE (net_attempt SKOP_ACCEPT). Dispatched specially (it can block). */
+static void do_accept(proc_t *p, uint64_t fd, uint64_t gaddr, uint64_t gaddrlen) {
+    p->state = PS_RUNNING;
+    if (deliver_pending(p)) return;                  /* a forwarded ^C/^Z interrupts the accept */
+    if (!fd_valid(p, fd)) { pal_guest_return(p->pid, (uint64_t)-AIOS_EBADF); return; }
+    p->blk_fd = (int)fd; p->blk_buf = gaddr; p->blk_len = gaddrlen; p->blk_pipe = 0; p->blk_sock_op = SKOP_ACCEPT;
+    net_attempt(p);                                  /* new fd, -errno, or parks PS_BLOCKED_NET_IN */
+}
+
+/* Republish the socket backings the kernel's parked guests are waiting on (called before every
+ * pal_guest_next). Empty when no guest is socket-parked -> pal_guest_next uses the plain blocking
+ * waitpid (byte-identical to the pre-networking behaviour). */
+static void net_publish_watches(void) {
+    pal_net_watch_reset();
+    for (int i = 0; i < MAX_PROCS; i++) {
+        proc_t *g = &g_proc[i];
+        if      (g->state == PS_BLOCKED_NET_IN)  pal_net_watch_add(fd_backing(g, g->blk_fd), 0);
+        else if (g->state == PS_BLOCKED_NET_OUT) pal_net_watch_add(fd_backing(g, g->blk_fd), 1);
+    }
+}
+/* A watched socket became ready (pal_guest_next returned 4). Re-try every socket-parked guest's op;
+ * net_attempt completes the ready ones and re-parks the rest (level-triggered, so a spurious wake is
+ * harmless). */
+static void net_retry_parked(void) {
+    for (int i = 0; i < MAX_PROCS; i++) {
+        proc_t *g = &g_proc[i];
+        if (g->state == PS_BLOCKED_NET_IN || g->state == PS_BLOCKED_NET_OUT) net_attempt(g);
+    }
 }
 
 /* pipe: allocate two backing ends + two fds, tag them as a pipe, and store the fd pair in guest. */
@@ -1157,10 +1284,12 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
           g_shutdown = (cmd <= AIOS_RB_REBOOT) ? (int)cmd : AIOS_RB_POWEROFF; }
         return;                                          /* do not resume: the run loop will now exit */
     case AIOS_SYS_SIGRETURN: pal_guest_sigreturn(p->pid, p->sigsave); p->in_handler = 0; return;
-    /* read/write/pipe own their own return/parking (pipes may block) -> dispatched specially */
-    case AIOS_SYS_READ:  do_read (p, sc->arg[0], sc->arg[1], sc->arg[2]); return;
-    case AIOS_SYS_WRITE: do_write(p, sc->arg[0], sc->arg[1], sc->arg[2]); return;
-    case AIOS_SYS_PIPE:  do_pipe (p, sc->arg[0]);                         return;
+    /* read/write/pipe + connect/accept own their own return/parking (they may block) -> special */
+    case AIOS_SYS_READ:    do_read   (p, sc->arg[0], sc->arg[1], sc->arg[2]); return;
+    case AIOS_SYS_WRITE:   do_write  (p, sc->arg[0], sc->arg[1], sc->arg[2]); return;
+    case AIOS_SYS_PIPE:    do_pipe   (p, sc->arg[0]);                         return;
+    case AIOS_SYS_CONNECT: do_connect(p, sc->arg[0], sc->arg[1], sc->arg[2]); return;
+    case AIOS_SYS_ACCEPT:  do_accept (p, sc->arg[0], sc->arg[1], sc->arg[2]); return;
     }
     uint64_t ret;
     switch (sc->nr) {
@@ -1185,10 +1314,8 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
     case AIOS_SYS_SETUID:  ret = (uint64_t)sys_setuid(p, sc->arg[0]);                      break;
     case AIOS_SYS_SETGID:  ret = (uint64_t)sys_setgid(p, sc->arg[0]);                      break;
     case AIOS_SYS_SOCKET:  ret = (uint64_t)sys_socket(p, sc->arg[0], sc->arg[1], sc->arg[2]);          break;
-    case AIOS_SYS_CONNECT: ret = (uint64_t)sys_connect(p, sc->arg[0], sc->arg[1], sc->arg[2]);         break;
     case AIOS_SYS_BIND:    ret = (uint64_t)sys_bind(p, sc->arg[0], sc->arg[1], sc->arg[2]);            break;
     case AIOS_SYS_LISTEN:  ret = (uint64_t)sys_listen(p, sc->arg[0], sc->arg[1]);                      break;
-    case AIOS_SYS_ACCEPT:  ret = (uint64_t)sys_accept(p, sc->arg[0], sc->arg[1], sc->arg[2]);          break;
     case AIOS_SYS_SETSOCKOPT: ret = (uint64_t)sys_setsockopt(p, sc->arg[0], sc->arg[1], sc->arg[2], sc->arg[3], sc->arg[4]); break;
     case AIOS_SYS_GETSOCKNAME:ret = (uint64_t)sys_getsockname(p, sc->arg[0], sc->arg[1], sc->arg[2]);  break;
     case AIOS_SYS_GETDENTS:ret = (uint64_t)sys_getdents(p, sc->arg[0], sc->arg[1], sc->arg[2]); break;
@@ -1255,9 +1382,11 @@ int aios_kernel_run(const char *guest_path, char *const guest_argv[]) {
 
     for (;;) {
         if (g_shutdown >= 0) break;                   /* a root REBOOT was requested -> bring it down */
+        net_publish_watches();                        /* tell the PAL which sockets parked guests await */
         pal_pid_t who; pal_syscall_t sc; int code = 0;
         int r = pal_guest_next(&who, &sc, &code);
         if (r < 0) break;                             /* no live guests left */
+        if (r == 4) { net_retry_parked(); continue; } /* a watched socket is ready -> retry parked ops */
         proc_t *p = proc_find(who);
         if (r == 0) {                                 /* `who` exited */
             if (who == init_pid) init_code = code;

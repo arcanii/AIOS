@@ -37,6 +37,7 @@
 #include <time.h>             /* clock_gettime + CLOCK_* (the host clock source) */
 #include <termios.h>          /* host tcgetattr/tcsetattr + struct termios (line discipline) */
 #include <sys/socket.h>        /* host socket/connect (AIOS networking passes through) */
+#include <poll.h>              /* ppoll -- co-wait guest events + socket readiness (park/wake) */
 #include <unistd.h>
 #include <sys/ptrace.h>
 #include <sys/stat.h>
@@ -645,12 +646,25 @@ int pal_host_isatty(pal_file_t f) { return isatty((int)f) ? 1 : 0; }
 
 /* --- networking (host-passthrough). AIOS domain/type/protocol + sockaddr layout match the host's, so
  * these forward straight through; AIOS errno == host errno, so -errno is the negated AIOS code. --- */
+/* Every AIOS socket is made NON-BLOCKING at the host, so a serviced read/write/connect/accept that
+ * would block returns EAGAIN/EINPROGRESS instead of stalling the single-threaded kernel; the kernel
+ * PARKS the guest (which still sees ordinary blocking semantics) and the trap front-end wakes it via
+ * the readiness co-wait. EAGAIN == -PAL_EWOULDBLOCK already (errno 11), so pal_host_read/write need no
+ * change; only connect's EINPROGRESS is remapped, below. */
+static void set_nonblock(int fd) {
+    int fl = fcntl(fd, F_GETFL, 0);
+    if (fl >= 0) fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+}
 pal_file_t pal_host_socket(int domain, int type, int protocol) {
     int fd = socket(domain, type, protocol);
-    return fd < 0 ? (pal_file_t)(-errno) : (pal_file_t)fd;
+    if (fd < 0) return (pal_file_t)(-errno);
+    set_nonblock(fd);
+    return (pal_file_t)fd;
 }
 int pal_host_connect(pal_file_t f, const void *addr, unsigned int addrlen) {
-    return connect((int)f, (const struct sockaddr *)addr, (socklen_t)addrlen) == 0 ? 0 : -errno;
+    if (connect((int)f, (const struct sockaddr *)addr, (socklen_t)addrlen) == 0) return 0;
+    if (errno == EINPROGRESS || errno == EALREADY) return PAL_EWOULDBLOCK;   /* in flight -> park on writable */
+    return -errno;
 }
 int pal_host_bind(pal_file_t f, const void *addr, unsigned int addrlen) {
     return bind((int)f, (const struct sockaddr *)addr, (socklen_t)addrlen) == 0 ? 0 : -errno;
@@ -659,11 +673,13 @@ int pal_host_listen(pal_file_t f, int backlog) {
     return listen((int)f, backlog) == 0 ? 0 : -errno;
 }
 /* accept: fill `addr` (up to *addrlen bytes) with the peer address, set *addrlen to the ACTUAL peer
- * length, and return a new host socket (or -errno). A NULL addr/addrlen means "don't want the peer". */
+ * length, and return a new (non-blocking) host socket -- or PAL_EWOULDBLOCK (no pending connection) /
+ * -errno. A NULL addr/addrlen means "don't want the peer". */
 pal_file_t pal_host_accept(pal_file_t f, void *addr, unsigned int *addrlen) {
     socklen_t sl = addrlen ? (socklen_t)*addrlen : 0;
     int c = accept((int)f, (struct sockaddr *)addr, addr ? &sl : NULL);
-    if (c < 0) return (pal_file_t)(-errno);
+    if (c < 0) return (pal_file_t)(errno == EAGAIN || errno == EWOULDBLOCK ? PAL_EWOULDBLOCK : -errno);
+    set_nonblock(c);                                  /* the accepted socket parks on read too */
     if (addrlen) *addrlen = (unsigned int)sl;
     return (pal_file_t)c;
 }
@@ -675,6 +691,53 @@ int pal_host_getsockname(pal_file_t f, void *addr, unsigned int *addrlen) {
     if (getsockname((int)f, (struct sockaddr *)addr, &sl) != 0) return -errno;
     if (addrlen) *addrlen = (unsigned int)sl;
     return 0;
+}
+int pal_host_sock_error(pal_file_t f) {                /* getsockopt SO_ERROR -- non-blocking connect completion */
+    int err = 0; socklen_t sl = sizeof err;
+    if (getsockopt((int)f, SOL_SOCKET, SO_ERROR, &err, &sl) != 0) return -errno;
+    return err == 0 ? 0 : -err;
+}
+int pal_host_sock_writable(pal_file_t f) {             /* has a non-blocking connect finished (POLLOUT/ERR)? */
+    struct pollfd pfd = { .fd = (int)f, .events = POLLOUT, .revents = 0 };
+    int r = poll(&pfd, 1, 0);
+    if (r < 0) return -errno;
+    return (r > 0 && (pfd.revents & (POLLOUT | POLLERR | POLLHUP))) ? 1 : 0;
+}
+
+/* --- socket-readiness co-wait (park/wake) ---
+ * The kernel publishes the sockets its parked guests wait on (reset + add each loop); pal_net_wait_ready
+ * blocks in ppoll on that set with SIGCHLD momentarily unblocked, so a guest event (which stops a tracee
+ * and raises SIGCHLD to the tracer) OR a ready socket wakes it. It returns 1 iff a socket is ready; on a
+ * SIGCHLD/terminal-signal EINTR (or the safety timeout) it returns 0 so the caller collects the guest
+ * event with a non-blocking waitpid. SIGCHLD is BLOCKED outside ppoll (installed once, below) so no
+ * child-event wakeup is lost in the window between the caller's waitpid and this ppoll. */
+#define PAL_NET_MAX_WATCH 64
+static struct { int fd; short events; } g_net_watch[PAL_NET_MAX_WATCH];
+static int g_net_nwatch;
+void pal_net_watch_reset(void) { g_net_nwatch = 0; }
+void pal_net_watch_add(pal_file_t f, int want_write) {
+    if (g_net_nwatch >= PAL_NET_MAX_WATCH) return;
+    g_net_watch[g_net_nwatch].fd = (int)f;
+    g_net_watch[g_net_nwatch].events = want_write ? POLLOUT : POLLIN;
+    g_net_nwatch++;
+}
+int pal_net_have_watches(void) { return g_net_nwatch > 0; }
+static void pal_net_chld_noop(int s) { (void)s; }
+static void pal_net_init_signals(void) {              /* idempotent: SIGCHLD deliverable + blocked (ppoll unblocks it) */
+    struct sigaction sa; sa.sa_handler = pal_net_chld_noop; sa.sa_flags = 0; sigemptyset(&sa.sa_mask);
+    sigaction(SIGCHLD, &sa, NULL);
+    sigset_t m; sigemptyset(&m); sigaddset(&m, SIGCHLD); sigprocmask(SIG_BLOCK, &m, NULL);
+}
+int pal_net_wait_ready(void) {
+    if (g_net_nwatch == 0) return 0;
+    struct pollfd pfds[PAL_NET_MAX_WATCH];
+    for (int i = 0; i < g_net_nwatch; i++) {
+        pfds[i].fd = g_net_watch[i].fd; pfds[i].events = g_net_watch[i].events; pfds[i].revents = 0;
+    }
+    sigset_t mask; sigprocmask(SIG_SETMASK, NULL, &mask); sigdelset(&mask, SIGCHLD);  /* deliver SIGCHLD during the wait */
+    struct timespec to = { 1, 0 };                    /* 1s safety net; SIGCHLD/readiness normally wakes us sooner */
+    int r = ppoll(pfds, (nfds_t)g_net_nwatch, &to, &mask);
+    return r > 0 ? 1 : 0;                              /* >0: a socket is ready; EINTR/timeout: caller polls guests */
 }
 
 /* AIOS termios <-> host termios. The shadow <termios.h> flag/c_cc values match the host's, so this is

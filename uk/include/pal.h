@@ -50,6 +50,13 @@ pal_pid_t pal_guest_spawn(const char *path, char *const argv[]);
  *   0  *who exited                 -> *exit_code set (8-bit, POSIX-shaped)
  *   2  *who got an async signal    -> *exit_code = signal number (the kernel owns the policy: run
  *                                     the guest's handler, ignore it, or terminate)
+ *   3  a TERMINAL signal was caught (^C/^Z) -> *exit_code = signum; the kernel forwards it to the
+ *                                     foreground process group (*who unused)
+ *   4  a watched socket became READY -> the kernel re-checks its socket-parked guests (*who unused).
+ *                                     Only occurs while the kernel has published socket waits (see the
+ *                                     pal_net_watch_* seam below); the trap mechanism co-waits guest
+ *                                     events AND host-socket readiness so network I/O never blocks the
+ *                                     single-threaded kernel.
  *  -1  no live guests / error                                                                   */
 int pal_guest_next(pal_pid_t *who, pal_syscall_t *sc, int *exit_code);
 
@@ -200,6 +207,30 @@ int        pal_host_listen     (pal_file_t f, int backlog);
 pal_file_t pal_host_accept     (pal_file_t f, void *addr, unsigned int *addrlen);
 int        pal_host_setsockopt (pal_file_t f, int level, int optname, const void *optval, unsigned int optlen);
 int        pal_host_getsockname(pal_file_t f, void *addr, unsigned int *addrlen);
+/* Pending error of a socket (getsockopt SO_ERROR) -- how a non-blocking connect reports completion:
+ * 0 = connected, else a negated AIOS error. Sockets are NON-BLOCKING at the host, so connect/accept/
+ * read/write return PAL_EWOULDBLOCK when they would block; the kernel PARKS the guest and the trap
+ * front-end wakes it when the socket is ready (see pal_guest_next code 4 + the pal_net_watch_* seam). */
+int        pal_host_sock_error (pal_file_t f);
+/* Is a socket WRITABLE yet (a non-blocking connect completed -- successfully or with an error)? 1 = yes
+ * (then read pal_host_sock_error for the outcome), 0 = still in progress, <0 = -errno. Needed because
+ * the kernel retries ALL socket-parked guests on any wake: a connect must confirm ITS OWN fd is ready
+ * before trusting SO_ERROR (which reads 0 on a still-connecting socket, aliasing "not done" with "ok"). */
+int        pal_host_sock_writable(pal_file_t f);
+
+/* --- socket-readiness seam (park/wake) --- The kernel publishes, before each pal_guest_next, the set
+ * of host sockets its parked guests are waiting on (a backing + a direction: want_write = wait for
+ * WRITABLE, else READABLE). The trap front-end then co-waits guest events AND that readiness, and
+ * returns code 4 from pal_guest_next when any becomes ready; the kernel re-tries its socket-parked
+ * guests. Reset clears the set; the kernel rebuilds it each loop. want_write is a generic direction,
+ * not a host detail (a seL4 PAL maps it to its net server's readiness notifications). */
+void pal_net_watch_reset(void);
+void pal_net_watch_add  (pal_file_t f, int want_write);
+int  pal_net_have_watches(void);
+/* One co-wait step: block until a published socket is ready (return 1) OR a guest event / signal is
+ * pending (return 0, so the caller collects it via a non-blocking waitpid). Called by pal_guest_next
+ * only while there are watches. Also installs the SIGCHLD plumbing the co-wait needs (idempotent). */
+int  pal_net_wait_ready (void);
 
 /* Is a backing object a terminal? 1 / 0 / -errno. (Linux: isatty/tcgetattr.) */
 int pal_host_isatty(pal_file_t f);
