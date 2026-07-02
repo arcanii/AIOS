@@ -266,6 +266,20 @@
  * kernel gets to expire. Only receive parks get a deadline (SO_SNDTIMEO not modeled). Proof:
  * guest/prog_rcvtimeo.c -- a bound UDP socket read with SO_RCVTIMEO 300ms returns -1/EAGAIN after ~300ms
  * (measured via CLOCK_MONOTONIC), neither hanging nor returning early. inc 4b = the resolver on top.
+ * 0.5.36 = NETWORKING, increment 4b: DNS -- a FROM-SCRATCH UDP resolver in libaios (NO new ABI). AIOS
+ * programs resolve hostnames, not just dotted quads. gethostbyname + getaddrinfo/freeaddrinfo/gai_strerror
+ * + inet_ntoa, built ENTIRELY on the AIOS socket ABI (SOCK_DGRAM + connect + read/write) with SO_RCVTIMEO
+ * (inc 4a) for a 2s-per-try, 3-try timeout on UDP packet loss -- so a future seL4 PAL gets DNS for free
+ * (it implements the socket ABI), and the kernel stays untouched. The resolver builds a type-A query,
+ * parses the response (header/question skip + answer records WITH name-compression pointers), and returns
+ * the first A record. Nameserver from $AIOS_DNS_SERVER ("ip[:port]") else /etc/resolv.conf (port 53).
+ * struct hostent/addrinfo live in aios_abi.h (so libaios.c sees the same layout under every build flag);
+ * shadow <netdb.h> + inet_ntoa in <arpa/inet.h>. HONEST scope: A/IPv4 only, no search domains, first
+ * answer wins, numeric getaddrinfo service only. Proof: guest/prog_dns.c resolves a name via BOTH
+ * gethostbyname and getaddrinfo through a host DNS stub (test/dns_server.c) that answers on 127.0.0.1
+ * (pointed to via $AIOS_DNS_SERVER) with a fixed A record -- self-contained, exercising the real DNS wire
+ * format. Gate key `dns`. THE NETWORKING ARC (client/server/non-blocking/DNS) IS FUNCTIONAL; next =
+ * network-access confinement (which hosts/ports, analogous to M4.2 fs).
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -275,7 +289,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 35
+#define AIOS_VERSION_PATCH 36
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

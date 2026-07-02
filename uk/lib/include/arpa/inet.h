@@ -8,5 +8,6 @@ unsigned short ntohs(unsigned short x);
 unsigned int   htonl(unsigned int x);
 unsigned int   ntohl(unsigned int x);
 in_addr_t      inet_addr(const char *cp);   /* dotted-quad -> network-order u32, or INADDR_NONE */
+char          *inet_ntoa(struct in_addr in); /* network-order u32 -> dotted quad (static storage) */
 
 #endif /* _ARPA_INET_H */

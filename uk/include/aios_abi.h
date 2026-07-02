@@ -125,6 +125,27 @@ struct aios_sockaddr_in {
 };
 struct aios_sockaddr { unsigned short sa_family; char sa_data[14]; };
 
+/* DNS resolver types (pure libaios constructs, NOT syscall ABI -- but defined here so libaios.c sees the
+ * SAME layout the guest sees via the shadow <netdb.h>, under both the freestanding and libc build flags).
+ * The resolver is a from-scratch UDP DNS client over the socket ABI; a future seL4 PAL gets it for free. */
+struct hostent {
+    char  *h_name;         /* official name           */
+    char **h_aliases;      /* NULL-terminated aliases */
+    int    h_addrtype;     /* AIOS_AF_INET            */
+    int    h_length;       /* 4 (IPv4)                */
+    char **h_addr_list;    /* NULL-terminated addrs (network order); h_addr = h_addr_list[0] */
+};
+struct addrinfo {
+    int    ai_flags, ai_family, ai_socktype, ai_protocol;
+    unsigned int ai_addrlen;   /* socklen_t */
+    void  *ai_addr;            /* struct sockaddr * (cast at use) */
+    char  *ai_canonname;
+    struct addrinfo *ai_next;
+};
+#define AIOS_EAI_NONAME  (-2)  /* name/service not known */
+#define AIOS_EAI_FAIL    (-4)  /* permanent resolver failure */
+#define AIOS_EAI_MEMORY (-10)  /* out of memory */
+
 /* ---- the Linux/aarch64 PAL trap convention (NOT part of the host-agnostic AIOS ABI) ----
  * AIOS owns its syscall NUMBERS (>= 0x1000, above); how a guest physically TRAPS into the kernel is a
  * per-host PAL detail. On Linux/aarch64 a guest traps with `svc #0`. The original convention put the

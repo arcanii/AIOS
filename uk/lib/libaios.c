@@ -1485,6 +1485,190 @@ unsigned int inet_addr(const char *s) {
     if (*p != '\0') return 0xFFFFFFFFu;
     return htonl((part[0] << 24) | (part[1] << 16) | (part[2] << 8) | part[3]);
 }
+/* inet_ntoa: a network-order IPv4 -> dotted quad, in static storage (POSIX). struct aios_in_addr is
+ * layout-identical to the shadow <arpa/inet.h> struct in_addr (both { unsigned int s_addr }). */
+char *inet_ntoa(struct aios_in_addr in) {
+    static char b[16];
+    unsigned int h = ntohl(in.s_addr);
+    int o = 0, sh = 24;
+    for (int i = 0; i < 4; i++) {
+        unsigned v = (h >> sh) & 0xff; sh -= 8;
+        if (v >= 100) b[o++] = '0' + v / 100;
+        if (v >= 10)  b[o++] = '0' + (v / 10) % 10;
+        b[o++] = '0' + v % 10;
+        if (i < 3) b[o++] = '.';
+    }
+    b[o] = '\0';
+    return b;
+}
+
+/* --- DNS: a from-scratch UDP resolver over the AIOS socket ABI (SOCK_DGRAM + connect + read/write) ---
+ * No new PAL/ABI: it is pure libaios over the existing sockets + SO_RCVTIMEO (inc 4a) for timeout/retry
+ * on UDP packet loss. A future seL4 PAL gets DNS for free (it implements the socket ABI). Query type A
+ * (IPv4). The nameserver comes from $AIOS_DNS_SERVER ("ip[:port]", for tests) else /etc/resolv.conf
+ * (port 53). Honest scope: A records only, no search domains, first answer wins. */
+static unsigned dns_rd16(const unsigned char *b, int o) { return (unsigned)(b[o] << 8) | b[o + 1]; }
+/* encode a hostname as DNS labels at buf+off; return the new offset, or -1 on a bad name. */
+static int dns_encode_name(unsigned char *buf, int off, const char *name) {
+    const char *p = name;
+    while (*p) {
+        int len = 0; while (p[len] && p[len] != '.') len++;
+        if (len == 0 || len > 63) return -1;
+        buf[off++] = (unsigned char)len;
+        for (int i = 0; i < len; i++) buf[off++] = (unsigned char)p[i];
+        p += len; if (*p == '.') p++;
+    }
+    buf[off++] = 0;                                   /* root label */
+    return off;
+}
+/* skip a (possibly compressed) name at buf+off within `len` bytes; return the offset just past it. */
+static int dns_skip_name(const unsigned char *buf, int len, int off) {
+    while (off < len) {
+        unsigned char c = buf[off];
+        if (c == 0) return off + 1;
+        if ((c & 0xC0) == 0xC0) return off + 2;      /* a compression pointer ends the name here */
+        off += 1 + c;
+    }
+    return -1;
+}
+/* Pick the nameserver (network-order IP in *ip, host-order port in *port). Returns 0/-1. */
+static int dns_server(unsigned int *ip, unsigned short *port) {
+    char *env = getenv("AIOS_DNS_SERVER");
+    if (env && *env) {
+        char host[64]; int i = 0;
+        while (env[i] && env[i] != ':' && i < (int)sizeof host - 1) { host[i] = env[i]; i++; }
+        host[i] = '\0';
+        unsigned int a = inet_addr(host);
+        if (a == 0xFFFFFFFFu) return -1;
+        *ip = a; *port = (env[i] == ':') ? (unsigned short)atoi(env + i + 1) : 53;
+        return 0;
+    }
+    FILE *f = fopen("/etc/resolv.conf", "r");
+    if (!f) return -1;
+    char line[256]; int ok = -1;
+    while (fgets(line, sizeof line, f)) {
+        if (strncmp(line, "nameserver", 10) != 0) continue;
+        char *p = line + 10; while (*p == ' ' || *p == '\t') p++;
+        char ips[64]; int j = 0;
+        while (*p && *p != '\n' && *p != ' ' && *p != '\t' && j < (int)sizeof ips - 1) ips[j++] = *p++;
+        ips[j] = '\0';
+        unsigned int a = inet_addr(ips);
+        if (a != 0xFFFFFFFFu) { *ip = a; *port = 53; ok = 0; break; }
+    }
+    fclose(f);
+    return ok;
+}
+/* Resolve `name` to a network-order IPv4 in *out. Returns 0, or -1 on failure. Retries on timeout. */
+static int dns_resolve(const char *name, unsigned int *out) {
+    unsigned int srv_ip; unsigned short srv_port;
+    if (!name || strlen(name) > 255) return -1;       /* a valid hostname is <= 253; keeps the query buffer safe */
+    if (dns_server(&srv_ip, &srv_port) != 0) return -1;
+
+    unsigned char q[512];
+    static unsigned short seq = 0;
+    unsigned short id = (unsigned short)(getpid() * 131 + (++seq));
+    q[0] = id >> 8; q[1] = id & 0xff;                 /* id */
+    q[2] = 0x01; q[3] = 0x00;                         /* flags: recursion desired */
+    q[4] = 0; q[5] = 1;                               /* qdcount = 1 */
+    q[6] = q[7] = q[8] = q[9] = q[10] = q[11] = 0;    /* an/ns/ar count = 0 */
+    int off = dns_encode_name(q, 12, name);
+    if (off < 0 || off + 4 > (int)sizeof q) return -1;
+    q[off++] = 0; q[off++] = 1;                       /* qtype = A */
+    q[off++] = 0; q[off++] = 1;                       /* qclass = IN */
+    int qlen = off;
+
+    struct aios_sockaddr_in sa;
+    for (unsigned k = 0; k < sizeof sa; k++) ((char *)&sa)[k] = 0;
+    sa.sin_family = AIOS_AF_INET; sa.sin_port = htons(srv_port); sa.sin_addr.s_addr = srv_ip;
+
+    int rc = -1;
+    for (int attempt = 0; attempt < 3 && rc != 0; attempt++) {
+        int s = socket(AIOS_AF_INET, AIOS_SOCK_DGRAM, 0);
+        if (s < 0) return -1;
+        struct { long tv_sec; long tv_usec; } tv = { 2, 0 };   /* 2s per attempt (SO_RCVTIMEO) */
+        setsockopt(s, AIOS_SOL_SOCKET, AIOS_SO_RCVTIMEO, &tv, sizeof tv);
+        if (connect(s, &sa, sizeof sa) != 0) { close(s); continue; }
+        if (write(s, q, qlen) != qlen) { close(s); continue; }
+        unsigned char r[1500];
+        int n = (int)read(s, r, sizeof r);
+        close(s);
+        if (n < 12) continue;                         /* timeout (-1) or a runt -> retry */
+        if (r[0] != q[0] || r[1] != q[1]) continue;   /* id mismatch -> retry */
+        if ((r[2] & 0x80) == 0) continue;             /* not a response */
+        if ((r[3] & 0x0f) != 0) break;                /* rcode != 0 (NXDOMAIN etc.) -> give up */
+        int qd = (int)dns_rd16(r, 4), an = (int)dns_rd16(r, 6);
+        int p = 12;
+        for (int i = 0; i < qd; i++) { p = dns_skip_name(r, n, p); if (p < 0 || p + 4 > n) { p = -1; break; } p += 4; }
+        if (p < 0) continue;
+        for (int i = 0; i < an && p >= 0; i++) {
+            p = dns_skip_name(r, n, p);
+            if (p < 0 || p + 10 > n) { p = -1; break; }
+            unsigned type = dns_rd16(r, p), cls = dns_rd16(r, p + 2), rdlen = dns_rd16(r, p + 8);
+            p += 10;
+            if (p + (int)rdlen > n) { p = -1; break; }
+            if (type == 1 && cls == 1 && rdlen == 4) {         /* an A record */
+                unsigned int a; unsigned char *ap = (unsigned char *)&a;
+                ap[0] = r[p]; ap[1] = r[p + 1]; ap[2] = r[p + 2]; ap[3] = r[p + 3];  /* already network order */
+                *out = a; rc = 0; break;
+            }
+            p += rdlen;
+        }
+    }
+    return rc;
+}
+
+/* gethostbyname: resolve a name (or accept a dotted-quad) to an IPv4. Returns a pointer to static
+ * storage (POSIX), or NULL (h_errno-style errors not modeled -- NULL = not found). */
+struct hostent *gethostbyname(const char *name) {
+    static struct hostent he;
+    static unsigned int addr;
+    static char *alist[2];
+    static char *aliases[1];
+    static char namebuf[256];
+    unsigned int a = inet_addr(name);                 /* already numeric? */
+    if (a == 0xFFFFFFFFu && dns_resolve(name, &a) != 0) return 0;
+    addr = a;
+    int i = 0; while (name[i] && i < (int)sizeof namebuf - 1) { namebuf[i] = name[i]; i++; } namebuf[i] = '\0';
+    aliases[0] = 0;
+    alist[0] = (char *)&addr; alist[1] = 0;
+    he.h_name = namebuf; he.h_aliases = aliases;
+    he.h_addrtype = AIOS_AF_INET; he.h_length = 4; he.h_addr_list = alist;
+    return &he;
+}
+
+/* getaddrinfo: the modern resolver API, minimal -- AF_INET only, node resolved via gethostbyname, an
+ * optional numeric `service` -> the port. One result. freeaddrinfo frees it. */
+int getaddrinfo(const char *node, const char *service, const struct addrinfo *hints, struct addrinfo **res) {
+    if (!node || !res) return AIOS_EAI_FAIL;
+    unsigned int a = inet_addr(node);
+    if (a == 0xFFFFFFFFu && dns_resolve(node, &a) != 0) return AIOS_EAI_NONAME;
+    struct addrinfo *ai = calloc(1, sizeof *ai);
+    struct aios_sockaddr_in *sa = calloc(1, sizeof *sa);
+    if (!ai || !sa) { free(ai); free(sa); return AIOS_EAI_MEMORY; }
+    sa->sin_family = AIOS_AF_INET;
+    sa->sin_port = htons(service ? (unsigned short)atoi(service) : 0);
+    sa->sin_addr.s_addr = a;
+    ai->ai_family = AIOS_AF_INET;
+    ai->ai_socktype = (hints && hints->ai_socktype) ? hints->ai_socktype : AIOS_SOCK_STREAM;
+    ai->ai_protocol = (hints && hints->ai_protocol) ? hints->ai_protocol : 0;
+    ai->ai_addrlen = sizeof *sa;
+    ai->ai_addr = sa;                                /* void* <- struct aios_sockaddr_in* (guest casts) */
+    ai->ai_canonname = 0;
+    ai->ai_next = 0;
+    *res = ai;
+    return 0;
+}
+void freeaddrinfo(struct addrinfo *res) {
+    while (res) { struct addrinfo *n = res->ai_next; free(res->ai_addr); free(res); res = n; }
+}
+const char *gai_strerror(int e) {
+    switch (e) {
+    case 0:                 return "Success";
+    case AIOS_EAI_NONAME:   return "Name or service not known";
+    case AIOS_EAI_MEMORY:   return "Memory allocation failure";
+    default:                return "Resolver error";
+    }
+}
 
 /* --- sysconf / rlimit / times: minimal so dash's miscbltin (ulimit/times) + paths compile + run. --- */
 long sysconf(int name) {

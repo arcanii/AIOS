@@ -1046,7 +1046,7 @@ static void do_write(proc_t *p, uint64_t fd, uint64_t gbuf, uint64_t len) {
     }
     if (g_ofile[oi].is_sock) {                        /* a socket: non-blocking write, park on full (park/wake) */
         p->blk_fd = (int)fd; p->blk_buf = gbuf; p->blk_len = len; p->blk_done = 0;
-        p->blk_pipe = 0; p->blk_sock_op = SKOP_WRITE;
+        p->blk_pipe = 0; p->blk_sock_op = SKOP_WRITE; p->blk_deadline_ms = 0;   /* no timeout on a write park */
         net_attempt(p);                              /* sends all len (parking as needed), or -errno */
         return;
     }
@@ -1077,7 +1077,7 @@ static void do_connect(proc_t *p, uint64_t fd, uint64_t gaddr, uint64_t addrlen)
     if (pal_guest_read(p->pid, gaddr, addr, addrlen) != addrlen) { pal_guest_return(p->pid, (uint64_t)-AIOS_EFAULT); return; }
     long r = pal_host_connect(fd_backing(p, fd), addr, (unsigned int)addrlen);
     if (r == PAL_EWOULDBLOCK) {                       /* in flight -> park until writable, then SO_ERROR */
-        p->blk_fd = (int)fd; p->blk_pipe = 0; p->blk_sock_op = SKOP_CONNECT;
+        p->blk_fd = (int)fd; p->blk_pipe = 0; p->blk_sock_op = SKOP_CONNECT; p->blk_deadline_ms = 0;   /* no timeout */
         p->state = PS_BLOCKED_NET_OUT;
         return;
     }
@@ -1090,7 +1090,7 @@ static void do_accept(proc_t *p, uint64_t fd, uint64_t gaddr, uint64_t gaddrlen)
     p->state = PS_RUNNING;
     if (deliver_pending(p)) return;                  /* a forwarded ^C/^Z interrupts the accept */
     if (!fd_valid(p, fd)) { pal_guest_return(p->pid, (uint64_t)-AIOS_EBADF); return; }
-    p->blk_fd = (int)fd; p->blk_buf = gaddr; p->blk_len = gaddrlen; p->blk_pipe = 0; p->blk_sock_op = SKOP_ACCEPT;
+    p->blk_fd = (int)fd; p->blk_buf = gaddr; p->blk_len = gaddrlen; p->blk_pipe = 0; p->blk_sock_op = SKOP_ACCEPT; p->blk_deadline_ms = 0;   /* no timeout on an accept park */
     net_attempt(p);                                  /* new fd, -errno, or parks PS_BLOCKED_NET_IN */
 }
 
@@ -1129,6 +1129,7 @@ static void net_expire_deadlines(void) {
     for (int i = 0; i < MAX_PROCS; i++) {
         proc_t *g = &g_proc[i];
         if ((g->state == PS_BLOCKED_NET_IN || g->state == PS_BLOCKED_NET_OUT) &&
+            g->blk_sock_op == SKOP_READ &&           /* only a read carries SO_RCVTIMEO (defensive) */
             g->blk_deadline_ms > 0 && t >= g->blk_deadline_ms) {
             g->state = PS_RUNNING;
             g->blk_deadline_ms = 0;
