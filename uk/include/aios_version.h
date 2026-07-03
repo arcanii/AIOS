@@ -335,6 +335,19 @@
  * throughout). This was the true root cause behind the intermittent login_pty flake (a test that was
  * correctly detecting a real kernel bug). Proven: 200/200 login pty runs across both PAL backends on
  * colima AND the RPi5 under CPU load with ZERO ENAMETOOLONG (pre-fix ~2-4% flaked); full gate green.
+ * 0.5.41 = M6, the seL4 PAL SEAM-PROVING SCAFFOLD (no ABI change; M6 does not modify the runnable
+ * kernel -- kernel/aios_kernel.c is unchanged, only a new PAL backend + build wiring is added; the
+ * banner version does bump to 0.5.41). A THIRD PAL backend, pal/pal_sel4.c, implements the full pal.h
+ * contract as
+ * documented stubs -- one per primitive, each stating its seL4 proof obligation -- so that
+ * `make PAL=sel4` compiles + LINKS the host-agnostic kernel against a non-Linux PAL, WITHOUT
+ * pal_linux_common.c. That link is the portability proof carried past M9's second-Linux-backend
+ * (seccomp) to the backend that matters for the endgame: it fails loudly if the kernel ever leaks a
+ * hidden Linux dependency (it does not -- it even links on macOS/arm64). The scaffold does NOT run
+ * seL4 (its pal_guest_spawn announces itself + refuses); the cross-cutting proof obligations (the
+ * fault-handler trap model since seL4 has no ptrace, memory as Frame caps, the host driver as
+ * userspace servers, confinement as capability confinement) + the infra a REAL port needs are in
+ * docs/DESIGN_20260703_pal_sel4_seam.md. gate.sh gained a third pass: RESULT linux=0 seccomp=0 sel4=0.
  *
  * Host-agnostic by construction (pure version macros), so the kernel may include it without taking
  * on any host dependency.
@@ -344,7 +357,7 @@
 
 #define AIOS_VERSION_MAJOR 0
 #define AIOS_VERSION_MINOR 5
-#define AIOS_VERSION_PATCH 40
+#define AIOS_VERSION_PATCH 41
 
 #define _AIOS_STR(x)  #x
 #define _AIOS_XSTR(x) _AIOS_STR(x)

@@ -267,5 +267,16 @@ gate; PASS_LINUX=$?
 echo "##################### GATE PASS 2: PAL=seccomp (seccomp SECCOMP_RET_TRACE -- rebuild ONLY aios-uk, same kernel) #####################"
 make --no-print-directory PAL=seccomp aios-uk || exit 1
 gate; PASS_SECCOMP=$?
-echo "##################### RESULT: linux=$PASS_LINUX seccomp=$PASS_SECCOMP -- BOTH must be 0 (one kernel, two host trap mechanisms) #####################"
-test "$PASS_LINUX" = 0 && test "$PASS_SECCOMP" = 0
+echo "##################### GATE PASS 3: PAL=sel4 (the seL4 SEAM-PROVING SCAFFOLD -- a THIRD, NON-Linux PAL; COMPILE+LINK proof, does NOT run guests) #####################"
+# The proof: the host-agnostic kernel (kernel/aios_kernel.c) compiles + LINKS against pal/pal_sel4.c
+# WITHOUT pal_linux_common.c and with no Linux-PAL symbol -- so the kernel has no hidden Linux
+# dependency (a leak would fail the link). Then running the scaffold must cleanly ANNOUNCE itself and
+# REFUSE to spawn a guest (exit non-zero) -- never crash, never silently pretend to work.
+make --no-print-directory PAL=sel4 aios-uk >/tmp/aios_sel4_build.log 2>&1; SEL4_BUILD=$?
+./aios-uk ./guest_hello >/dev/null 2>/tmp/aios_sel4_run.log; SEL4_RUN=$?
+if [ "$SEL4_BUILD" = 0 ] && grep -qi "seam-proving scaffold" /tmp/aios_sel4_run.log && [ "$SEL4_RUN" != 0 ]; then SEL4=0; else SEL4=1; fi
+echo "  [sel4 scaffold: build=$SEL4_BUILD (0=links clean), run-refused=$SEL4_RUN (non-0=refused to spawn) -> sel4=$SEL4]"
+if [ "$SEL4_BUILD" != 0 ]; then echo "  --- sel4 build log (link/compile failure) ---"; cat /tmp/aios_sel4_build.log; fi
+make --no-print-directory PAL=linux aios-uk >/dev/null 2>&1   # restore the default backend: leave the tree runnable
+echo "##################### RESULT: linux=$PASS_LINUX seccomp=$PASS_SECCOMP sel4=$SEL4 -- ALL must be 0 (one kernel: two host trap mechanisms + a third, non-Linux PAL that LINKS) #####################"
+test "$PASS_LINUX" = 0 && test "$PASS_SECCOMP" = 0 && test "$SEL4" = 0

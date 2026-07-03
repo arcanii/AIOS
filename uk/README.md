@@ -510,10 +510,37 @@ AIOS shell. The exact kernel features AIOS needs — and nothing more — are in
 `docs/AIOS_KERNEL_DEPENDENCIES.md` + `appliance/aios.config`; that manifest *is* the eventual seL4
 PAL's proof obligation, stated precisely.
 
+## M6 — the seL4 PAL seam: a third, *non-Linux* backend (the portability proof that matters) ✅ (scaffold)
+
+The endgame's premise is that `kernel/aios_kernel.c` is **host-agnostic** — it reaches the host *only*
+through `pal.h`, so it can replant onto **verified seL4** ("verification is the soul"). M9 rehearsed the
+proof with a *second Linux* trap mechanism; **M6 carries it to a third, _non-Linux_ backend** and makes
+the property checkable: `make PAL=sel4` compiles + **links** the kernel against `pal/pal_sel4.c`
+**without** `pal_linux_common.c` and with no Linux-PAL symbol. A single leaked dependency would fail the
+link — it does not (it even links on **macOS/arm64**, a different OS entirely).
+
+`pal/pal_sel4.c` is the **seam-proving scaffold**: it implements the full `pal.h` contract as documented
+stubs, one per primitive, each stating its **seL4 proof obligation** — the fault-handler trap model (seL4
+has no `ptrace`, so a guest's AIOS `svc` *faults* to the kernel's fault endpoint; `pal_guest_next` =
+`seL4_Recv`), guest memory as the kernel's own mapping of the guest's **Frame caps** (no
+`process_vm_readv`), the loader ops as **Untyped→Frames / VSpace copy / ELF load** (no injected
+`mmap`/`clone`/`execve`), the whole host driver as **IPC to userspace servers** (fs/net/timer/console),
+and confinement as **capability confinement** (a confined guest's fs cap can't *name* an out-of-root
+path — the `openat2` tricks become structural). It does **not** run seL4: `pal_guest_spawn` announces
+itself and refuses to spawn, so the proof binary is honest about being a proof binary.
+
+The cross-cutting obligations + the infrastructure a *real* seL4 port needs (SDK, target — with an honest
+note on seL4's arch-specific verification story — servers, a phasing) are in
+**`docs/DESIGN_20260703_pal_sel4_seam.md`**. `gate.sh` runs a **third pass** proving the link + the honest
+refusal: **`RESULT: linux=0 seccomp=0 sel4=0`**. (The kernel banner still reads "on Linux (ptrace PAL)"
+under `PAL=sel4` — a *cosmetic* default: `kernel/aios_kernel.c` is identical across all three backends
+(that identity *is* the portability proof), so its banner names the default (ptrace) backend whichever
+PAL is linked; the `[pal_sel4]` startup notice corrects it.)
+
 ## Next (per the design doc)
 
-**sched_ext** — AIOS authors its own scheduling policy as a `sched_ext` BPF program (the 6.18 appliance
-can carry `CONFIG_SCHED_CLASS_EXT`; `appliance/aios.config` keeps it off for the strict-minimal base).
-Then the endgame: the **seL4/x86-64 replant seam** (`pal_sel4.c`) — a third PAL backend that proves
-`kernel/aios_kernel.c` runs unchanged on a verified base. M9 (the seccomp second backend) is the dress
-rehearsal: the trap-mechanism/host-driver split + `PAL_RESUME` seam are exactly what `pal_sel4.c` reuses.
+The scaffold **proves the seam; the soul is scoped**. What remains is the **real seL4 port** — an
+infrastructure-gated, multi-session epic (an seL4 SDK, a verified target, the three userspace servers, and
+the fault-handler trap model), laid out phase-by-phase in `docs/DESIGN_20260703_pal_sel4_seam.md §7`. Other
+open arcs (Bryan's call): IPv6 / a fuller net stack; a finer `scx_aios` policy (explicit per-guest weight
+tags beyond `nice`); more userland (a real editor — `vi`/`ed` are absent).

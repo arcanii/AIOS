@@ -14,11 +14,20 @@ INCLUDE  = -Iinclude
 # The kernel is an ordinary hosted program (its PAL backend uses libc + ptrace). The PAL backend is
 # SELECTABLE: `make` uses the SYSEMU-style ptrace backend (pal_linux.c, the default), `make PAL=seccomp`
 # the seccomp SECCOMP_RET_TRACE backend (pal_seccomp.c) -- a SECOND host trap mechanism over the SAME
-# host-agnostic kernel (the portability proof). Both front-ends #include the shared host-driver core
-# pal_linux_common.c (NOT compiled directly; it is a prereq so a change to it rebuilds aios-uk).
+# host-agnostic kernel (the portability proof). Both Linux front-ends #include the shared host-driver
+# core pal_linux_common.c (NOT compiled directly; it is a prereq so a change to it rebuilds aios-uk).
+#   `make PAL=sel4` selects the THIRD backend, pal/pal_sel4.c -- the seL4 SEAM-PROVING SCAFFOLD (M6):
+# a self-contained set of documented stubs (one per pal.h primitive, each stating its seL4 proof
+# obligation) that the host-agnostic kernel compiles + LINKS against, WITHOUT pal_linux_common.c. It
+# proves the kernel has no hidden Linux dependency; it does not run guests (see docs/DESIGN_20260703_
+# pal_sel4_seam.md). So PAL_COMMON is empty for sel4 (there is no Linux under seL4).
 PAL ?= linux
 PAL_SRC    = pal/pal_$(PAL).c
+ifeq ($(PAL),sel4)
+PAL_COMMON =
+else
 PAL_COMMON = pal/pal_linux_common.c
+endif
 KERNEL_SRC = kernel/aios_kernel.c $(PAL_SRC)
 KERNEL_CFLAGS = -O2 $(WARN) $(INCLUDE)
 
