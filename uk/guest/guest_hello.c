@@ -1,8 +1,9 @@
 /*
  * guest_hello.c -- a freestanding AIOS-ABI program (the M1 "hello world").
  *
- * No libc, no host headers: it makes AIOS syscalls directly (svc #0 with the AIOS syscall number
- * in x8) so it talks to the AIOS kernel and NEVER to Linux. Built -nostdlib -static; its _start
+ * No libc, no host headers: it makes AIOS syscalls directly (svc #0 via the gateway convention --
+ * x8 = AIOS_GATEWAY, the AIOS number in x9, and x7 for the future seL4 backend; see the stub below)
+ * so it talks to the AIOS kernel and NEVER to Linux. Built -nostdlib -static; its _start
  * is the entry point. This binary is the proof that an AIOS-ABI program runs under the AIOS
  * userspace kernel -- nothing here is Linux-specific except the aarch64 syscall calling sequence
  * (which the AIOS ABI shares for now).
@@ -15,12 +16,13 @@
 static long aios_syscall3(long nr, long a0, long a1, long a2) {
     register long x8 __asm__("x8") = AIOS_GATEWAY;
     register long x9 __asm__("x9") = nr;
+    register long x7 __asm__("x7") = nr;   /* seL4 fault-model: nr in x7 (see uk/lib/libaios.c) */
     register long x0 __asm__("x0") = a0;
     register long x1 __asm__("x1") = a1;
     register long x2 __asm__("x2") = a2;
     __asm__ volatile("svc #0"
                      : "+r"(x0)
-                     : "r"(x8), "r"(x9), "r"(x1), "r"(x2)
+                     : "r"(x8), "r"(x9), "r"(x7), "r"(x1), "r"(x2)
                      : "memory", "cc");
     return x0;
 }

@@ -7,6 +7,17 @@ a separate, later epic (scope settled with Bryan — this session delivers the s
 proof obligation inline; this doc states the *cross-cutting* ones and the infrastructure a real port
 needs. Read the two together.
 
+> **UPDATE (session 28, 2026-07-10) — the real port is now SCOPED, and two claims below are revised by
+> `docs/PLAN_20260709_sel4_real_port.md`** (which supersedes this doc's §7 target discussion):
+> (1) **Target = AArch64, ratified** (not x86-64): AArch64 completed full functional-correctness
+> verification incl. fastpath (Apr 2024) + integrity/availability (Apr 2025), so it is now a *stronger*
+> verified config than x86-64 (which is FC-to-C only) — and it runs the existing aarch64 guests. The §1
+> and §7 "verified x86-64" framing is superseded.
+> (2) **The seL4 SDK is largely already in-repo** — `deps/` pins seL4 kernel 15.0.0-dev +
+> seL4_libs/sel4runtime/musl/tools/util_libs — so §7's "infrastructure not yet stood up / SDK … none
+> installed" was too pessimistic. See the PLAN doc for the target matrix, the 10-phase plan, and the
+> risk register. The proof-obligation *content* below (the three families, the trap model) stands.
+
 ---
 
 ## 1. Why this milestone exists

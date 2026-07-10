@@ -146,10 +146,17 @@ work — the part no target avoids — is **family A**: the fault-EP trap loop +
 Notes on the load-bearing phases:
 - **Phase 0** (do first, half a session): pin `x7` at the **8 conforming svc sites** (libaios `asys`/
   `asys4`/`asys5` + `__aios_sigtramp`; the dev guests `guest_{hello,cat,fileio}` + guest_escape's
-  *gateway* svc). Leave **guest_escape's second, raw svc unpinned** — it is the deliberate red-team
-  escape vector. Then the seL4 decode is: *fault-message X7 ≥ 0x1000 → AIOS nr; else surfaced verbatim →
-  the existing M4 kill policy.* Exit: `objdump -d` shows x7 pinned before every conforming `svc`; full
-  `gate.sh` still `linux=0 seccomp=0 sel4=0`.
+  *gateway* svc) so a conforming svc carries its AIOS nr (≥0x1000) in x7. **guest_escape's raw escape
+  svc gets a controlled x7 too — but a sub-0x1000 escape sentinel (the raw Linux nr 64), NOT an AIOS
+  number** — so it deterministically UnknownSyscall-faults on seL4 (64 is positive → never a valid,
+  negative seL4 syscall number, so it can't accidentally invoke a real seL4 call) and is classified as
+  an escape (< 0x1000). *(An **un**controlled x7 on the escape would be codegen-dependent — it could
+  randomly land on a valid seL4 nr and silently not-fault, or on a value ≥0x1000 and be mis-decoded as
+  a legit AIOS write with fd/buf/len still live — the exact hazard the pin exists to remove. So **every**
+  guest svc gets a controlled x7; the escape's is simply a non-AIOS one. Caught by the Phase-0 review.)*
+  The seL4 decode is then total: *fault-message X7 ≥ 0x1000 → AIOS nr; else → the existing M4 escape-kill
+  policy.* Exit: `objdump -d` shows x7 pinned before **every** `svc` (conforming = the AIOS nr; the escape
+  = 64); full `gate.sh` still `linux=0 seccomp=0 sel4=0`.
 - **Phase B** measures the syscall round-trip (two slowpath IPCs, 13 words out / 9 back) vs the ptrace
   and seccomp backends — the "seL4 is the fast backend" assumption gets **confirmed or corrected here**,
   not presumed. Reply contract: echo x1–x7, x0=retval, **FaultIP += 4** (an empty reply re-executes the
@@ -174,7 +181,7 @@ Notes on the load-bearing phases:
 | **R4** | effort blowup (10 phases, two L-phases) | every phase ends runnable+committed+gated; tripwires (Phase C >4 sessions → drop COW, ship eager copy; Phase F → client-net first). The 0.4.x parts bin de-risks B/C. |
 | R3 | QEMU-vs-HW divergence (SLIRP is lossless — no TCP loss modeling) | plat-split driver seam (proven 0.4.x); util_libs ltimer; TCP-loss validation explicitly deferred to Phase H real-LAN. |
 | R6 | debug-kernel hazard (`x7=SysDebugHalt` halts the machine) | red-team + verified claims on **release** builds only; dev-on-debug is fine (guests are ours). |
-| R7 | fault-reply semantic traps (empty reply → svc re-exec loop; x30 unreachable from reply; Yield-with-garbage-x7 silent no-op) | Phase 0 x7 pin kills the silent case; corpus register maps are the Phase B/E review checklist; a register-echo test guest. |
+| R7 | fault-reply semantic traps (empty reply → svc re-exec loop; x30 unreachable from reply; Yield-with-garbage-x7 silent no-op) | Phase 0 pins x7 at **every** svc — conforming *and* the escape — so **no** guest svc has a codegen-dependent x7 (the silent-Yield / mis-decode cases are structurally gone); corpus register maps are the Phase B/E review checklist; a register-echo test guest. |
 | R8/R9 | RPi5 pioneer tier (merged to master 2026-07-07, no release/CI, 2GB-DTS, *is* the Linux prod box); `deps/kernel` external symlink | default RPi4 (§7); re-pin stock 15.0.0 in Phase A. |
 
 ---

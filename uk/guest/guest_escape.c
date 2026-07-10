@@ -20,22 +20,30 @@
 static long aios_syscall3(long nr, long a0, long a1, long a2) {
     register long x8 __asm__("x8") = AIOS_GATEWAY;
     register long x9 __asm__("x9") = nr;
+    register long x7 __asm__("x7") = nr;   /* seL4 fault-model: nr in x7 (see uk/lib/libaios.c) */
     register long x0 __asm__("x0") = a0;
     register long x1 __asm__("x1") = a1;
     register long x2 __asm__("x2") = a2;
-    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x9), "r"(x1), "r"(x2) : "memory", "cc");
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x9), "r"(x7), "r"(x1), "r"(x2) : "memory", "cc");
     return x0;
 }
 /* THE ESCAPE: a RAW Linux syscall -- the real number goes straight in x8 (NOT via the gateway), the
- * way a guest would try to call the host directly. Under either PAL, x8 != AIOS_GATEWAY => the kernel
- * sees a sub-0x1000 number = an escape attempt and kills the guest (M4). Under seccomp this also traps
- * because write(64) is a real in-range syscall. */
+ * way a guest would try to call the host directly. Under either Linux PAL, x8 != AIOS_GATEWAY => the
+ * kernel sees a sub-0x1000 number = an escape attempt and kills the guest (M4). Under seccomp this
+ * also traps because write(64) is a real in-range syscall.
+ * x7 also carries `nr` -- NOT as an AIOS number but as a DETERMINISTIC escape: seL4/aarch64 reads the
+ * syscall number from x7, so a controlled x7 = 64 makes this a reliable UnknownSyscall fault (64 is
+ * positive, so never a valid seL4 syscall number -> it always faults, never invokes a real seL4 call)
+ * carrying a value < 0x1000, which the seL4 fault handler classifies as an escape (never mis-decodes
+ * as an AIOS syscall). Without pinning x7 the escape would be codegen-dependent on seL4 -- exactly the
+ * hazard the x7 pin exists to remove -- so the ESCAPE gets a controlled x7 too, just a non-AIOS one. */
 static long raw_linux_syscall3(long nr, long a0, long a1, long a2) {
     register long x8 __asm__("x8") = nr;
+    register long x7 __asm__("x7") = nr;   /* seL4 fault-model: a controlled sub-0x1000 escape number */
     register long x0 __asm__("x0") = a0;
     register long x1 __asm__("x1") = a1;
     register long x2 __asm__("x2") = a2;
-    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2) : "memory", "cc");
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x7), "r"(x1), "r"(x2) : "memory", "cc");
     return x0;
 }
 static unsigned slen(const char *s) { unsigned n = 0; while (s[n]) n++; return n; }
