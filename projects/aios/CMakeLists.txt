@@ -1,3 +1,10 @@
+# When building the userspace-kernel seL4 port (-DAIOS_UK_BUILD=1), skip this 0.4.x rootserver;
+# projects/aios-uk provides the rootserver instead (one DeclareRootserver per image). Undefined =
+# the 0.4.x build is unchanged.
+if(AIOS_UK_BUILD)
+    return()
+endif()
+
 cmake_minimum_required(VERSION 3.16.0)
 project(aios-rootserver C ASM)
 
