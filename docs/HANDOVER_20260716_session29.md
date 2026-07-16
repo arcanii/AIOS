@@ -110,21 +110,41 @@ forks + round-trips 64 KiB with reader AND writer parking/waking, exit 42. Revie
 >4 KiB static .bss lands in an unaligned multi-page PT_LOAD that sel4utils_elf_load rejects —
 mmap big guest buffers at runtime (guest_pipe does).
 
-PRIMARY TASK → **Phase D BREADTH: make dash + sbase actually RUN on seL4.** The tar already holds
-/sbin/init + the whole vendored world, so the goal is spawn `/sbin/init` FOR REAL (drop the
-hardcoded dev-guest name) and drive login→dash→sbase. Work: implement the ~24 remaining fs ops the
-shell/utils touch — most are already host-agnostic kernel code, but the seL4 PAL/tarfs needs
-**getdents** (tarfs directory enumeration — the biggest new piece; sbase ls/the shell glob need it),
-**openat/fstatat/faccessat/readlink/dup2/chdir/getcwd** wiring, and the **CNTVCT clock**
-(pal_host_clock_gettime → the ARM generic timer; sbase date + file mtimes). Persistence (a writable
-overlay/ramfs over the RO tarfs) is deferable — dash+sbase mostly READ; add a tmpfs only where a
-test writes. Build a `sel4-gate.sh` that boots qemu with serial on a pty and drives the prog_*
-suite (the Linux gate's shape) once a shell runs. Tripwire is moot — Phase C came in at 2 sessions
-(budget ~4).
+**D.1 + D.2 LANDED TOO (e5da3d5 + 21e7d9e, same session) → THE REAL DASH + SBASE RUN ON seL4.** The
+Phase D headline: a real POSIX shell runs real coreutils pipelines over the fault-EP trap loop.
+**D.1 = fs breadth + the clock** (tarfs.c + boot.c): directories now OPEN (open-file entry gained a
+normalized path[256] + a getdents cursor; read-on-dir → EISDIR); pal_host_getdents enumerates a
+dir's immediate children + "."/".." as packed aios_dirent records (19-byte header, 8-aligned,
+cursor-resumed); openat/fstatat/faccessat/readlink/chdir over the tarfs (mutating ops → -EACCES, no
+EROFS in the ABI); and the CLOCK — pal_host_clock_gettime reads `mrs cntpct_el0`/`cntfrq_el0`
+directly at EL0 (the proven 0.4.x pattern; REALTIME==MONOTONIC==uptime, no RTC). D.1 review MUST-FIX
+(all 3 finders): getdents("/") leaked the archive's own top prefix dir "aios_loginroot" as a phantom
+child — dir_nth_child omitted the top-dir→root special case tar_lookup has; fixed + regression-
+guarded (the test enumerates "/" through a tiny buffer, also proving multi-call resume).
+**D.2 = dash+sbase RUN** (NO new PAL primitive): guest_shrun execs /bin/sh -c pipelines with
+PATH=/bin; dash forks + execs real sbase by PATH, wires pipes (C.5) + command-substitution +
+redirections (dup2), runs 3-stage pipelines, reaps them. Clean: echo / `cat /etc/hostname`→aios /
+`seq 1 5 | wc -l`→5 / `ls /bin | wc -l`→31 / `grep -c root /etc/passwd`→1 / `seq|tr|tr`→bcd, all
+exit 0. The one D.2 fix: guest_copy PRE-CHECKS a page is mapped (vspace_get_cap) + stops QUIETLY, so
+a variable-length guest-string over-read (exec argv, kernel path reads) is a benign short copy, not
+a sel4utils ZF_LOGE. Pipelines made SELF-VERIFYING (dash `[ "$(...)" = N ]`). DEFERRED (tracked
+task_e00cf9d3): the kernel wait-status never encodes WIFSIGNALED (a signal-killed child reports
+WIFEXITED/128+sig) — a pre-existing host-agnostic kernel gap (all backends, needs a Linux re-gate).
+
+PRIMARY TASK → **finish Phase D breadth, then Phase E (interactive login).** dash+sbase RUN
+NON-INTERACTIVELY now; the natural next steps: (1) a **writable tmpfs overlay** over the RO tarfs so
+`echo > /tmp/x` / `mkdir` work (currently -EACCES) — a small RAM node tree the mutating ops target;
+(2) spawn the **REAL /sbin/init** (drop the hardcoded dev-guest name in pal_guest_spawn; init reads
+/etc/inittab + respawns login — login then needs console stdin, which is Phase E); (3) the
+**WIFSIGNALED** fix (task_e00cf9d3); (4) a **sel4-gate.sh** driving the prog_* suite. Then **Phase E**
+= console **stdin** (seL4_DebugGetChar or the PL011) + **termios** (pal_host_tcgetattr/tcsetattr are
+stubs) + **signal delivery** (pal_guest_deliver/sigreturn are stubs — WriteRegisters a signal frame,
+x30=trampoline) → **INTERACTIVE login → dash on seL4**.
 
 OTHER: re-run the RPi5 gcc-15 gate when the Pi is back (Phase 0 recheck, pending since s28; Pi
-offline 2026-07-11..16). GOTCHAS: FULL `ninja` after a boot.c edit; `pkill -f aios-uk-sel4-image`;
+offline 2026-07-11..17). GOTCHAS: FULL `ninja` after a boot.c edit; `pkill -f aios-uk-sel4-image`;
 absolute paths (the Bash cwd persists); guests via add_custom_command, never add_executable; the
-init guest is a HARDCODED name in pal_guest_spawn (swap + rebuild to regression-test others);
-non-MCS reply caps are per-guest SaveCaller slots now — never seL4_Reply, never Recv without an
-immediate SaveCaller.
+init guest is a HARDCODED name in pal_guest_spawn (swap + rebuild to regression-test others; a
+python one-liner over resolve_image + guest_image_build does it); non-MCS reply caps are per-guest
+SaveCaller slots — never seL4_Reply, never Recv without an immediate SaveCaller; a >4 KiB static
+guest .bss → an unaligned multi-page PT_LOAD sel4utils rejects, so mmap big guest buffers at runtime.
