@@ -98,14 +98,29 @@ vendored userland binary on the seL4 backend). Review: 13 raw findings, 8 advers
 zero must/should-fix. aiosroot.tar is an UNTRACKED Linux-line build product (uk: make all + sh
 mkaiosroot.sh); CMake fails loudly if missing.
 
-PRIMARY TASK → **continue Phase C: C.5 PIPES.** The kernel's pipe machinery is host-agnostic and
-kernel-internal (do_pipe/do_read/do_write + PS_BLOCKED_*) — what C.5 must prove on seL4 is the
-blocked-reader/writer PARK/WAKE over the SaveCaller reply tokens (the C.2 wait() park already
-proved the pattern) + whatever pal.h PAL_EWOULDBLOCK seams the kernel expects; gate-key target
-`pipebig` (uk/guest/prog_pipebig.c is the Linux-line reference). Then **Phase D breadth**: ~24 fs
-ops (getdents/openat/fstatat/...) + the CNTVCT clock → dash + sbase RUN — the tar already holds
-/sbin/init and the whole world, so spawn becomes /sbin/init-for-real. Tripwire: Phase C >~4
-sessions → ship what works, defer polish (s29 was session 2 and landed C.2+C.3+C.4).
+**C.5 LANDED TOO (eb62e89, same session) → PHASE C COMPLETE:** pipes. The insight: the kernel
+already owns the ENTIRE park/wake fixpoint (do_read/do_write park PS_BLOCKED_READ/WRITE on
+PAL_EWOULDBLOCK; pipe_settle wakes via pal_guest_return over the C.2 SaveCaller reply cap) AND holds
+NO pipe bytes — so C.5's only new code was the BACKING: uk/pal/sel4/pipe.c, an in-root-task byte
+ring (the seL4 answer to Linux pipe2(O_NONBLOCK); read/write EWOULDBLOCK/EPIPE/EOF matching Linux;
+refcount stays the kernel's job — pal_host_close once per end at ofile refcount 0). guest_pipe
+forks + round-trips 64 KiB with reader AND writer parking/waking, exit 42. Review (3 finders, 6 raw,
+1 refuted): fixed 1 real hang (a zero-length pipe read on an empty pipe parked the reader forever)
++ lseek/fstat pipe routing (ESPIPE / S_IFIFO) + single-direction EBADF gating. GUEST GOTCHA: a
+>4 KiB static .bss lands in an unaligned multi-page PT_LOAD that sel4utils_elf_load rejects —
+mmap big guest buffers at runtime (guest_pipe does).
+
+PRIMARY TASK → **Phase D BREADTH: make dash + sbase actually RUN on seL4.** The tar already holds
+/sbin/init + the whole vendored world, so the goal is spawn `/sbin/init` FOR REAL (drop the
+hardcoded dev-guest name) and drive login→dash→sbase. Work: implement the ~24 remaining fs ops the
+shell/utils touch — most are already host-agnostic kernel code, but the seL4 PAL/tarfs needs
+**getdents** (tarfs directory enumeration — the biggest new piece; sbase ls/the shell glob need it),
+**openat/fstatat/faccessat/readlink/dup2/chdir/getcwd** wiring, and the **CNTVCT clock**
+(pal_host_clock_gettime → the ARM generic timer; sbase date + file mtimes). Persistence (a writable
+overlay/ramfs over the RO tarfs) is deferable — dash+sbase mostly READ; add a tmpfs only where a
+test writes. Build a `sel4-gate.sh` that boots qemu with serial on a pty and drives the prog_*
+suite (the Linux gate's shape) once a shell runs. Tripwire is moot — Phase C came in at 2 sessions
+(budget ~4).
 
 OTHER: re-run the RPi5 gcc-15 gate when the Pi is back (Phase 0 recheck, pending since s28; Pi
 offline 2026-07-11..16). GOTCHAS: FULL `ninja` after a boot.c edit; `pkill -f aios-uk-sel4-image`;
