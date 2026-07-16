@@ -63,7 +63,7 @@
  *   PAL_EWOULDBLOCK (empty, a writer open); write: bytes / PAL_EWOULDBLOCK (full) / PAL_EPIPE
  *   (readers gone). pal_host_write (here) + pal_host_read/close (tarfs.c) route pipe-end handles to
  *   the ring. Nothing else in the PAL changed -- C.5 is the smallest family-B milestone.
- * Phase D.1 (THIS): FS BREADTH + the CLOCK. The tarfs grows the directory/metadata ops the shell +
+ * Phase D.1: FS BREADTH + the CLOCK. The tarfs grows the directory/metadata ops the shell +
  *   coreutils need -- pal_host_{getdents,openat,fstatat,faccessat,readlink,chdir} (all in tarfs.c;
  *   directories now OPEN, read()-on-a-dir -> EISDIR, getdents enumerates immediate children + ./.. as
  *   aios_dirent records) -- and the CLOCK arrives here: pal_host_clock_gettime reads the ARM generic
@@ -71,6 +71,13 @@
  *   RTC so REALTIME==MONOTONIC==uptime). The mutating ops (unlink/mkdir/rename/...) return -EACCES
  *   (the tarfs is read-only; a writable overlay is deferrable). This is the breadth that lets the real
  *   vendored dash + sbase RUN (Phase D.2).
+ * Phase D.2 (THIS): the REAL dash + sbase RUN. No new PAL primitive -- the C+D.1 machinery is enough:
+ *   the launcher execs /bin/sh -c a pipeline with PATH=/bin, and the vendored dash (from the tar)
+ *   forks, resolves + execs REAL sbase tools by PATH (stat/faccessat), wires pipes (C.5) + redirections
+ *   (dup2), and reaps them. `seq 1 5 | wc -l` -> 5, `ls /bin | wc -l` -> 31, `grep -c root /etc/passwd`
+ *   -> 1, all on seL4. The one fix D.2 needed: guest_copy now PRE-CHECKS a page is mapped (vspace_get_
+ *   cap) and stops QUIETLY, so a variable-length guest-string read (exec argv, kernel path reads) that
+ *   runs its fixed cap off the end of a short string's page is a benign short copy, not a ZF_LOGE.
  *
  * The design + every seL4 API used here is kernel-source-validated (the Phase B + C.2 research; all
  * claims re-verified adversarially against deps/kernel + deps/seL4_libs; C.3 adds NO new seL4 API --
@@ -385,6 +392,12 @@ static size_t guest_copy(sel4utils_process_t *p, uint64_t gaddr, void *buf, size
         size_t pgoff = (size_t)(a & (PAGE_SZ - 1));
         size_t n = PAGE_SZ - pgoff;
         if (n > len - done) n = len - done;
+        /* Pre-check the page is mapped and stop QUIETLY if not, rather than let
+         * vspace_access_page_with_callback log a ZF_LOGE. Callers reading a variable-length guest
+         * STRING (exec argv, kernel path reads) request a fixed max cap, so the tail routinely runs
+         * off the end of a short string's page -- a benign short copy, not an error (the NUL was
+         * already found). vspace_get_cap maps both unmapped and reserved-but-unmapped to CapNull. */
+        if (vspace_get_cap(&p->vspace, (void *)(a & ~((uint64_t)PAGE_SZ - 1))) == seL4_CapNull) break;
         struct copy_ctx c = { (char *)buf + done, a, n, is_write };
         int r = vspace_access_page_with_callback(&p->vspace, &vspace, (void *)a,
                                                  seL4_PageBits, seL4_AllRights, 1 /* cacheable */,
@@ -469,16 +482,16 @@ pal_pid_t pal_guest_spawn(const char *path, char *const argv[]) {
     for (int i = 0; i < MAX_GUESTS; i++) if (!g_g[i].used) { g = &g_g[i]; break; }
     if (!g) { con_puts("[pal_sel4] spawn: guest table full\n"); return PAL_PID_NONE; }
 
-    con_puts("[pal_sel4] Phase D.1: loading guest 'guest_fsbreadth' (kernel asked for ");
+    con_puts("[pal_sel4] Phase D.2: loading guest 'guest_shrun' (kernel asked for ");
     con_puts(path); con_puts(")\n");
 
     unsigned long isz = 0;
-    const void *idata = resolve_image("/bin/guest_fsbreadth", &isz);
+    const void *idata = resolve_image("/bin/guest_shrun", &isz);
     if (!idata) { con_puts("[pal_sel4] spawn: no init image\n"); return PAL_PID_NONE; }
 
     memset(g, 0, sizeof *g);
     if (guest_slot_init(g)) return PAL_PID_NONE;
-    if (guest_image_build(g, 0, "guest_fsbreadth", idata, isz, &g->img)) { guest_slot_fini(g); return PAL_PID_NONE; }
+    if (guest_image_build(g, 0, "guest_shrun", idata, isz, &g->img)) { guest_slot_fini(g); return PAL_PID_NONE; }
 
     int argc = 0; while (argv && argv[argc]) argc++;
     uint64_t sp = 0;
@@ -898,16 +911,15 @@ int      pal_net_wait_ready (void) { return 0; }
 /* ================================ the root task entry ============================================== */
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
-    con_puts("\n[pal_sel4] AIOS userspace kernel -- Phase D.1: fs breadth + the clock\n");
-    con_puts("[pal_sel4]   (getdents + the *at family + chdir/getcwd + the CNTPCT generic-timer clock).\n");
+    con_puts("\n[pal_sel4] AIOS userspace kernel -- Phase D.2: the REAL dash + sbase run\n");
+    con_puts("[pal_sel4]   (a launcher execs /bin/sh -c pipelines; vendored dash forks + execs sbase).\n");
 
     /* Run the host-agnostic kernel. It spawns the init guest, resumes it, then services trapped AIOS
-     * syscalls from EVERY guest -- now including the directory + metadata + clock ops -- until none
-     * remain. */
+     * syscalls from EVERY guest -- now a whole tree of dash + sbase processes -- until none remain. */
     char *gargv[] = { (char *)"aios-uk", (char *)"/sbin/init", 0 };
     int code = aios_kernel_main(2, gargv);
 
-    con_puts("[pal_sel4] Phase D.1 complete: guests enumerated the tarfs + read the clock on seL4; init exit code=");
+    con_puts("[pal_sel4] Phase D.2 complete: the REAL dash + sbase ran pipelines on seL4; init exit code=");
     con_put_int(code);
     con_puts(".\n[pal_sel4] halting.\n");
     seL4_TCB_Suspend(seL4_CapInitThreadTCB);
