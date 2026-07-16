@@ -29,8 +29,9 @@ set(UK "${AIOS_ROOT}/uk")
 #   guest_hello -- Phase B (WRITE + EXIT);  guest_mmap -- Phase C.1 (mmap a region, pattern round-trip);
 #   guest_fork  -- Phase C.2 (fork + wait: eager VSpace copy, two-return, isolation of data/stack/mmap);
 #   guest_exec + guest_execd -- Phase C.3 (exec: failed-exec keeps the old image; argv/envp staging);
-#   guest_tarfs -- Phase C.4 (tarfs file ops + exec of a REAL sbase binary out of aiosroot.tar).
-set(UK_GUESTS guest_hello guest_mmap guest_fork guest_exec guest_execd guest_tarfs)
+#   guest_tarfs -- Phase C.4 (tarfs file ops + exec of a REAL sbase binary out of aiosroot.tar);
+#   guest_pipe -- Phase C.5 (a pipe: writer parks on a full ring, reader wakes it, EOF at close).
+set(UK_GUESTS guest_hello guest_mmap guest_fork guest_exec guest_execd guest_tarfs guest_pipe)
 set(GUEST_ELFS "")
 foreach(g ${UK_GUESTS})
     set(elf ${CMAKE_CURRENT_BINARY_DIR}/${g})
@@ -57,6 +58,7 @@ add_executable(aios-uk-sel4
     ${UK}/kernel/aios_kernel.c      # the host-agnostic kernel, unchanged (main -> aios_kernel_main)
     ${UK}/pal/sel4/boot.c           # the real seL4 PAL: root-task main + console + the trap loop
     ${UK}/pal/sel4/tarfs.c          # Phase C.4: the read-only tarfs over the embedded aiosroot.tar
+    ${UK}/pal/sel4/pipe.c           # Phase C.5: the in-root-task pipe byte ring
     guests_cpio.o                   # the embedded archive: dev guests + aiosroot.tar
 )
 

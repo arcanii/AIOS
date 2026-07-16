@@ -26,6 +26,7 @@
 
 #include "pal.h"
 #include "tarfs.h"
+#include "pipe.h"   /* pal_host_read/close route pipe-end handles to the C.5 ring */
 
 /* ---- the mounted archive ---------------------------------------------------------------------- */
 static const char   *g_tar;
@@ -199,6 +200,7 @@ pal_file_t pal_host_open(const char *path, uint64_t flags, uint64_t mode) {
 }
 
 long pal_host_read(pal_file_t f, void *buf, size_t n) {
+    if (pipe_is_handle(f)) return pipe_read(f, buf, n);   /* a pipe read-end (C.5) */
     int i = of_from_handle(f);
     if (i < 0) return -AIOS_ENOSYS;               /* std handles: console read is Phase E */
     if (g_of[i].pos >= g_of[i].e.size) return 0;  /* EOF (also covers a past-EOF seek) */
@@ -210,6 +212,7 @@ long pal_host_read(pal_file_t f, void *buf, size_t n) {
 }
 
 long long pal_host_lseek(pal_file_t f, long long off, int whence) {
+    if (pipe_is_handle(f)) return -AIOS_ESPIPE;   /* a pipe is not seekable (POSIX ESPIPE) */
     int i = of_from_handle(f);
     if (i < 0) return -AIOS_ENOSYS;
     long long base = (whence == AIOS_SEEK_SET) ? 0
@@ -223,6 +226,7 @@ long long pal_host_lseek(pal_file_t f, long long off, int whence) {
 }
 
 int pal_host_close(pal_file_t f) {
+    if (pipe_is_handle(f)) return pipe_close(f);  /* a pipe end (C.5): closes an end, may reclaim */
     int i = of_from_handle(f);
     if (i >= 0) g_of[i].used = 0;
     return 0;                                     /* std handles close as a no-op, as before */
@@ -243,6 +247,13 @@ static void ent_stat(const struct tar_ent *e, struct aios_stat *o) {
 }
 
 int pal_host_fstat(pal_file_t f, struct aios_stat *o) {
+    if (pipe_is_handle(f)) {                       /* a pipe end: a minimal FIFO stat (Linux-parity) */
+        memset(o, 0, sizeof *o);
+        o->st_mode = AIOS_S_IFIFO | 0600;
+        o->st_nlink = 1;
+        o->st_blksize = TAR_BLK;
+        return 0;
+    }
     int i = of_from_handle(f);
     if (i < 0) return -AIOS_ENOSYS;               /* std-handle stat (a tty) is Phase E */
     ent_stat(&g_of[i].e, o);

@@ -43,16 +43,26 @@
  *       the path is basename-mapped onto the CPIO (the tarfs is C.4; -ENOENT for unknown images),
  *       and per-slot state resets: image meta committed, mmap list cleared, started=0 so the
  *       kernel's pal_guest_resume gives the new image the same Inactive kick a fresh spawn gets.
- * Phase C.4 (THIS): the READ-ONLY TARFS (family C begins -- in-proc as a LIBRARY, never a
- *   parked-caller IPC server: plan risk R5). uk/pal/sel4/tarfs.c parses the embedded aiosroot.tar
- *   (a CPIO member; the same archive the guests live in) and serves pal_host_{open,read,lseek,
- *   close,fstat,stat} over it -- the vendored dash+sbase world's files are now REAL to guests.
- *   The loader stops being CPIO-shaped: an image's identity is its BYTES (img_meta.elf_data/size),
- *   resolved ONCE per exec/spawn -- tarfs REAL PATH first, CPIO basename fallback for the dev
- *   guests -- then configure runs WITHOUT process_config_elf and the ELF is loaded manually via
- *   sel4utils_elf_load (the proven 0.4.x fork.c pattern; entry_point is ours to set). fork reloads
- *   the parent's identity bytes, never a name. The tarfs normalizes dot segments itself
- *   (read_abspath does cwd_join but NOT path_norm) and strips the archive's top-level prefix dir.
+ * Phase C.4: the READ-ONLY TARFS (family C begins -- in-proc as a LIBRARY, never a parked-caller
+ *   IPC server: plan risk R5). uk/pal/sel4/tarfs.c parses the embedded aiosroot.tar (a CPIO member;
+ *   the same archive the guests live in) and serves pal_host_{open,read,lseek,close,fstat,stat} over
+ *   it -- the vendored dash+sbase world's files are now REAL to guests. The loader stops being
+ *   CPIO-shaped: an image's identity is its BYTES (img_meta.elf_data/size), resolved ONCE per
+ *   exec/spawn -- tarfs REAL PATH first, CPIO basename fallback for the dev guests -- then configure
+ *   runs WITHOUT process_config_elf and the ELF is loaded manually via sel4utils_elf_load (the proven
+ *   0.4.x fork.c pattern; entry_point is ours to set). fork reloads the parent's identity bytes,
+ *   never a name. The tarfs normalizes dot segments itself (read_abspath does cwd_join but NOT
+ *   path_norm) and strips the archive's top-level prefix dir.
+ * Phase C.5 (THIS): PIPES. The kernel already owns the whole park/wake fixpoint -- do_read/do_write
+ *   park a guest (PS_BLOCKED_READ/WRITE) on PAL_EWOULDBLOCK and pipe_settle wakes it via
+ *   pal_guest_return, which since C.2 replies over a PARKED guest's saved SaveCaller reply cap (the
+ *   wait() park proved it). The kernel holds NO pipe bytes: it makes a backing (pal_host_pipe) and
+ *   reads/writes the two ends. So the ONLY new work is the BACKING: uk/pal/sel4/pipe.c is an
+ *   in-root-task byte ring (the seL4 answer to the Linux PAL's pipe2(O_NONBLOCK)) whose two ends'
+ *   contract matches the Linux non-blocking pipe -- read: bytes / 0 (EOF, writers gone) /
+ *   PAL_EWOULDBLOCK (empty, a writer open); write: bytes / PAL_EWOULDBLOCK (full) / PAL_EPIPE
+ *   (readers gone). pal_host_write (here) + pal_host_read/close (tarfs.c) route pipe-end handles to
+ *   the ring. Nothing else in the PAL changed -- C.5 is the smallest family-B milestone.
  *
  * The design + every seL4 API used here is kernel-source-validated (the Phase B + C.2 research; all
  * claims re-verified adversarially against deps/kernel + deps/seL4_libs; C.3 adds NO new seL4 API --
@@ -92,6 +102,7 @@
 #include <string.h>              /* memcpy -- muslc (the root task links the C runtime) */
 
 #include "tarfs.h"               /* the C.4 read-only tarfs over the embedded aiosroot.tar */
+#include "pipe.h"                 /* the C.5 in-root-task pipe byte ring */
 
 #include "pal.h"                 /* the contract (pulls in aios_abi.h) -- boot.c uses no AIOS version
                                   * macros; the kernel (aios_kernel.c) prints the version banner. */
@@ -339,7 +350,8 @@ pal_file_t pal_host_std(int which) { return (pal_file_t)which; }
 
 long pal_host_write(pal_file_t f, const void *buf, size_t len) {
     if (f == 0 || f == 1 || f == 2) { con_write((const char *)buf, len); return (long)len; }
-    return -AIOS_ENOSYS;
+    if (pipe_is_handle(f)) return pipe_write(f, buf, len);   /* a pipe write-end (C.5) */
+    return -AIOS_ENOSYS;                                     /* the tarfs is read-only */
 }
 
 long pal_host_getcwd(char *buf, size_t size) {
@@ -449,16 +461,16 @@ pal_pid_t pal_guest_spawn(const char *path, char *const argv[]) {
     for (int i = 0; i < MAX_GUESTS; i++) if (!g_g[i].used) { g = &g_g[i]; break; }
     if (!g) { con_puts("[pal_sel4] spawn: guest table full\n"); return PAL_PID_NONE; }
 
-    con_puts("[pal_sel4] Phase C.4: loading guest 'guest_tarfs' (kernel asked for ");
+    con_puts("[pal_sel4] Phase C.5: loading guest 'guest_pipe' (kernel asked for ");
     con_puts(path); con_puts(")\n");
 
     unsigned long isz = 0;
-    const void *idata = resolve_image("/bin/guest_tarfs", &isz);
+    const void *idata = resolve_image("/bin/guest_pipe", &isz);
     if (!idata) { con_puts("[pal_sel4] spawn: no init image\n"); return PAL_PID_NONE; }
 
     memset(g, 0, sizeof *g);
     if (guest_slot_init(g)) return PAL_PID_NONE;
-    if (guest_image_build(g, 0, "guest_tarfs", idata, isz, &g->img)) { guest_slot_fini(g); return PAL_PID_NONE; }
+    if (guest_image_build(g, 0, "guest_pipe", idata, isz, &g->img)) { guest_slot_fini(g); return PAL_PID_NONE; }
 
     int argc = 0; while (argv && argv[argc]) argc++;
     uint64_t sp = 0;
@@ -827,9 +839,9 @@ int pal_guest_exec(pal_pid_t who, const char *abspath, uint64_t gargv, uint64_t 
 int      pal_take_term_signal(void) { return 0; }
 int      pal_guest_deliver(pal_pid_t w, uint64_t h, uint64_t sg, uint64_t t, void *sv) { (void)w;(void)h;(void)sg;(void)t;(void)sv; return -1; }
 int      pal_guest_sigreturn(pal_pid_t w, const void *sv) { (void)w;(void)sv; return -1; }
-int      pal_host_pipe(pal_file_t *rd, pal_file_t *wr) { (void)rd;(void)wr; return -1; }
 /* Phase C.4 made real IN TARFS.C: pal_host_{open,read,lseek,close,fstat,stat} (the read-only tarfs).
- * Phase D (family C) grows the rest below. */
+ * Phase C.5 made real IN PIPE.C: pal_host_pipe (+ pipe_read/write/close, routed from
+ * pal_host_read/write/close). Phase D (family C) grows the rest below. */
 long     pal_host_getdents(pal_file_t f, void *b, size_t n) { (void)f;(void)b;(void)n; return -AIOS_ENOSYS; }
 int      pal_host_unlink(const char *p) { (void)p; return -AIOS_ENOSYS; }
 int      pal_host_mkdir (const char *p, unsigned int m) { (void)p;(void)m; return -AIOS_ENOSYS; }
@@ -870,15 +882,15 @@ int      pal_net_wait_ready (void) { return 0; }
 /* ================================ the root task entry ============================================== */
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
-    con_puts("\n[pal_sel4] AIOS userspace kernel -- Phase C.4: the read-only tarfs (family C begins)\n");
-    con_puts("[pal_sel4]   (aiosroot.tar mounted in-proc; open/read/lseek/fstat/stat; exec by REAL path).\n");
+    con_puts("\n[pal_sel4] AIOS userspace kernel -- Phase C.5: pipes (the in-root-task byte ring)\n");
+    con_puts("[pal_sel4]   (blocked reader/writer park + wake over the SaveCaller reply tokens).\n");
 
     /* Run the host-agnostic kernel. It spawns the init guest, resumes it, then services trapped AIOS
-     * syscalls from EVERY guest -- now including the file syscalls -- until none remain. */
+     * syscalls from EVERY guest -- now including pipe read/write park+wake -- until none remain. */
     char *gargv[] = { (char *)"aios-uk", (char *)"/sbin/init", 0 };
     int code = aios_kernel_main(2, gargv);
 
-    con_puts("[pal_sel4] Phase C.4 complete: guests read the tarfs + exec'd by real path; init exit code=");
+    con_puts("[pal_sel4] Phase C.5 complete: guests piped bytes with park/wake on seL4; init exit code=");
     con_put_int(code);
     con_puts(".\n[pal_sel4] halting.\n");
     seL4_TCB_Suspend(seL4_CapInitThreadTCB);
