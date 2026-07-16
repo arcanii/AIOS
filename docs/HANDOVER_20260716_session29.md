@@ -1,4 +1,4 @@
-# HANDOVER — session 29 (2026-07-16): Phase C.2 fork + C.3 exec — a guest FORKS and EXECS on seL4
+# HANDOVER — session 29 (2026-07-16..17): Phase C.2 fork + C.3 exec + C.4 tarfs — fork/exec/files on seL4; a VENDORED SBASE BINARY runs
 
 **HEADLINE:** the two hardest mechanisms of family B (the process model) landed in one session. A
 guest **forks** (eager VSpace copy, the parent waits PARKED across the child's faults, three memory
@@ -89,16 +89,23 @@ handover. Every seL4 API is kernel-source-validated by a research Workflow BEFOR
 milestone gets an adversarial find→verify review BEFORE commit (a design-reshaping correction and
 three real defects caught this session alone — KEEP DOING BOTH).
 
-PRIMARY TASK → **continue Phase C: C.4 the READ-ONLY TARFS.** Embed uk/aiosroot.tar in the image
-(a second MakeCPIO entry or its own section), implement a tar reader + pal_host_open/read/lseek/
-close/fstat(+getdents if cheap) over it in uk/pal/sel4/ (families C begins; in-proc as a library,
-NEVER a parked-caller IPC server — plan R5), and make exec resolve REAL paths against it (replacing
-the basename→CPIO scaffold; keep the CPIO fallback for the dev guests or migrate them into the
-tar). Then **C.5 pipes**: the kernel's pipe machinery is host-agnostic and kernel-internal — prove
-the blocked-reader/writer PARK/WAKE works over the SaveCaller reply tokens (the C.2 wait() park
-already proved the pattern) + wire the pal.h PAL_EWOULDBLOCK seams; gate-key target `pipebig`.
-Then Phase D breadth (~24 fs ops; dash + sbase run). Tripwire: Phase C >~4 sessions → ship what
-works, defer polish.
+**C.4 LANDED TOO (52863d7, same session):** the read-only tarfs (uk/pal/sel4/tarfs.c: in-place
+ustar parse, PAL-side path normalization — the kernel does NOT path_norm — pal_host open/read/
+lseek/close/fstat/stat), the bytes-identity loader (configure-without-elf + manual
+sel4utils_elf_load; tarfs real paths first, CPIO fallback), and the HEADLINE: /bin/echo — the real
+vendored sbase binary out of aiosroot.tar — exec'd by path and RAN on seL4 (the first unmodified
+vendored userland binary on the seL4 backend). Review: 13 raw findings, 8 adversarially refuted,
+zero must/should-fix. aiosroot.tar is an UNTRACKED Linux-line build product (uk: make all + sh
+mkaiosroot.sh); CMake fails loudly if missing.
+
+PRIMARY TASK → **continue Phase C: C.5 PIPES.** The kernel's pipe machinery is host-agnostic and
+kernel-internal (do_pipe/do_read/do_write + PS_BLOCKED_*) — what C.5 must prove on seL4 is the
+blocked-reader/writer PARK/WAKE over the SaveCaller reply tokens (the C.2 wait() park already
+proved the pattern) + whatever pal.h PAL_EWOULDBLOCK seams the kernel expects; gate-key target
+`pipebig` (uk/guest/prog_pipebig.c is the Linux-line reference). Then **Phase D breadth**: ~24 fs
+ops (getdents/openat/fstatat/...) + the CNTVCT clock → dash + sbase RUN — the tar already holds
+/sbin/init and the whole world, so spawn becomes /sbin/init-for-real. Tripwire: Phase C >~4
+sessions → ship what works, defer polish (s29 was session 2 and landed C.2+C.3+C.4).
 
 OTHER: re-run the RPi5 gcc-15 gate when the Pi is back (Phase 0 recheck, pending since s28; Pi
 offline 2026-07-11..16). GOTCHAS: FULL `ninja` after a boot.c edit; `pkill -f aios-uk-sel4-image`;
