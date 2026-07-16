@@ -4,7 +4,7 @@
  * guests. It grows phase by phase (docs/PLAN_20260709_sel4_real_port.md).
  *
  * Phase A: console (pal_host_write -> seL4_DebugPutChar) + a root-task main(); pal_guest_spawn refused.
- * Phase B (THIS): FAMILY A -- the fault-EP trap loop. A guest is a seL4 thread; its AIOS `svc`
+ * Phase B: FAMILY A -- the fault-EP trap loop. A guest is a seL4 thread; its AIOS `svc`
  *   UnknownSyscall-FAULTS to the root task (seL4/aarch64 reads the syscall nr from x7, which Phase 0
  *   pinned to the AIOS number -- x7 >= 0x1000 is never a valid (negative) seL4 syscall, so every AIOS
  *   svc deterministically faults). The root seL4_Recv()s the fault, decodes it (the 13-MR message
@@ -12,6 +12,12 @@
  *   buffer is read from the guest's own frames), and pal_guest_return REPLIES to resume the guest
  *   (X0=retval, FaultIP+=4 to step past the svc). guest_hello (embedded in the image's CPIO) thus
  *   runs to completion: WRITE its banner, then EXIT. This is the crux new work of the port.
+ * Phase C.1 (THIS): FAMILY B begins -- pal_guest_mmap (vspace_new_pages: Untyped->Frames mapped into the
+ *   guest VSpace, the proven 0.4.x MMAP_ANON pattern) + the case-(b) RESUME-PAST-SYSCALL reply. An inject
+ *   primitive stashes its result (the mmap addr) and the kernel then calls pal_guest_resume, which now
+ *   replies FaultIP+4 with that stashed x0 (a fault-stopped guest resumes via a reply, NOT seL4_TCB_
+ *   Resume, which would re-run the svc) -- the Phase B review fix. So a guest that mmaps runs; the loaded
+ *   test guest is guest_mmap (mmap a region, write+read a pattern in the fresh memory, exit 42 on match).
  *
  * The design + every seL4 API used here is kernel-source-validated (the Phase B research). Key facts:
  *   - Fault msg (aarch64 seL4_UnknownSyscall_Msg): X0..X7 = MR0..7, FaultIP=8, SP=9, LR=10, SPSR=11,
@@ -108,6 +114,9 @@ static const pal_pid_t     GUEST_PID    = 1;
 static seL4_Word           g_fregs[seL4_UnknownSyscall_Length];   /* the pending fault's 13 registers */
 static int                 g_pending_exit = 0;
 static int                 g_exit_code    = 0;
+static int                 g_started      = 0;   /* 0 = Inactive (needs the spawn-kick); 1 = running */
+static uint64_t            g_inject_x0    = 0;   /* an inject primitive's result (mmap addr, ...) ... */
+static int                 g_have_inject  = 0;   /* ... consumed by pal_guest_resume's case-(b) reply */
 
 /* ================================ Phase A: console (kept) ========================================== */
 pal_file_t pal_host_std(int which) { return (pal_file_t)which; }
@@ -124,22 +133,22 @@ long pal_host_getcwd(char *buf, size_t size) {
 
 /* ================================ Phase B: family A -- the trap loop =============================== */
 
-/* spawn: load "guest_hello" from the CPIO, build its VSpace/TCB/CSpace with a fault endpoint pointing
- * at us, and leave it SUSPENDED (resume=0) so the kernel registers it before it runs toward its first
- * svc (pal_guest_resume then starts it). Phase B ignores `path` -- the only guest is guest_hello; the
- * real path-resolving loader is Phase C/D (family B + the fs server). */
+/* spawn: load "guest_mmap" (the Phase C.1 test guest) from the CPIO, build its VSpace/TCB/CSpace with a
+ * fault endpoint pointing at us, and leave it SUSPENDED (resume=0) so the kernel registers it before it
+ * runs toward its first svc (pal_guest_resume then starts it). Phase C.1 still ignores `path` -- the only
+ * guest is the hardcoded guest_mmap; the real path-resolving loader is Phase C.3/D (exec + the fs server). */
 pal_pid_t pal_guest_spawn(const char *path, char *const argv[]) {
     (void)argv;
     if (boot_once()) return PAL_PID_NONE;
     if (g_have_guest) { con_puts("[pal_sel4] Phase B services a single guest\n"); return PAL_PID_NONE; }
 
-    con_puts("[pal_sel4] Phase B: loading guest 'guest_hello' from the CPIO (kernel asked for ");
+    con_puts("[pal_sel4] Phase C: loading guest 'guest_mmap' from the CPIO (kernel asked for ");
     con_puts(path); con_puts(")\n");
 
     if (vka_alloc_endpoint(&vka, &g_fault_ep)) { con_puts("[pal_sel4] fault-ep alloc failed\n"); return PAL_PID_NONE; }
 
     sel4utils_process_config_t config = process_config_new(&simple);
-    config = process_config_elf(config, "guest_hello", true);
+    config = process_config_elf(config, "guest_mmap", true);
     config = process_config_create_cnode(config, 12);
     config = process_config_create_vspace(config, NULL, 0);
     config = process_config_auth(config, simple_get_tcb(&simple));
@@ -155,19 +164,37 @@ pal_pid_t pal_guest_spawn(const char *path, char *const argv[]) {
     return GUEST_PID;
 }
 
-/* resume: pal.h uses this for TWO things -- (a) the initial spawn-kick: start a freshly-loaded,
- * Inactive guest at its ELF entry; and (b) resume a guest STOPPED at a serviced syscall, past the
- * INJECT primitives (mmap/exec/fork, which plant their own x0) and the setret+signal interpose. Phase
- * B implements only (a): seL4_TCB_Resume starts the Inactive thread. It does NOT yet honor (b) -- a
- * fault-stopped guest's FaultIP still points AT the svc (seL4 never auto-advances it; that is why
- * pal_guest_return writes FaultIP+4), so seL4_TCB_Resume would re-run the svc and re-fault. Case (b)
- * is UNREACHABLE in Phase B (mmap/exec/fork are stubs, guest_hello uses none, a 2nd guest is refused);
- * when Phase C makes those primitives real, (b) must resume via a seL4_Reply that advances FaultIP+4
- * WITHOUT overwriting x0 (the primitive already planted it) -- NOT seL4_TCB_Resume. */
+/* reply_resume: resume a FAULT-STOPPED guest past its serviced svc -- reply with label 0, length 9,
+ * x0 = the result, X1..X7 echoed from the fault snapshot, FaultIP+4 (step past the svc). Shared by
+ * pal_guest_return (x0 = the syscall retval) and pal_guest_resume case (b) (x0 = an inject primitive's
+ * stashed result). Rebuilds every MR from the g_fregs snapshot because the service path (e.g.
+ * vspace_new_pages) used the IPC buffer; the non-MCS caller cap survives because only KERNEL-OBJECT
+ * invocations ran between the fault Recv and here (Retype/Page_Map -- never a userspace-endpoint Call;
+ * the Phase B guest_copy Page_Map already proved this). */
+static void reply_resume(uint64_t x0) {
+    seL4_SetMR(seL4_UnknownSyscall_X0, x0);
+    for (int i = seL4_UnknownSyscall_X1; i <= seL4_UnknownSyscall_X7; i++) seL4_SetMR(i, g_fregs[i]);
+    seL4_SetMR(seL4_UnknownSyscall_FaultIP, g_fregs[seL4_UnknownSyscall_FaultIP] + 4);   /* past the svc */
+    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, seL4_UnknownSyscall_FaultIP + 1 /* length 9 */));
+}
+
+/* resume: pal.h uses this for TWO things -- (a) the initial spawn-kick (start a freshly-loaded, Inactive
+ * guest at its ELF entry) and (b) resume a guest STOPPED at a serviced syscall, past an INJECT primitive
+ * (mmap/exec/fork, which stash their own x0 in g_inject_x0) or a setret/signal interpose. Phase C
+ * implements BOTH: (a) seL4_TCB_Resume the Inactive thread; (b) reply FaultIP+4 with the stashed x0 (a
+ * fault-stopped guest's FaultIP still points AT the svc, so seL4_TCB_Resume would re-run it + re-fault).
+ * This fixes the contract gap the Phase B review flagged. */
 int pal_guest_resume(pal_pid_t who) {
     (void)who;
     if (!g_have_guest) return -1;
-    seL4_TCB_Resume(g_proc.thread.tcb.cptr);   /* (a) start the Inactive guest; see the two-case note */
+    if (!g_started) {                              /* (a) first run: Inactive -> running */
+        g_started = 1;
+        seL4_TCB_Resume(g_proc.thread.tcb.cptr);
+        return 0;
+    }
+    uint64_t x0 = g_have_inject ? g_inject_x0 : g_fregs[seL4_UnknownSyscall_X0];  /* (b) past the svc */
+    g_have_inject = 0;
+    reply_resume(x0);
     return 0;
 }
 
@@ -208,23 +235,19 @@ int pal_guest_next(pal_pid_t *who, pal_syscall_t *sc, int *exit_code) {
     return 0;
 }
 
-/* return: set the guest's syscall result and resume it past the svc. Rebuild the register frame from
- * the snapshot (X0=retval, X1..X7 echoed, FaultIP+4), reply with label 0 length 9. SP/LR/SPSR beyond
- * the reply length keep their faulted values (the svc changed none of them). */
+/* return: set the guest's syscall result and resume it past the svc (a fault-stopped guest). */
 int pal_guest_return(pal_pid_t who, uint64_t retval) {
     (void)who;
-    seL4_SetMR(seL4_UnknownSyscall_X0, retval);
-    for (int i = seL4_UnknownSyscall_X1; i <= seL4_UnknownSyscall_X7; i++) seL4_SetMR(i, g_fregs[i]);
-    seL4_SetMR(seL4_UnknownSyscall_FaultIP, g_fregs[seL4_UnknownSyscall_FaultIP] + 4);   /* step past the svc */
-    seL4_Reply(seL4_MessageInfo_new(0, 0, 0, seL4_UnknownSyscall_FaultIP + 1 /* length 9 */));
+    reply_resume(retval);
     return 0;
 }
 
 /* setret: set the result but do NOT resume (the kernel interposes signal delivery: setret, then
- * deliver/sigreturn or resume). That signal path is Phase E and is UNREACHABLE in Phase B (guest_hello
- * raises no signals; pal_guest_deliver/sigreturn are stubs). Recording x0 into the snapshot is the
- * right value to stash, but NOTHING consumes it yet -- the case-(b) resume that would (see
- * pal_guest_resume) is Phase C/E. Kept as a documented placeholder, not a working interpose. */
+ * deliver/sigreturn or resume). That signal interpose is Phase E and is UNREACHABLE in Phase C.1
+ * (guest_mmap raises no signals; pal_guest_deliver/sigreturn are stubs). The case-(b) resume mechanism
+ * now EXISTS (pal_guest_resume, C.1), but it replies with an inject primitive's g_inject_x0, not this
+ * setret snapshot -- so this stashed x0 is NOT consumed until the Phase-E signal path wires setret ->
+ * resume. Kept as a documented placeholder, not a working interpose. */
 int pal_guest_setret(pal_pid_t who, uint64_t retval) {
     (void)who;
     g_fregs[seL4_UnknownSyscall_X0] = retval;   /* Phase E will reply FaultIP+4 with this x0 */
@@ -278,10 +301,29 @@ size_t pal_guest_write(pal_pid_t who, uint64_t gaddr, const void *src, size_t le
 int      pal_take_term_signal(void) { return 0; }
 int      pal_guest_deliver(pal_pid_t w, uint64_t h, uint64_t sg, uint64_t t, void *sv) { (void)w;(void)h;(void)sg;(void)t;(void)sv; return -1; }
 int      pal_guest_sigreturn(pal_pid_t w, const void *sv) { (void)w;(void)sv; return -1; }
-/* Phase C (family B -- loader/pager: mmap/fork/exec/pipes) */
-uint64_t pal_guest_mmap(pal_pid_t w, size_t n) { (void)w;(void)n; return 0; }
-int      pal_guest_exec(pal_pid_t w, const char *p, uint64_t a, uint64_t e) { (void)w;(void)p;(void)a;(void)e; return -1; }
-pal_pid_t pal_guest_fork(pal_pid_t p) { (void)p; return PAL_PID_NONE; }
+/* Phase C (family B -- the loader/pager). mmap: allocate `len` bytes of fresh anonymous memory and map
+ * it contiguously into the GUEST's VSpace at a kernel-chosen vaddr (the AIOS ABI has no MAP_FIXED / addr
+ * hint). vspace_new_pages retypes Untyped -> Frames + maps them into g_proc.vspace -- the proven 0.4.x
+ * MMAP_ANON pattern (src/servers/pipe_server.c); the Untyped pool IS the guest's memory budget, and the
+ * frames are kernel-zeroed. Returns the guest vaddr (0 on failure) and STASHES it as g_inject_x0 for the
+ * kernel's following pal_guest_resume (case b) to reply into x0. seL4_AllRights matches the proven
+ * pattern; a RW-only / execute-never hardening (malloc is data) is a later refinement. */
+uint64_t pal_guest_mmap(pal_pid_t who, size_t len) {
+    (void)who;
+    g_inject_x0 = 0; g_have_inject = 1;   /* default failure (x0=0); the resume replies with this */
+    if (!g_have_guest || len == 0) return 0;
+    size_t pages = (len + (BIT(seL4_PageBits) - 1)) >> seL4_PageBits;
+    void *v = vspace_new_pages(&g_proc.vspace, seL4_AllRights, pages, seL4_PageBits);
+    g_inject_x0 = (uint64_t)(uintptr_t)v;   /* the guest vaddr, or 0 if NULL */
+    return g_inject_x0;
+}
+/* exec/fork: still stubs (Phase C.2/C.3). They stash x0 = -ENOSYS so that IF a guest reaches them, the
+ * kernel's following pal_guest_resume (case b) returns a clean error rather than echoing the faulted x0
+ * (garbage). Unreachable in C.1 (guest_mmap neither forks nor execs; a 2nd guest is refused). */
+int      pal_guest_exec(pal_pid_t w, const char *p, uint64_t a, uint64_t e) {
+    (void)w;(void)p;(void)a;(void)e; g_inject_x0 = (uint64_t)(-AIOS_ENOSYS); g_have_inject = 1; return -1; }
+pal_pid_t pal_guest_fork(pal_pid_t p) {
+    (void)p; g_inject_x0 = (uint64_t)(-AIOS_ENOSYS); g_have_inject = 1; return PAL_PID_NONE; }
 int      pal_host_pipe(pal_file_t *rd, pal_file_t *wr) { (void)rd;(void)wr; return -1; }
 /* Phase D (family C -- fs server) */
 pal_file_t pal_host_open(const char *p, uint64_t fl, uint64_t m) { (void)p;(void)fl;(void)m; return (pal_file_t)-AIOS_ENOSYS; }
@@ -330,14 +372,15 @@ int      pal_net_wait_ready (void) { return 0; }
 /* ================================ the root task entry ============================================== */
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
-    con_puts("\n[pal_sel4] AIOS userspace kernel -- Phase B: seL4 root task, the fault-EP trap loop.\n");
+    con_puts("\n[pal_sel4] AIOS userspace kernel -- Phase C: the process model (family B), sub-milestone 1:\n");
+    con_puts("[pal_sel4]   mmap (Untyped->Frames into the guest VSpace) + the resume-past-syscall reply.\n");
 
-    /* Run the host-agnostic kernel. It spawns guest_hello (pal_guest_spawn), resumes it, then services
-     * its faulted AIOS syscalls until it EXITs -- returning the guest's exit code. */
+    /* Run the host-agnostic kernel. It spawns the guest (pal_guest_spawn), resumes it, then services its
+     * faulted AIOS syscalls -- now including AIOS_SYS_MMAP -- until it EXITs, returning the exit code. */
     char *gargv[] = { (char *)"aios-uk", (char *)"/sbin/init", 0 };
     int code = aios_kernel_main(2, gargv);
 
-    con_puts("[pal_sel4] Phase B complete: guest ran on seL4 via the fault-EP trap loop; exit code=");
+    con_puts("[pal_sel4] Phase C.1 complete: guest mmap'd + ran on seL4 via the fault-EP trap loop; exit code=");
     con_put_int(code);
     con_puts(".\n[pal_sel4] halting.\n");
     seL4_TCB_Suspend(seL4_CapInitThreadTCB);

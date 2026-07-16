@@ -21,25 +21,30 @@ project(aios-uk-rootserver C ASM)
 set(AIOS_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
 set(UK "${AIOS_ROOT}/uk")
 
-# ---- Phase B: embed a guest for the fault-EP trap loop --------------------------------------------
-# Build guest_hello as a FREESTANDING AIOS-ABI guest (aarch64 ET_EXEC with its OWN _start), EXACTLY
-# like uk/Makefile's GUEST_CFLAGS, using the cross compiler CMake resolved. NOT add_executable() -- the
-# default seL4 link set would pull in sel4runtime and replace _start with _sel4_start (it would stop
-# being a pure AIOS-ABI guest that traps via svc). The output basename ("guest_hello") is the runtime
-# image_name sel4utils matches against in the CPIO.
-set(GUEST_HELLO_ELF ${CMAKE_CURRENT_BINARY_DIR}/guest_hello)
-add_custom_command(
-    OUTPUT ${GUEST_HELLO_ELF}
-    COMMAND ${CMAKE_C_COMPILER} -O2 -Wall -Wextra -I${UK}/include
-            -ffreestanding -nostdlib -static -fno-stack-protector -fno-asynchronous-unwind-tables
-            -o ${GUEST_HELLO_ELF} ${UK}/guest/guest_hello.c
-    DEPENDS ${UK}/guest/guest_hello.c ${UK}/include/aios_abi.h
-    COMMENT "Phase B: build freestanding AIOS-ABI guest_hello (aarch64 ET_EXEC, own _start)"
-    VERBATIM)
+# ---- embed the freestanding AIOS-ABI guests for the fault-EP trap loop ----------------------------
+# Build each guest as an aarch64 ET_EXEC with its OWN _start (EXACTLY uk/Makefile's GUEST_CFLAGS), using
+# the cross compiler CMake resolved. NOT add_executable() -- the default seL4 link set would pull in
+# sel4runtime and replace _start with _sel4_start (it would stop being a pure AIOS-ABI guest that traps
+# via svc). The output basename is the runtime image_name sel4utils matches against in the CPIO.
+#   guest_hello -- Phase B (WRITE + EXIT);  guest_mmap -- Phase C.1 (mmap a region, pattern round-trip).
+set(UK_GUESTS guest_hello guest_mmap)
+set(GUEST_ELFS "")
+foreach(g ${UK_GUESTS})
+    set(elf ${CMAKE_CURRENT_BINARY_DIR}/${g})
+    add_custom_command(
+        OUTPUT ${elf}
+        COMMAND ${CMAKE_C_COMPILER} -O2 -Wall -Wextra -I${UK}/include
+                -ffreestanding -nostdlib -static -fno-stack-protector -fno-asynchronous-unwind-tables
+                -o ${elf} ${UK}/guest/${g}.c
+        DEPENDS ${UK}/guest/${g}.c ${UK}/include/aios_abi.h
+        COMMENT "build freestanding AIOS-ABI guest ${g} (aarch64 ET_EXEC, own _start)"
+        VERBATIM)
+    list(APPEND GUEST_ELFS ${elf})
+endforeach()
 # MakeCPIO emits guests_cpio.o, which DEFINES the globals _cpio_archive / _cpio_archive_end that
 # sel4utils reads directly (you never pass the archive -- only the image_name). Files are stored under
-# their basename, so "guest_hello" is the name process_config_elf() resolves.
-MakeCPIO(guests_cpio.o "${GUEST_HELLO_ELF}")
+# their basename, so "guest_mmap" is the name process_config_elf() resolves.
+MakeCPIO(guests_cpio.o "${GUEST_ELFS}")
 
 add_executable(aios-uk-sel4
     ${UK}/kernel/aios_kernel.c      # the host-agnostic kernel, unchanged (main -> aios_kernel_main)
