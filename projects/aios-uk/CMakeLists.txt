@@ -30,8 +30,9 @@ set(UK "${AIOS_ROOT}/uk")
 #   guest_fork  -- Phase C.2 (fork + wait: eager VSpace copy, two-return, isolation of data/stack/mmap);
 #   guest_exec + guest_execd -- Phase C.3 (exec: failed-exec keeps the old image; argv/envp staging);
 #   guest_tarfs -- Phase C.4 (tarfs file ops + exec of a REAL sbase binary out of aiosroot.tar);
-#   guest_pipe -- Phase C.5 (a pipe: writer parks on a full ring, reader wakes it, EOF at close).
-set(UK_GUESTS guest_hello guest_mmap guest_fork guest_exec guest_execd guest_tarfs guest_pipe)
+#   guest_pipe -- Phase C.5 (a pipe: writer parks on a full ring, reader wakes it, EOF at close);
+#   guest_fsbreadth -- Phase D.1 (getdents + *at + chdir/getcwd + the CNTPCT clock).
+set(UK_GUESTS guest_hello guest_mmap guest_fork guest_exec guest_execd guest_tarfs guest_pipe guest_fsbreadth)
 set(GUEST_ELFS "")
 foreach(g ${UK_GUESTS})
     set(elf ${CMAKE_CURRENT_BINARY_DIR}/${g})

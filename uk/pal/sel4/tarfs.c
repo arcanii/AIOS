@@ -167,9 +167,10 @@ const void *tarfs_find(const char *abspath, unsigned long *size_out) {
 #define TARFS_FD_BASE  3              /* 0/1/2 are the console's std handles (pal_host_std) */
 
 static struct {
-    int           used;
+    int            used;
     struct tar_ent e;
-    unsigned long pos;
+    unsigned long  pos;               /* a FILE: byte offset; a DIRECTORY: the getdents logical cursor */
+    char           path[256];         /* the normalized path -- a dir handle needs it for *at + getdents */
 } g_of[TARFS_MAX_OPEN];
 
 static int of_from_handle(pal_file_t f) {
@@ -178,31 +179,45 @@ static int of_from_handle(pal_file_t f) {
     return (int)i;
 }
 
-pal_file_t pal_host_open(const char *path, uint64_t flags, uint64_t mode) {
-    (void)mode;
-    if (!g_tar) return (pal_file_t)-AIOS_ENOSYS;
+/* Open an ALREADY-NORMALIZED path (no leading slash, dot segments collapsed). Directories now open
+ * (getdents/opendir + fstat need a handle); a subsequent read() on a dir handle -> EISDIR. Shared by
+ * pal_host_open (normalizes an abspath) and pal_host_openat (joins a dirfd path first). */
+static pal_file_t tarfs_open_norm(const char *norm, uint64_t flags) {
     if ((flags & AIOS_O_ACCMODE) != AIOS_O_RDONLY ||
         (flags & (AIOS_O_CREAT | AIOS_O_TRUNC | AIOS_O_APPEND)))
         return (pal_file_t)-AIOS_EACCES;          /* read-only fs (the ABI defines no EROFS) */
-    char norm[256];
     struct tar_ent e;
-    if (tar_norm(path, norm, sizeof norm) < 0) return (pal_file_t)-AIOS_ENAMETOOLONG;
-    if (tar_lookup(norm, &e)) return (pal_file_t)-AIOS_ENOENT;
-    if (e.is_dir) return (pal_file_t)-AIOS_EISDIR;             /* getdents is Phase D */
+    if (norm[0] == '\0') {                         /* the root directory itself ("/") */
+        memset(&e, 0, sizeof e); e.is_dir = 1; e.mode = 0755; e.ino = 1;
+    } else if (tar_lookup(norm, &e)) {
+        return (pal_file_t)-AIOS_ENOENT;
+    }
+    if ((flags & AIOS_O_DIRECTORY) && !e.is_dir) return (pal_file_t)-AIOS_ENOTDIR;
     for (int i = 0; i < TARFS_MAX_OPEN; i++) {
         if (g_of[i].used) continue;
         g_of[i].used = 1;
         g_of[i].e = e;
         g_of[i].pos = 0;
+        size_t k = 0; while (norm[k] && k < sizeof g_of[i].path - 1) { g_of[i].path[k] = norm[k]; k++; }
+        g_of[i].path[k] = '\0';
         return (pal_file_t)(TARFS_FD_BASE + i);
     }
     return (pal_file_t)-AIOS_EMFILE;
+}
+
+pal_file_t pal_host_open(const char *path, uint64_t flags, uint64_t mode) {
+    (void)mode;
+    if (!g_tar) return (pal_file_t)-AIOS_ENOSYS;
+    char norm[256];
+    if (tar_norm(path, norm, sizeof norm) < 0) return (pal_file_t)-AIOS_ENAMETOOLONG;
+    return tarfs_open_norm(norm, flags);
 }
 
 long pal_host_read(pal_file_t f, void *buf, size_t n) {
     if (pipe_is_handle(f)) return pipe_read(f, buf, n);   /* a pipe read-end (C.5) */
     int i = of_from_handle(f);
     if (i < 0) return -AIOS_ENOSYS;               /* std handles: console read is Phase E */
+    if (g_of[i].e.is_dir) return -AIOS_EISDIR;    /* a directory reads via getdents, not read() */
     if (g_of[i].pos >= g_of[i].e.size) return 0;  /* EOF (also covers a past-EOF seek) */
     unsigned long left = g_of[i].e.size - g_of[i].pos;
     if (n > left) n = left;
@@ -275,4 +290,154 @@ int pal_host_stat(const char *path, struct aios_stat *o, int follow) {
     if (tar_lookup(norm, &e)) return -AIOS_ENOENT;
     ent_stat(&e, o);
     return 0;
+}
+
+/* ---- directory enumeration (getdents) + the *at family (Phase D breadth) ----------------------- */
+
+/* Fill `name` with the Nth immediate child of the normalized directory `dpath` ("" = the root) in
+ * archive order + its ino/type. Returns 0, or -1 when there are fewer than n+1 children. The tar's
+ * dirs are all EXPLICIT entries (mkaiosroot cp's a real tree), so every child is a real entry. */
+static int dir_nth_child(const char *dpath, int n, char *name, size_t namecap,
+                         unsigned long *ino, int *is_dir) {
+    size_t dl = strlen(dpath);
+    int cnt = 0;
+    unsigned long off = 0;
+    while (off + TAR_BLK <= g_tar_sz) {
+        const char *h = g_tar + off;
+        if (h[0] == '\0') break;
+        unsigned long size = tar_oct(h + 124, 12);
+        char typ = h[156];
+        char full[260]; size_t fl = 0;                 /* prefix-stripped rel path (as tar_lookup) */
+        if (h[345]) { size_t pl = 0; while (pl < 155 && h[345 + pl]) pl++;
+                      memcpy(full, h + 345, pl); fl = pl; full[fl++] = '/'; }
+        { size_t nl = 0; while (nl < 100 && h[nl]) nl++;
+          if (fl + nl < sizeof full) { memcpy(full + fl, h, nl); fl += nl; } }
+        full[fl] = '\0';
+        while (fl && full[fl - 1] == '/') full[--fl] = '\0';
+        const char *rel = full;
+        if (g_prefix_len && strncmp(full, g_prefix, g_prefix_len) == 0) rel = full + g_prefix_len;
+        else if (g_prefix_len && fl + 1 == g_prefix_len && strncmp(full, g_prefix, fl) == 0)
+            rel = full + fl;                           /* the top prefix dir ITSELF -> the root ""
+                                                        * (mirrors tar_lookup -- without this the top
+                                                        * entry leaks as a phantom child of "/") */
+
+        const char *child = NULL;                      /* the immediate-child name, or NULL */
+        if (dl == 0) { if (rel[0] && !strchr(rel, '/')) child = rel; }
+        else if (strncmp(rel, dpath, dl) == 0 && rel[dl] == '/' && rel[dl + 1]
+                 && !strchr(rel + dl + 1, '/')) child = rel + dl + 1;
+
+        if (child && (typ == '0' || typ == '\0' || typ == '5')) {
+            if (cnt == n) {
+                size_t k = 0; while (child[k] && k < namecap - 1) { name[k] = child[k]; k++; }
+                name[k] = '\0';
+                *ino = off / TAR_BLK + 1;
+                *is_dir = (typ == '5');
+                return 0;
+            }
+            cnt++;
+        }
+        off += TAR_BLK + ((size + TAR_BLK - 1) & ~(unsigned long)(TAR_BLK - 1));
+    }
+    return -1;
+}
+
+long pal_host_getdents(pal_file_t f, void *buf, size_t len) {
+    int i = of_from_handle(f);
+    if (i < 0) return -AIOS_ENOSYS;
+    if (!g_of[i].e.is_dir) return -AIOS_ENOTDIR;
+    const size_t HDR = offsetof(struct aios_dirent, d_name);   /* == 19 */
+    char *out = (char *)buf;
+    size_t used = 0;
+    for (;;) {
+        long L = (long)g_of[i].pos;                    /* the logical cursor: 0=".", 1="..", 2+=child */
+        char name[128]; unsigned long ino = 1; int is_dir = 1;
+        if      (L == 0) { name[0] = '.'; name[1] = '\0'; ino = g_of[i].e.ino ? g_of[i].e.ino : 1; }
+        else if (L == 1) { name[0] = name[1] = '.'; name[2] = '\0'; }
+        else if (dir_nth_child(g_of[i].path, (int)(L - 2), name, sizeof name, &ino, &is_dir) != 0) break;
+        size_t nl = 0; while (name[nl]) nl++;
+        size_t reclen = (HDR + nl + 1 + 7) & ~(size_t)7;           /* 8-align (Linux dirent64 does) */
+        if (used + reclen > len) { if (used == 0) return -AIOS_EINVAL; break; }   /* buffer full */
+        struct aios_dirent *d = (struct aios_dirent *)(out + used);
+        d->d_ino    = ino;
+        d->d_off    = L + 1;
+        d->d_reclen = (unsigned short)reclen;
+        d->d_type   = (unsigned char)(is_dir ? AIOS_DT_DIR : AIOS_DT_REG);
+        memcpy(d->d_name, name, nl);
+        memset(d->d_name + nl, 0, reclen - HDR - nl);              /* NUL + alignment padding */
+        used += reclen;
+        g_of[i].pos = (unsigned long)(L + 1);
+    }
+    return (long)used;                                            /* 0 = end of directory */
+}
+
+/* Resolve an *at (dir, path) pair to a normalized tarfs path. AT_FDCWD (the kernel already joined the
+ * cwd) or an absolute path -> normalize as-is; a real dir handle -> join its stored path + the rel. */
+static long at_resolve(pal_file_t dir, const char *path, char *norm, size_t cap) {
+    if (dir == PAL_AT_FDCWD || path[0] == '/')
+        return tar_norm(path, norm, cap) < 0 ? -AIOS_ENAMETOOLONG : 0;
+    int i = of_from_handle(dir);
+    if (i < 0) return -AIOS_EBADF;
+    if (!g_of[i].e.is_dir) return -AIOS_ENOTDIR;
+    char joined[512]; size_t o = 0;
+    const char *dp = g_of[i].path;
+    while (dp[o] && o < sizeof joined - 2) { joined[o] = dp[o]; o++; }
+    joined[o++] = '/';
+    size_t j = 0; while (path[j] && o < sizeof joined - 1) joined[o++] = path[j++];
+    joined[o] = '\0';
+    return tar_norm(joined, norm, cap) < 0 ? -AIOS_ENAMETOOLONG : 0;
+}
+
+pal_file_t pal_host_openat(pal_file_t dir, const char *path, uint64_t flags, uint64_t mode) {
+    (void)mode;
+    if (!g_tar) return (pal_file_t)-AIOS_ENOSYS;
+    char norm[256];
+    long e = at_resolve(dir, path, norm, sizeof norm);
+    if (e) return (pal_file_t)e;
+    return tarfs_open_norm(norm, flags);
+}
+
+int pal_host_fstatat(pal_file_t dir, const char *path, struct aios_stat *o, int follow) {
+    (void)follow;
+    if (!g_tar) return -AIOS_ENOSYS;
+    char norm[256];
+    long e = at_resolve(dir, path, norm, sizeof norm);
+    if (e) return (int)e;
+    struct tar_ent ent;
+    if (norm[0] == '\0') { memset(&ent, 0, sizeof ent); ent.is_dir = 1; ent.mode = 0755; ent.ino = 1; }
+    else if (tar_lookup(norm, &ent)) return -AIOS_ENOENT;
+    ent_stat(&ent, o);
+    return 0;
+}
+
+int pal_host_faccessat(pal_file_t dir, const char *path, int amode) {
+    if (!g_tar) return -AIOS_ENOSYS;
+    char norm[256];
+    long e = at_resolve(dir, path, norm, sizeof norm);
+    if (e) return (int)e;
+    struct tar_ent ent;
+    if (norm[0] != '\0' && tar_lookup(norm, &ent)) return -AIOS_ENOENT;   /* root always exists */
+    if (amode & AIOS_W_OK) return -AIOS_EACCES;   /* the tarfs is read-only */
+    return 0;                                     /* exists; R_OK/X_OK/F_OK granted */
+}
+
+long pal_host_readlink(const char *path, char *buf, size_t bufsiz) {
+    (void)buf; (void)bufsiz;
+    if (!g_tar) return -AIOS_ENOSYS;
+    char norm[256];
+    struct tar_ent ent;
+    if (tar_norm(path, norm, sizeof norm) < 0) return -AIOS_ENAMETOOLONG;
+    if (norm[0] == '\0') return -AIOS_EINVAL;                 /* the root is not a symlink */
+    if (tar_lookup(norm, &ent)) return -AIOS_ENOENT;
+    return -AIOS_EINVAL;                                      /* the archive holds no symlinks */
+}
+
+int pal_host_chdir(const char *path) {
+    if (!g_tar) return -AIOS_ENOSYS;
+    char norm[256];
+    struct tar_ent ent;
+    if (tar_norm(path, norm, sizeof norm) < 0) return -AIOS_ENAMETOOLONG;
+    if (norm[0] == '\0') return 0;                            /* "/" is a directory */
+    if (tar_lookup(norm, &ent)) return -AIOS_ENOENT;
+    if (!ent.is_dir) return -AIOS_ENOTDIR;
+    return 0;                                                 /* the kernel records the cwd string */
 }

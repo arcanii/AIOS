@@ -53,7 +53,7 @@
  *   0.4.x fork.c pattern; entry_point is ours to set). fork reloads the parent's identity bytes,
  *   never a name. The tarfs normalizes dot segments itself (read_abspath does cwd_join but NOT
  *   path_norm) and strips the archive's top-level prefix dir.
- * Phase C.5 (THIS): PIPES. The kernel already owns the whole park/wake fixpoint -- do_read/do_write
+ * Phase C.5: PIPES. The kernel already owns the whole park/wake fixpoint -- do_read/do_write
  *   park a guest (PS_BLOCKED_READ/WRITE) on PAL_EWOULDBLOCK and pipe_settle wakes it via
  *   pal_guest_return, which since C.2 replies over a PARKED guest's saved SaveCaller reply cap (the
  *   wait() park proved it). The kernel holds NO pipe bytes: it makes a backing (pal_host_pipe) and
@@ -63,6 +63,14 @@
  *   PAL_EWOULDBLOCK (empty, a writer open); write: bytes / PAL_EWOULDBLOCK (full) / PAL_EPIPE
  *   (readers gone). pal_host_write (here) + pal_host_read/close (tarfs.c) route pipe-end handles to
  *   the ring. Nothing else in the PAL changed -- C.5 is the smallest family-B milestone.
+ * Phase D.1 (THIS): FS BREADTH + the CLOCK. The tarfs grows the directory/metadata ops the shell +
+ *   coreutils need -- pal_host_{getdents,openat,fstatat,faccessat,readlink,chdir} (all in tarfs.c;
+ *   directories now OPEN, read()-on-a-dir -> EISDIR, getdents enumerates immediate children + ./.. as
+ *   aios_dirent records) -- and the CLOCK arrives here: pal_host_clock_gettime reads the ARM generic
+ *   timer directly at EL0 (mrs CNTPCT_EL0/CNTFRQ_EL0 -- the proven 0.4.x pattern; qemu-arm-virt has no
+ *   RTC so REALTIME==MONOTONIC==uptime). The mutating ops (unlink/mkdir/rename/...) return -EACCES
+ *   (the tarfs is read-only; a writable overlay is deferrable). This is the breadth that lets the real
+ *   vendored dash + sbase RUN (Phase D.2).
  *
  * The design + every seL4 API used here is kernel-source-validated (the Phase B + C.2 research; all
  * claims re-verified adversarially against deps/kernel + deps/seL4_libs; C.3 adds NO new seL4 API --
@@ -461,16 +469,16 @@ pal_pid_t pal_guest_spawn(const char *path, char *const argv[]) {
     for (int i = 0; i < MAX_GUESTS; i++) if (!g_g[i].used) { g = &g_g[i]; break; }
     if (!g) { con_puts("[pal_sel4] spawn: guest table full\n"); return PAL_PID_NONE; }
 
-    con_puts("[pal_sel4] Phase C.5: loading guest 'guest_pipe' (kernel asked for ");
+    con_puts("[pal_sel4] Phase D.1: loading guest 'guest_fsbreadth' (kernel asked for ");
     con_puts(path); con_puts(")\n");
 
     unsigned long isz = 0;
-    const void *idata = resolve_image("/bin/guest_pipe", &isz);
+    const void *idata = resolve_image("/bin/guest_fsbreadth", &isz);
     if (!idata) { con_puts("[pal_sel4] spawn: no init image\n"); return PAL_PID_NONE; }
 
     memset(g, 0, sizeof *g);
     if (guest_slot_init(g)) return PAL_PID_NONE;
-    if (guest_image_build(g, 0, "guest_pipe", idata, isz, &g->img)) { guest_slot_fini(g); return PAL_PID_NONE; }
+    if (guest_image_build(g, 0, "guest_fsbreadth", idata, isz, &g->img)) { guest_slot_fini(g); return PAL_PID_NONE; }
 
     int argc = 0; while (argv && argv[argc]) argc++;
     uint64_t sp = 0;
@@ -841,28 +849,36 @@ int      pal_guest_deliver(pal_pid_t w, uint64_t h, uint64_t sg, uint64_t t, voi
 int      pal_guest_sigreturn(pal_pid_t w, const void *sv) { (void)w;(void)sv; return -1; }
 /* Phase C.4 made real IN TARFS.C: pal_host_{open,read,lseek,close,fstat,stat} (the read-only tarfs).
  * Phase C.5 made real IN PIPE.C: pal_host_pipe (+ pipe_read/write/close, routed from
- * pal_host_read/write/close). Phase D (family C) grows the rest below. */
-long     pal_host_getdents(pal_file_t f, void *b, size_t n) { (void)f;(void)b;(void)n; return -AIOS_ENOSYS; }
-int      pal_host_unlink(const char *p) { (void)p; return -AIOS_ENOSYS; }
-int      pal_host_mkdir (const char *p, unsigned int m) { (void)p;(void)m; return -AIOS_ENOSYS; }
-int      pal_host_rmdir (const char *p) { (void)p; return -AIOS_ENOSYS; }
-int      pal_host_rename(const char *o, const char *n) { (void)o;(void)n; return -AIOS_ENOSYS; }
-int      pal_host_chdir (const char *p) { (void)p; return -AIOS_ENOSYS; }
-pal_file_t pal_host_openat   (pal_file_t d, const char *p, uint64_t fl, uint64_t m) { (void)d;(void)p;(void)fl;(void)m; return (pal_file_t)-AIOS_ENOSYS; }
-int      pal_host_fstatat  (pal_file_t d, const char *p, struct aios_stat *o, int fo) { (void)d;(void)p;(void)o;(void)fo; return -AIOS_ENOSYS; }
-int      pal_host_unlinkat (pal_file_t d, const char *p, int rd) { (void)d;(void)p;(void)rd; return -AIOS_ENOSYS; }
-int      pal_host_faccessat(pal_file_t d, const char *p, int am) { (void)d;(void)p;(void)am; return -AIOS_ENOSYS; }
-long     pal_host_readlink (const char *p, char *b, size_t n) { (void)p;(void)b;(void)n; return -AIOS_ENOSYS; }
-int      pal_host_fchmodat (pal_file_t d, const char *p, unsigned int m, int nf) { (void)d;(void)p;(void)m;(void)nf; return -AIOS_ENOSYS; }
-int      pal_host_fchownat (pal_file_t d, const char *p, unsigned int o, unsigned int g, int nf) { (void)d;(void)p;(void)o;(void)g;(void)nf; return -AIOS_ENOSYS; }
-int      pal_host_symlinkat(const char *t, pal_file_t d, const char *l) { (void)t;(void)d;(void)l; return -AIOS_ENOSYS; }
-int      pal_host_linkat   (pal_file_t od, const char *op, pal_file_t nd, const char *np, int fo) { (void)od;(void)op;(void)nd;(void)np;(void)fo; return -AIOS_ENOSYS; }
-int      pal_host_utimensat(pal_file_t d, const char *p, const struct aios_timespec *t, int nf) { (void)d;(void)p;(void)t;(void)nf; return -AIOS_ENOSYS; }
-/* Phase E (family C -- console/termios) */
+ * pal_host_read/write/close). Phase D.1 also made real IN TARFS.C: pal_host_{getdents,openat,fstatat,
+ * faccessat,readlink,chdir} (fs breadth over the read-only tarfs). The mutating ops below return
+ * -EACCES (the tarfs is read-only -- the ABI has no EROFS; a writable overlay is a deferrable step). */
+int      pal_host_unlink(const char *p) { (void)p; return -AIOS_EACCES; }
+int      pal_host_mkdir (const char *p, unsigned int m) { (void)p;(void)m; return -AIOS_EACCES; }
+int      pal_host_rmdir (const char *p) { (void)p; return -AIOS_EACCES; }
+int      pal_host_rename(const char *o, const char *n) { (void)o;(void)n; return -AIOS_EACCES; }
+int      pal_host_unlinkat (pal_file_t d, const char *p, int rd) { (void)d;(void)p;(void)rd; return -AIOS_EACCES; }
+int      pal_host_fchmodat (pal_file_t d, const char *p, unsigned int m, int nf) { (void)d;(void)p;(void)m;(void)nf; return -AIOS_EACCES; }
+int      pal_host_fchownat (pal_file_t d, const char *p, unsigned int o, unsigned int g, int nf) { (void)d;(void)p;(void)o;(void)g;(void)nf; return -AIOS_EACCES; }
+int      pal_host_symlinkat(const char *t, pal_file_t d, const char *l) { (void)t;(void)d;(void)l; return -AIOS_EACCES; }
+int      pal_host_linkat   (pal_file_t od, const char *op, pal_file_t nd, const char *np, int fo) { (void)od;(void)op;(void)nd;(void)np;(void)fo; return -AIOS_EACCES; }
+int      pal_host_utimensat(pal_file_t d, const char *p, const struct aios_timespec *t, int nf) { (void)d;(void)p;(void)t;(void)nf; return -AIOS_EACCES; }
+/* Phase E (family C -- console/termios): the console + termios are still stubs. clock_gettime is
+ * D.1: the ARM generic timer read directly at EL0 (mrs CNTPCT_EL0/CNTFRQ_EL0 -- the proven 0.4.x
+ * pattern, HW-validated on the RPi4/seL4). qemu-arm-virt has no RTC, so REALTIME == MONOTONIC ==
+ * uptime since boot (an SNTP/offset epoch is a later refinement, as on the Linux line). */
 int      pal_host_isatty(pal_file_t f) { (void)f; return 0; }
 int      pal_host_tcgetattr(pal_file_t f, struct aios_termios *o) { (void)f;(void)o; return -AIOS_ENOSYS; }
 int      pal_host_tcsetattr(pal_file_t f, int a, const struct aios_termios *i) { (void)f;(void)a;(void)i; return -AIOS_ENOSYS; }
-int      pal_host_clock_gettime(int id, struct aios_timespec *o) { (void)id;(void)o; return -AIOS_ENOSYS; }
+int      pal_host_clock_gettime(int id, struct aios_timespec *o) {
+    (void)id;
+    uint64_t frq, cnt;
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(frq));
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(cnt));
+    if (frq == 0) return -AIOS_ENOSYS;
+    o->tv_sec  = (long long)(cnt / frq);
+    o->tv_nsec = (long long)((cnt % frq) * 1000000000ULL / frq);
+    return 0;
+}
 /* Phase F (family C -- net server) */
 pal_file_t pal_host_socket (int d, int t, int p) { (void)d;(void)t;(void)p; return (pal_file_t)-AIOS_ENOSYS; }
 int      pal_host_connect  (pal_file_t f, const void *a, unsigned int l) { (void)f;(void)a;(void)l; return -AIOS_ENOSYS; }
@@ -882,15 +898,16 @@ int      pal_net_wait_ready (void) { return 0; }
 /* ================================ the root task entry ============================================== */
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
-    con_puts("\n[pal_sel4] AIOS userspace kernel -- Phase C.5: pipes (the in-root-task byte ring)\n");
-    con_puts("[pal_sel4]   (blocked reader/writer park + wake over the SaveCaller reply tokens).\n");
+    con_puts("\n[pal_sel4] AIOS userspace kernel -- Phase D.1: fs breadth + the clock\n");
+    con_puts("[pal_sel4]   (getdents + the *at family + chdir/getcwd + the CNTPCT generic-timer clock).\n");
 
     /* Run the host-agnostic kernel. It spawns the init guest, resumes it, then services trapped AIOS
-     * syscalls from EVERY guest -- now including pipe read/write park+wake -- until none remain. */
+     * syscalls from EVERY guest -- now including the directory + metadata + clock ops -- until none
+     * remain. */
     char *gargv[] = { (char *)"aios-uk", (char *)"/sbin/init", 0 };
     int code = aios_kernel_main(2, gargv);
 
-    con_puts("[pal_sel4] Phase C.5 complete: guests piped bytes with park/wake on seL4; init exit code=");
+    con_puts("[pal_sel4] Phase D.1 complete: guests enumerated the tarfs + read the clock on seL4; init exit code=");
     con_put_int(code);
     con_puts(".\n[pal_sel4] halting.\n");
     seL4_TCB_Suspend(seL4_CapInitThreadTCB);
