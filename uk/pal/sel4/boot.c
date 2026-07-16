@@ -26,7 +26,7 @@
  *   The child's registers are the parent's FULL 36-word seL4_UserContext with x0=0 and pc=FaultIP+4
  *   (the +4 is load-bearing: an unadvanced pc re-runs the svc). Object TEARDOWN: a reported exit
  *   destroys the process + our badged EP copy + the reply slot.
- * Phase C.3 (THIS): pal_guest_exec -- the kernel IS the ELF loader. Two mechanisms:
+ * Phase C.3: pal_guest_exec -- the kernel IS the ELF loader. Two mechanisms:
  *   (1) The HAND-STAGED SysV STACK replaces sel4utils_spawn_process_v for BOTH spawn and exec: the
  *       AIOS guest ABI is [sp]=argc, [sp+8]=argv[0].., NULL, envp.., NULL, strings (libaios _start
  *       does `ldr x0,[sp]; add x1,sp,#8` and environ = argv+argc+1) -- which is NOT the layout
@@ -43,6 +43,16 @@
  *       the path is basename-mapped onto the CPIO (the tarfs is C.4; -ENOENT for unknown images),
  *       and per-slot state resets: image meta committed, mmap list cleared, started=0 so the
  *       kernel's pal_guest_resume gives the new image the same Inactive kick a fresh spawn gets.
+ * Phase C.4 (THIS): the READ-ONLY TARFS (family C begins -- in-proc as a LIBRARY, never a
+ *   parked-caller IPC server: plan risk R5). uk/pal/sel4/tarfs.c parses the embedded aiosroot.tar
+ *   (a CPIO member; the same archive the guests live in) and serves pal_host_{open,read,lseek,
+ *   close,fstat,stat} over it -- the vendored dash+sbase world's files are now REAL to guests.
+ *   The loader stops being CPIO-shaped: an image's identity is its BYTES (img_meta.elf_data/size),
+ *   resolved ONCE per exec/spawn -- tarfs REAL PATH first, CPIO basename fallback for the dev
+ *   guests -- then configure runs WITHOUT process_config_elf and the ELF is loaded manually via
+ *   sel4utils_elf_load (the proven 0.4.x fork.c pattern; entry_point is ours to set). fork reloads
+ *   the parent's identity bytes, never a name. The tarfs normalizes dot segments itself
+ *   (read_abspath does cwd_join but NOT path_norm) and strips the archive's top-level prefix dir.
  *
  * The design + every seL4 API used here is kernel-source-validated (the Phase B + C.2 research; all
  * claims re-verified adversarially against deps/kernel + deps/seL4_libs; C.3 adds NO new seL4 API --
@@ -76,9 +86,12 @@
 #include <sel4utils/vspace.h>
 #include <sel4utils/process.h>
 #include <sel4utils/process_config.h>
-#include <elf/elf.h>             /* fork/exec parse the guest ELF's phdrs (writable PT_LOAD ranges) */
-#include <cpio/cpio.h>           /* ... from the linked-in CPIO (the same archive sel4utils loads) */
+#include <elf/elf.h>             /* the loader parses + loads guest ELFs from raw bytes */
+#include <sel4utils/elf.h>       /* sel4utils_elf_load (manual: config-elf can only name CPIO files) */
+#include <cpio/cpio.h>           /* the linked-in CPIO: dev guests + the embedded aiosroot.tar */
 #include <string.h>              /* memcpy -- muslc (the root task links the C runtime) */
+
+#include "tarfs.h"               /* the C.4 read-only tarfs over the embedded aiosroot.tar */
 
 #include "pal.h"                 /* the contract (pulls in aios_abi.h) -- boot.c uses no AIOS version
                                   * macros; the kernel (aios_kernel.c) prints the version banner. */
@@ -129,6 +142,20 @@ static int boot_once(void) {
     int err = sel4utils_bootstrap_vspace_with_bootinfo_leaky(&vspace, &vspace_data,
                                                              simple_get_pd(&simple), &vka, info);
     if (err) { con_puts("[pal_sel4] FATAL: vspace bootstrap\n"); return -1; }
+    /* mount the read-only tarfs over the embedded aiosroot.tar (Phase C.4). Its absence is not
+     * fatal -- the fs syscalls just return -ENOSYS as before -- but it is LOUD, because exec's
+     * real-path space and Phase D's dash/sbase world both live in it. */
+    { unsigned long tsz = 0;
+      const void *tar = cpio_get_file(_cpio_archive,
+                                      (unsigned long)(_cpio_archive_end - _cpio_archive),
+                                      "aiosroot.tar", &tsz);
+      if (!tar) con_puts("[pal_sel4] WARNING: no aiosroot.tar in the CPIO -- tarfs disabled\n");
+      else {
+          int nf = tarfs_init(tar, tsz);
+          con_puts("[pal_sel4] tarfs: aiosroot.tar mounted read-only, ");
+          con_put_int(nf); con_puts(" files\n");
+      }
+    }
     g_boot_done = 1;
     return 0;
 }
@@ -150,6 +177,11 @@ typedef struct img_meta {
     uint64_t   wseg_lo[MAX_WSEGS], wseg_hi[MAX_WSEGS];   /* page-aligned [lo,hi) */
     int        nwseg;
     uint64_t   stack_lo, stack_hi;                       /* [lo,hi), eagerly mapped; guard is below */
+    /* The image's IDENTITY is its bytes (in immortal image memory: the tarfs or the CPIO) -- fork
+     * reloads from these, so a truncated display name can never make it re-resolve a different
+     * file (image[] is display-only). */
+    const void *elf_data;
+    unsigned long elf_size;
 } img_meta_t;
 
 typedef struct guest {
@@ -190,25 +222,17 @@ static guest_t *gfind(pal_pid_t pid) {
 }
 static int gslot(const guest_t *g) { return (int)(g - g_g); }
 
-/* Parse the image's writable PT_LOAD ranges (page-aligned) from the CPIO ELF into `meta`. This is
- * fork's copy list: sel4utils' preload path loads every segment eagerly but throws its region
- * records away (elf.c load_record_regions frees them), so the ELF's own phdrs are the only truthful
- * source of "which pages can have diverged from the file image". */
-static int load_wsegs(const char *image, img_meta_t *meta) {
-    unsigned long size = 0;
-    const void *file = cpio_get_file(_cpio_archive,
-                                     (unsigned long)(_cpio_archive_end - _cpio_archive),
-                                     image, &size);
-    if (!file) { con_puts("[pal_sel4] loader: CPIO lookup failed\n"); return -1; }
-    elf_t elf;
-    if (elf_newFile(file, size, &elf)) { con_puts("[pal_sel4] loader: bad guest ELF\n"); return -1; }
+/* Parse the image's writable PT_LOAD ranges (page-aligned) from its ELF into `meta`. This is fork's
+ * copy list: sel4utils throws its region records away after loading, so the ELF's own phdrs are the
+ * only truthful source of "which pages can have diverged from the file image". */
+static int load_wsegs(const elf_t *elf, img_meta_t *meta) {
     meta->nwseg = 0;
-    for (size_t i = 0; i < elf_getNumProgramHeaders(&elf); i++) {
-        if (elf_getProgramHeaderType(&elf, i) != 1 /* PT_LOAD */) continue;
-        if (!(elf_getProgramHeaderFlags(&elf, i) & 2 /* PF_W */)) continue;
+    for (size_t i = 0; i < elf_getNumProgramHeaders(elf); i++) {
+        if (elf_getProgramHeaderType(elf, i) != 1 /* PT_LOAD */) continue;
+        if (!(elf_getProgramHeaderFlags(elf, i) & 2 /* PF_W */)) continue;
         if (meta->nwseg >= MAX_WSEGS) { con_puts("[pal_sel4] loader: too many writable segments\n"); return -1; }
-        uint64_t va = (uint64_t)elf_getProgramHeaderVaddr(&elf, i);
-        uint64_t end = va + (uint64_t)elf_getProgramHeaderMemorySize(&elf, i);   /* memsz: data+bss */
+        uint64_t va = (uint64_t)elf_getProgramHeaderVaddr(elf, i);
+        uint64_t end = va + (uint64_t)elf_getProgramHeaderMemorySize(elf, i);   /* memsz: data+bss */
         meta->wseg_lo[meta->nwseg] = va & ~((uint64_t)PAGE_SZ - 1);
         meta->wseg_hi[meta->nwseg] = (end + PAGE_SZ - 1) & ~((uint64_t)PAGE_SZ - 1);
         meta->nwseg++;
@@ -243,12 +267,23 @@ static void guest_slot_fini(guest_t *g) {
     vka_cspace_free(&vka, g->reply_path.capPtr);
 }
 
-/* IMAGE-lifetime: configure proc[which] from the CPIO `image` (preload: ELF + stack + IPC buffer
- * eagerly built) with the slot's badged fault EP, and fill `meta` (wsegs + the stack range;
- * committed by the caller only when the image goes live). */
-static int guest_image_build(guest_t *g, int which, const char *image, img_meta_t *meta) {
-    size_t n = 0; while (image[n] && n < sizeof meta->image - 1) { meta->image[n] = image[n]; n++; }
+/* IMAGE-lifetime: configure proc[which] with the slot's badged fault EP and load the ELF from
+ * `data`/`size` -- bytes out of immortal image memory: a tarfs file (real paths, C.4) or a CPIO dev
+ * guest. Configure runs WITHOUT process_config_elf (the config-elf path can only resolve CPIO
+ * names) and the ELF is loaded MANUALLY afterward via sel4utils_elf_load -- the proven 0.4.x
+ * pattern (src/process/fork.c did exactly this from a vfs buffer); entry_point is ours to set.
+ * Fills `meta` (identity bytes + wsegs + the stack range; committed by the caller only when the
+ * image goes live). Returns 0, 1 (resources), or 2 (not a loadable ELF -> exec's -ENOEXEC). */
+static int guest_image_build(guest_t *g, int which, const char *name,
+                             const void *data, unsigned long size, img_meta_t *meta) {
+    size_t n = 0; while (name[n] && n < sizeof meta->image - 1) { meta->image[n] = name[n]; n++; }
     meta->image[n] = '\0';
+
+    elf_t elf;
+    if (elf_newFile(data, size, &elf)) {                 /* validate BEFORE building anything */
+        con_puts("[pal_sel4] loader: not a loadable ELF\n");
+        return 2;
+    }
 
     vka_object_t badged_ep;
     memset(&badged_ep, 0, sizeof badged_ep);
@@ -257,7 +292,6 @@ static int guest_image_build(guest_t *g, int which, const char *image, img_meta_
                                                           * create_fault_endpoint=false -> own_ep
                                                           * stays false -> destroy leaves it alone) */
     sel4utils_process_config_t config = process_config_new(&simple);
-    config = process_config_elf(config, meta->image, true /* preload: load the ELF eagerly now */);
     config = process_config_create_cnode(config, 12);
     config = process_config_create_vspace(config, NULL, 0);
     config = process_config_auth(config, simple_get_tcb(&simple));
@@ -266,17 +300,38 @@ static int guest_image_build(guest_t *g, int which, const char *image, img_meta_
     int err = sel4utils_configure_process_custom(&g->proc[which], &vka, &vspace, config);
     if (err) {
         con_puts("[pal_sel4] configure_process failed: "); con_put_int(err); con_puts("\n");
-        return -1;
+        return 1;
     }
-    if (load_wsegs(meta->image, meta)) {   /* the ELF just configured fine; fails only on limits */
+    void *entry = sel4utils_elf_load(&g->proc[which].vspace, &vspace, &vka, &vka, &elf);
+    if (!entry) {
+        con_puts("[pal_sel4] loader: elf_load failed\n");
         sel4utils_destroy_process(&g->proc[which], &vka);
-        return -1;
+        return 1;
+    }
+    g->proc[which].entry_point = entry;
+    if (load_wsegs(&elf, meta)) {                        /* fails only on table limits */
+        sel4utils_destroy_process(&g->proc[which], &vka);
+        return 1;
     }
     /* stack_size is recorded in 4K pages (sel4utils thread.c); the guard page is BELOW stack_lo and
      * unmapped, so [stack_lo, stack_hi) is exactly the eagerly-mapped range */
     meta->stack_hi = (uint64_t)(uintptr_t)g->proc[which].thread.stack_top;
     meta->stack_lo = meta->stack_hi - (uint64_t)g->proc[which].thread.stack_size * PAGE_SZ;
+    meta->elf_data = data;
+    meta->elf_size = size;
     return 0;
+}
+
+/* Resolve an ABSOLUTE guest path to image bytes: the tarfs first (real paths -- exec's path space
+ * became real in C.4), then the CPIO by basename (the dev guests). NULL = no such image. */
+static const void *resolve_image(const char *abspath, unsigned long *size) {
+    const void *d = tarfs_find(abspath, size);
+    if (d) return d;
+    const char *base = abspath;
+    for (const char *s = abspath; *s; s++) if (*s == '/') base = s + 1;
+    if (base[0] == '\0') return NULL;
+    return cpio_get_file(_cpio_archive, (unsigned long)(_cpio_archive_end - _cpio_archive),
+                         base, size);
 }
 
 /* ================================ Phase A: console (kept) ========================================== */
@@ -379,10 +434,11 @@ static int start_image(sel4utils_process_t *p, uint64_t sp) {
 
 /* ================================ the trap loop (families A+B) ===================================== */
 
-/* spawn: load the C.3 test guest from the CPIO into a fresh table slot, stage its initial stack from
- * the kernel-provided argv, and leave it Inactive so the kernel registers it before it runs
- * (pal_guest_resume then kicks it). Still ignores `path` -- the init guest is hardcoded until the
- * C.4 tarfs gives paths meaning. */
+/* spawn: load the C.4 test guest into a fresh table slot (resolved like exec: tarfs path first,
+ * CPIO basename fallback), stage its initial stack from the kernel-provided argv, and leave it
+ * Inactive so the kernel registers it before it runs (pal_guest_resume then kicks it). The init
+ * guest NAME is still hardcoded (the boot-config file in the CPIO is later work); its image now
+ * resolves through the same real-path machinery exec uses. */
 pal_pid_t pal_guest_spawn(const char *path, char *const argv[]) {
     if (boot_once()) return PAL_PID_NONE;
     if (!g_have_ep) {
@@ -393,12 +449,16 @@ pal_pid_t pal_guest_spawn(const char *path, char *const argv[]) {
     for (int i = 0; i < MAX_GUESTS; i++) if (!g_g[i].used) { g = &g_g[i]; break; }
     if (!g) { con_puts("[pal_sel4] spawn: guest table full\n"); return PAL_PID_NONE; }
 
-    con_puts("[pal_sel4] Phase C.3: loading guest 'guest_exec' from the CPIO (kernel asked for ");
+    con_puts("[pal_sel4] Phase C.4: loading guest 'guest_tarfs' (kernel asked for ");
     con_puts(path); con_puts(")\n");
+
+    unsigned long isz = 0;
+    const void *idata = resolve_image("/bin/guest_tarfs", &isz);
+    if (!idata) { con_puts("[pal_sel4] spawn: no init image\n"); return PAL_PID_NONE; }
 
     memset(g, 0, sizeof *g);
     if (guest_slot_init(g)) return PAL_PID_NONE;
-    if (guest_image_build(g, 0, "guest_exec", &g->img)) { guest_slot_fini(g); return PAL_PID_NONE; }
+    if (guest_image_build(g, 0, "guest_tarfs", idata, isz, &g->img)) { guest_slot_fini(g); return PAL_PID_NONE; }
 
     int argc = 0; while (argv && argv[argc]) argc++;
     uint64_t sp = 0;
@@ -608,7 +668,11 @@ pal_pid_t pal_guest_fork(pal_pid_t parent) {
 
     memset(gc, 0, sizeof *gc);
     if (guest_slot_init(gc)) return PAL_PID_NONE;
-    if (guest_image_build(gc, 0, gp->img.image, &gc->img)) { guest_slot_fini(gc); return PAL_PID_NONE; }
+    if (guest_image_build(gc, 0, gp->img.image, gp->img.elf_data, gp->img.elf_size, &gc->img)) {
+        guest_slot_fini(gc);                     /* reloads the parent's IDENTITY BYTES (immortal
+                                                  * image memory) -- never a name re-lookup */
+        return PAL_PID_NONE;
+    }
 
     /* The child's ELF/stack placement reproduces the parent's only by allocation-order determinism
      * (identical config -> identical first-fit); VERIFY before copying by address. */
@@ -690,33 +754,30 @@ static long read_gvec(sel4utils_process_t *p, uint64_t gvec, char *pool, size_t 
 }
 
 /* Replace guest `who`'s image with the AIOS program at `abspath` (already kernel-resolved). The
- * kernel IS the loader here: argv/envp are read out of the OLD image, the path's basename is looked
- * up in the CPIO (the C.4 tarfs will give paths real meaning), and the new image is built into the
- * slot's OTHER proc buffer -- the old image stays fault-stopped and INTACT until the new one is
- * fully staged, so a failed exec returns -errno to a still-running caller (POSIX). On success the
- * old process is destroyed, cur flips, the mmap list clears (a new address space), and started=0
- * hands the kernel's pal_guest_resume the same Inactive kick a fresh spawn gets. */
+ * kernel IS the loader here: argv/envp are read out of the OLD image, the path resolves REAL
+ * tarfs paths first (C.4) then falls back to the CPIO by basename (the dev guests), and the new
+ * image is built into the slot's OTHER proc buffer -- the old image stays fault-stopped and INTACT
+ * until the new one is fully staged, so a failed exec returns -errno to a still-running caller
+ * (POSIX). On success the old process is destroyed, cur flips, the mmap list clears (a new address
+ * space), and started=0 hands the kernel's pal_guest_resume the same Inactive kick a fresh spawn
+ * gets. (The C.3 ENAMETOOLONG pre-check is gone WITH its hazard: an image's identity is now its
+ * BYTES -- resolved once, right here -- and never re-looked-up by name; meta.image is display-only.) */
 int pal_guest_exec(pal_pid_t who, const char *abspath, uint64_t gargv, uint64_t genvp) {
     guest_t *g = gfind(who);
     if (!g) return -1;
     g->inject_x0 = (uint64_t)(-AIOS_ENOENT); g->have_inject = 1;   /* default failure errno */
     if (!g->have_reply) return -1;               /* not fault-stopped -> contract violation */
 
-    /* the CPIO has flat basenames until the C.4 tarfs: "/bin/guest_execd" -> "guest_execd" */
-    const char *base = abspath;
-    for (const char *s = abspath; *s; s++) if (*s == '/') base = s + 1;
-    size_t blen = 0; while (base[blen]) blen++;
-    if (blen >= sizeof g->img.image) {           /* the lookup + the build must agree on ONE string:
-                                                  * guest_image_build truncates to 63 chars, so an
-                                                  * overlong name is rejected up front, never checked
-                                                  * long + built truncated (the C.3 review's catch) */
-        g->inject_x0 = (uint64_t)(-AIOS_ENAMETOOLONG);
+    unsigned long isz = 0;
+    const void *idata = resolve_image(abspath, &isz);
+    if (!idata) {                                /* -ENOENT (the default stash) -- unless the path
+                                                  * is a DIRECTORY: exec("/bin") is -EACCES (what
+                                                  * Linux execve gives), not "no such file" */
+        struct aios_stat st;
+        if (pal_host_stat(abspath, &st, 1) == 0 && (st.st_mode & AIOS_S_IFMT) == AIOS_S_IFDIR)
+            g->inject_x0 = (uint64_t)(-AIOS_EACCES);
         return -1;
     }
-    unsigned long fsz = 0;
-    if (base[0] == '\0' ||
-        !cpio_get_file(_cpio_archive, (unsigned long)(_cpio_archive_end - _cpio_archive), base, &fsz))
-        return -1;                               /* -ENOENT (the default stash) */
 
     /* read argv/envp from the OLD image before anything else can fail expensively */
     static char apool[X_BUF], epool[X_BUF];
@@ -734,8 +795,10 @@ int pal_guest_exec(pal_pid_t who, const char *abspath, uint64_t gargv, uint64_t 
     int nw = g->cur ^ 1;
     img_meta_t meta;
     memset(&meta, 0, sizeof meta);
-    if (guest_image_build(g, nw, base, &meta)) {
-        g->inject_x0 = (uint64_t)(-AIOS_ENOMEM);             /* lookup passed; this is resources */
+    int berr = guest_image_build(g, nw, abspath, idata, isz, &meta);
+    if (berr) {
+        g->inject_x0 = (uint64_t)(berr == 2 ? -AIOS_ENOEXEC   /* exists but is not a loadable ELF */
+                                            : -AIOS_ENOMEM);  /* resources */
         return -1;
     }
     uint64_t sp = 0;
@@ -765,14 +828,9 @@ int      pal_take_term_signal(void) { return 0; }
 int      pal_guest_deliver(pal_pid_t w, uint64_t h, uint64_t sg, uint64_t t, void *sv) { (void)w;(void)h;(void)sg;(void)t;(void)sv; return -1; }
 int      pal_guest_sigreturn(pal_pid_t w, const void *sv) { (void)w;(void)sv; return -1; }
 int      pal_host_pipe(pal_file_t *rd, pal_file_t *wr) { (void)rd;(void)wr; return -1; }
-/* Phase D (family C -- fs server) */
-pal_file_t pal_host_open(const char *p, uint64_t fl, uint64_t m) { (void)p;(void)fl;(void)m; return (pal_file_t)-AIOS_ENOSYS; }
-long     pal_host_read (pal_file_t f, void *b, size_t n) { (void)f;(void)b;(void)n; return -AIOS_ENOSYS; }
-int      pal_host_close(pal_file_t f) { (void)f; return 0; }
-long long pal_host_lseek(pal_file_t f, long long o, int w) { (void)f;(void)o;(void)w; return -AIOS_ENOSYS; }
-int      pal_host_fstat(pal_file_t f, struct aios_stat *o) { (void)f;(void)o; return -AIOS_ENOSYS; }
+/* Phase C.4 made real IN TARFS.C: pal_host_{open,read,lseek,close,fstat,stat} (the read-only tarfs).
+ * Phase D (family C) grows the rest below. */
 long     pal_host_getdents(pal_file_t f, void *b, size_t n) { (void)f;(void)b;(void)n; return -AIOS_ENOSYS; }
-int      pal_host_stat  (const char *p, struct aios_stat *o, int fo) { (void)p;(void)o;(void)fo; return -AIOS_ENOSYS; }
 int      pal_host_unlink(const char *p) { (void)p; return -AIOS_ENOSYS; }
 int      pal_host_mkdir (const char *p, unsigned int m) { (void)p;(void)m; return -AIOS_ENOSYS; }
 int      pal_host_rmdir (const char *p) { (void)p; return -AIOS_ENOSYS; }
@@ -812,15 +870,15 @@ int      pal_net_wait_ready (void) { return 0; }
 /* ================================ the root task entry ============================================== */
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
-    con_puts("\n[pal_sel4] AIOS userspace kernel -- Phase C.3: exec (the kernel IS the ELF loader)\n");
-    con_puts("[pal_sel4]   (the hand-staged SysV stack + the double-buffered atomic image swap).\n");
+    con_puts("\n[pal_sel4] AIOS userspace kernel -- Phase C.4: the read-only tarfs (family C begins)\n");
+    con_puts("[pal_sel4]   (aiosroot.tar mounted in-proc; open/read/lseek/fstat/stat; exec by REAL path).\n");
 
     /* Run the host-agnostic kernel. It spawns the init guest, resumes it, then services trapped AIOS
-     * syscalls from EVERY guest -- now including EXEC -- until none remain. */
+     * syscalls from EVERY guest -- now including the file syscalls -- until none remain. */
     char *gargv[] = { (char *)"aios-uk", (char *)"/sbin/init", 0 };
     int code = aios_kernel_main(2, gargv);
 
-    con_puts("[pal_sel4] Phase C.3 complete: guests forked, exec'd, exited on seL4; init exit code=");
+    con_puts("[pal_sel4] Phase C.4 complete: guests read the tarfs + exec'd by real path; init exit code=");
     con_put_int(code);
     con_puts(".\n[pal_sel4] halting.\n");
     seL4_TCB_Suspend(seL4_CapInitThreadTCB);

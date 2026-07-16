@@ -28,8 +28,9 @@ set(UK "${AIOS_ROOT}/uk")
 # via svc). The output basename is the runtime image_name sel4utils matches against in the CPIO.
 #   guest_hello -- Phase B (WRITE + EXIT);  guest_mmap -- Phase C.1 (mmap a region, pattern round-trip);
 #   guest_fork  -- Phase C.2 (fork + wait: eager VSpace copy, two-return, isolation of data/stack/mmap);
-#   guest_exec + guest_execd -- Phase C.3 (exec: failed-exec keeps the old image; argv/envp staging).
-set(UK_GUESTS guest_hello guest_mmap guest_fork guest_exec guest_execd)
+#   guest_exec + guest_execd -- Phase C.3 (exec: failed-exec keeps the old image; argv/envp staging);
+#   guest_tarfs -- Phase C.4 (tarfs file ops + exec of a REAL sbase binary out of aiosroot.tar).
+set(UK_GUESTS guest_hello guest_mmap guest_fork guest_exec guest_execd guest_tarfs)
 set(GUEST_ELFS "")
 foreach(g ${UK_GUESTS})
     set(elf ${CMAKE_CURRENT_BINARY_DIR}/${g})
@@ -43,15 +44,20 @@ foreach(g ${UK_GUESTS})
         VERBATIM)
     list(APPEND GUEST_ELFS ${elf})
 endforeach()
-# MakeCPIO emits guests_cpio.o, which DEFINES the globals _cpio_archive / _cpio_archive_end that
-# sel4utils reads directly (you never pass the archive -- only the image_name). Files are stored under
-# their basename, so "guest_mmap" is the name process_config_elf() resolves.
-MakeCPIO(guests_cpio.o "${GUEST_ELFS}")
+# MakeCPIO emits guests_cpio.o, which DEFINES the globals _cpio_archive / _cpio_archive_end. Files
+# are stored under their basename. Phase C.4 also embeds uk/aiosroot.tar -- the vendored dash+sbase
+# WORLD the Linux line builds (make all + mkaiosroot.sh in uk/, run on the Linux side; it is a build
+# product, not tracked -- build it there first if missing). boot.c mounts it as the read-only tarfs.
+if(NOT EXISTS ${UK}/aiosroot.tar)
+    message(FATAL_ERROR "uk/aiosroot.tar missing -- build the Linux line first (uk: make all && sh mkaiosroot.sh)")
+endif()
+MakeCPIO(guests_cpio.o "${GUEST_ELFS};${UK}/aiosroot.tar")
 
 add_executable(aios-uk-sel4
     ${UK}/kernel/aios_kernel.c      # the host-agnostic kernel, unchanged (main -> aios_kernel_main)
     ${UK}/pal/sel4/boot.c           # the real seL4 PAL: root-task main + console + the trap loop
-    guests_cpio.o                   # the embedded guest archive (defines _cpio_archive)
+    ${UK}/pal/sel4/tarfs.c          # Phase C.4: the read-only tarfs over the embedded aiosroot.tar
+    guests_cpio.o                   # the embedded archive: dev guests + aiosroot.tar
 )
 
 # aios_kernel.c includes ONLY aios_abi.h / aios_version.h / pal.h (+ stddef/stdint) -- so uk/include is
