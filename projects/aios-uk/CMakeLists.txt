@@ -27,8 +27,9 @@ set(UK "${AIOS_ROOT}/uk")
 # sel4runtime and replace _start with _sel4_start (it would stop being a pure AIOS-ABI guest that traps
 # via svc). The output basename is the runtime image_name sel4utils matches against in the CPIO.
 #   guest_hello -- Phase B (WRITE + EXIT);  guest_mmap -- Phase C.1 (mmap a region, pattern round-trip);
-#   guest_fork  -- Phase C.2 (fork + wait: eager VSpace copy, two-return, isolation of data/stack/mmap).
-set(UK_GUESTS guest_hello guest_mmap guest_fork)
+#   guest_fork  -- Phase C.2 (fork + wait: eager VSpace copy, two-return, isolation of data/stack/mmap);
+#   guest_exec + guest_execd -- Phase C.3 (exec: failed-exec keeps the old image; argv/envp staging).
+set(UK_GUESTS guest_hello guest_mmap guest_fork guest_exec guest_execd)
 set(GUEST_ELFS "")
 foreach(g ${UK_GUESTS})
     set(elf ${CMAKE_CURRENT_BINARY_DIR}/${g})
