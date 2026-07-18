@@ -601,7 +601,9 @@ int pal_guest_next(pal_pid_t *who, pal_syscall_t *sc, int *exit_code) {
         seL4_TCB_Suspend(GPROC(g)->thread.tcb.cptr);
         seL4_CNode_Delete(g->reply_path.root, g->reply_path.capPtr, g->reply_path.capDepth);
         g->have_reply = 0;
-        *who = g->pid; *exit_code = 139;           /* 128 + SIGSEGV-ish */
+        *who = g->pid; *exit_code = -11;           /* NEGATIVE = killed by a signal: SIGSEGV (a VM/cap
+                                                    * fault). The kernel converts this to WIFSIGNALED
+                                                    * (WTERMSIG=11); a normal guest exit is >= 0. */
         sel4utils_destroy_process(GPROC(g), &vka);
         guest_slot_fini(g);
         g->used = 0; g_nused--;

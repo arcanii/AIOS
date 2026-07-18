@@ -43,13 +43,13 @@ main(void)
     }
 
     /* The child is running again (only a running child receives a posted signal at a syscall): prove
-     * it by terminating it and reaping. Default-terminate surfaces as exit code 128+signal. */
+     * it by terminating it and reaping. A default-terminate surfaces as WIFSIGNALED/WTERMSIG (POSIX). */
     kill(kid, SIGTERM);
-    if (waitpid(kid, &st, 0) != kid || !WIFEXITED(st) || WEXITSTATUS(st) != 128 + SIGTERM) {
-        printf("FAIL terminate: waitpid status=0x%x (want exit %d)\n", st, 128 + SIGTERM);
+    if (waitpid(kid, &st, 0) != kid || !WIFSIGNALED(st) || WTERMSIG(st) != SIGTERM) {
+        printf("FAIL terminate: waitpid status=0x%x (want WIFSIGNALED, WTERMSIG %d)\n", st, SIGTERM);
         fail = 1;
     } else {
-        printf("SIGTERM after continue -> child took it (exit %d) and was reaped\n", WEXITSTATUS(st));
+        printf("SIGTERM after continue -> child took it (signal %d) and was reaped\n", WTERMSIG(st));
     }
 
     printf("stop: %s\n", fail ? "FAIL" : "PASS");

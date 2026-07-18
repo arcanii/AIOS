@@ -148,7 +148,7 @@ int pal_guest_next(pal_pid_t *who, pal_syscall_t *sc, int *exit_code) {
             if (pid < 0) { if (errno == EINTR) continue; return -1; }   /* EINTR (^C): loop -> g_term_sig returns 3 */
         }
         if (WIFEXITED(st))   { *who = pid; if (exit_code) *exit_code = WEXITSTATUS(st);    return 0; }
-        if (WIFSIGNALED(st)) { *who = pid; if (exit_code) *exit_code = 128 + WTERMSIG(st); return 0; }
+        if (WIFSIGNALED(st)) { *who = pid; if (exit_code) *exit_code = -WTERMSIG(st); return 0; }   /* NEGATIVE = killed by a signal (kernel -> WIFSIGNALED); a normal exit is >= 0 */
         if (!WIFSTOPPED(st)) continue;
         int sig = WSTOPSIG(st);
         if ((st >> 8) == (SIGTRAP | (PTRACE_EVENT_SECCOMP << 8))) {  /* a guest syscall trapped via seccomp */

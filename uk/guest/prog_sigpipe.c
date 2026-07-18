@@ -33,11 +33,11 @@ main(void)
     close(pfd[0]);                              /* no readers left -> the child's write gets SIGPIPE */
     int st = 0;
     waitpid(kid, &st, 0);
-    if (!(WIFEXITED(st) && WEXITSTATUS(st) == 128 + SIGPIPE)) {
-        printf("FAIL default: writer status 0x%x (want exit %d = 128+SIGPIPE)\n", st, 128 + SIGPIPE);
+    if (!(WIFSIGNALED(st) && WTERMSIG(st) == SIGPIPE)) {   /* killed by SIGPIPE -> WIFSIGNALED (POSIX) */
+        printf("FAIL default: writer status 0x%x (want WIFSIGNALED, WTERMSIG %d = SIGPIPE)\n", st, SIGPIPE);
         fail = 1;
     } else {
-        printf("default SIGPIPE -> writer terminated (exit %d) when the reader closed\n", WEXITSTATUS(st));
+        printf("default SIGPIPE -> writer terminated (signal %d) when the reader closed\n", WTERMSIG(st));
     }
 
     /* Case 2: SIGPIPE IGNORED -- the write returns -1/EPIPE instead of terminating. */

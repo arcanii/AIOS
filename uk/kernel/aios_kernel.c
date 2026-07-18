@@ -95,6 +95,10 @@ typedef struct {
     unsigned long wait_flags;          /* PS_BLOCKED_WAIT: the wait options (WUNTRACED/WCONTINUED/...) */
     uint64_t      wait_status_gaddr;   /* PS_BLOCKED_WAIT: where to store the status (0 = none) */
     int           stopped_sig;         /* PS_STOPPED: the signal that stopped it (for WSTOPSIG) */
+    int           term_sig;            /* if TERMINATED BY A SIGNAL: the signal (for WIFSIGNALED/WTERMSIG);
+                                        * 0 = a normal exit (WIFEXITED). Set at the kernel kill sites +
+                                        * from a PAL-reported signal death; disambiguates a real
+                                        * exit(128+sig) from a signal kill (both would numerically be 128+sig). */
     int           report_stop;         /* a stop event awaits collection by wait(WUNTRACED) */
     int           report_cont;         /* a continue event awaits collection by wait(WCONTINUED) */
     /* PS_BLOCKED_READ/WRITE: a pipe I/O parked because the pipe was empty/full. The kernel resumes
@@ -753,6 +757,7 @@ static void kreturn(proc_t *p, uint64_t ret) {
         return;                                                  /* do NOT resume -- wait for SIGCONT */
     }
     if (h == AIOS_SIG_DFL) {                                      /* default action: terminate */
+        p->term_sig = sig;                                       /* -> WIFSIGNALED (POSIX 128+sig for $?) */
         pal_guest_exit(p->pid, 128 + sig);
         return;
     }
@@ -776,8 +781,8 @@ static void handle_signal_stop(proc_t *p, int sig) {
         proc_stop(p, sig);                                       /* already at the signal-stop; just mark + notify */
         return;                                                  /* do NOT resume -- wait for SIGCONT */
     }
-    if (h == AIOS_SIG_DFL) { pal_guest_exit(p->pid, 128 + sig); return; }   /* default: terminate */
-    if (p->sig_tramp == 0) { pal_guest_exit(p->pid, 128 + sig); return; }
+    if (h == AIOS_SIG_DFL) { p->term_sig = sig; pal_guest_exit(p->pid, 128 + sig); return; }   /* default: terminate */
+    if (p->sig_tramp == 0) { p->term_sig = sig; pal_guest_exit(p->pid, 128 + sig); return; }   /* can't deliver -> terminate */
     p->in_handler = 1;
     pal_guest_deliver(p->pid, h, (uint64_t)sig, p->sig_tramp, p->sigsave);
 }
@@ -1188,6 +1193,7 @@ static void do_fork(proc_t *parent) {
     child->wait_flags = 0;
     child->wait_status_gaddr = 0;
     child->stopped_sig = 0;
+    child->term_sig = 0;
     child->report_stop = 0;
     child->report_cont = 0;
     for (int i = 0; i < AIOS_NSIG; i++) child->sig_handler[i] = parent->sig_handler[i];  /* inherited */
@@ -1213,12 +1219,20 @@ static void do_fork(proc_t *parent) {
 /* wait: report a matching child's state change -- an exit (reap), or (with WUNTRACED/WCONTINUED) a
  * stop/continue (no reap). If a matching child is still alive but has no event, PARK the caller until
  * one comes (WNOHANG -> return 0 instead). -ECHILD if it has no matching child at all. */
+/* POSIX wait status: a signal-terminated child -> WIFSIGNALED/WTERMSIG (the signal in the low 7 bits);
+ * a normal exit -> WIFEXITED/WEXITSTATUS (the code in the high byte). term_sig (set at the kernel kill
+ * sites + from a PAL-reported signal death) is what lets us tell a real exit(128+sig) from a signal
+ * kill. WIFSTOPPED (0x7f low byte) + WIFCONTINUED (0xffff) are encoded at their own sites below. */
+static int wait_status_of(const proc_t *c) {
+    return c->term_sig ? (c->term_sig & 0x7f) : ((c->exit_code & 0xff) << 8);
+}
+
 static void do_wait(proc_t *p, unsigned long want, uint64_t gstatus, unsigned long flags) {
     if (deliver_pending(p)) return;                  /* a forwarded ^C/^Z interrupts the wait */
     for (int i = 0; i < MAX_PROCS; i++) {             /* 1. an exited (zombie) child -> report + reap */
         proc_t *c = &g_proc[i];
         if (c->state == PS_ZOMBIE && c->parent_pid == p->pid && wait_matches(want, c)) {
-            if (gstatus) { int status = (c->exit_code & 0xff) << 8;
+            if (gstatus) { int status = wait_status_of(c);
                            pal_guest_write(p->pid, gstatus, &status, sizeof status); }
             pal_pid_t cpid = c->pid;
             c->state = PS_FREE;                       /* reaped */
@@ -1265,6 +1279,10 @@ static void do_wait(proc_t *p, unsigned long want, uint64_t gstatus, unsigned lo
  * wake a parent parked in wait (delivering the status + reaping), or become a zombie for a running
  * parent to reap later, or -- no parent -- free outright. */
 static void on_exit(proc_t *p, int code) {
+    p->exit_code = code;                                    /* recorded now so wait_status_of(p) works
+                                                             * for BOTH the parked-wake + zombie paths
+                                                             * (p->term_sig was set at the kill site or
+                                                             * from a PAL-reported signal death) */
     for (int i = 0; i < AIOS_MAX_FD; i++) fd_release(p, i);  /* close its fds (pipe ends -> EOF) */
     for (int i = 0; i < MAX_PROCS; i++) {
         proc_t *c = &g_proc[i];
@@ -1275,15 +1293,15 @@ static void on_exit(proc_t *p, int code) {
     }
     proc_t *parent = (p->parent_pid != PAL_PID_NONE) ? proc_find(p->parent_pid) : NULL;
     if (parent && parent->state == PS_BLOCKED_WAIT && wait_matches(parent->wait_for, p)) {
-        if (parent->wait_status_gaddr) { int status = (code & 0xff) << 8;
+        if (parent->wait_status_gaddr) { int status = wait_status_of(p);
             pal_guest_write(parent->pid, parent->wait_status_gaddr, &status, sizeof status); }
         pal_pid_t cpid = p->pid;
         parent->state = PS_RUNNING;
         p->state = PS_FREE;                           /* reaped by the wakeup */
         pal_guest_return(parent->pid, (uint64_t)cpid);
     } else if (parent) {
-        p->exit_code = code;
-        p->state = PS_ZOMBIE;                         /* parent alive but not waiting (yet) */
+        p->state = PS_ZOMBIE;                         /* parent alive but not waiting (yet); exit_code
+                                                       * + term_sig already recorded above */
     } else {
         p->state = PS_FREE;                           /* orphan / init: nothing waits */
     }
@@ -1303,6 +1321,7 @@ static void dispatch(proc_t *p, const pal_syscall_t *sc) {
         kputs(" issued a non-AIOS (host) syscall nr=");
         kput_int((long)sc->nr);
         kputs(" -> escape attempt; killing the guest (boundary enforced)\n");
+        p->term_sig = 31;                                               /* SIGSYS -> WIFSIGNALED */
         pal_guest_exit(p->pid, 159);                                    /* 128 + 31 (SIGSYS-flavoured) */
         return;
     }
@@ -1409,6 +1428,7 @@ int aios_kernel_run(const char *guest_path, char *const guest_argv[]) {
     init->wait_flags = 0;
     init->wait_status_gaddr = 0;
     init->stopped_sig = 0;
+    init->term_sig = 0;
     init->report_stop = 0;
     init->report_cont = 0;
     sig_reset(init);
@@ -1435,6 +1455,15 @@ int aios_kernel_run(const char *guest_path, char *const guest_argv[]) {
         if (r == 4) { net_retry_parked(); net_expire_deadlines(); continue; } /* socket ready / deadline -> retry + expire */
         proc_t *p = proc_find(who);
         if (r == 0) {                                 /* `who` exited */
+            if (code < 0) {                           /* PAL convention: a NEGATIVE code = killed by a
+                                                       * signal (WTERMSIG = -code) the PAL detected, not
+                                                       * the kernel (a real crash: seL4 VM-fault, a Linux
+                                                       * tracee's signal death). Kernel-initiated kills
+                                                       * come back POSITIVE (exit_group 128+sig) with
+                                                       * term_sig already set at the kill site. */
+                if (p) p->term_sig = -code;
+                code = 128 + (-code);                 /* POSIX 128+signum for init_code / $? */
+            }
             if (who == init_pid) init_code = code;
             if (p) on_exit(p, code);
             continue;

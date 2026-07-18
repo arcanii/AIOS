@@ -47,7 +47,11 @@ pal_pid_t pal_guest_spawn(const char *path, char *const argv[]);
 /* Wait for the next event from ANY live guest. Skips internal artifacts (syscall exits, the stray
  * stops injection leaves behind). Returns:
  *   1  a syscall trapped on *who   -> *sc filled (NOT executed by the host); *who is at its entry
- *   0  *who exited                 -> *exit_code set (8-bit, POSIX-shaped)
+ *   0  *who exited                 -> *exit_code set. >= 0 = a NORMAL exit (WEXITSTATUS = code & 0xff);
+ *                                     < 0 = the PAL detected a SIGNAL DEATH the kernel did not initiate
+ *                                     (a real crash: a VM fault, a Linux tracee's signal) -> WTERMSIG =
+ *                                     -*exit_code, and the kernel reports WIFSIGNALED. (A kernel-
+ *                                     initiated kill returns >= 0 as 128+sig; the kernel already knows.)
  *   2  *who got an async signal    -> *exit_code = signal number (the kernel owns the policy: run
  *                                     the guest's handler, ignore it, or terminate)
  *   3  a TERMINAL signal was caught (^C/^Z) -> *exit_code = signum; the kernel forwards it to the

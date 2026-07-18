@@ -211,7 +211,8 @@ struct addrinfo {
 
 /* AIOS_SYS_WAIT: pid selector + the wait status it stores via *status. pid == -1 waits for ANY
  * child; a positive pid waits for that child. The status encodes a normal exit as
- * (exit_code & 0xff) << 8 -- AIOS_WEXITSTATUS decodes it (a POSIX-shaped subset; signals later). */
+ * (exit_code & 0xff) << 8 -- AIOS_WEXITSTATUS decodes it; a SIGNAL death sets the low 7 bits to the
+ * terminating signal (WIFSIGNALED / WTERMSIG), and a stop/continue uses the 0x7f / 0xffff forms. */
 #define AIOS_WAIT_ANY        ((unsigned long)-1)
 #define AIOS_WEXITSTATUS(s)  (((s) >> 8) & 0xff)
 /* wait options (match the shadow <sys/wait.h>): also report STOPPED (WUNTRACED) and CONTINUED

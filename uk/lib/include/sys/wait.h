@@ -1,5 +1,6 @@
 /* sys/wait.h -- AIOS shadow header (see sys/types.h). wait/waitpid over the kernel's process model.
- * Status encodes a normal exit as (code & 0xff) << 8 (a POSIX-shaped subset; signals come later). */
+ * Status encodes a normal exit as (code & 0xff) << 8; a SIGNAL death sets the low 7 bits = WTERMSIG
+ * (WIFSIGNALED); a stop uses (sig<<8)|0x7f (WIFSTOPPED) and a continue 0xffff. */
 #ifndef _SYS_WAIT_H
 #define _SYS_WAIT_H
 #include <sys/types.h>

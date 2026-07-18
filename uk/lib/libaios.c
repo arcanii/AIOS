@@ -883,7 +883,10 @@ int tolower(int c)  { return isupper(c) ? c + 32 : c; }
 
 /* stdlib extras */
 void  exit(int code)  { fflush(stdout); aios_exit(code); }   /* flush buffered stdout like libc */
-void  abort(void)     { fflush(stdout); aios_exit(134); }    /* 128 + SIGABRT */
+int   raise(int sig);   /* defined below; forward-declared so abort() can route through it */
+void  abort(void)     { fflush(stdout); raise(6); aios_exit(134); }   /* raise(SIGABRT=6) -> the kernel's
+    * SIG_DFL-terminate reports WIFSIGNALED/SIGABRT (matching raise(6)); the exit(134) is an unreachable
+    * fallback should SIGABRT be blocked/ignored. <signal.h> is not included here, hence the literal. */
 void *calloc(size_t nmemb, size_t size) {
     size_t t = nmemb * size; void *p = malloc(t); if (p) memset(p, 0, t); return p;
 }
