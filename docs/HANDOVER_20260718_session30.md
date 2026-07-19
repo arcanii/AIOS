@@ -43,12 +43,20 @@ uk/pal/sel4/{boot.c,tarfs.c,pipe.c}.
    `WIFEXITED`/128+sig and had to be updated (a "fix" without them FAILS the gate). Also routed
    `abort()` through `raise(6)` so both abort routes agree.
 
-## >>> UNCOMMITTED: D.3, the WRITABLE fs — validated but NOT yet reviewed <<<
+## D.3 — the WRITABLE fs (`d3cab77`, reviewed + committed)
 
-The working tree holds a complete, QEMU-validated **D.3** (7 modified files + the new
-`uk/guest/guest_wfs.c`). **It has NOT had its adversarial find→verify review, and is therefore not
-committed** — the session was redirected before that step. **First task next session: run the review,
-address findings, commit.**
+Reviewed and committed. **Its review caught two must-fix bugs that all six passing guests had hidden**,
+because every validated path used `O_TRUNC`: (1) `node_ensure_rw` clamped the copy-up to the *write*
+size while leaving `n->size` unchanged — a partial in-place write (`O_RDWR`, no `O_TRUNC`) to a seeded
+file destroyed the tail AND left `size > cap`, so every later read ran past the buffer, leaking heap to
+the guest and handing the exec loader a bogus length; (2) `pal_host_rename` freed a replaced
+destination node without the open-handle check `fs_remove_norm` has — a use-after-free for `mv tmp f`
+while `f` is open. Also fixed: getdents used a *positional* sibling index, so unlinking an
+already-listed entry shifted the cursor and skipped a later one (now a monotonic per-link `dseq`), and
+rename now enforces POSIX type compatibility. `guest_wfs` covers both must-fix holes directly and was
+negative-tested. Known/documented, not fixed: unlink-while-open detaches but never frees (bounded
+leak); rename does not rewrite an open *directory* handle's stored path; create-into-a-non-dir reports
+ENOENT not ENOTDIR.
 
 What D.3 does: `tarfs.c` stops re-walking the tar per lookup and instead parses it ONCE at mount into
 an **fsnode tree**. A regular file's bytes are NOT copied — the node points at the tar image in
@@ -71,7 +79,6 @@ the WIFSIGNALED test updates): `guest_tarfs`'s refused write-open, and `guest_fs
 ## State + open items
 
 - **Unpushed:** everything from `dba2f9a` (s28 Phase B) through `42cf989` — 12 commits. Bryan pushes.
-- **D.3 uncommitted + unreviewed** (above).
 - **RPi5 OFFLINE** since s28 → the **Phase 0 gcc-15 gate recheck is still PENDING**.
 - The Linux line is fully green: `sh run.sh` (colima) → `RESULT: linux=0 seccomp=0 sel4=0`. Re-gate
   after any shared-kernel/libaios change; colima sometimes needs `colima start` first.
@@ -95,18 +102,7 @@ WORKING BRANCH = `main` (commit per milestone; Bryan pushes). DONE: Phases 0/A/B
 **D.2** (the REAL vendored dash + sbase run pipelines) + the **WIFSIGNALED** wait-status fix. A real
 POSIX shell runs real coreutils on the verified microkernel.
 
-**FIRST TASK — finish D.3 (it is sitting UNCOMMITTED in the working tree):** run the adversarial
-find→verify review over the D.3 diff (`git diff` + the new `uk/guest/guest_wfs.c`), address the
-findings, re-validate (rebuild + boot the six guests), and COMMIT. D.3 = the writable RAM fs: the tar
-is parsed once into an fsnode tree, file data points at the immortal tar bytes and is COPIED UP on
-first write (6 MB muslc morecore), and the mutating ops became real. Review angles worth covering:
-the node-tree lifecycle (unlink-while-open detaches without freeing — a deliberate leak; rename into
-its own subtree; parent pointers after rename), `node_ensure_rw` growth/overflow + the seek-past-EOF
-hole, handle vs node invalidation, getdents cursor stability while a directory is being MUTATED
-(a file created/removed mid-enumeration shifts the sibling index — likely the sharpest real bug),
-and whether any read path regressed vs C.4/D.1.
-
-THEN, Phase D breadth / Phase E:
+**Phase D is functionally complete** (a real shell runs real coreutils over a writable fs). NEXT:
 - **spawn the REAL `/sbin/init`** (drop the hardcoded dev-guest name in `pal_guest_spawn`); init
   reads `/etc/inittab`, forks + execs `/bin/login` — which then needs console **stdin**, i.e. Phase E.
 - **`sel4-gate.sh`**: boot qemu with serial on a pty and drive the `prog_*` suite (the Linux gate's
