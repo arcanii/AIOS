@@ -5,7 +5,7 @@
  *     shadow, motd, inittab) + the "." and ".." entries appear, with a plausible d_type;
  *   - a read() on a directory handle is refused (-EISDIR);
  *   - fstat/stat classify dir vs file (S_IFDIR / S_IFREG);
- *   - faccessat: R_OK on a real file OK, W_OK refused (read-only fs), F_OK on a missing file ENOENT;
+ *   - faccessat: R_OK + W_OK on a real file OK (the fs is writable since D.3), F_OK missing -> ENOENT;
  *   - chdir + getcwd round-trip (chdir /bin -> getcwd == "/bin");
  *   - clock_gettime(MONOTONIC) advances (two reads, the second not before the first).
  * Exit 42 iff every check passes. No libc, no host headers.
@@ -116,11 +116,12 @@ void _start(void) {
     if (asys(AIOS_SYS_OPEN, (long)"/etc/passwd", AIOS_O_RDONLY | AIOS_O_DIRECTORY, 0) != -AIOS_ENOTDIR)
         die("guest_fsbreadth: FAIL -- O_DIRECTORY on a file did not give ENOTDIR\n", 4);
 
-    /* 3. faccessat (AT_FDCWD): R_OK ok, W_OK refused (read-only), F_OK on a missing file -> ENOENT */
+    /* 3. faccessat (AT_FDCWD): R_OK + W_OK both granted (since D.3 the fs is writable), F_OK on a
+     * missing file -> ENOENT */
     if (asys4(AIOS_SYS_FACCESSAT, AIOS_AT_FDCWD, (long)"/etc/passwd", AIOS_R_OK, 0) != 0)
         die("guest_fsbreadth: FAIL -- faccessat R_OK on /etc/passwd\n", 5);
-    if (asys4(AIOS_SYS_FACCESSAT, AIOS_AT_FDCWD, (long)"/etc/passwd", AIOS_W_OK, 0) != -AIOS_EACCES)
-        die("guest_fsbreadth: FAIL -- faccessat W_OK did not refuse a read-only fs\n", 5);
+    if (asys4(AIOS_SYS_FACCESSAT, AIOS_AT_FDCWD, (long)"/etc/passwd", AIOS_W_OK, 0) != 0)
+        die("guest_fsbreadth: FAIL -- faccessat W_OK on the writable fs\n", 5);
     if (asys4(AIOS_SYS_FACCESSAT, AIOS_AT_FDCWD, (long)"/etc/nope", AIOS_F_OK, 0) != -AIOS_ENOENT)
         die("guest_fsbreadth: FAIL -- faccessat F_OK on a missing file\n", 5);
 

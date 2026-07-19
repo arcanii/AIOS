@@ -52,6 +52,11 @@ static const char *cmds[] = {
     "r=$(ls /bin | wc -l); echo \"ls /bin | wc -l = $r\"; [ \"$r\" = 31 ]",
     "r=$(grep -c root /etc/passwd); echo \"grep -c root /etc/passwd = $r\"; [ \"$r\" = 1 ]",
     "r=$(seq 1 3 | tr 0-9 a-j | tr -d '\\n'); echo \"seq|tr|tr = $r\"; [ \"$r\" = bcd ]",
+    /* D.3: the fs is writable, so shell REDIRECTION to a file works -- write it, read it back
+     * through a second process, append, and check the whole thing round-trips. */
+    "echo written-by-dash > /tmp/sh1; r=$(cat /tmp/sh1); echo \"redirect = $r\"; [ \"$r\" = written-by-dash ]",
+    "echo one > /tmp/sh2; echo two >> /tmp/sh2; r=$(wc -l < /tmp/sh2); echo \"append lines = $r\"; [ \"$r\" = 2 ]",
+    "mkdir /tmp/shd && echo deep > /tmp/shd/f && r=$(cat /tmp/shd/f) && echo \"mkdir+write = $r\" && [ \"$r\" = deep ]",
 };
 
 void _start(void) {

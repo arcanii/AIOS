@@ -32,8 +32,9 @@ set(UK "${AIOS_ROOT}/uk")
 #   guest_tarfs -- Phase C.4 (tarfs file ops + exec of a REAL sbase binary out of aiosroot.tar);
 #   guest_pipe -- Phase C.5 (a pipe: writer parks on a full ring, reader wakes it, EOF at close);
 #   guest_fsbreadth -- Phase D.1 (getdents + *at + chdir/getcwd + the CNTPCT clock);
-#   guest_shrun -- Phase D.2 (launches the REAL vendored dash + sbase pipelines from the tar).
-set(UK_GUESTS guest_hello guest_mmap guest_fork guest_exec guest_execd guest_tarfs guest_pipe guest_fsbreadth guest_shrun)
+#   guest_shrun -- Phase D.2 (launches the REAL vendored dash + sbase pipelines from the tar);
+#   guest_wfs -- Phase D.3 (the writable RAM fs: create/append/trunc/copy-up/mkdir/rename).
+set(UK_GUESTS guest_hello guest_mmap guest_fork guest_exec guest_execd guest_tarfs guest_pipe guest_fsbreadth guest_shrun guest_wfs)
 set(GUEST_ELFS "")
 foreach(g ${UK_GUESTS})
     set(elf ${CMAKE_CURRENT_BINARY_DIR}/${g})

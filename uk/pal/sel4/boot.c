@@ -71,13 +71,26 @@
  *   RTC so REALTIME==MONOTONIC==uptime). The mutating ops (unlink/mkdir/rename/...) return -EACCES
  *   (the tarfs is read-only; a writable overlay is deferrable). This is the breadth that lets the real
  *   vendored dash + sbase RUN (Phase D.2).
- * Phase D.2 (THIS): the REAL dash + sbase RUN. No new PAL primitive -- the C+D.1 machinery is enough:
+ * Phase D.2: the REAL dash + sbase RUN. No new PAL primitive -- the C+D.1 machinery is enough:
  *   the launcher execs /bin/sh -c a pipeline with PATH=/bin, and the vendored dash (from the tar)
  *   forks, resolves + execs REAL sbase tools by PATH (stat/faccessat), wires pipes (C.5) + redirections
  *   (dup2), and reaps them. `seq 1 5 | wc -l` -> 5, `ls /bin | wc -l` -> 31, `grep -c root /etc/passwd`
  *   -> 1, all on seL4. The one fix D.2 needed: guest_copy now PRE-CHECKS a page is mapped (vspace_get_
  *   cap) and stops QUIETLY, so a variable-length guest-string read (exec argv, kernel path reads) that
  *   runs its fixed cap off the end of a short string's page is a benign short copy, not a ZF_LOGE.
+ *
+ * Phase D.3 (THIS): the fs becomes WRITABLE. tarfs.c stops re-walking the tar per lookup and instead
+ *   parses it ONCE at mount into an fsnode TREE. A regular file's bytes are NOT copied -- the node
+ *   points at the tar image in immortal .rodata -- so the whole userland costs ~49 nodes of metadata.
+ *   The first WRITE copies that file up into a heap buffer (the root task's 6 MB muslc morecore) and
+ *   the node becomes heap-backed; files created at runtime are heap-backed from birth. So a read-only
+ *   workload allocates nothing, and `echo hi > /tmp/x` costs one small buffer. After mount the tree is
+ *   the single source of truth -- create/unlink/mkdir/rmdir/rename are ordinary tree edits, with no
+ *   union/whiteout layering. tarfs.c therefore now owns the mutating half of the contract too
+ *   (mkdir/rmdir/unlink/rename/unlinkat/fchmodat/utimensat + O_CREAT/O_TRUNC/O_APPEND + tarfs_write,
+ *   which boot.c's pal_host_write calls for file handles); only ownership and hard/symbolic links stay
+ *   refused (the tree has no model for them). REAL dash redirection works: `echo x > /tmp/f`, `>>`,
+ *   `< file`, mkdir + write into it.
  *
  * The design + every seL4 API used here is kernel-source-validated (the Phase B + C.2 research; all
  * claims re-verified adversarially against deps/kernel + deps/seL4_libs; C.3 adds NO new seL4 API --
@@ -175,10 +188,10 @@ static int boot_once(void) {
       const void *tar = cpio_get_file(_cpio_archive,
                                       (unsigned long)(_cpio_archive_end - _cpio_archive),
                                       "aiosroot.tar", &tsz);
-      if (!tar) con_puts("[pal_sel4] WARNING: no aiosroot.tar in the CPIO -- tarfs disabled\n");
+      if (!tar) con_puts("[pal_sel4] WARNING: no aiosroot.tar in the CPIO -- the fs is disabled\n");
       else {
           int nf = tarfs_init(tar, tsz);
-          con_puts("[pal_sel4] tarfs: aiosroot.tar mounted read-only, ");
+          con_puts("[pal_sel4] fs: aiosroot.tar seeded into the writable RAM tree, ");
           con_put_int(nf); con_puts(" files\n");
       }
     }
@@ -366,7 +379,7 @@ pal_file_t pal_host_std(int which) { return (pal_file_t)which; }
 long pal_host_write(pal_file_t f, const void *buf, size_t len) {
     if (f == 0 || f == 1 || f == 2) { con_write((const char *)buf, len); return (long)len; }
     if (pipe_is_handle(f)) return pipe_write(f, buf, len);   /* a pipe write-end (C.5) */
-    return -AIOS_ENOSYS;                                     /* the tarfs is read-only */
+    return tarfs_write(f, buf, len);                         /* a writable fs file (D.3) */
 }
 
 long pal_host_getcwd(char *buf, size_t size) {
@@ -482,16 +495,16 @@ pal_pid_t pal_guest_spawn(const char *path, char *const argv[]) {
     for (int i = 0; i < MAX_GUESTS; i++) if (!g_g[i].used) { g = &g_g[i]; break; }
     if (!g) { con_puts("[pal_sel4] spawn: guest table full\n"); return PAL_PID_NONE; }
 
-    con_puts("[pal_sel4] Phase D.2: loading guest 'guest_shrun' (kernel asked for ");
+    con_puts("[pal_sel4] Phase D.3: loading guest 'guest_wfs' (kernel asked for ");
     con_puts(path); con_puts(")\n");
 
     unsigned long isz = 0;
-    const void *idata = resolve_image("/bin/guest_shrun", &isz);
+    const void *idata = resolve_image("/bin/guest_wfs", &isz);
     if (!idata) { con_puts("[pal_sel4] spawn: no init image\n"); return PAL_PID_NONE; }
 
     memset(g, 0, sizeof *g);
     if (guest_slot_init(g)) return PAL_PID_NONE;
-    if (guest_image_build(g, 0, "guest_shrun", idata, isz, &g->img)) { guest_slot_fini(g); return PAL_PID_NONE; }
+    if (guest_image_build(g, 0, "guest_wfs", idata, isz, &g->img)) { guest_slot_fini(g); return PAL_PID_NONE; }
 
     int argc = 0; while (argv && argv[argc]) argc++;
     uint64_t sp = 0;
@@ -867,16 +880,11 @@ int      pal_guest_sigreturn(pal_pid_t w, const void *sv) { (void)w;(void)sv; re
  * pal_host_read/write/close). Phase D.1 also made real IN TARFS.C: pal_host_{getdents,openat,fstatat,
  * faccessat,readlink,chdir} (fs breadth over the read-only tarfs). The mutating ops below return
  * -EACCES (the tarfs is read-only -- the ABI has no EROFS; a writable overlay is a deferrable step). */
-int      pal_host_unlink(const char *p) { (void)p; return -AIOS_EACCES; }
-int      pal_host_mkdir (const char *p, unsigned int m) { (void)p;(void)m; return -AIOS_EACCES; }
-int      pal_host_rmdir (const char *p) { (void)p; return -AIOS_EACCES; }
-int      pal_host_rename(const char *o, const char *n) { (void)o;(void)n; return -AIOS_EACCES; }
-int      pal_host_unlinkat (pal_file_t d, const char *p, int rd) { (void)d;(void)p;(void)rd; return -AIOS_EACCES; }
-int      pal_host_fchmodat (pal_file_t d, const char *p, unsigned int m, int nf) { (void)d;(void)p;(void)m;(void)nf; return -AIOS_EACCES; }
-int      pal_host_fchownat (pal_file_t d, const char *p, unsigned int o, unsigned int g, int nf) { (void)d;(void)p;(void)o;(void)g;(void)nf; return -AIOS_EACCES; }
-int      pal_host_symlinkat(const char *t, pal_file_t d, const char *l) { (void)t;(void)d;(void)l; return -AIOS_EACCES; }
-int      pal_host_linkat   (pal_file_t od, const char *op, pal_file_t nd, const char *np, int fo) { (void)od;(void)op;(void)nd;(void)np;(void)fo; return -AIOS_EACCES; }
-int      pal_host_utimensat(pal_file_t d, const char *p, const struct aios_timespec *t, int nf) { (void)d;(void)p;(void)t;(void)nf; return -AIOS_EACCES; }
+/* mkdir/rmdir/unlink/rename/unlinkat/fchmodat/utimensat are REAL in tarfs.c since D.3 (the writable
+ * RAM fs). Ownership + hard/symbolic links have no model in the node tree, so they stay refused. */
+int      pal_host_fchownat (pal_file_t d, const char *p, unsigned int o, unsigned int g, int nf) { (void)d;(void)p;(void)o;(void)g;(void)nf; return -AIOS_EPERM; }
+int      pal_host_symlinkat(const char *t, pal_file_t d, const char *l) { (void)t;(void)d;(void)l; return -AIOS_EPERM; }
+int      pal_host_linkat   (pal_file_t od, const char *op, pal_file_t nd, const char *np, int fo) { (void)od;(void)op;(void)nd;(void)np;(void)fo; return -AIOS_EPERM; }
 /* Phase E (family C -- console/termios): the console + termios are still stubs. clock_gettime is
  * D.1: the ARM generic timer read directly at EL0 (mrs CNTPCT_EL0/CNTFRQ_EL0 -- the proven 0.4.x
  * pattern, HW-validated on the RPi4/seL4). qemu-arm-virt has no RTC, so REALTIME == MONOTONIC ==
@@ -913,15 +921,15 @@ int      pal_net_wait_ready (void) { return 0; }
 /* ================================ the root task entry ============================================== */
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
-    con_puts("\n[pal_sel4] AIOS userspace kernel -- Phase D.2: the REAL dash + sbase run\n");
-    con_puts("[pal_sel4]   (a launcher execs /bin/sh -c pipelines; vendored dash forks + execs sbase).\n");
+    con_puts("\n[pal_sel4] AIOS userspace kernel -- Phase D.3: the WRITABLE RAM fs (seeded from the tar)\n");
+    con_puts("[pal_sel4]   (copy-on-write file data; create/append/trunc/mkdir/rename; dash redirection).\n");
 
     /* Run the host-agnostic kernel. It spawns the init guest, resumes it, then services trapped AIOS
      * syscalls from EVERY guest -- now a whole tree of dash + sbase processes -- until none remain. */
     char *gargv[] = { (char *)"aios-uk", (char *)"/sbin/init", 0 };
     int code = aios_kernel_main(2, gargv);
 
-    con_puts("[pal_sel4] Phase D.2 complete: the REAL dash + sbase ran pipelines on seL4; init exit code=");
+    con_puts("[pal_sel4] Phase D.3 complete: the RAM fs seeded from the tar is writable on seL4; init exit code=");
     con_put_int(code);
     con_puts(".\n[pal_sel4] halting.\n");
     seL4_TCB_Suspend(seL4_CapInitThreadTCB);

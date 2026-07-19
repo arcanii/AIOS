@@ -44,11 +44,14 @@ void __tarfs_main(long argc, char **argv) {
     if (n != 4 || !memeq(buf, "ios\n", 4)) die("guest_tarfs: FAIL -- read after lseek\n", 2);
     if (asys(AIOS_SYS_CLOSE, fd, 0, 0) != 0) die("guest_tarfs: FAIL -- close\n", 2);
 
-    /* 2. the error paths: missing file; write-intent on a read-only fs */
+    /* 2. the error paths: a missing file still ENOENTs. (A write-open USED to be refused here; since
+     * D.3 the fs is a writable RAM tree seeded from the tar, so it now succeeds -- guest_wfs covers
+     * the write semantics. Opening without writing must not disturb the seeded content.) */
     if (asys(AIOS_SYS_OPEN, (long)"/etc/nope", AIOS_O_RDONLY, 0) >= 0)
                                          die("guest_tarfs: FAIL -- open of a missing file succeeded\n", 3);
-    if (asys(AIOS_SYS_OPEN, (long)"/etc/motd", AIOS_O_WRONLY, 0) >= 0)
-                                         die("guest_tarfs: FAIL -- write-open of a read-only fs succeeded\n", 3);
+    { long wfd = asys(AIOS_SYS_OPEN, (long)"/etc/motd", AIOS_O_WRONLY, 0);
+      if (wfd < 0)                       die("guest_tarfs: FAIL -- write-open on the writable fs refused\n", 3);
+      asys(AIOS_SYS_CLOSE, wfd, 0, 0); }
 
     /* 3. stat: a directory and a file -- plus ".." paths (the normalizer's pop + root-clamp
      * branches; the kernel does NOT path_norm what it hands the PAL) */
